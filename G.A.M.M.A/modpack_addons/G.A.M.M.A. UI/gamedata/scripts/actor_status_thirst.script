@@ -1,0 +1,221 @@
+-- Changed for IMM	by Faustle (2018)
+-- Edited by Tronex
+-- 2018/2/18 - modified indicator icon to show properly and work with HUD toggle
+-- 2018/11/7 - modified values for Anomaly
+-- Water deprivation
+
+local last_drink, last_drink_chk, pwr_chk
+local feature_state
+
+local up_drink				= 30 -- step
+local in_hour				= 600 -- amount increased every sleep hour
+local start_blur_1 			= 1440 -- value at which gray indicator appear
+local start_blur_2 			= 2880 -- value at which yellow indicator appear
+local start_blur_3 			= 4320 -- value at which orange indicator appear
+local start_blur_4 			= 5760 -- value at which red indicator appear
+local force 				= 7200 -- value at which player is forced to sleep
+local force_slp				= 10001
+
+local drink_chk				= 300 -- amount of in-game seconds where indicator value increase
+local itn_mul 				= 0.001
+local eat_thirstiness_mul	= 1000
+local pwr_rate,rng_factor 	= -0.00010, 0.08
+local caff_max				= 3
+local die_chance 			= 5
+
+function create()
+	printdbg("- Water deprivation | Enabled")
+	feature_state = true
+	last_drink 				= last_drink or 0
+	RegisterScriptCallback("actor_on_update",actor_on_update)
+	RegisterScriptCallback("actor_on_item_use",actor_on_item_use)
+	RegisterScriptCallback("actor_on_sleep",actor_on_sleep)
+	actor_status.add_indicator("Thirst",{
+		index= 3,
+		typ= "state",
+		functor= {"actor_status_thirst","get_water_deprivation",true},
+		icon= "ui_inGame2_indicator_thirst",
+		background= "ui_inGame2_indicator_slot",
+		anim_icon= false,
+		anim_bk= false,
+	})
+end 
+
+function destroy()
+	printdbg("- Water deprivation | Disabled")
+	feature_state = false
+	last_drink = nil
+	UnregisterScriptCallback("actor_on_update",actor_on_update)
+	UnregisterScriptCallback("actor_on_item_use",actor_on_item_use)
+	UnregisterScriptCallback("actor_on_sleep",actor_on_sleep)
+	alife_storage_manager.get_state().drink = nil
+	actor_status.add_indicator("Thirst",nil)
+end 
+
+function toggle_feature(val)
+	if val and (not feature_state) then
+		create()
+	elseif (not val) and feature_state then
+		destroy()
+	end
+end
+
+function test_blur()
+	level.remove_pp_effector(39568)
+	if last_drink >= start_blur_1 then
+		level.add_pp_effector("yantar_underground_psi.ppe", 39568, false)
+		if last_drink >= start_blur_1 and last_drink < start_blur_2 then
+			level.remove_pp_effector(39568)
+			-- level.set_pp_effector_factor(39568, (last_drink-start_blur_1) * itn_mul)
+		elseif last_drink >= start_blur_2 and last_drink < start_blur_3 then
+			--level.set_pp_effector_factor(39568, (last_drink-start_blur_1) * itn_mul)
+			-- actor_menu.set_msg(1, game.translate_string("You have not had a drink, you should drink"),3)
+		elseif last_drink >= start_blur_3 and last_drink < start_blur_4 then
+			level.set_pp_effector_factor(39568, (last_drink-start_blur_1) * itn_mul)
+			-- actor_menu.set_msg(1, game.translate_string("You have not had a drink, you should drink"),5)
+		elseif last_drink >= start_blur_4 and last_drink < force then
+			level.set_pp_effector_factor(39568, (last_drink-start_blur_1) * itn_mul)
+		elseif last_drink >= force and math.random(100) <= force_slp and not db.actor:has_info("actor_is_sleeping")==true then
+			db.actor:give_info_portion("force_slp")
+			force_sleep()
+			-- actor_menu.set_msg(1, game.translate_string("You are extremely depleted - you need to drink!"),5)
+		end
+	end
+end
+
+function force_sleep()
+	ui_sleep_dialog.sleep_forced()
+	if math.random(100) < die_chance then
+		actor_menu.set_msg(1, game.translate_string("st_sleep_deprived"),5)
+		db.actor:kill(db.actor)
+	end
+	disable_info("force_slp")
+end
+
+function get_water_deprivation(visual)
+	if (not last_drink) then
+		return 0
+	end
+	
+	if visual then -- indicator
+		if last_drink <= start_blur_1 then return 0
+		elseif last_drink <= start_blur_2 then return 1
+		elseif last_drink <= start_blur_3 then return 2
+		elseif last_drink <= start_blur_4 then return 3
+		else return 4
+		end
+	end
+	return clamp( normalize(last_drink, 0, 10000) , 0 , 1)
+end
+
+function get_last_drink()
+	return last_drink or 0
+end
+
+function get_thirst_blur_4()
+	return start_blur_4 or 0
+end
+
+-------------------------------------------------------------------
+-- Callbacks
+-------------------------------------------------------------------
+function save_state(m_data)
+	if (USE_MARSHAL) and feature_state then
+		local drink = {}
+		drink.last_drink = last_drink
+		drink.chk_drink = last_drink_chk and utils_data.CTime_to_table(last_drink_chk)
+		
+		m_data.drink = drink
+		printdbg("# SAVING: Water deprivation | last_drink: %s", tostring(last_drink))
+	end
+end
+
+function load_state(m_data)
+	local drink = m_data.drink
+	if drink then
+		last_drink = drink.last_drink or 0
+		last_drink_chk = drink.chk_drink and utils_data.CTime_from_table(drink.chk_drink) or nil
+		printdbg("# LOADING: Water deprivation | last_drink: %s", tostring(last_drink))
+	end
+end
+
+function actor_on_sleep(hours)
+	if (not db.actor:has_info("force_slp")) then
+		printdbg("/ Water deprivation | Increased thirst by sleeping: %s - old thirst level: %s", hours*(in_hour/2), last_drink)
+		last_drink = last_drink and math.ceil(last_drink + hours*((in_hour or 600)/2)) or 0
+		if (last_drink < 0) then
+			last_drink = 0
+		elseif (last_drink > 10000) then
+			last_drink = 10000
+		end
+	end
+end
+
+function actor_on_item_use(item)
+
+	local sec = item:section()
+	local eat_thirstiness = (ini_sys:r_float_ex(sec,"eat_thirstiness") or 0) * eat_thirstiness_mul 
+	
+	if eat_thirstiness and eat_thirstiness ~= 0 then
+		printdbg("/ Thirst deprivation | Item used: %s - old thirst level: %s - thirst level change: %s", sec, last_drink, eat_thirstiness)
+		last_drink = last_drink + eat_thirstiness
+		if (last_drink < 0) then
+			last_drink = 0
+		elseif (last_drink > 10000) then
+			last_drink = 10000
+		end
+		
+		test_blur()
+	end
+end
+
+function actor_on_update(b,d)
+	--printf("last_drink_chk=%s last_drink=%s",last_drink_chk and game.get_game_time():diffSec(last_drink_chk) or "nil",last_drink)
+	
+	-- God mode console command enabled.
+	if (get_console_cmd(1,"g_god")) then
+		return true
+	end
+	
+	local curr_time = game.get_game_time()
+	
+	if last_drink > start_blur_2 then
+		local tg = time_global()
+		if (pwr_chk == nil or tg > pwr_chk) then 
+			if (db.actor.power > 0) then
+				db.actor:change_power(pwr_rate*((last_drink-start_blur_1)*rng_factor)/10)
+				db.actor:change_health(pwr_rate*((last_drink-start_blur_1)*rng_factor)/100)
+			end
+			pwr_chk = tg+100
+		end
+	end
+	
+	if (last_drink_chk and curr_time:diffSec(last_drink_chk) < drink_chk) then 
+		return 
+	end
+	
+	last_drink_chk = curr_time
+	-- log(" !The usual increase in thirst is 6. Thirst before: " .. "last_drink)
+	
+	last_drink = last_drink + up_drink
+	
+	if (last_drink < 0) then
+		last_drink = 0
+	elseif (last_drink > 10000) then
+		last_drink = 10000
+	end
+	
+	test_blur()
+end
+
+function on_game_start()
+	
+	local function on_game_load()
+		if game_difficulties.get_game_factor("thirst") then
+			create()
+		end
+	end
+	--RegisterScriptCallback("on_game_load",on_game_load)
+	RegisterScriptCallback("load_state",load_state)
+	RegisterScriptCallback("save_state",save_state)
+end

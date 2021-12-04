@@ -1,0 +1,53 @@
+local level_multipliers = {
+	["jupiter"]                 = -0.1,
+	["l09_deadcity"]            = -0.05,
+	["l10_limansk"]             = -0.15,
+	["l10_red_forest"]          = -0,15,
+	["l11_hospital"]            = -0.2,
+	["l11_pripyat"]             = -0.2,
+	["l12_stancia"]             = -0.4,
+	["l12_stancia_2"]           = -0.4,
+	["l13_generators"]			= -0.4,
+	["pripyat"]					= -0.2,
+	["zaton"]					= -0.1
+}
+
+GetCost = utils_item.get_item_cost
+get_trader_community = faction_stocks.get_trader_community
+
+multiplier = 1
+supply_level = nil
+local use_north_level_mul = true
+local use_goodwill_mul = true
+local use_ignore_faction_goodwill = false
+local use_reputation_mul = true
+local goodwill_mul = 2
+local rep_mul = 2
+local gt = game.translate_string
+
+function utils_item.get_item_cost(obj, profile)
+	--printf("# <HARU> Item: [%s]", obj:section())
+    --printf("# <HARU> Mode: [%s]", profile.mode)
+    return profile.mode == 1 and GetCost(obj, profile) * clamp(multiplier, 0, 2) or GetCost(obj, profile) * clamp(2 - multiplier, 0.65, 5)
+end
+--[[
+	~ <HARU> Goodwill: [3000]
+	~ <HARU> Reputation: [4000]
+]]
+
+function ActorMenu_on_trade_started()
+	local actor = db.actor
+	local trader_npc = mob_trade.GetTalkingNpc()
+	local actor_faction = str_explode(character_community(actor), "_")[2]
+	local trader_faction = get_trader_community(trader_npc, actor_faction)
+	local goodwill = relation_registry.community_goodwill(trader_faction, 0)
+	local current_level = level.name()
+	local community_relation = relation_registry.community_relation(actor_faction, trader_faction)
+	local reputation = actor:character_reputation()
+    	multiplier = 1 -- reset the multiplier
+end
+
+
+function on_game_start()
+    RegisterScriptCallback("ActorMenu_on_trade_started", ActorMenu_on_trade_started)
+end
