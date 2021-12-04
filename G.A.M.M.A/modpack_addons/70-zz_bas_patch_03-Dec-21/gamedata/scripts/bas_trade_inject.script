@@ -1,0 +1,138 @@
+--[[
+
+Custom trade injector made for CW weapon pack and modified for BaS.
+
+Author: HarukaSai
+Credits: Arti, for creating trader_autoinject.script and being amazing
+
+Last edit: 19-10-2021
+]]
+
+-- this is where you add custom trade profiles for specific dudes
+-- by default only suppliers are able to sell faction stuff
+-- you can bypass this by adding trader in this table
+-- [name that you can see when you look at npc in debug] = ini_file("path to your ini")
+local ini_by_name = {
+    ["m_trader"] = ini_file("items\\trade_bas\\trade_stalker_sidorovich.ltx"), -- make sure that entries have comma after them
+    ["m_lesnik"] = ini_file("items\\trade_bas\\trade_stalker_forester.ltx"),
+	["cit_killers_merc_mechanic_stalker"] = ini_file("items\\trade_bas\\trade_mechanic_mercenary_hog.ltx"),
+	["mar_base_stalker_tech"] = ini_file("items\\trade_bas\\trade_mechanic_csky_novikov.ltx"),
+	["esc_smart_terrain_5_7_loner_mechanic_stalker"] = ini_file("items\\trade_bas\\trade_mechanic_stalker_furgon.ltx"),
+	["merc_pri_a18_mech_mlr"] = ini_file("items\\trade_bas\\trade_mechanic_mercenary_pripyat.ltx"),
+	["army_south_mechan_mlr"] = ini_file("items\\trade_bas\\trade_mechanic_military_esc.ltx"),
+	["mechanic_army_yan_mlr"] = ini_file("items\\trade_bas\\trade_mechanic_ecolog_yantar.ltx"),
+	["dask_tech_mlr"] = ini_file("items\\trade_bas\\trade_mechanic_stalker_darkscape.ltx"),
+	["agr_smart_terrain_1_6_army_mechanic_stalker"] = ini_file("items\\trade_bas\\trade_mechanic_military_agroprom.ltx"),
+	["bar_visitors_stalker_mechanic"] = ini_file("items\\trade_bas\\trade_mechanic_duty_bar.ltx"),
+	["mil_smart_terrain_7_7_freedom_mechanic_stalker"] = ini_file("items\\trade_bas\\trade_mechanic_freedom_mil.ltx"),
+	["jup_b217_stalker_tech"] = ini_file("items\\trade_bas\\trade_mechanic_freedom_jupiter.ltx"),
+	["zat_stancia_mech_merc"] = ini_file("items\\trade_bas\\trade_mechanic_mercenary_zaton.ltx"),
+	["zat_tech_mlr"] = ini_file("items\\trade_bas\\trade_mechanic_stalker_zaton.ltx"),
+	["jup_b19_freedom_yar"] = ini_file("items\\trade_bas\\trade_mechanic_yar.ltx"),
+    ["jup_b6_scientist_tech"] = ini_file("items\\trade_bas\\trade_mechanic_ecolog_garin.ltx"),	
+	["agr_smart_terrain_1_6_army_trader_stalker"] = ini_file("items\\trade_bas\\trade_military_agro.ltx"),		
+	["esc_main_base_trader_mlr"] = ini_file("items\\trade_bas\\trade_stalker_loris.ltx"),	
+	["dask_trade_mlr"] = ini_file("items\\trade_bas\\trade_stalker_darkscape.ltx"),
+	["hunter_gar_trader"] = ini_file("items\\trade_bas\\trade_stalker_butcher.ltx"),
+	["baraholka_trader"] = ini_file("items\\trade_bas\\trade_stalker_flea_market_day.ltx"),
+	["baraholka_trader_night"] = ini_file("items\\trade_bas\\trade_stalker_flea_market_night.ltx"),	
+	["bar_visitors_barman_stalker_trader"] = ini_file("items\\trade_bas\\trade_stalker_barman.ltx"),	
+	["jup_a6_freedom_trader_ashot"] = ini_file("items\\trade_bas\\trade_freedom_ashot.ltx"),	
+	["zat_stancia_trader_merc"] = ini_file("items\\trade_bas\\trade_mercenary_zaton.ltx"),
+	["zat_b30_owl_stalker_trader"] = ini_file("items\\trade_bas\\trade_stalker_owl.ltx"),
+	["zat_a2_stalker_nimble"] = ini_file("items\\trade_bas\\trade_stalker_nimble.ltx"),	
+	["zat_a2_stalker_barmen"] = ini_file("items\\trade_bas\\trade_stalker_beard.ltx"),
+	["trader_pri_a15_mlr"] = ini_file("items\\trade_bas\\trade_stalker_cashier.ltx"),		
+	["pri_special_trader_mlr"] = ini_file("items\\trade_bas\\trade_mercenary_pripyat.ltx"),
+	["yan_stalker_sakharov"] = ini_file("items\\trade_bas\\trade_ecolog_sakharov.ltx"),
+	["yan_povar_army_mlr"] = ini_file("items\\trade_bas\\trade_povar.ltx"),
+	["jup_b6_scientist_nuclear_physicist"] = ini_file("items\\trade_bas\\trade_ecolog_hermann.ltx")	
+}
+
+local ini_by_faction = {
+    ["stalker"] = ini_file("items\\trade_bas\\trade_stalker.ltx"),
+    ["bandit"] = ini_file("items\\trade_bas\\trade_bandit.ltx"),
+    ["csky"] = ini_file("items\\trade_bas\\trade_csky_spore.ltx"),
+    ["dolg"] = ini_file("items\\trade_bas\\trade_duty.ltx"),
+    ["freedom"] = ini_file("items\\trade_bas\\trade_freedom.ltx"),
+    ["killer"] = ini_file("items\\trade_bas\\trade_mercenary.ltx"),
+    ["army"] = ini_file("items\\trade_bas\\trade_military_esc.ltx"),
+    ["ecolog"] = ini_file("items\\trade_bas\\trade_ecolog.ltx"),
+    ["monolith"] = ini_file("items\\trade_bas\\trade_monolith.ltx"),
+    ["renegade"] = ini_file("items\\trade_bas\\trade_renegade.ltx"),
+    ["greh"] = ini_file("items\\trade_bas\\trade_greh.ltx"),
+    ["isg"] = ini_file("items\\trade_bas\\trade_isg.ltx")
+}
+
+local format_table = utils_data.print_table
+local to_array = utils_data.parse_ini_section_to_array
+local math_random = math.random
+
+function bas_spawn_stock(npc)
+    local npc_name = npc:section()
+    local has_custom = ini_by_name[npc_name]
+    local is_supplier = trader_autoinject.get_trader_type(npc) == trader_autoinject.SUPPLIER
+    if not (is_supplier or has_custom) then 
+        printf("NPC %s has no trade information", npc_name)
+        return 
+    end
+    local community = get_trader_community(npc)
+    local supply_level = trader_autoinject.supply_level(npc) or "common_supplies"
+    local ini_trade = ini_by_name[npc_name] or ini_by_faction[community]
+    local supply_table = to_array(ini_trade, supply_level)
+    if not supply_table then
+        printf("! Trader has no supplies [%s] - [%s]", npc_name, supply_level)
+        return
+    end
+
+    local to_spawn = {}
+    for item, amount in pairs(supply_table) do
+        local str_amount = str_explode(amount, ",")
+        to_spawn[item] = chance_for_each(tonumber(str_amount[1]), tonumber(str_amount[2]))
+    end
+
+    --printf(format_table(to_spawn, "Haruka Trade Table CW", true))
+    trader_autoinject.spawn_items(npc, to_spawn)
+end
+
+TraderAuto = trader_autoinject.update
+
+function trader_autoinject.update(npc)
+    TraderAuto(npc)
+    bas_spawn_stock(npc)
+end
+
+function chance_for_each(n, chance)
+    local total = 0
+
+    for i = 1, n do
+        if math_random() < chance then
+            total = total + 1
+        end
+    end
+
+    return total
+end
+
+local furniture = {
+    ["esc_m_trader"] = true,
+    ["red_m_lesnik"] = true
+}
+
+local blacklisted_comms = {
+    ["trader"] = true,
+    ["monster"] = true
+}
+
+function get_trader_community(npc)
+    if furniture[npc:name()] then return "stalker" end
+    local community = character_community(npc)
+    if not blacklisted_comms[community] then return community end
+    local squad_community = get_object_squad(npc):get_squad_community()
+
+    if not blacklisted_comms[squad_community] then
+        return squad_community
+    else
+        return "stalker"
+    end
+end

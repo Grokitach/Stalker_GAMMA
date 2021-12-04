@@ -1,0 +1,3762 @@
+
+--[[
+
+- Tronex
+- 2020/2/3 - 2020/4/3
+
+- Inventory simulation
+
+Modes:
+	1. Inventory
+	2. Loot
+	3. Trade
+	4. Repair/Upgrade
+	
+--]]
+
+local enable_feature        = true
+local enable_item_picker	= true
+
+local is_shift_pressed = false
+
+local weight_unit = game.translate_string("st_kg")
+local snd_open         = sound_object([[interface\inv_open]])
+local snd_close        = sound_object([[interface\inv_close]])
+local snd_item_to_slot = sound_object([[interface\inv_slot]])
+local snd_item_to_belt = sound_object([[interface\inv_belt]])
+local snd_item_to_ruck = sound_object([[interface\inv_ruck]])
+local snd_properties   = sound_object([[interface\inv_properties_2]])
+local snd_drop_item    = sound_object([[interface\inv_drop]])
+local snd_attach_addon = sound_object([[interface\inv_attach_addon]])
+local snd_detach_addon = sound_object([[interface\inv_detach_addon]])
+local snd_item_use     = sound_object([[interface\inv_none]])
+
+local clr_weight = {
+	[1] = GetARGB(255,255,255,255),
+	[2] = GetARGB(255,255,50,0),
+	[3] = GetARGB(255,200,150,0),
+}
+
+-- UI events
+local K_Timer   = false
+local K_M1      = DIK_keys.MOUSE_1
+local K_M2      = DIK_keys.MOUSE_2
+local K_CTRL    = DIK_keys.DIK_LCONTROL
+local K_SHFT    = DIK_keys.DIK_LSHIFT
+local E_PRESS   = ui_events.WINDOW_KEY_PRESSED
+local E_RELEASE = ui_events.WINDOW_KEY_RELEASED
+
+-- Utils
+local in_actor_inv = utils_item.in_actor_inv
+local in_npc_inv = utils_item.in_npc_inv
+
+function keybind_pass()
+	-- I added this to prevent inventory closing after starting because of release keybind
+	if (K_Timer and (time_global() > K_Timer + 200)) or (not K_Timer) then
+		K_Timer = time_global()
+		return true
+	end
+	return false
+end
+
+local function init_mode(mode, flags, obj)
+	if db.actor and db.actor:alive() then
+		start(mode, obj)
+	end
+	flags.ret = true
+end
+
+local function on_key_press(key)
+	if (key == DIK_keys.DIK_LSHIFT) or (key == DIK_keys.DIK_RSHIFT) then
+		is_shift_pressed = true
+		--printf( "shift pressed" )
+	end
+end
+
+local function on_key_release(key)
+	if (key == DIK_keys.DIK_LSHIFT) or (key == DIK_keys.DIK_RSHIFT) then
+		is_shift_pressed = false
+		--printf( "shift released" )
+	end
+end
+
+function on_game_start()
+	if enable_feature then
+		overrides()
+		RegisterScriptCallback("ActorMenu_on_before_init_mode",init_mode)
+		RegisterScriptCallback("on_key_press",on_key_press)
+		RegisterScriptCallback("on_key_release",on_key_release)
+	end
+end
+
+
+----------------------------------------------------------------
+GUI = nil -- instance, don't touch
+function start(mode, obj)
+	if (not mode) then
+		return
+	end
+	
+	if (mode == "loot") and is_shift_pressed then
+		return
+	end
+	
+	if (not GUI) then
+		GUI = UIInventory()
+	end
+	
+	if (GUI) and (not GUI:IsShown()) and keybind_pass() then
+		if mode == "inventory" then
+			change_last_mode(1)
+			GUI:IMode_Init()
+			
+		elseif mode == "loot" then
+			change_last_mode(4)
+			GUI:LMode_Init(obj)
+			
+		elseif mode == "trade" then
+			change_last_mode(2)
+			GUI:TMode_Init(obj)
+			
+		elseif mode == "repair" then
+			change_last_mode(3)
+			GUI:RMode_Init(obj)
+			
+		end
+		
+		GUI:ShowDialog(true)
+--[[Bartoche70 for my addon Bart's New Sorting Tabs	because "Keypad 0" toggle hud in inventory	
+		--_GUIs_keyfree["UIInventory"] = true
+--]]
+		_GUIs_keyfree["UIInventory"] = false
+		Register_UI("UIInventory","ui_inventory")
+	end
+end
+
+
+----------------------------------------------------------------
+class "UIInventory" (CUIScriptWnd)
+
+function UIInventory:__init() super()
+
+	-- Base
+	self.mode          = nil -- "inventory" / "loot" / "trade" / "repair"
+	self.npc_id        = nil
+	self.possible_kind = {} -- ["s_all"] = true -> show all item kinds
+	self.CC            = {} -- item cell containers
+	self.flags         = { ret_value = true }
+	
+	-- Technical
+	self.hover           = { idx = false , bag = false, tg = 0 }
+	self.slot_hl         = { idx = false , bag = false }
+	self.holding_shift   = false
+	self.holding_ctrl    = false
+	self.update_info     = false
+	self.update_inv 	 = false
+	self.update_bags     = {"actor_bag", "actor_trade", "actor_trade_bag", "npc_bag", "npc_trade", "npc_trade_bag" , "picker"}
+	self.update_items	 = {}
+
+	self.tg_info  	     = nil
+	self.tg_info_step  	 = 2 --[ms]
+	self.tg_inv  		 = 0 --[ms]
+	self.tg_inv_step  	 = 100 --[ms]
+	self.tg_stats        = 0
+	self.tg_stats_step   = 2000 --[ms]
+	self.tg_hint         = nil
+	self.tg_hint_step    = 1000 --[ms]
+	self.tg_m1		     = 0
+	
+	self.box_init_update = { state = false , tg = 0 }
+
+	-- Item cell containers
+	self.bag_id = {
+		["actor_bag"]       = EDDListType.iActorBag,
+		["actor_equ"]       = EDDListType.iActorSlot,
+		["actor_belt"]      = EDDListType.iActorBelt,
+		["actor_quick"]     = EDDListType.iQuickSlot,
+		["actor_trade"]     = EDDListType.iActorTrade,
+		["actor_trade_bag"] = EDDListType.iActorBag,
+		
+		["npc_bag"]         = EDDListType.iDeadBodyBag,
+		["npc_trade"]       = EDDListType.iPartnerTrade,
+		["npc_trade_bag"]   = EDDListType.iPartnerTradeBag,
+	}
+	
+	-- Slot = Cell to take
+	self.slot_cell = { -- base slot = {UI slots to fit in}
+		[1]  = {1},          -- Knife
+		[2]  = {2,1,3},      -- Pistol
+		[3]  = {3,2},        -- Rifle
+		[4]  = {4},          -- Grenade
+		[5]  = {5},          -- Binoculars
+		[6]  = {6},          -- Bolt
+		[7]  = {7},          -- Outfit
+		[8]  = {8},          -- PDA
+		[9]  = {9},          -- Detector
+		[10] = {10},         -- Torch
+		[11] = {11},         -- Artefact
+		[12] = {12},         -- Helmet
+		[13] = {13},         -- Backpack
+	}
+	
+	-- Player stats
+	self.stat_outfit = {}
+	self.stat_helm = {}
+	self.stat_arty = {}
+	self.stat_boost = {}
+	self.stat_list = {
+		["health"]     = { min= 0 , max= 1                                                               , hint= "st_ui_health_sensor_inv"},
+		["radia"]      = { min= 0 , max= (SYS_GetParam(2,"actor_condition","radio_zone_max_power"))      , hint= "ui_inv_radiation_protection"},
+		["acid"]       = { min= 0 , max= (SYS_GetParam(2,"actor_condition","acid_zone_max_power"))       , hint= "ui_inv_chemical_burn_protection"},
+		["shock"]      = { min= 0 , max= (SYS_GetParam(2,"actor_condition","electra_zone_max_power"))    , hint= "ui_inv_shock_protection" },
+		["fire"]       = { min= 0 , max= (SYS_GetParam(2,"actor_condition","fire_zone_max_power"))       , hint= "ui_inv_burn_protection" },
+		["psi"]        = { min= 0 , max= (SYS_GetParam(2,"actor_condition","psi_zone_max_power"))        , hint= "ui_inv_telepatic_protection"},
+		["wound"]      = { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_wound_protection"))      , hint= "ui_inv_wound_protection" },
+		["fire_wound"] = { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_fire_wound_protection")) , hint= "ui_inv_fire_wound_protection" },
+		["power"]      = { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_power_restore_speed"))   },
+		["thirst"]		= { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_power_restore_speed"))   },
+		["sleep"]		= { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_power_restore_speed"))   },
+	}
+	self.boost_id = {
+		[ BoosterID["HpRestore"] ]              = "health_restore",
+		[ BoosterID["RadiationRestore"] ]       = "radia_restore",
+		[ BoosterID["PowerRestore"] ]           = "power",
+		[ BoosterID["RadiationProtection"] ]    = "radia",
+		[ BoosterID["TelepaticProtection"] ]    = "psi",
+		[ BoosterID["ChemicalBurnProtection"] ] = "acid",
+	}
+	self.boost_id_inv =  invert_table( dup_table(BoosterID) )
+	for name,v in pairs(self.stat_list) do
+		self.stat_outfit[name] = 0
+		self.stat_helm[name] = 0
+		self.stat_boost[name] = 0
+		self.stat_arty[name] = 0
+	end
+	
+	
+	-- Item properties
+	self.properties = {
+		["use"]             = { index= 1 ,  name= "st_use",                    mode= {"inventory"},				cont= {"actor_bag"},                    precondition1= {"Cond_Use"},                                               	   action= {"Action_Use"} },
+		["attach_1"]        = { index= 2 ,  name_func= {"Name_Attach",1},      mode= {"inventory"},				cont= {"actor_bag"},                    precondition1= {"Cond_Attach",1},                                              action= {"Action_Attach",1} },
+		["attach_2"]        = { index= 3 ,  name_func= {"Name_Attach",2},      mode= {"inventory"},				cont= {"actor_bag"},                    precondition1= {"Cond_Attach",2},                                              action= {"Action_Attach",2} },
+		["attach_3"]        = { index= 4 ,  name_func= {"Name_Attach",3},      mode= {"inventory"},				cont= {"actor_bag"},                    precondition1= {"Cond_Attach",3},                                              action= {"Action_Attach",3} },
+		["to_slot"]         = { index= 5 ,  name_func= {"Name_Equip"},         mode= {"inventory"},				cont= {"actor_bag"},                    precondition1= {"Cond_Equip"},                                                 action= {"Action_Equip"} },
+		["to_ruck"]         = { index= 6 ,  name_func= {"Name_UnEquip"},	   mode= {"inventory","trade"},		cont= {"actor_equ","actor_belt"}, 					                                                                   action= {"Action_UnEquip"} },
+		["move"]            = { index= 7 ,  name_func= {"Name_Move"},          mode= {"loot","trade"},			cont= {"actor_equ","actor_belt","actor_bag","actor_trade_bag","actor_trade","npc_bag","npc_trade","npc_trade_bag"},   precondition1= {"Cond_Move"},                        action= {"Action_Move"} },
+		["move_all"]        = { index= 8 ,  name= "st_move_all",               mode= {"loot","trade"},			cont= {"actor_equ","actor_belt","actor_bag","actor_trade_bag","actor_trade","npc_bag","npc_trade","npc_trade_bag"},   precondition1= {"Cond_Childs"}, precondition2= {"Cond_Move"},          action= {"Action_Move_All"} },
+		["donate"]          = { index= 9 ,  name= "st_donate",                 mode= {"trade"},					cont= {"actor_trade_bag","actor_trade"},precondition1= {"Cond_NotQuest"},                                          	   action= {"Action_Donate"} },
+		["unload"]          = { index= 10,  name= "st_unload_magazine",        mode= {"loot","inventory"},		cont= {"actor_equ","actor_bag","npc_bag"}, precondition1= {"Cond_Unload"},                                             action= {"Action_Unload"} },
+		["custom_1"]        = { index= 11,  name_func= {"Name_Custom",1},      mode_func= {"Mode_Custom",1},	cont_func= {"Cont_Custom",1},   		precondition1= {"Name_Custom",1 },                                             action= {"Action_Custom",1} },
+		["custom_2"]        = { index= 12,  name_func= {"Name_Custom",2},      mode_func= {"Mode_Custom",2},	cont_func= {"Cont_Custom",2},   		precondition1= {"Name_Custom",2 },                                             action= {"Action_Custom",2} },
+		["custom_3"]        = { index= 13,  name_func= {"Name_Custom",3},      mode_func= {"Mode_Custom",3},	cont_func= {"Cont_Custom",3},   		precondition1= {"Name_Custom",3 },                                             action= {"Action_Custom",3} },
+		["custom_4"]        = { index= 14,  name_func= {"Name_Custom",4},      mode_func= {"Mode_Custom",4},	cont_func= {"Cont_Custom",4},   		precondition1= {"Name_Custom",4 },                                             action= {"Action_Custom",4} },
+		["custom_5"]        = { index= 15,  name_func= {"Name_Custom",5},      mode_func= {"Mode_Custom",5},	cont_func= {"Cont_Custom",5},   		precondition1= {"Name_Custom",5 },                                             action= {"Action_Custom",5} },
+		["custom_6"]        = { index= 16,  name_func= {"Name_Custom",6},      mode_func= {"Mode_Custom",6},	cont_func= {"Cont_Custom",6},   		precondition1= {"Name_Custom",6 },                                             action= {"Action_Custom",6} },
+		["custom_7"]        = { index= 17,  name_func= {"Name_Custom",7},      mode_func= {"Mode_Custom",7},	cont_func= {"Cont_Custom",7},   		precondition1= {"Name_Custom",7 },                                             action= {"Action_Custom",7} },
+		["custom_8"]        = { index= 18,  name_func= {"Name_Custom",8},      mode_func= {"Mode_Custom",8},	cont_func= {"Cont_Custom",8},   		precondition1= {"Name_Custom",8 },                                             action= {"Action_Custom",8} },
+		["custom_9"]        = { index= 19,  name_func= {"Name_Custom",9},      mode_func= {"Mode_Custom",9},	cont_func= {"Cont_Custom",9},   		precondition1= {"Name_Custom",9 },                                             action= {"Action_Custom",9} },
+		["custom_10"]       = { index= 20,  name_func= {"Name_Custom",10},     mode_func= {"Mode_Custom",10},	cont_func= {"Cont_Custom",10},  		precondition1= {"Name_Custom",10},                                             action= {"Action_Custom",10} },
+		["detach_silencer"] = { index= 21,  name= "st_detach_silencer",        mode= {"loot","inventory"},		cont= {"actor_equ","actor_bag","npc_bag"},        precondition1= {"Cond_Detach_Silencer"},                                       action= {"Action_Detach_Silencer"} },
+		["detach_scope"] 	= { index= 22,  name= "st_detach_scope",           mode= {"loot","inventory"},		cont= {"actor_equ","actor_bag","npc_bag"},        precondition1= {"Cond_Detach_Scope"},                                          action= {"Action_Detach_Scope"} },
+		["detach_gl"]       = { index= 23,  name= "st_detach_gl",              mode= {"loot","inventory"},		cont= {"actor_equ","actor_bag","npc_bag"},        precondition1= {"Cond_Detach_GL"},                                             action= {"Action_Detach_GL"} },
+		["drop"]            = { index= 24,  name= "st_drop",                   mode= {"inventory"},				cont= {"actor_equ","actor_bag"},        precondition1= {"Cond_NotQuest"},                                              action= {"Action_Drop"} },
+		["drop_all"]        = { index= 25,  name= "st_drop_all",               mode= {"inventory"},				cont= {"actor_bag"},                    precondition1= {"Cond_Childs"}, precondition2= {"Cond_NotQuest"},          	   action= {"Action_Drop_All"} },
+	}
+	for _,props in pairs(self.properties) do
+		if props.mode then t2k_table(props.mode) end
+		if props.cont then t2k_table(props.cont) end
+	end
+	
+	-- Repair/Upgrade mode
+	self.upgr = { id = false , sec = false , idx = false , bag = false}
+	self.upgr_tree = {}
+	self.upgr_installed = {}
+	self.upgr_last_row = nil
+	self.upgr_last_col = nil
+	self.upgr_last_ii = nil
+	
+	-- Controls
+	self:InitControls()
+	self:InitCallbacks()
+	
+	-- Callbacks
+	RegisterScriptCallback("actor_item_to_ruck",self)
+	RegisterScriptCallback("actor_item_to_slot",self)
+	RegisterScriptCallback("actor_item_to_belt",self)
+	RegisterScriptCallback("actor_on_item_drop",self)
+	RegisterScriptCallback("actor_on_item_use",self)
+	RegisterScriptCallback("actor_on_item_put_in_box",self)
+	RegisterScriptCallback("actor_on_item_take_from_box",self)
+	RegisterScriptCallback("npc_on_item_take",self)
+	RegisterScriptCallback("npc_on_item_drop",self)
+	RegisterScriptCallback("npc_on_use",self)
+	RegisterScriptCallback("physic_object_on_use_callback",self)
+	RegisterScriptCallback("actor_on_net_destroy",self)
+end
+
+function UIInventory:__finalize()
+end
+
+function UIInventory:InitControls()
+	self:SetWndRect			(Frect():set(0,0,1024,768))
+	self:SetAutoDelete(true)
+	
+	self.xml = CScriptXmlInit()
+	
+	local xml = self.xml
+	xml:ParseFile			("ui_inventory.xml")
+
+	-- Right side - Player
+	self.player_dialog            = xml:InitStatic("player", self)
+	self.player_background		  = xml:InitStatic("player:background", self.player_dialog)
+	self.player_name              = xml:InitTextWnd("player:name", self.player_dialog)
+	self.player_community         = xml:InitTextWnd("player:community", self.player_dialog)
+	self.player_icon              = xml:InitStatic("player:icon", self.player_dialog)
+	self.player_money             = xml:InitTextWnd("player:money", self.player_dialog)
+	self.player_weight_cap        = xml:InitStatic("player:weight_caption", self.player_dialog)
+	self.player_weight            = xml:InitTextWnd("player:weight", self.player_dialog)
+	self.player_weight_max        = xml:InitTextWnd("player:weight_max", self.player_dialog)
+	self.player_putall 		      = xml:Init3tButton("player:putall_button", self.player_dialog)
+	self:Register(self.player_putall, "put_all")
+	self.player_trade  		      = xml:InitStatic("player:trade_delimiter", self.player_dialog)
+	self.player_trade_cap         = xml:InitStatic("player:trade_delimiter:trade_caption", self.player_trade)
+	self.player_trade_price       = xml:InitTextWnd("player:trade_delimiter:trade_price", self.player_trade)
+	self.player_trade_weight      = xml:InitTextWnd("player:trade_delimiter:trade_weight_max", self.player_trade)
+	self.player_trade_sell 		  = xml:Init3tButton("player:trade_delimiter:trade_sell_button", self.player_trade)
+	self:Register(self.player_trade_sell, "sell")
+	self.CC["actor_bag"]          = utils_ui.UICellContainer("actor_bag", self, nil, "player:cont_bag", self.player_dialog)
+	self.CC["actor_trade"]        = utils_ui.UICellContainer("actor_trade", self, nil, "player:cont_trade", self.player_dialog)
+	self.CC["actor_trade_bag"]    = utils_ui.UICellContainer("actor_trade_bag", self, nil, "player:cont_trade_bag", self.player_dialog)
+	
+	self.CC["actor_bag"].stack_all              = enable_item_picker and true or false
+	self.CC["actor_trade"].stack_all            = enable_item_picker and true or false
+	self.CC["actor_trade_bag"].stack_all        = enable_item_picker and true or false
+--	self.CC["actor_bag"].sort_method       = "kind"
+--	self.CC["actor_trade_bag"].sort_method = "kind"
+	
+	-- Left side -- NPC
+	self.npc_dialog               = xml:InitStatic("npc", self)
+	self.npc_background		      = xml:InitStatic("npc:background", self.npc_dialog)
+	self.npc_name                 = xml:InitTextWnd("npc:name", self.npc_dialog)
+	self.npc_community            = xml:InitTextWnd("npc:community", self.npc_dialog)
+	self.npc_icon                 = xml:InitStatic("npc:icon", self.npc_dialog)
+	self.npc_money                = xml:InitTextWnd("npc:money", self.npc_dialog)
+	self.npc_weight_cap           = xml:InitStatic("npc:weight_caption", self.npc_dialog)
+	self.npc_weight               = xml:InitTextWnd("npc:weight", self.npc_dialog)
+	self.npc_weight_max           = xml:InitTextWnd("npc:weight_max", self.npc_dialog)
+	self.npc_takeall 		      = xml:Init3tButton("npc:takeall_button", self.npc_dialog)
+	self:Register(self.npc_takeall, "take_all")
+	self.npc_trade  		      = xml:InitStatic("npc:trade_delimiter", self.npc_dialog)
+	self.npc_trade_cap            = xml:InitStatic("npc:trade_delimiter:trade_caption", self.npc_trade)
+	self.npc_trade_price          = xml:InitTextWnd("npc:trade_delimiter:trade_price", self.npc_trade)
+	self.npc_trade_weight         = xml:InitTextWnd("npc:trade_delimiter:trade_weight_max", self.npc_trade)
+	self.npc_trade_buy 		  	  = xml:Init3tButton("npc:trade_delimiter:trade_buy_button", self.npc_trade)
+	self:Register(self.npc_trade_buy, "buy")
+	self.CC["npc_bag"]            = utils_ui.UICellContainer("npc_bag", self, nil, "npc:cont_bag", self.npc_dialog)
+	self.CC["npc_trade"]          = utils_ui.UICellContainer("npc_trade", self, nil, "npc:cont_trade", self.npc_dialog)
+	self.CC["npc_trade_bag"]      = utils_ui.UICellContainer("npc_trade_bag", self, nil, "npc:cont_trade_bag", self.npc_dialog)
+	
+	self.CC["npc_bag"].stack_all              = enable_item_picker and true or false
+	self.CC["npc_trade"].stack_all            = enable_item_picker and true or false
+	self.CC["npc_trade_bag"].stack_all        = enable_item_picker and true or false
+--	self.CC["npc_bag"].sort_method       = "kind"
+--	self.CC["npc_trade_bag"].sort_method = "kind"
+	
+	-- Upgrade/Repair
+	self.npc_up_dialog	          = xml:InitStatic("upgrade", self)
+	self.npc_up_background		  = xml:InitStatic("upgrade:background", self.npc_up_dialog)
+	self.npc_up_name              = xml:InitTextWnd("upgrade:name", self.npc_up_dialog)
+	self.npc_up_community         = xml:InitTextWnd("upgrade:community", self.npc_up_dialog)
+	self.npc_up_icon              = xml:InitStatic("upgrade:icon", self.npc_up_dialog)
+	self.npc_up_money             = xml:InitTextWnd("upgrade:money", self.npc_up_dialog)
+	self.npc_up_scheme            = xml:InitScrollView("upgrade:scheme", self.npc_up_dialog)
+	self.npc_up_item              = xml:InitStatic("upgrade:item_static", self.npc_up_dialog)
+	self.npc_up_repair 		  	  = xml:Init3tButton("upgrade:repair_button", self.npc_up_dialog)
+	self:Register(self.npc_up_repair, "repair")
+	
+	self.equ_dialog            	  = xml:InitStatic("equipment", self)
+	self.equ_background		      = xml:InitStatic("equipment:background", self.equ_dialog)
+	
+	-- Slots
+	self.CC["actor_equ"]          = utils_ui.UICellContainer("actor_equ", self, "equipment:cont_equ", "equipment:cont_equ", self.equ_dialog, true)
+	self.CC["actor_equ"].disable_callback["On_CC_Add"] = true
+	self.CC["actor_equ"].disable_callback["On_CC_Remove"] = true
+	for i=1,13 do self.CC["actor_equ"]:AddItemManual(nil, nil, i) end
+	self.blocker_helm = xml:InitStatic("equipment:cont_equ:blocker_12", self.CC["actor_equ"].prof)
+	self.blocker_bkpk = xml:InitStatic("equipment:cont_equ:blocker_13", self.CC["actor_equ"].prof)
+	
+	-- Belt
+	self.CC["actor_belt"]         = utils_ui.UICellContainer("actor_belt", self, "equipment:cont_belt", "equipment:cont_belt", self.equ_dialog, true)
+	self.CC["actor_belt"].disable_callback["On_CC_Add"] = true
+	self.CC["actor_belt"].disable_callback["On_CC_Remove"] = true
+	self.blocker_arty = {}
+	for i=1,5 do
+		self.CC["actor_belt"]:AddItemManual(nil, nil, i)
+		self.blocker_arty[i] = xml:InitStatic("equipment:cont_belt:blocker_" .. i, self.CC["actor_belt"].prof)
+	end
+	
+	-- Quick items
+	self.CC["actor_quick"]        = utils_ui.UICellContainer("actor_quick", self, "equipment:cont_quick", "equipment:cont_quick", self.equ_dialog, true)
+	self.CC["actor_quick"].disable_drag      = true
+	self.CC["actor_quick"].disable_info      = true
+	self.CC["actor_quick"].disable_callback["On_CC_Add"] = true
+	self.CC["actor_quick"].disable_callback["On_CC_Remove"] = true
+	self.CC["actor_quick"].showcase = true
+	self.quick_txt = {}
+	for i=1,4 do
+		--self.CC["actor_quick"]:AddItemManual(nil, "bread", i)
+		self.CC["actor_quick"]:AddItemManual(nil, nil, i)
+		self.quick_txt[i] = xml:InitStatic("equipment:cont_quick:cell_" .. i .. ":txt", self.CC["actor_quick"].cell[i].cell)
+	end
+	
+	-- Stats
+	self.stats_dialog            = xml:InitStatic("equipment:actor_state_info", self.equ_dialog)
+	self.stat = {}
+	for name,_ in pairs(self.stat_list) do
+		self.stat[name]          = {}
+		self.stat[name].base     = xml:InitStatic("equipment:actor_state_info:" .. name .. "_sensor", self.stats_dialog)
+		self.stat[name].bar      = xml:InitProgressBar("equipment:actor_state_info:" .. name .. "_sensor:state_progress", self.stat[name].base)
+		self.stat[name].ico_base = xml:InitStatic("equipment:actor_state_info:icon", self.stat[name].base)
+		
+		self.stat[name].ico_p    = xml:InitStatic("equipment:actor_state_info:icon:active", self.stat[name].ico_base)
+		self.stat[name].ico_p:InitTexture("ui_inGame2_inv_state_P_" .. name)
+		self.stat[name].ico_p:Show(false)
+		
+		self.stat[name].ico_n    = xml:InitStatic("equipment:actor_state_info:icon:active", self.stat[name].ico_base)
+		self.stat[name].ico_n:InitTexture("ui_inGame2_inv_state_N_" .. name)
+		self.stat[name].ico_n:Show(false)
+	end
+
+	-- Sorter
+	self.sort_dialog            = xml:InitStatic("equipment:sorter", self.equ_dialog)
+	self.sort_btn = {}
+	self.sort_num = {}
+    
+
+--[[Bartoche70 for my addon Bart's New Sorting Tabs	30/10/2020
+    -------------------------------------------------------
+	--for i=1,8 do  --> because tabs are now 10
+--]]	
+	
+	for i=1,10 do
+    	
+		self.sort_btn[i] 		= xml:InitCheck("equipment:sorter:btn_" .. i, self.sort_dialog)
+		self.sort_btn[i]:SetCheck(false)
+		local _wrapper = function(handler) -- we need wrapper in order to pass ctrl to method
+			self:On_Sort(i)
+		end
+		self:Register(self.sort_btn[i], "sort_" .. i)
+		self:AddCallback("sort_" .. i, ui_events.BUTTON_CLICKED, _wrapper, self)
+		
+		self.sort_num[i]		= xml:InitTextWnd("equipment:sorter:txt_" .. i, self.sort_dialog)
+		self.sort_num[i]:SetFont(GetFontSmall())
+		self.sort_num[i]:SetText(i)
+	end
+	
+	-- Trash can
+	self.trash				  	= xml:InitStatic("npc:trash", self)
+	
+	-- Item picker
+	self.CC["picker"] = utils_ui.UICellContainer("picker", self, nil, "equipment:cont_picker", self.equ_dialog, nil)
+	self.CC["picker"].sort_method = "props"
+	self.CC["picker"].disable_stack = true
+	self.CC["picker"].disable_scroll_dragdrop = true
+	self.CC["picker"].parent = { bag = false , idx = false }
+	self.CC["picker"].disable_callback["On_CC_Add"] = true -- needed to prevent update loop
+	self.CC["picker"].disable_callback["On_CC_Remove"] = true
+	self.CC["picker"].scroll:SetWndPos(vector2():set( 10 , 0 ))
+--	self.CC["picker"].scroll:SetWndSize(vector2():set( self.CC["picker"].scroll:GetWidth() - 7.5 , self.CC["picker"].scroll:GetHeight() ))
+--	self.CC["picker"]:SetGridSpecs()
+	self.CC["picker"]:Show(false)
+	
+	-- Message box
+	self.message_box		  = CUIMessageBoxEx()
+	self:Register(self.message_box, "mbr")
+	self.message_box_up		  = CUIMessageBoxEx()
+	self:Register(self.message_box_up, "mbu")
+	
+	-- Info box
+	self.item_info                = utils_ui.UIInfoItem(self)
+	self.item_info.can_compare	  = true
+	
+	-- Upgrade box
+	self.upgr_info                = utils_ui.UIInfoUpgr(self)
+	
+	-- Item Properties box
+	self.item_props				  = utils_ui.UICellProperties(self)
+	
+	-- Hint Window
+	self.hint_wnd = xml:InitFrame("hint_wnd:background",self)
+	self.hint_wnd:SetAutoDelete(false)
+	self.hint_wnd_text = xml:InitTextWnd("hint_wnd:text",self.hint_wnd)
+	self.hint_wnd:Show(false)
+end
+
+function UIInventory:InitCallbacks()
+	self:AddCallback("sell", ui_events.BUTTON_CLICKED, self.TMode_Sell, self)
+	self:AddCallback("buy"  , ui_events.BUTTON_CLICKED, self.TMode_Buy, self)
+	self:AddCallback("put_all"  , ui_events.BUTTON_CLICKED, self.LMode_PutAll, self)
+	self:AddCallback("take_all"  , ui_events.BUTTON_CLICKED, self.LMode_TakeAll, self)
+	self:AddCallback("repair"  , ui_events.BUTTON_CLICKED, self.RMode_OnRepair, self)
+	self:AddCallback("mbr", ui_events.MESSAGE_BOX_YES_CLICKED, self.RMode_RepairYes, self)
+	self:AddCallback("mbr", ui_events.MESSAGE_BOX_NO_CLICKED, self.Discard, self)
+	self:AddCallback("mbr", ui_events.MESSAGE_BOX_OK_CLICKED, self.Discard, self)
+	self:AddCallback("mbu", ui_events.MESSAGE_BOX_YES_CLICKED, self.RMode_UpgradeYes, self)
+	self:AddCallback("mbu", ui_events.MESSAGE_BOX_NO_CLICKED, self.Discard, self)
+end
+
+function UIInventory:Reset(obj)
+
+	local to_show = obj and self:IsInvOwner(obj)
+	local mode = self.mode
+	local mI = mode == "inventory"
+	local mL = mode == "loot"
+	local mT = mode == "trade"
+	local mR = mode == "repair"
+	
+	-- Info
+	self.npc_id           = obj and obj:id() or false
+	self.npc_is_companion = obj and mL and IsStalker(obj) and obj:alive() and obj:has_info("npcx_is_companion") and true or false
+	self.npc_is_box       = obj and IsInvbox(obj) or false
+	self.npc_is_not_npc   = obj and ((obj:name() == "esc_m_trader") or (obj:section() == "m_lesnik"))
+	
+	-- Containers
+	self.CC["actor_bag"]:Show( mI or mL or mR )
+	self.CC["actor_trade"]:Show( mT )
+	self.CC["actor_trade_bag"]:Show( mT )
+	self.CC["npc_bag"]:Show( mL )
+	self.CC["npc_trade"]:Show( mT )
+	self.CC["npc_trade_bag"]:Show( mT )
+	self:Picker_Toggle()
+	self.trash:Show( mI )
+	
+	self.CC["actor_bag"].can_select = mR
+	self.CC["actor_equ"].can_select = mR
+	self.CC["picker"].can_select 	= mR
+	
+	for name,cc in pairs(self.CC) do
+		cc.trade_profile = nil
+	end
+	
+	-- Elements
+	self.npc_dialog:Show( mL or mT )
+	self.npc_up_dialog:Show( mR )
+	self.player_trade:Show( mT )
+	self.player_putall:Show( mL )
+	self.npc_takeall:Show( mL )
+	self.npc_trade:Show( mT )
+	self.npc_money:Show( mT )
+	self.npc_weight_max:Show( self.npc_is_companion and mL )
+	
+	self.npc_name:Show(to_show)   
+	self.npc_community:Show(to_show)
+	self.npc_icon:Show(to_show)
+	self.npc_up_repair:Enable(false)
+	
+	self.item_info:Update()
+	self.upgr_info:Update()
+	self:SetHint(false)
+	if self.item_props:IsShown() then
+		self.item_props:OnHide()
+	end
+
+	-- Reset sorting
+	self.sort_btn[1]:SetCheck(true)
+	self:On_Sort(1, true)
+	
+	self.upgr 			 = { id = false , sec = false , idx = false , bag = false}
+	self.hover           = { idx = false , bag = false, tg = 0 }
+	self.slot_hl         = { idx = false , bag = false }
+	self.holding_ctrl    = false
+	self.holding_shift   = false
+	
+	-- Allow player movement for this UI
+	self:AllowMovement( mI )
+end
+
+
+-- General
+function UIInventory:ParseInventory(npc, all, id_list, ignore_kind)
+
+	local inv = {}
+	local size_c = 0
+	local pkind = self.possible_kind
+	local sec, kind, w, h
+	local function iterate(owner,obj)
+		sec = obj:section()
+		kind = SYS_GetParam(0,sec,"kind") or "na"
+		
+		-- Parsing for kinds, according to sorter
+		if ignore_kind or pkind["s_all"] or pkind[kind] then
+			if id_list then
+				inv[obj:id()] = obj
+			else
+				size_c = size_c + 1
+				inv[size_c] = obj
+			end
+		end
+	end
+	if self:IsInvOwner(npc) then
+		if all then
+			npc:iterate_inventory(iterate,nil)
+		else
+			npc:iterate_ruck(iterate,nil)
+		end
+	elseif self.npc_is_box then
+		npc:iterate_inventory_box(iterate,nil)
+	end
+	
+	return inv
+end
+
+function UIInventory:ParseInventory_Companion(npc, id_list, ignore_kind)
+	-- only for alive NPCs, player shouldn't get NPC equipped items
+	-- companions are a special case, player can only get their assigned items
+	
+	local npc_id = npc:id() 
+	local inv = {}
+	local size_c = 0
+	local pkind = self.possible_kind
+	local id, sec, kind
+	local pass = false
+	local is_assigned_item = axr_companions.is_assigned_item
+	npc:iterate_inventory( function(owner,obj)
+		id = obj:id()
+		sec = obj:section()
+		kind = SYS_GetParam(0,sec,"kind") or "na"
+		pass = false
+		
+		-- Player's assigned items
+		if is_assigned_item(npc_id, id) then 
+			pass = true
+			
+		-- Player's strapped weapons
+		elseif IsWeapon(obj) and se_load_var(id, nil, "strapped_item") then 
+			pass = true
+		end
+		
+		-- Parsing for kinds, according to sorter
+		if pass then
+			if ignore_kind or pkind["s_all"] or pkind[kind] then
+				if id_list then
+					inv[obj:id()] = obj
+				else
+					size_c = size_c + 1
+					inv[size_c] = obj
+				end
+			end
+		end
+	end)
+	
+	return inv
+end
+
+function UIInventory:IsMode(bag, mode, ...)
+	local bags = {...}
+	if (not mode) or (self.mode == mode) then
+		for i=1,#bags do
+			if bags[i] == bag then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+function UIInventory:Item_On_Mode(name, bag)
+	local props = self.properties[name]
+	return props.mode[self.mode] and props.cont[bag]
+end
+
+function UIInventory:CheckItem(obj, msg)
+	if (type(obj) == "number") then
+		obj = level.object_by_id(obj)
+	end
+	if (not obj) then
+		callstack()
+		printe("!ERROR Can't get item game object!")
+	else
+		self:Print(nil, msg, obj:name())
+	end
+	
+	return obj
+end
+
+function UIInventory:GetPartner()
+	if self.npc_id then
+		return (db.storage[self.npc_id] and db.storage[self.npc_id].object or level.object_by_id(self.npc_id))
+	end
+end
+
+function UIInventory:ValidOwner(obj, state)
+	local p = obj:parent()
+	if (not p) then
+		return false
+	end
+	
+	if state then
+		return p:id() == AC_ID
+	else
+		local npc = self:GetPartner()
+		return npc and p:id() == npc:id()
+	end
+end
+
+function UIInventory:IsInvOwner(npc)
+-- We need this cause Sid and Forester are not NPCs
+	return IsStalker(npc) or self.npc_is_not_npc
+end
+
+function UIInventory:InitProperties(obj, bag)
+	if not (obj and bag) then
+		return
+	end
+	
+	self:Print("InitProperties | bag: %s - obj: %s", bag, obj:name())
+
+	local id = obj:id()
+	local mode = self.mode
+	local context_str = {}
+	local context_action = {}
+	local context_params = {}
+	
+	for n,props in spairs(self.properties, func_index) do
+	
+		-- Check if prop is aimed for active container
+		local bag_allowed = true
+		if props.cont then
+			bag_allowed = props.cont[bag] and true or false
+		end
+		if props.cont_func and props.cont_func[1] and self[props.cont_func[1]] then
+			bag_allowed = self[props.cont_func[1]](self, obj, bag, unpack(props.cont_func)) and true or false
+		end
+		
+		-- Check if prop is aimed for active mode
+		local mode_allowed = true
+		if props.mode then
+			mode_allowed = props.mode[mode] and true or false
+		end
+		if props.mode_func and props.mode_func[1] and self[props.mode_func[1]] then
+			mode_allowed = self[props.mode_func[1]](self, obj, bag, unpack(props.mode_func)) and true or false
+		end
+		
+		if mode_allowed and bag_allowed then
+		
+			-- Evaluate preconditions
+			local cond = true
+			local k = 1
+			while cond and props["precondition" .. k] do
+				local precond = props["precondition" .. k]
+				if precond[1] and self[precond[1]] then
+					cond = self[precond[1]](self, obj, bag, unpack(precond)) and true or false
+				else
+					cond = false
+				end
+				k = k + 1
+			end
+			if cond then
+				
+				-- Get prop name
+				local name = props.name or ""
+				local func_name = props.name_func
+				if func_name and func_name[1] and self[func_name[1]] then
+					name = self[func_name[1]](self, id, bag, unpack(func_name)) or name
+				end
+				table.insert(context_str, name)
+				
+				-- Get action
+				local func_action = props.action
+				if func_action and func_action[1] and self[func_action[1]] then
+					table.insert(context_action, func_action[1])
+					table.insert(context_params, {id, bag, unpack(func_action)})
+				end
+			end
+			
+		end
+	end
+	
+	if is_not_empty(context_action) and is_not_empty(context_str) then
+		self.item_props:Reset(GetCursorPosition(), context_action, context_str, context_params)
+		self:PlaySND(snd_properties)
+	end
+end
+
+function UIInventory:Discard()
+	self:Print(nil, "Discard")
+end
+
+
+-- Property naming
+function UIInventory:Name_Equip(obj, bag)
+	obj = self:CheckItem(obj,"Name_Equip")
+	
+	local clsid = obj:clsid()
+	local sec = obj:section()
+	if IsOutfit(nil,clsid) then
+		return "st_dress_outfit"
+	elseif IsHeadgear(nil,clsid) then
+		return "st_dress_helmet"
+	elseif IsItem("backpack",sec) then
+		return "st_equip_backpack"
+	elseif IsArtefact(nil,clsid) then
+		return "st_move_on_belt"
+	end
+	return "st_move_to_slot"
+end
+
+function UIInventory:Name_UnEquip(obj, bag)
+	obj = self:CheckItem(obj,"Name_UnEquip")
+	
+	local clsid = obj:clsid()
+	local sec = obj:section()
+	if IsOutfit(nil,clsid) then
+		return "st_undress_outfit"
+	elseif IsHeadgear(nil,clsid) then
+		return "st_undress_helmet"
+	elseif IsItem("backpack",sec) then
+		return "st_unequip_backpack"
+	end
+	return "st_unequip"
+end
+
+function UIInventory:Name_Attach(obj, bag, temp, slot)
+	obj = self:CheckItem(obj,"Name_Attach")
+	
+	local sec = obj:section()
+	local wpn = slot and db.actor:item_in_slot(slot)
+	local name = wpn and ui_item.get_obj_name(wpn) or ""
+	
+	if IsItem("sil",sec) then
+		return (game.translate_string("st_attach_silencer_to_pistol") .. " (" .. name .. ")")
+	elseif IsItem("scope",sec) then
+		return (game.translate_string("st_attach_scope_to_pistol") .. " (" .. name .. ")")
+	elseif IsItem("gl",sec) then
+		return (game.translate_string("st_attach_gl_to_rifle") .. " (" .. name .. ")")
+	end
+end
+
+function UIInventory:Name_Move(obj, bag)
+	obj = self:CheckItem(obj,"Name_Move")
+
+	if (self.mode == "loot") and (bag == "npc_bag") then
+		return "st_move_to_bag"
+	end
+	return "st_move_to"
+end
+
+function UIInventory:Name_Custom(obj, bag, temp, i)
+	obj = self:CheckItem(obj,"Name_Custom " .. i)
+	
+	local sec = obj:section()
+	local str = SYS_GetParam(0,sec, "use" .. i .. "_functor")
+	if str then
+		str = str_explode(str,"%.") -- dot needs escape character!
+		if str[1] and str[2] and _G[ str[1] ] and _G[ str[1] ][ str[2] ] then
+			return _G[ str[1] ][ str[2] ](obj)
+		else
+			printe("!ERROR UIInventory:Name_Custom | can't find function (%s) for %s in section [%s]", str[1] .. str[2], "use" .. i .. "_functor", sec)
+		end
+	end
+	return false
+end
+
+
+-- Precondition
+function UIInventory:Mode_Custom(obj, bag, temp, i)
+	obj = self:CheckItem(obj,"Mode_Custom " .. i)
+	
+	local mode = self.mode
+	local sec = obj:section()
+	local str = SYS_GetParam(0,sec, "use" .. i .. "_modes","")
+	if str then
+		str = str_explode(str,",")
+		for i=1,#str do
+			if (mode == str[i]) then
+				return true
+			end
+		end
+	end
+	
+	return (mode == "inventory") -- default
+end
+
+function UIInventory:Cont_Custom(obj, bag, temp, i)
+	obj = self:CheckItem(obj,"Cont_Custom " .. i)
+	
+	local sec = obj:section()
+	local str = SYS_GetParam(0,sec, "use" .. i .. "_containers","")
+	if str then
+		str = str_explode(str,",")
+		for i=1,#str do
+			if (bag == str[i]) then
+				return true
+			end
+		end
+	end
+	
+	return (bag == "actor_bag") or (bag == "actor_equ") or (bag == "actor_belt") -- default
+end
+
+function UIInventory:DB_Custom(obj, bag, temp, i)
+	obj = self:CheckItem(obj,"DB_Custom " .. i)
+	
+	return SYS_GetParam(1,obj:section(), "use" .. i .. "_allow_db",false)
+end
+
+
+function UIInventory:Cond_Childs(obj, bag)
+	obj = self:CheckItem(obj,"Cond_Childs")
+
+	local ci = self.CC[bag]:GetCell_ID(obj:id())
+	return ci.ID == obj:id() and ci:HasChild()
+end
+
+function UIInventory:Cond_Use(obj, bag)
+	obj = self:CheckItem(obj,"Cond_Use")
+	
+	return IsItem("consumable",obj:section()) and true or false
+end
+
+function UIInventory:Cond_Move(obj, bag, temp, bag_to)
+	if (not obj) then
+		return false
+	end
+	obj = self:CheckItem(obj,"Cond_Move")
+
+	self.flags.ret_value = true
+	SendScriptCallback("ActorMenu_on_item_before_move", self.flags, self.npc_id, obj, self.mode, self.bag_id[bag])
+	if (not self.flags.ret_value) then
+		return false
+	end
+	
+	-- For custom use of this function
+	if bag_to then
+		if (self.mode == "loot") then
+			if (bag == "actor_bag") or (bag == "actor_equ") then
+				if bag_to ~= "npc_bag" then return false end
+			elseif bag_to == "npc_bag" then
+				if bag_to ~= "actor_bag" then return false end
+			end
+			
+		elseif (self.mode == "trade") then
+			if (bag == "actor_trade_bag") then
+				if bag_to ~= "actor_trade" then return false end
+			elseif (bag == "actor_trade") then
+				if bag_to ~= "actor_trade_bag" then return false end
+			elseif (bag == "npc_trade_bag") then
+				if bag_to ~= "npc_trade" then return false end
+			elseif (bag == "npc_trade") then
+				if bag_to ~= "npc_trade_bag" then return false end
+			end
+		end
+	end
+	
+	-- Don't move quest items
+	if (bag == "actor_bag") and self:Cond_Quest(obj, bag) then
+		return false
+	end
+	
+	if (self.mode == "loot") then
+		local npc = self.npc_id and get_object_by_id(self.npc_id)
+		return npc and true or false
+		
+	elseif (self.mode == "trade") then
+		if (bag == "actor_trade") or (bag == "npc_trade") then
+			return true
+			
+		elseif (bag == "actor_trade_bag") or (bag == "npc_trade_bag") then
+			return self.CC[bag]:IsTradable(obj)
+		end
+	end
+end
+
+function UIInventory:Cond_Quest(obj, bag)
+	obj = self:CheckItem(obj,"Cond_NotQuest")
+	
+	return (SYS_GetParam(1,obj:section(),"quest_item") == true)
+end
+
+function UIInventory:Cond_NotQuest(obj, bag)
+	obj = self:CheckItem(obj,"Cond_NotQuest")
+	
+	return (SYS_GetParam(1,obj:section(),"quest_item") ~= true)
+end
+
+function UIInventory:Cond_Attach(obj, bag, temp, slot, wpn)
+	obj = self:CheckItem(obj,"Cond_Attach")
+
+	local add_sec = obj:section()
+	local is_sil   = IsItem("sil",add_sec)
+	local is_scope = IsItem("scope",add_sec)
+	local is_gl    = IsItem("gl",add_sec)
+	if not (is_sil or is_scope or is_gl) then
+		return false
+	end
+	
+	local wpn = wpn or slot and db.actor:item_in_slot(slot)
+	if wpn then
+		if utils_item.can_attach_scope(wpn, obj) then
+			return true
+			
+		elseif utils_item.can_attach_silencer(wpn, obj) then
+			return true
+			
+		elseif utils_item.can_attach_gl(wpn, obj) then
+			return true
+		end
+	end
+	return false
+end
+
+function UIInventory:Cond_Equip(obj, bag)
+	obj = self:CheckItem(obj,"Cond_Equip")
+
+	-- Attention: equipping something outside of actor inventory will cause a crash!
+	if (bag ~= "actor_bag") then
+		return false
+	end
+	
+	local sec = obj:section()
+	local arty = IsArtefact(obj)
+	local slot = (SYS_GetParam(2,sec,"slot") or -1) + 1
+	if arty or (slot == 12) or (slot == 13) then
+		local outfit = db.actor:item_in_slot(7)
+		if outfit then
+			local c_outfit = outfit:cast_CustomOutfit()
+			if arty then
+				local arty_rooms = c_outfit:get_artefact_count() or 0
+				local arty_cnt = db.actor:belt_count()
+				return (arty_rooms > 0) and (arty_rooms > arty_cnt)
+			elseif (slot == 12) then
+				return (c_outfit.bIsHelmetAvaliable and true or false)
+			elseif (slot == 13) then
+				return (c_outfit.bIsBackpackAvaliable and true or false)
+			end
+		end
+	end
+	return (not arty) and (SCANNED_SLOTS[slot] == true)
+end
+
+function UIInventory:Cond_Unload(obj, bag)
+	obj = self:CheckItem(obj,"Cond_Unload")
+
+	local sec = obj:section()
+	if IsWeapon(obj) and (not IsItem("fake_ammo_wpn",sec)) then
+		return obj:get_ammo_in_magazine() > 0
+	end
+	return false
+end
+
+function UIInventory:Cond_Detach_Silencer(obj, bag)
+	obj = self:CheckItem(obj,"Cond_Detach_Silencer")
+
+	return utils_item.has_attached_silencer(obj)
+end
+
+function UIInventory:Cond_Detach_Scope(obj, bag)
+	obj = self:CheckItem(obj,"Cond_Detach_Scope")
+	
+	return utils_item.has_attached_scope(obj)
+end
+
+function UIInventory:Cond_Detach_GL(obj, bag)
+	obj = self:CheckItem(obj,"Cond_Detach_GL")
+
+	return utils_item.has_attached_gl(obj)
+end
+
+
+-- Actions
+function UIInventory:Action_Use(obj, bag)
+	obj = self:CheckItem(obj,"Action_Use")
+	
+	-- Force hiding picker on use
+	self:Picker_Toggle(nil, nil, nil, true)
+	
+	if (CInventory__eat(obj) == false) then
+		return
+	end
+	
+	db.actor:eat(obj)
+	
+	-- Sound effect
+	self:PlaySND(snd_item_use)
+	
+	self:On_Item_Update()
+end
+
+function UIInventory:Action_Donate(obj, bag)
+	obj = self:CheckItem(obj,"Action_Donate")
+	
+	local npc = self.npc_id and get_object_by_id(self.npc_id)
+	if (not npc) then
+		return
+	end
+	
+	self:On_Item_Exchange(db.actor, npc, obj)
+end
+
+function UIInventory:Action_Move(obj, bag)
+	obj = self:CheckItem(obj,"Action_Move")
+	
+	if (self.mode == "loot") then
+		local npc = self.npc_id and get_object_by_id(self.npc_id)
+		if (not npc) then
+			return
+		end
+		
+		if (bag == "actor_bag") or (bag == "actor_equ") then
+			self:On_Item_Exchange(db.actor, npc, obj)
+		elseif (bag == "npc_bag") then
+			self:On_Item_Exchange(npc, db.actor, obj)
+		end
+
+	elseif (self.mode == "trade") then
+		local bag_to
+		if (bag == "actor_trade")         then bag_to = "actor_trade_bag"
+		elseif (bag == "actor_trade_bag") then bag_to = "actor_trade"
+		elseif (bag == "npc_trade")       then bag_to = "npc_trade_bag"
+		elseif (bag == "npc_trade_bag")   then bag_to = "npc_trade"
+		end
+		
+		-- Make sure item is tradable first
+		if (not self.CC[bag]:IsTradable(obj)) then
+			return
+		end
+		
+		if bag_to and self.CC[bag_to] then
+			self.CC[bag]:TransferItem( self.CC[bag_to] , obj)
+		end
+	end
+
+	SendScriptCallback("ActorMenu_on_item_after_move", self.npc_id, obj, self.mode, self.bag_id[bag])
+	
+	self:On_Item_Update()
+end
+
+function UIInventory:Action_Move_All(obj, bag)
+	obj = self:CheckItem(obj,"Action_Move_All")
+	
+	local ci = self.CC[bag]:GetCell_ID(obj:id())
+	for id,_ in pairs(ci.childs) do
+		self:Action_Move(id, bag)
+	end
+	self:Action_Move(obj, bag)
+end
+
+function UIInventory:Action_UnEquip(obj, bag)
+	obj = self:CheckItem(obj,"Action_UnEquip")
+
+	db.actor:move_to_ruck(obj)
+	
+	--self:UpdateInfo(true)
+	self:PlaySND(snd_item_to_ruck)
+	self:On_Item_Update()
+end
+
+function UIInventory:Action_Equip(obj, bag)
+	obj = self:CheckItem(obj,"Action_Equip")
+	
+	-- Belt
+	if IsArtefact(obj) then
+		db.actor:move_to_belt(obj)
+		self:PlaySND(snd_item_to_belt)
+		
+	-- Slots
+	else
+		-- Gather free compatible slots
+		local slot = (SYS_GetParam(2,obj:section(),"slot") or -1) + 1
+		local cc = self.CC["actor_equ"]
+		local free_slots = {}
+		local cslots = self.slot_cell[slot] or {}
+		for i=1,#cslots do
+			local ci = cc.cell[cslots[i]]
+			if ci and (not ci:IsShown()) then
+				table.insert(free_slots, cslots[i])
+			end
+		end
+		
+		if is_empty(free_slots) then
+			db.actor:make_item_active(obj)
+		else
+			-- Get free slot
+			local slot_new = free_slots[1]
+			
+			-- Just to make sure
+			local obj_in = cc:GetObj(slot_new)
+			if obj_in then
+				db.actor:move_to_ruck(obj_in)
+			end
+			
+			-- Move to slot
+			db.actor:move_to_slot(obj, slot_new)
+		end
+		
+		self:PlaySND(snd_item_to_slot)
+	end
+	
+	self:On_Item_Update()
+end
+
+function UIInventory:Action_Attach(obj, bag, temp, slot, wpn)
+	obj = self:CheckItem(obj,"Action_Attach")
+
+	if (bag ~= "actor_bag") then
+		return
+	end
+	
+	local wpn = wpn or slot and db.actor:item_in_slot(slot)
+	if (not wpn) then
+		return
+	end
+	
+	local add_sec = obj:section()
+	local typ = (IsItem("scope",add_sec) and "scope") or (IsItem("sil",add_sec) and "sil") or (IsItem("gl",add_sec) and "gl")
+	if (not typ) then
+		return
+	end
+	
+	utils_item.attach_addon(wpn, obj, typ, true)
+
+	self:PlaySND(snd_attach_addon)
+	self:On_Item_Update()
+end
+
+function UIInventory:Action_Custom(obj, bag, temp, i)
+	obj = self:CheckItem(obj,"Action_Custom " .. i)
+	
+	local sec = obj:section()
+	local str = SYS_GetParam(0,sec, "use" .. i .. "_action_functor")
+	if str then
+		str = str_explode(str,"%.") -- dot needs escape character!
+		if str[1] and str[2] and _G[ str[1] ] and _G[ str[1] ][ str[2] ] then
+			_G[ str[1] ][ str[2] ](obj) -- excute
+		else
+			printe("!ERROR UIInventory:Action_Custom | can't find function (%s) for %s in section [%s]", str[1] .. str[2], "use" .. i .. "_action_functor", sec)
+		end
+	end
+	
+	self:On_Item_Update()
+end
+
+function UIInventory:Action_Detach_Silencer(obj, bag)
+	obj = self:CheckItem(obj,"Action_Detach_Silencer")
+
+	utils_item.detach_addon(obj, nil, "sil")
+	self:On_Item_Update()
+	
+	self:PlaySND(snd_detach_addon)
+end
+
+function UIInventory:Action_Detach_Scope(obj, bag)
+	obj = self:CheckItem(obj,"Action_Detach_Scope")
+
+	utils_item.detach_addon(obj, nil, "scope")
+	
+	self:PlaySND(snd_detach_addon)
+	self:On_Item_Update()
+end
+
+function UIInventory:Action_Detach_GL(obj, bag)
+	obj = self:CheckItem(obj,"Action_Detach_GL")
+	
+	utils_item.detach_addon(obj, nil, "gl")
+
+	self:PlaySND(snd_detach_addon)
+	self:On_Item_Update()
+end
+
+function UIInventory:Action_Unload(obj, bag)
+	obj = self:CheckItem(obj,"Action_Unload")
+	
+	obj:force_unload_magazine(true)
+	
+	self:On_Item_Update()
+	if self.mode == "loot" and bag == "npc_bag" then
+		--self:LMode_ResetNPCInventory()
+	end
+end
+
+function UIInventory:Action_Drop(obj, bag)
+	obj = self:CheckItem(obj,"Action_Drop")
+
+	db.actor:drop_item(obj)
+	self:PlaySND(snd_drop_item)
+end
+
+function UIInventory:Action_Drop_All(obj, bag)
+	obj = self:CheckItem(obj,"Action_Drop_All")
+	
+	local ci = self.CC[bag]:GetCell_ID(obj:id())
+	for id,_ in pairs(ci.childs) do
+		local obj_c = level.object_by_id(id)
+		if obj_c then
+			db.actor:drop_item(obj_c)
+		end
+	end
+	db.actor:drop_item(obj)
+	
+	self:PlaySND(snd_drop_item)
+end
+
+
+-- Shared
+function UIInventory:UpdateInfo(go)
+
+	-- Update timer
+	-- Timer ensures that info update happens only once when something change, regardless of how many calls are done
+	-- pass (go) as true to update instantly
+		
+	if (not go) then
+		if (self.update_info) then
+			self.update_info = false
+			self.tg_info = time_global()
+			return
+		end
+	
+		if (not self.tg_info) then
+			return
+		end
+		if (time_global() < self.tg_info + self.tg_info_step) then
+			return
+		end
+	end
+	self.tg_info = nil
+	
+	-- Update weight, character and prices
+	self:UpdateWeight()
+	self:UpdateCharacter()
+	self:UpdateSlots()
+	self:UpdateBelt()
+	self:UpdateQuick()
+	self:UpdateStats()
+	self:UpdateInventories()
+	self:UpdateItems()
+	self:Picker_Refresh()
+	if (self.mode == "trade") then
+		self:TMode_UpdatePrice(self.player_trade_price, self.player_trade_sell, "actor_trade")
+		self:TMode_UpdatePrice(self.npc_trade_price, self.npc_trade_buy, "npc_trade")
+	end
+	
+	-- Update scroll pads
+	for bag,cc in pairs(self.CC) do
+		if cc:IsShown() and cc.pad:IsShown() then
+			cc.pd.update = true
+		end
+	end
+end
+
+function UIInventory:UpdateCharacter()
+	local actor = db.actor
+	self.player_name:SetText( alife():actor():character_name() )
+	self.player_community:SetText( game.translate_string(actor:character_community()) )
+	self.player_icon:InitTexture( actor:character_icon() )
+	self.player_money:SetText( actor:money() .. " RU" )
+	
+	-- NPC
+	local npc = self:GetPartner()
+	if npc and (not self.npc_is_box) then
+		-- in case of rich NPCs
+		local npc_money = npc:money()
+		npc_money = npc_money > 500000 and "..." or npc_money
+		
+		if (self.mode == "repair") then
+			self.npc_up_name:SetText( npc:character_name() )
+			self.npc_up_community:SetText( game.translate_string(npc:character_community()) )
+			self.npc_up_icon:InitTexture( npc:character_icon() )
+			self.npc_up_money:SetText( npc_money .. " RU" )
+		else
+			self.npc_name:SetText( npc:character_name() )
+			self.npc_community:SetText( game.translate_string(npc:character_community()) )
+			self.npc_icon:InitTexture( npc:character_icon() )
+			self.npc_money:SetText( npc_money .. " RU" )
+		end
+	end
+end
+
+function UIInventory:UpdateWeight()
+
+-- Player
+	local actor = db.actor
+	local outfit = actor:item_in_slot(7)
+	local backpack = actor:item_in_slot(13)
+	
+	-- Current weight
+	local tot_weight = actor:get_total_weight()
+	
+	-- Additional weight - Actor
+	local max_weight = actor:get_actor_max_weight()
+	
+	-- Additional weight - Outfit
+	max_weight = max_weight + (outfit and outfit:get_additional_max_weight() or 0)
+	
+	-- Additional weight - Backpack
+	max_weight = max_weight + (backpack and backpack:get_additional_max_weight() or 0)
+	
+	-- Additional weight - Artefacts
+	actor:iterate_belt( function(owner, obj)
+		local c_arty = obj:cast_Artefact()
+		max_weight = max_weight + (c_arty and c_arty:AdditionalInventoryWeight() or 0)
+	end)
+	
+	-- Additional weight - Booster
+	actor:cast_Actor():conditions():BoosterForEach( function(booster_type, booster_time, booster_value)
+		if (booster_type == 4) then --eBoostMaxWeight
+			max_weight = max_weight + booster_value
+		end
+	end)
+
+	-- Change weight color according to how heavy the actor is
+	local clr = clr_weight[1]
+	if (tot_weight > max_weight) then
+		clr = clr_weight[2]
+	elseif (tot_weight + 10 > max_weight) then
+		clr = clr_weight[3]
+	end
+	
+	self.player_weight:SetTextColor( clr )
+	self.player_weight:SetText( strformat("%s %s", round_idp(tot_weight,1), weight_unit) )
+	self.player_weight_max:SetText( strformat("(max %s %s)", round_idp(max_weight,1), weight_unit) )
+	
+-- NPC
+	local npc = self:GetPartner()
+	if npc and (self.mode ~= "repair") then
+		local weight = 0
+		
+		if self.npc_is_box then
+			npc:iterate_inventory_box( function(owner,itm)
+				weight = weight + itm:weight()
+			end)
+			
+		elseif self:IsInvOwner(npc) then
+			weight = npc:get_total_weight()
+		end
+		
+		self.npc_weight:SetText( round_idp(weight,1) .. " " .. weight_unit )
+		self.npc_weight_max:SetText( strformat("(max %s %s)", 30, weight_unit) )
+	end
+end
+
+function UIInventory:UpdateInventories()
+	if (self.mode == "inventory") or (self.mode == "repair") then
+		self:IMode_RefreshInventories()
+		
+	elseif (self.mode == "loot") then
+		self:LMode_RefreshInventories()
+		
+	elseif (self.mode == "trade") then
+		self:TMode_RefreshInventories()
+	end
+end
+
+function UIInventory:UpdateItems()
+	for i,bag in ipairs(self.update_bags) do
+		local cc = self.CC[bag]
+		if cc:IsShown() then
+			for idx,ci in pairs(cc.cell) do
+				if ci:IsShown() then
+					ci:Update()
+				end
+			end
+		end
+	end
+end
+
+function UIInventory:UpdateSlots()
+	self:Print(nil, "UpdateSlots")
+	local cc = self.CC["actor_equ"]
+	
+	-- update items
+	local actor = db.actor
+	for i=1,13 do
+		local slot = self.slot_cell[i] and self.slot_cell[i][1]
+		if slot then
+			local item = actor:item_in_slot(i)
+			if item then
+				cc:AddItemManual(item, nil, slot)
+			else
+				cc:RemoveItemManual(slot)
+			end
+		end
+	end
+	
+	-- Helmet/Backpack slots blockers
+	local helm_block = false
+	local bkpk_block = false
+	local outfit = actor:item_in_slot(7)
+	if outfit then
+		local c_outfit = outfit:cast_CustomOutfit()
+		helm_block = not (c_outfit.bIsHelmetAvaliable and true or false)
+		bkpk_block = not (c_outfit.bIsBackpackAvaliable and true or false)
+	end
+
+	self.blocker_helm:Show( helm_block )
+	self.blocker_bkpk:Show( bkpk_block )
+end
+
+function UIInventory:UpdateBelt()
+	self:Print(nil, "UpdateBelt")
+	local cc = self.CC["actor_belt"]
+
+	-- update items
+	local actor = db.actor
+	local outfit = actor:item_in_slot(7)
+	local cnt_arty = actor:belt_count()
+	local cnt_arty_slot = outfit and outfit:cast_CustomOutfit():get_artefact_count() or 0
+	
+	for i=1,5 do
+		self.blocker_arty[i]:Show(i > cnt_arty_slot)
+		local item = i <= cnt_arty and actor:item_on_belt(i-1)
+		if item then
+			cc:AddItemManual(item, nil, i)
+		else
+			cc:RemoveItemManual(i)
+		end
+	end
+end
+
+function UIInventory:UpdateQuick()
+	self:Print(nil, "UpdateQuick")
+	local cc = self.CC["actor_quick"]
+	
+	for i=1,4 do
+		local quick_item = get_console_cmd(0,"slot_" .. (i-1))
+		if quick_item and ini_sys:section_exist(quick_item) then
+			if (cc.cell[i].sec ~= quick_item) then
+				cc:AddItemManual(nil, quick_item, i)
+			end
+			cc.cell[i]:Colorize( db.actor:object(quick_item) and "def" or "hide" )
+		end
+	end
+end
+
+function UIInventory:UpdateStats()
+	--self:Print(nil, "UpdateStats")
+	local actor = db.actor
+	
+-- Outfit
+	for name,val in pairs(self.stat_outfit) do
+		self.stat_outfit[name] = 0
+	end
+	self.stat_outfit["health_restore"]  = 0
+	self.stat_outfit["radia_restore"]  = 0
+
+	local outfit = actor:item_in_slot(7)
+	if outfit then
+		local c_outfit = outfit:cast_CustomOutfit()
+		if (not c_outfit) then
+			printe("UIInventory | can't get cast_CustomOutfit of [%s]", outfit:name())
+		end
+		local sec = outfit:section()
+		local id = outfit:id()
+		local cond = outfit:condition()
+		
+		self.stat_outfit["health_restore"]  = c_outfit.m_fHealthRestoreSpeed
+		self.stat_outfit["radia_restore"]  = c_outfit.m_fRadiationRestoreSpeed
+		
+		self.stat_outfit["fire"]  = c_outfit:GetDefHitTypeProtection( HitTypeID["Burn"]         ) or 0
+		self.stat_outfit["shock"] = c_outfit:GetDefHitTypeProtection( HitTypeID["Shock"]        ) or 0
+		self.stat_outfit["acid"]  = c_outfit:GetDefHitTypeProtection( HitTypeID["ChemicalBurn"] ) or 0
+		self.stat_outfit["radia"] = c_outfit:GetDefHitTypeProtection( HitTypeID["Radiation"]    ) or 0
+		self.stat_outfit["psi"]   = c_outfit:GetDefHitTypeProtection( HitTypeID["Telepatic"]    ) or 0
+		self.stat_outfit["wound"] = c_outfit:GetDefHitTypeProtection( HitTypeID["Wound"]        ) or 0
+		self.stat_outfit["power"] = (c_outfit.m_fPowerRestoreSpeed or 0) * cond
+
+		local bone_value = c_outfit:GetBoneArmor( BoneID["bip01_spine"] ) or 0
+		if (not c_outfit.bIsHelmetAvaliable) then
+			bone_value = bone_value + c_outfit:GetBoneArmor( BoneID["bip01_head"] ) or 0
+		end
+		self.stat_outfit["fire_wound"] = bone_value * cond
+	end
+	
+-- Helmet
+	for name,val in pairs(self.stat_helm) do
+		self.stat_helm[name] = 0
+	end
+	
+	local helm = actor:item_in_slot(12)
+	if helm then
+		local c_helm = helm:cast_Helmet()
+		if (not c_helm) then
+			printe("UIInventory | can't get cast_Helmet of [%s]", outfit:name())
+		end
+		local sec = helm:section()
+		local id = helm:id()
+		local cond = helm:condition()
+		
+		self.stat_helm["fire"]  = c_helm:GetDefHitTypeProtection( HitTypeID["Burn"]         ) or 0
+		self.stat_helm["shock"] = c_helm:GetDefHitTypeProtection( HitTypeID["Shock"]        ) or 0
+		self.stat_helm["acid"]  = c_helm:GetDefHitTypeProtection( HitTypeID["ChemicalBurn"] ) or 0
+		self.stat_helm["radia"] = c_helm:GetDefHitTypeProtection( HitTypeID["Radiation"]    ) or 0
+		self.stat_helm["psi"]   = c_helm:GetDefHitTypeProtection( HitTypeID["Telepatic"]    ) or 0
+		self.stat_helm["wound"] = c_helm:GetDefHitTypeProtection( HitTypeID["Wound"]        ) or 0
+
+		local bone_value = c_helm:GetBoneArmor( BoneID["bip01_head"] ) or 0
+		self.stat_helm["fire_wound"] = bone_value * cond
+	end
+	
+-- Artefacts
+	for name,val in pairs(self.stat_arty) do
+		self.stat_arty[name] = 0
+	end
+	self.stat_arty["health_restore"] = 0
+	self.stat_arty["radia_restore"] = 0
+	
+	actor:iterate_belt( function(owner, obj)
+		local sec = obj:section()
+		local cond = obj:condition()
+		local immunities_sec = SYS_GetParam(0,obj:section(),"hit_absorbation_sect")
+		self.stat_arty["health_restore"] = self.stat_arty["health_restore"] + ( cond * SYS_GetParam(2, sec, "health_restore_speed", 0) )
+		self.stat_arty["radia_restore"]  = self.stat_arty["radia_restore"]  + ( cond * SYS_GetParam(2, sec, "radiation_restore_speed", 0) )
+		
+		self.stat_arty["power"]      = self.stat_arty["power"]      + ( cond * SYS_GetParam(2, sec, "power_restore_speed", 0) )
+		self.stat_arty["radia"]      = self.stat_arty["radia"]      + ( cond * SYS_GetParam(2, immunities_sec, "radiation_immunity", 0) )
+		self.stat_arty["acid"]       = self.stat_arty["acid"]       + ( cond * SYS_GetParam(2, immunities_sec, "chemical_burn_immunity", 0) )
+		self.stat_arty["shock"]      = self.stat_arty["shock"]      + ( cond * SYS_GetParam(2, immunities_sec, "shock_immunity", 0) )
+		self.stat_arty["fire"]       = self.stat_arty["fire"]       + ( cond * SYS_GetParam(2, immunities_sec, "burn_immunity", 0) )
+		self.stat_arty["psi"]        = self.stat_arty["psi"]        + ( cond * SYS_GetParam(2, immunities_sec, "telepatic_immunity", 0) )
+--		self.stat_arty["wound"]      = self.stat_arty["wound"]      + ( cond * SYS_GetParam(2, immunities_sec, "wound_immunity", 0) )
+--		self.stat_arty["fire_wound"] = self.stat_arty["fire_wound"] + ( cond * SYS_GetParam(2, immunities_sec, "fire_wound_immunity", 0) )
+	end)
+	
+-- Boosters
+	for name,val in pairs(self.stat_boost) do
+		self.stat_boost[name] = 0
+	end
+	self.stat_boost["health_restore"] = 0
+	self.stat_boost["radia_restore"] = 0
+
+	actor:cast_Actor():conditions():BoosterForEach( function(booster_type, booster_time, booster_value)
+		local boost_id = self.boost_id[booster_type]
+		--printf("!Booster: %s - %s - %s - %s", self.boost_id_inv[booster_type], booster_type, booster_time, booster_value)
+		if boost_id then
+			self.stat_boost[boost_id] = booster_value
+		end
+	end)
+	
+-- Progress bars
+	self.stat["health"].bar:SetProgressPos( clamp( actor.health, 0, 1) )
+	
+	local radia_val = ((self.stat_outfit["radia"] + self.stat_helm["radia"] + self.stat_arty["radia"] + self.stat_boost["radia"]) / self.stat_list["radia"].max)
+	self.stat["radia"].bar:SetProgressPos( clamp( radia_val, 0, 1) )
+	
+	local acid_val = ((self.stat_outfit["acid"] + self.stat_helm["acid"] + self.stat_arty["acid"] + self.stat_boost["acid"]) / self.stat_list["acid"].max)
+	self.stat["acid"].bar:SetProgressPos( clamp( acid_val, 0, 1) )
+
+	local shock_val = ((self.stat_outfit["shock"] + self.stat_helm["shock"] + self.stat_arty["shock"]) / self.stat_list["shock"].max)
+	self.stat["shock"].bar:SetProgressPos( clamp( shock_val, 0, 1) )
+
+	local fire_val = ((self.stat_outfit["fire"] + self.stat_helm["fire"] + self.stat_arty["fire"]) / self.stat_list["fire"].max)
+	self.stat["fire"].bar:SetProgressPos( clamp( fire_val, 0, 1) )
+
+	local psi_val = ((self.stat_outfit["psi"] + self.stat_helm["psi"] + self.stat_arty["psi"] + self.stat_boost["psi"]) / self.stat_list["psi"].max)
+	self.stat["psi"].bar:SetProgressPos( clamp( psi_val, 0, 1) )
+
+	local wound_val = ((self.stat_outfit["wound"] + self.stat_helm["wound"] + self.stat_arty["wound"]) / self.stat_list["wound"].max)
+	self.stat["wound"].bar:SetProgressPos( clamp( wound_val, 0, 1) )
+
+	local fire_wound_val = ((self.stat_outfit["fire_wound"] + self.stat_helm["fire_wound"] + self.stat_arty["fire_wound"]) / self.stat_list["fire_wound"].max)
+	self.stat["fire_wound"].bar:SetProgressPos( clamp( fire_wound_val, 0, 1) )
+
+	-- Special case for power (similar to engine method)
+	local power = actor:cast_Actor():conditions():V_SatietyPower() --db.actor.satiety
+	power = power + self.stat_arty["power"]
+	if outfit then
+		power = power + self.stat_outfit["power"]
+		local power_loss = outfit:cast_CustomOutfit().m_fPowerLoss or 0
+		if power_loss ~= 0 then
+			power = power / power_loss
+		end
+	else
+		power = power / 0.5
+	end
+	power = power / self.stat_list["power"].max
+	self.stat["power"].bar:SetProgressPos( clamp( power , 0, 15) )
+	--]]
+
+	-- Satiety Bar
+	local satiety = actor:cast_Actor():conditions():GetSatiety()
+	satiety = (satiety - 0.1) / 5		-- 5.7
+	self.stat["power"].bar:SetProgressPos( clamp( satiety , 0, 0.2) )
+
+	-- Thirst Bar
+	local thirst = actor_status_thirst.get_last_drink()
+	local thirst_red_icon = actor_status_thirst.get_thirst_blur_4()
+	thirst = thirst_red_icon - thirst
+	thirst = (thirst / thirst_red_icon) / 5.65
+	self.stat["thirst"].bar:SetProgressPos( clamp( thirst, 0, 0.185))
+
+	-- Sleep bar
+	local sleep = actor_status_sleep.get_last_sleep()
+	local sleep_red_icon = actor_status_sleep.get_sleep_blur_4()
+	sleep = sleep_red_icon - sleep
+	sleep = (sleep / sleep_red_icon) / 5.65
+	self.stat["sleep"].bar:SetProgressPos( clamp( sleep, 0, 0.185))
+
+
+-- Blinking Icons
+	for name,v in pairs(self.stat) do
+		v.ico_p:Show(false)
+		v.ico_n:Show(false)
+	end
+	
+	-- Health
+	local health_restore = self.stat_outfit["health_restore"] + self.stat_arty["health_restore"] + self.stat_boost["health_restore"]
+	if (actor.bleeding > 0) or (health_restore < 0) then
+		self.stat["health"].ico_n:Show(true)
+	elseif (health_restore > 0) then
+		self.stat["health"].ico_p:Show(true)
+	end
+	
+	-- Power
+	--[[
+	if (self.stat_boost["power"] < 0) then
+		self.stat["power"].ico_n:Show(true)
+	elseif (self.stat_boost["power"] > 0) then
+		self.stat["power"].ico_p:Show(true)
+	end
+	--]]
+	
+	-- Radiation
+	local radia_restore = self.stat_outfit["radia_restore"] + self.stat_arty["radia_restore"] + self.stat_boost["radia_restore"]
+	if (actor.radiation > 0) then
+		self.stat["radia"].ico_n:Show(true)
+	elseif (radia_restore < 0) or (self.stat_boost["radia"] > 0) then
+		self.stat["radia"].ico_p:Show(true)
+	end
+	
+	-- Psi
+	if (self.stat_boost["psi"] < 0) then
+		self.stat["psi"].ico_n:Show(true)
+	elseif (self.stat_boost["psi"] > 0) then
+		self.stat["psi"].ico_p:Show(true)
+	end
+	
+	-- Chemical
+	if (self.stat_boost["acid"] < 0) then
+		self.stat["acid"].ico_n:Show(true)
+	elseif (self.stat_boost["acid"] > 0) then
+		self.stat["acid"].ico_p:Show(true)
+	end
+end
+
+function UIInventory:On_Sort(ii, ignore)
+	self:Print(nil, "On_Sort [%s]", ii)
+	
+	-- Uncheck the rest of buttons
+	if (not self.sort_btn[ii]:GetCheck()) then
+		self.sort_btn[ii]:SetCheck(true)
+		return
+	end
+	for i=1,#self.sort_btn do
+		if i ~= ii then
+			self.sort_btn[i]:SetCheck(false)
+		end
+	end
+	
+	-- Collect kinds
+	self.possible_kind = parse_list(ini_sys, "button_sort_tab_" .. ii, "kinds", true) or { ["s_all"] = true }
+	
+	if ignore then
+		return
+	end
+
+	-- Update inventories
+	if (self.mode == "inventory") or (self.mode == "repair") then
+		self:IMode_ResetInventories()
+		
+	elseif (self.mode == "loot") then
+		self:LMode_ResetInventories()
+		
+	elseif (self.mode == "trade") then -- Special case because we want to keep trade items there without resetting
+		
+		local cc_a1 = self.CC["actor_trade"]
+		local cc_a2 = self.CC["actor_trade_bag"]
+		local cc_b1 = self.CC["npc_trade"]
+		local cc_b2 = self.CC["npc_trade_bag"]
+		
+		local actor_trade_ids = {}
+		for id,idx in pairs(cc_a1.indx_id) do actor_trade_ids[id] = true end
+		
+		local npc_trade_ids = {}
+		for id,idx in pairs(cc_b1.indx_id) do npc_trade_ids[id] = true end
+		
+		
+		self:TMode_ResetInventories(true)
+		
+		for id,_ in pairs(actor_trade_ids) do
+			local obj = level.object_by_id(id)
+			if obj then
+				--cc_a1:AddItem(obj)
+				cc_a2:RemoveItem(obj)
+			end
+		end
+		
+		for id,_ in pairs(npc_trade_ids) do
+			local obj = level.object_by_id(id)
+			if obj then
+				--cc_b1:AddItem(obj)
+				cc_b2:RemoveItem(obj)
+			end
+		end
+	end
+end
+
+function UIInventory:Highlight(sec, bag_id)
+	for bag, id in pairs(self.bag_id) do
+		if id == bag_id then
+			local cc = self.CC[bag]
+			if cc:IsShown() then
+				local use_main_clr = (bag == "actor_equ") or (bag == "actor_belt") or (bag == "actor_quick")
+				for idx,ci in pairs(cc.cell) do
+					if ci.section == sec then
+						ci:Highlight(true, "blue", use_main_clr)
+					end
+				end
+			end
+		end
+	end
+end
+
+function UIInventory:UnHighlight_All()
+	for bag, cc in pairs(self.CC) do
+		for idx,ci in pairs(cc.cell) do
+			if (cc.selected ~= idx) then
+				ci:Highlight(false)
+			end
+		end
+	end
+end
+
+function UIInventory:highlight_section_in_slot(sec, bag_id)
+	self:Highlight(sec, bag_id)
+end
+
+
+-- Item picker
+function UIInventory:Picker_Refresh()
+	if (not enable_item_picker) then
+		return
+	end
+	
+	local cc = self.CC["picker"]
+	if (not cc:IsShown()) then
+		return
+	end
+	
+	local bag = cc.parent.bag
+	local idx = cc.parent.idx
+	local ci = bag and idx and self.CC[bag].cell[idx]
+	if not (ci and ci:HasChild()) then
+		self:Print(nil, "Picker_Toggle(%s, %s) | nothing to deal with -> hide", bag, idx)
+		self:Picker_Update(true)
+		return
+	end
+
+	local list = cc.indx_id
+	local inv = dup_table(ci.childs)
+	inv[ci.ID] = true
+	
+	for id,_ in pairs(inv) do
+		if (not list[id]) then
+			local obj = level.object_by_id(id)
+			if obj then
+				cc:AddItem(obj, obj:section())
+			end
+		end
+	end
+	for id,idx in pairs(list) do
+		if (not inv[id]) then
+			cc:RemoveItem_byID(id)
+		end
+	end
+end
+
+function UIInventory:Picker_Toggle(bag, idx, update_mode, force_hide)
+	
+	if (not enable_item_picker) then
+		return
+	end
+	
+	if force_hide then
+		self:Picker_Update(true)
+		return
+	end
+	
+	-- This is needed to avoid resetting picker when we click on item property
+	-- (300 ms should be fine because low time scope might not be enough)
+	local no_hide = self.item_props.action_moment and (time_continual() < self.item_props.action_moment + 300)
+	
+	-- Avoid hiding picker if we are scrolling a pad
+	for bag,cc in pairs(self.CC) do
+		if cc:IsShown() and cc.pad:IsShown() and cc.pad:IsCursorOverWindow() then
+			no_hide = true
+			break
+		end
+	end
+	
+	local cc = self.CC["picker"]
+	
+	if (update_mode) then
+		if (not cc:IsShown()) then
+			return
+		end
+		
+		bag = cc.parent.bag
+		idx = cc.parent.idx
+		if not (bag and idx) then
+			return
+		end
+		
+		no_hide = true
+	else
+		if no_hide then
+			self:Print(nil, "Picker_Toggle(%s, %s) | clicked item property -> continue", bag, idx)
+			return
+		end
+		
+		-- Interacting with picker: hide if clicking outside
+		if cc:IsShown() then
+			if cc:IsCursorOverWindow() then
+				self:Print(nil, "Picker_Toggle(%s, %s) | dealing with picker -> continue", bag, idx)
+				return
+
+			elseif (cc.hold.ico:IsShown()) then
+				self:Print(nil, "Picker_Toggle(%s, %s) | was holding cell -> continue", bag, idx)
+				return
+			else
+				self:Print(nil, "Picker_Toggle(%s, %s) | clicking outside picker area -> hide", bag, idx)
+				self:Picker_Update(true)
+				return
+			end
+		end
+		
+		-- Nothing to interact with
+		if not (bag and idx) then
+			self:Print(nil, "Picker_Toggle(%s, %s) | nothing to deal with -> hide", bag, idx)
+			self:Picker_Update(true)
+			return
+		end
+
+		-- Interacting with picker cell
+		if (bag == "picker") then
+			self:Print(nil, "Picker_Toggle(%s, %s) | dealing with picker -> continue", bag, idx)
+			return
+		end
+	end
+	
+	-- Interacting with cell 
+	local ci = self.CC[bag].cell[idx]
+	if not (ci and ci:HasChild() and ( cc:IsCursorOverWindow() or ci:IsCursorOverWindow() or no_hide )) then
+		self:Print(nil, "Picker_Toggle(%s, %s) | cell has no childs or not focused-> hide", bag, idx)
+		self:Picker_Update(true)
+		return
+	end
+	
+	local obj = level.object_by_id(ci.ID)
+	if (not obj) then
+		self:Print(nil, "Picker_Toggle(%s, %s) | cell has no object -> hide", bag, idx)
+		self:Picker_Update(true)
+		return
+	end
+	
+	-- No picker for items without condition bar
+	local clsid = obj:clsid()
+	local use_cond = SYS_GetParam(1,ci.section,"use_condition") or IsWeapon(nil,clsid) or IsOutfit(nil,clsid) or IsHeadgear(nil,clsid)
+	if not (use_cond or IsAmmo(nil,clsid)) then
+		self:Print(nil, "Picker_Toggle(%s, %s) | cell has no condition -> hide", bag, idx)
+		self:Picker_Update(true)
+		return
+	end
+	
+	-- Prepare picker
+	local t = {}
+	t[#t+1] = obj
+	for id,_ in pairs(ci.childs) do
+		t[#t+1] = level.object_by_id(id)
+	end
+
+	if self.mode == "trade" then
+		cc.trade_profile = dup_table( self.CC[bag].trade_profile )
+	end
+	cc:Reinit(t)
+	cc:Show(true)
+	cc.parent.bag = bag
+	cc.parent.idx = idx
+	
+	-- For closing picker if player clicked M1 in outer areas
+	self.tg_m1 = time_global()
+	
+	self:Print(nil, "Picker_Toggle(%s, %s) | started picker -> stop", bag, idx)
+end
+
+function UIInventory:Picker_Ownership(bag, idx, obj)
+	if bag == "picker" then
+		local cc = self.CC["picker"]
+		local ci = self:Picker_OwnerCell(cc)
+		if ci and ci:IsShown() and obj and (ci.ID == obj:id() or ci:HasChild(obj)) then
+			local p = cc.parent
+			self:Print(nil, "Picker_Ownership | bag: %s - idx: %s", p.bag, p.idx)
+			return p.bag, p.idx
+		end
+	end
+	return bag, idx
+end
+
+function UIInventory:Picker_OwnerCell(cc)
+	cc = cc or self.CC["picker"]
+	local p = cc.parent
+	return p.bag and p.idx and self.CC[p.bag].cell[p.idx]
+end
+
+function UIInventory:Picker_IsFocused()
+	local cc = self.CC["picker"]
+	if cc:IsShown() then
+		local ci = self:Picker_OwnerCell(cc)
+		if cc:IsCursorOverWindow() or (ci and ci:IsShown() and ci:IsCursorOverWindow()) then
+			return true
+		end
+	end
+	return false
+end
+
+function UIInventory:Picker_Update(force_hide)
+	local cc = self.CC["picker"]
+	if cc:IsShown() then
+	
+		-- Get Parent Cell
+		local ci = self:Picker_OwnerCell(cc)
+
+		-- Unhighlight and hide
+		if (size_table(cc.indx_id) <= 1) or force_hide then
+			if ci and ci:IsShown() then
+				ci:Highlight(false)
+				
+				local cip = cc:GetCell_ID(ci.ID)
+				if cip and cip:IsShown() then
+					cip:Highlight(true,"green")
+				end
+			end
+			cc:Show(false)
+			cc.parent.bag = false
+			cc.parent.idx = false
+			
+			return false
+			
+		-- Highlight parent cell
+		else
+			if ci and ci:IsShown() then
+				ci:Highlight(true,"green")
+				
+				local cip = cc:GetCell_ID(ci.ID)
+				if cip and cip:IsShown() then
+					cip:Highlight(true,"green")
+				end
+				
+				return true
+			end
+		end
+	end
+	return false
+end
+
+
+-- Inventory mode
+function UIInventory:IMode_Init()
+	self:Print(nil, "IMode_Init")
+	
+	self.mode = "inventory"
+
+	-- Show/Hide needed elements
+	self:Reset()
+	
+	-- Update inventories
+	self:IMode_ResetInventories()
+	
+	-- Update info
+	self:UpdateInfo(true)
+	
+	-- Sound effect
+	self:PlaySND(snd_open)
+end
+
+function UIInventory:IMode_ResetInventories()
+	self:Picker_Toggle()
+	self.CC["actor_bag"]:Reinit( self:ParseInventory(db.actor) )
+end
+
+function UIInventory:IMode_RefreshInventories()
+	
+	-- Actor
+	local cc_a = self.CC["actor_bag"]
+	local list_a = cc_a.indx_id
+	local inv_a = self:ParseInventory(db.actor, nil, true)
+	for id,obj in pairs(inv_a) do
+		if (not list_a[id]) then
+			cc_a:AddItem(obj, obj:section())
+		end
+	end
+	for id,idx in pairs(list_a) do
+		if (not inv_a[id]) then
+			cc_a:RemoveItem_byID(id)
+		end
+	end
+end
+
+
+-- Loot mode
+function UIInventory:LMode_Init(obj)
+	self:Print(nil, "LMode_Init | obj: %s", obj and obj:name())
+
+	self.mode = "loot"
+	
+	-- Show/Hide needed elements
+	self:Reset(obj)
+
+	-- We need this because box can spawn items after opening, so they don't update those instantly
+	if self.npc_is_box and (not self.box_init_update.state) then
+		self.box_init_update.tg = time_global()
+		self.box_init_update.state = true
+		self:LMode_ResetInventories(true)
+		return
+	end
+	self.box_init_update.state = false
+
+	-- Update inventories
+	self:LMode_ResetInventories()
+	
+	-- Update info
+	self:UpdateInfo(true)
+	
+	-- Known info (Special case for corpses)
+	self:LMode_TransferInfo(obj)
+	
+	-- Sound effect
+	self:PlaySND(snd_open)
+end
+
+function UIInventory:LMode_ResetInventories(reset_only)
+	if reset_only then
+		self.CC["actor_bag"]:Reset()
+		self.CC["npc_bag"]:Reset()
+		return
+	end
+
+	local npc = self:GetPartner()
+	local is_box = npc and IsInvbox(npc)
+
+	self:Picker_Toggle()
+	self.CC["actor_bag"]:Reinit( self:ParseInventory(db.actor) )
+	
+	if self.npc_is_companion then
+		self.CC["npc_bag"]:Reinit( self:ParseInventory_Companion(npc) )
+	else
+		local all = (not is_box) and (npc and (not npc:alive()))
+		self.CC["npc_bag"]:Reinit( self:ParseInventory(npc, all) )
+	end
+end
+
+function UIInventory:LMode_ResetNPCInventory()
+	local npc = self:GetPartner()
+	local is_box = npc and IsInvbox(npc)
+
+	self:Picker_Toggle()
+
+	if self.npc_is_companion then
+		self.CC["npc_bag"]:Reinit( self:ParseInventory_Companion(npc) )
+	else
+		local all = (not is_box) and (npc and (not npc:alive()))
+		self.CC["npc_bag"]:Reinit( self:ParseInventory(npc, all) )
+	end
+end
+
+function UIInventory:LMode_RefreshInventories()
+	-- Actor
+	local added, removed = {}, {}
+	local cc_a = self.CC["actor_bag"]
+	local list_a = cc_a.indx_id
+	local inv_a = self:ParseInventory(db.actor, nil, true)
+	
+	for id,obj in pairs(inv_a) do
+		if (not list_a[id]) then
+			cc_a:AddItem(obj, obj:section())
+			added[id] = true
+		end
+	end
+	for id,idx in pairs(list_a) do
+		if (not inv_a[id]) then
+			cc_a:RemoveItem_byID(id)
+			removed[id] = true
+		end
+	end
+	
+	-- NPC
+	local npc = self:GetPartner()
+	local is_box = npc and IsInvbox(npc)
+	local all = (not is_box) and (npc and (not npc:alive()))
+	
+	local cc_b = self.CC["npc_bag"]
+	local list_b = cc_b.indx_id
+	local inv_b = self.npc_is_companion and self:ParseInventory_Companion(npc, true) or self:ParseInventory(npc, all, true)
+	for id,obj in pairs(inv_b) do
+		if (not list_b[id]) then
+			cc_b:AddItem(obj, obj:section())
+			if is_box and removed[id] then
+				SendScriptCallback("actor_on_item_put_in_box", npc, obj)
+			end
+		end
+	end
+	for id,idx in pairs(list_b) do
+		if (not inv_b[id]) then
+			cc_b:RemoveItem_byID(id)
+			if is_box and added[id] then
+				SendScriptCallback("actor_on_item_take_from_box", npc, level.object_by_id(id))
+			end
+		end
+	end
+end
+
+function UIInventory:LMode_PutAll()
+	self:Print(nil, "LMode_PutAll")
+	
+	local npc = self:GetPartner()
+	if (not npc) then
+		return
+	end
+	
+	local cc = self.CC["actor_bag"]
+	if (not cc) then
+		return
+	end
+	
+	-- We need to make sure that the other NPC has enough carry weight
+	if IsStalker(npc) and npc:alive() then
+		local tot_weight = 0
+		for id,idx in pairs(cc.indx_id) do
+			local ci = cc:GetCell_ID(id)
+			if ci then
+				-- Transfer item
+				local obj = level.object_by_id(id)
+				if self:Cond_Move(obj, "actor_bag") then
+					tot_weight = tot_weight + obj:weight()
+				end
+			end
+		end
+		
+		if utils_item.is_overweight(npc, nil, tot_weight) then
+			return
+		end
+	end
+	
+	-- Move all possible items
+	for id,idx in pairs(cc.indx_id) do
+		local ci = cc:GetCell_ID(id)
+		if ci then
+			local obj = level.object_by_id(id)
+			if self:Cond_Move(obj, "actor_bag") then
+				self:Action_Move(obj, "actor_bag")
+			end
+		end
+	end
+	
+	-- Update info
+	self.update_info = true
+end
+
+function UIInventory:LMode_TakeAll()
+	self:Print(nil, "LMode_TakeAll")
+	
+	local npc = self:GetPartner()
+	if (not npc) then
+		return
+	end
+	
+	local cc = self.CC["npc_bag"]
+	if (not cc) then
+		return
+	end
+	
+	for id,idx in pairs(cc.indx_id) do
+		local ci = cc:GetCell_ID(id)
+		if ci then
+			-- Transfer item
+			local obj = level.object_by_id(id)
+			if self:Cond_Move(obj, "npc_bag") then
+				self:Action_Move(obj, "npc_bag")
+			end
+		end
+	end
+	
+	-- Update info
+	self.update_info = true
+end
+
+function UIInventory:LMode_TransferInfo(npc)
+	-- Only for dead stalkers
+	if not (npc and IsStalker(npc) and (not npc:alive())) then
+		return
+	end
+	
+	local custom_data = ini_sys:r_string_ex(npc:section(),"custom_data")
+	local char_ini = custom_data and ini_file(custom_data)
+	local known_info = char_ini and char_ini:r_string_ex("logic","known_info")
+	if known_info and char_ini:section_exist(known_info) then
+		local n = char_ini:line_count(known_info)
+		for i=0,n-1 do
+			local result, id, value = char_ini:r_line(known_info,i,"","")
+			
+			-- Transfer info portion from corpse to actor
+			if id and npc:has_info(id) then
+				npc:disable_info_portion(id)
+				give_info(id)
+			end
+		end
+	end
+end
+
+
+-- Trade mode
+function UIInventory:TMode_Init(npc)
+	self:Print(nil, "TMode_Init | npc: %s", npc and npc:name())
+	
+	self.mode = "trade"
+	
+	-- Show/Hide needed elements
+	self:Reset(npc)
+
+	-- Update inventories
+	self:TMode_InitProfile(npc)
+	self:TMode_ResetInventories()
+	
+	-- Update info
+	self:UpdateInfo(true)
+
+	-- Sound effect
+	self:PlaySND(snd_open)
+end
+
+function UIInventory:TMode_ResetInventories(only_bags)
+	local npc = self:GetPartner()
+	
+	self:Picker_Toggle()
+	if (not only_bags) then
+		self.CC["actor_trade"]:Reinit()
+		self.CC["npc_trade"]:Reinit()
+	end
+	self.CC["actor_trade_bag"]:Reinit( self:ParseInventory(db.actor) )
+	self.CC["npc_trade_bag"]:Reinit( self:ParseInventory(npc) )
+end
+
+function UIInventory:TMode_RefreshInventories()
+	
+	-- Actor
+	local cc_a = self.CC["actor_trade_bag"]
+	local cc_at = self.CC["actor_trade"]
+	local list_a = cc_a.indx_id
+	local list_at = cc_at.indx_id
+	local inv_a = self:ParseInventory(db.actor, nil, true)
+	for id,obj in pairs(inv_a) do
+		if (not list_a[id]) and (not list_at[id]) then
+			cc_a:AddItem(obj, obj:section())
+		end
+	end
+	for id,idx in pairs(list_a) do
+		if (not inv_a[id]) then
+			cc_a:RemoveItem_byID(id)
+		end
+	end
+	for id,idx in pairs(list_at) do
+		if (not inv_a[id]) then
+			local obj = level.object_by_id(id)
+			if obj and (not in_actor_inv(obj)) then -- Important because trade bag is proccessed differently
+				cc_at:RemoveItem_byID(id)
+			end
+		end
+	end
+	
+	-- NPC
+	local npc = self:GetPartner()
+
+	local cc_b = self.CC["npc_trade_bag"]
+	local cc_bt = self.CC["npc_trade"]
+	local list_b = cc_b.indx_id
+	local list_bt = cc_bt.indx_id
+	local inv_b = self:ParseInventory(npc, nil, true)
+	for id,obj in pairs(inv_b) do
+		if (not list_b[id]) and (not list_bt[id]) then
+			cc_b:AddItem(obj, obj:section())
+		end
+	end
+	for id,idx in pairs(list_b) do
+		if (not inv_b[id]) then
+			cc_b:RemoveItem_byID(id)
+		end
+	end
+	--
+	for id,idx in pairs(list_bt) do
+		if (not inv_b[id]) then
+			local obj = level.object_by_id(id)
+			if obj and (not in_npc_inv(npc, obj)) then -- Important because trade bag is proccessed differently
+				cc_bt:RemoveItem_byID(id)
+			end
+		end
+	end
+	--
+end
+
+function UIInventory:TMode_InitProfile(npc)
+	self:Print(nil, "TMode_InitProfile | npc: %s", npc and npc:name())
+
+	local id = npc:id()
+	
+	-- Actor
+	local actor_trade_profile = {
+		mode          = 1,
+		cfg           = trade_manager.get_trade_profile(id, "cfg_ltx"),
+		list          = trade_manager.get_trade_profile(id, "current_buy_condition"), -- list of all items that npc can buy
+		cond_factor   = trade_manager.get_trade_profile(id, "current_buy_item_condition_factor"), -- no buy below this condition
+		cond_exponent = trade_manager.get_trade_profile(id, "current_buy_item_exponent"), -- multiplier for condition
+		discount      = trade_manager.get_buy_discount(id), -- cost factor for items in player side
+	}
+	
+	local actor_trade_bags = {"actor_trade","actor_trade_bag","actor_equ","actor_belt"}
+	for i,bag in ipairs(actor_trade_bags) do
+		self.CC[bag].trade_profile = dup_table(actor_trade_profile)
+	end
+	
+	-- NPC
+	local npc_trade_profile = {
+		mode            = 2,
+		cfg             = trade_manager.get_trade_profile(id, "cfg_ltx"),
+		list            = trade_manager.get_trade_profile(id, "current_sell_condition"), -- list of all items that npc can sell
+--		cond_factor     = 1,
+		cond_exponent   = trade_manager.get_trade_profile(id, "current_sell_item_exponent"), -- multiplier for condition
+		discount        = trade_manager.get_sell_discount(id), -- cost factor for items in npc side
+	}
+	
+	local npc_trade_bags = {"npc_trade","npc_trade_bag"}
+	for i,bag in ipairs(npc_trade_bags) do
+		self.CC[bag].trade_profile = dup_table(npc_trade_profile)
+	end
+
+	--[[
+		['current_sell_item_exponent'] = 0.75,
+		['cfg_ltx'] = 'items\trade\trade_mercenary.ltx',
+		['current_buy_item_condition_factor'] = 0.6,
+		['resupply_time'] = {
+			['M'] = 10,
+			['s'] = 58,
+			['ms'] = 674,
+			['Y'] = 2018,
+			['h'] = 9,
+			['m'] = 40,
+			['D'] = 25
+		},
+		['current_sell_condition'] = 'trade_generic_sell',
+		['current_buy_condition'] = 'trade_generic_buy',
+		['checked'] = true,
+		['current_buy_item_exponent'] = 2.25,
+		['current_buy_supplies'] = 'supplies_1'
+		
+	--]]
+	
+end
+
+function UIInventory:TMode_UpdatePrice(ele_txt, ele_btn, bag)
+	self:Print(nil, "TMode_UpdatePrice | bag: %s", bag)
+	
+	local tot_cost = 0
+	local cc = self.CC[bag]
+	if (not cc) then
+		return
+	end
+	
+	for idx,ci in pairs(cc.cell) do
+		tot_cost = tot_cost + cc:GetCellCost(ci)
+	end
+	tot_cost = math.floor(tot_cost)
+
+	ele_txt:SetText(tot_cost .. " RU")
+	ele_btn:Enable( tot_cost > 0 )
+end
+
+function UIInventory:TMode_Sell()
+	self:Print(nil, "TMode_Sell")
+	
+	local npc = self:GetPartner()
+	if (not npc) then
+		return
+	end
+	
+	local cc = self.CC["actor_trade"]
+	if (not cc) then
+		return
+	end
+	
+	-- Calculate full price
+	local tot_cost = 0
+	for idx,ci in pairs(cc.cell) do
+		tot_cost = tot_cost + cc:GetCellCost(ci)
+	end
+	tot_cost = math.floor(tot_cost)
+	
+	-- Don't processed if NPC doesn't have enough money
+	if npc:money() < tot_cost then
+		self.message_box:InitMessageBox("message_box_ok")
+		self.message_box:SetText( game.translate_string("not_enough_money_partner") )
+		self.message_box:ShowDialog(true)
+		return
+	end
+	
+	-- Transfer items
+	for id,idx in pairs(cc.indx_id) do
+		local ci = cc:GetCell_ID(id)
+		if ci then
+			self:On_Item_Exchange(db.actor, npc, level.object_by_id(id))
+		end
+	end
+	
+	-- Transfer money
+	db.actor:give_money(tot_cost)
+	npc:give_money(-tot_cost)
+	
+	-- Update UI
+	self.update_info = true
+end
+
+function UIInventory:TMode_Buy()
+	self:Print(nil, "TMode_Buy")
+	
+	local npc = self:GetPartner()
+	if (not npc) then
+		return
+	end
+	
+	local cc = self.CC["npc_trade"]
+	if (not cc) then
+		return
+	end
+	
+	-- Calculate full price
+	local tot_cost = 0
+	for idx,ci in pairs(cc.cell) do
+		tot_cost = tot_cost + cc:GetCellCost(ci)
+	end
+	tot_cost = math.floor(tot_cost)
+	
+	-- Don't processed if player doesn't have enough money
+	if db.actor:money() < tot_cost then
+		self.message_box:InitMessageBox("message_box_ok")
+		self.message_box:SetText( game.translate_string("not_enough_money_actor") )
+		self.message_box:ShowDialog(true)
+		return
+	end
+	
+	-- Transfer items
+	for id,idx in pairs(cc.indx_id) do
+		local ci = cc:GetCell_ID(id)
+		if ci then
+			self:On_Item_Exchange(npc, db.actor, level.object_by_id(id))
+		end
+	end
+	
+	-- Transfer money
+	npc:give_money(tot_cost)
+	db.actor:give_money(-tot_cost)
+	
+	-- Update UI
+	self.update_info = true
+end
+
+
+-- Repair/Upgrade mode
+function UIInventory:RMode_Init(npc)
+	self:Print(nil, "RMode_Init | %s", npc and npc:name())
+	
+	self.mode = "repair"
+	
+	-- Show/Hide needed elements
+	self:Reset(npc)
+
+	-- Update inventories
+	self:IMode_ResetInventories()
+	
+	-- Hide existing tree
+	self:RMode_InitItem()
+	
+	-- Update info
+	self:UpdateInfo(true)
+	
+	-- Sound effect
+	self:PlaySND(snd_open)
+end
+
+function UIInventory:RMode_InitElements()
+	self:Print(nil, "RMode_InitElements")
+	
+	local xml = self.xml
+	
+	self.upx = {} -- upgrade_xml
+	
+	-- All possible rows
+	for r=1,5 do
+		local _st = xml:InitStatic("upgrade:st", nil)
+		
+		-- All possible elements
+		for c=1,6 do
+		
+			-- In case colomn has solo element
+			for s=1,2 do
+				local str = ""
+				if odd(c) then
+					str = (s == 2) and "b" or ""
+				end
+				
+				if not ((s == 2) and (not odd(c))) then
+					local ii = (r..c..str)
+					self:Print(nil, "RMode_InitElements | init for index: %s", ii)
+					self.upx[ii] = {}
+					
+					self.upx[ii].base = xml:InitStatic("upgrade:row_cells:cell_" .. (c..str), _st)
+					self.upx[ii].ico = xml:InitStatic("upgrade:cell_upgrade:ico", self.upx[ii].base)
+					self.upx[ii].btn = xml:InitCheck("upgrade:cell_upgrade:btn", self.upx[ii].base)
+					self.upx[ii].row = r
+					self.upx[ii].col = c
+					
+					-- Callback
+					self:Register(self.upx[ii].btn, "btn_up_" .. ii)
+					local _wrapper = function(self) -- we need wrapper in order to pass ctrl to method
+						self:RMode_OnUpgrade(r, c, ii)
+					end
+					self:AddCallback("btn_up_" .. ii, ui_events.BUTTON_CLICKED, _wrapper, self)
+				end
+			end
+		end
+		
+		self.npc_up_scheme:AddWindow(_st, true)
+		_st:SetAutoDelete(false)
+	end
+	
+	-- Upgrade order table
+	self.upgr_order = {}
+	
+	local upg_gr = {
+		[1] = "first",
+		[2] = "secon",
+		[3] = "third",
+		[4] = "fourt",
+		[5] = "fifth",
+	}
+	local upg_ind = {
+		[1] = "a",
+		[2] = "b",
+		[3] = "c",
+		[4] = "d",
+		[5] = "e",
+		[6] = "f",
+	}
+	for i=1,#upg_gr do
+		for ii=1,#upg_ind do
+			self.upgr_order[#self.upgr_order + 1] = upg_gr[i] .. upg_ind[ii]
+		end
+	end
+end
+
+function UIInventory:RMode_InitItem(obj, bag, idx)
+	self:Print(nil, "RMode_InitItem | %s", obj and obj:name())
+	
+	-- Init upgrade scheme if it's not set
+	if is_empty(self.upx) then
+		self:RMode_InitElements()
+	end
+	
+	-- Clear old data, assign new
+	empty_table(self.upgr_tree)
+	empty_table(self.upgr_installed)
+	
+	-- Hide all possible upgrades
+	for ii,ele in pairs(self.upx) do
+		ele.base:Show(false)
+		ele.btn:Enable(true)
+		ele.btn:SetCheck(false)
+		ele.section = nil
+		ele.prereq = ""
+	end
+	
+	-- No object -> reset and return
+	if (not obj) then
+		self.upgr = { id = false , sec = false , idx = false , bag = false}
+		self.npc_up_repair:Enable(false)
+		self:RMode_InitItemIcon()
+		return
+	end
+
+	-- Selected object -> get id and section
+	local id = obj:id()
+	local sec = obj:section()
+	self.upgr.id = id
+	self.upgr.sec = sec
+	self.upgr.bag = bag
+	self.upgr.idx = idx
+	
+	-- Set up upgrade icon
+	self:RMode_InitItemIcon(obj)
+	
+	-- Repair button state
+	self.npc_up_repair:Enable( inventory_upgrades.can_repair_item(sec) and (obj:condition() < 0.99) )
+	
+	-- Parse mechanic's discount condition
+	local can_upgrade = inventory_upgrades.can_upgrade_item()
+	if (not can_upgrade) then
+		return
+	end
+	
+	-- Upgrades tree
+	self.upgr_tree = utils_item.get_upgrades_tree(sec, true)
+	if is_empty(self.upgr_tree) then
+		return
+	end
+
+	-- Installed upgrades
+	self.upgr_installed = utils_item.get_upgrades_installed(obj, nil, true)
+
+	-- Show upgrade tree
+	for row,v in pairs(self.upgr_tree) do
+		for col,info in pairs(v) do
+			local ii = row .. col .. ( info.solo and "b" or "" )
+			
+			self.upx[ii].section = info.section
+			self.upx[ii].ico:InitTexture(info.icon)
+			self.upx[ii].ico:SetStretchTexture(true)
+			
+			self.upx[ii].base:Show(true)
+		end
+	end
+	
+	self:RMode_EvaluateUpgrAll()
+end
+
+function UIInventory:RMode_InitItemIcon(obj)
+	self:Print(nil, "RMode_InitItemIcon | %s", obj and obj:name())
+	
+	if (not obj) then
+		self.npc_up_item:Show(false)
+		return
+	end
+	
+	local sec = obj:section()
+	local ratio = (utils_xml.is_widescreen() and 0.8 or 1)
+	
+	local x = SYS_GetParam(2,sec,"upgr_icon_x")
+	local y = SYS_GetParam(2,sec,"upgr_icon_y")
+	local w = SYS_GetParam(2,sec,"upgr_icon_width")
+	local h = SYS_GetParam(2,sec,"upgr_icon_height")
+	if not (x and y and w and h) then
+		self.npc_up_item:Show(false)
+		return
+	end
+	
+	-- Get upgrade dds
+	local path = SYS_GetParam(0,sec,"upgr_icon_path") or (IsWeapon(obj) and "ui\\ui_actor_weapons") or "ui\\ui_actor_armor"
+	
+	self.npc_up_item:InitTexture(path)
+	self.npc_up_item:SetTextureRect(Frect():set(x, y, x + w, y + h))
+	self.npc_up_item:SetWndSize(vector2():set( w * ratio , h ))
+	self.npc_up_item:SetStretchTexture(true)
+	self.npc_up_item:Show(true)
+end
+
+function UIInventory:RMode_OnUpgrade(row, col, ii)
+	self:Print(nil, "RMode_OnUpgrade | row: %s - col: %s - ii: %s", row, col, ii)
+	
+	local btn = self.upx[ii].btn
+	if (not btn) then
+		return
+	end
+	
+	-- You cannot uninstall
+	if (not btn:GetCheck()) then
+		btn:SetCheck(true)
+		return
+	end
+	btn:SetCheck(false)
+	
+	self.upgr_last_row = row
+	self.upgr_last_col = col
+	self.upgr_last_ii = ii
+	
+	local str = game.translate_string("st_upgrade_install") .. " " .. game.translate_string(self.upgr_tree[row][col].name or "") .. "?"
+	self.message_box_up:InitMessageBox("message_box_yes_no")
+	self.message_box_up:SetText(str)
+	self.message_box_up:ShowDialog(true)
+end
+
+function UIInventory:RMode_UpgradeYes()
+	local row = self.upgr_last_row
+	local col = self.upgr_last_col
+	local ii = self.upgr_last_ii
+	self.upx[ii].btn:SetCheck(true)
+	self:Print(nil, "RMode_UpgradeYes | row: %s - col: %s - ii: %s", row, col, ii)
+	
+	
+	-- Install new upgrade
+	local obj = self.upgr.id and level.object_by_id(self.upgr.id)
+	if (not obj) then
+		return
+	end
+	
+	-- For weapons, unload mag and clear ammo cache in case of ammo type upgrades
+	if IsWeapon(obj) and (not IsItem("fake_ammo_wpn",obj:section())) then
+		obj:force_unload_magazine(true)
+		item_weapon.clear_cache(obj)
+	end
+	
+	-- Install upgrade
+	local upgr_section = self.upgr_tree[row][col].section
+	if (not upgr_section) then
+		return
+	end
+
+	obj:install_upgrade(upgr_section)
+	
+	self.upgr_installed[upgr_section] = true
+	
+	
+	--[[ -- Effect on upgrading (not needed because it's called by install_upgrade)
+	local section_states = self.upgr_tree[row][col].stats
+	inventory_upgrades.effect_functor_a( nil, section_states, 0 )
+	--]]
+	
+	inventory_upgrades.effect_upgrade_item(obj)
+	
+	-- Evaluate all other upgrades
+	self:RMode_EvaluateUpgrAll()
+	
+	self:On_Item_Update()
+end
+
+function UIInventory:RMode_EvaluateUpgr(row, col, ii, info)
+	self:Print(nil, "RMode_EvaluateUpgr | row: %s - col: %s - ii: %s", row, col, ii)
+	
+	local btn = self.upx[ii].btn
+	
+	-- We don't evalute installed upgrades
+	if btn:GetCheck() or self.upgr_installed[info.section] then
+		btn:SetCheck(true)
+		self.upx[ii].prereq = game.translate_string("st_upgr_installed")
+		return
+	end
+
+	-- Check if upgrade group is installed
+	if (not self.upgr_tree[row][col].solo) then
+		local col_g = odd(col) and col+1 or col-1
+		local section_g = self.upgr_tree[row][col_g].section
+		if self.upgr_installed[section_g] then
+			btn:Enable(false)
+			self.upx[ii].prereq = game.translate_string("st_upgr_disable")
+			return
+		end
+	end
+
+	-- Check price + mechanic info portion + parsed profile
+	local ret = inventory_upgrades.precondition_functor_a(nil, info.stats)
+	local prereq = parse_func(info.section, "prereq_functor", nil, info.stats) or ""
+	
+	-- Check if parent upgrades is not installed
+	local prev_installed = col <= 2 and true or false
+	local section = self.upgr_tree[row][col].section
+	if (not prev_installed) then
+		for c, v in pairs(self.upgr_tree[row]) do
+			if v.effect and v.effect[section] and self.upgr_installed[v.section] then
+				prev_installed = true
+			end
+		end
+	end
+	if (not prev_installed) then
+		ret = 2
+		prereq = prereq .. "\\n - " .. game.translate_string("st_upgr_parents")
+	end
+	
+	-- Finale
+	if prereq and prereq ~= "" then
+		prereq = game.translate_string("st_upgr_disable") .. " \\n" .. prereq
+	end
+	
+	self.upx[ii].prereq = prereq
+	btn:Enable( (ret == 0) )
+end
+
+function UIInventory:RMode_EvaluateUpgrAll()
+	self:Print(nil, "RMode_EvaluateUpgrAll")
+	
+	for row,v in pairs(self.upgr_tree) do
+		for col,info in pairs(v) do
+			local ii = row .. col .. (info.solo and "b" or "")
+			self:RMode_EvaluateUpgr(row, col, ii, info)
+		end
+	end
+end
+
+function UIInventory:RMode_OnRepair()
+	self:Print(nil, "RMode_OnRepair")
+	
+	if (not self.upgr.id) then
+		return
+	end
+	
+	local obj = level.object_by_id(self.upgr.id)
+	if (not obj) then
+		return
+	end
+	
+	local sec = obj:section()
+	local cond = obj:condition()
+	
+	local can_afford = inventory_upgrades.can_afford_repair_item(sec , cond)
+	local str = inventory_upgrades.question_repair_item( sec, cond, true )
+	if (str == nil) then
+		str = game.translate_string("st_upgr_cant_do")
+	end
+	
+	if can_afford then
+		self.message_box:InitMessageBox("message_box_yes_no")
+	else
+		self.message_box:InitMessageBox("message_box_ok")
+	end
+	self.message_box:SetText(str)
+	self.message_box:ShowDialog(true)
+end
+
+function UIInventory:RMode_RepairYes()
+	self:Print(nil, "RMode_RepairYes")
+	if (not self.upgr.id) then
+		return
+	end
+	
+	local obj = level.object_by_id(self.upgr.id)
+	if (not obj) then
+		return
+	end
+	
+	inventory_upgrades.effect_repair_item( obj:section(), obj:condition())
+	obj:set_condition(0.99999)
+	
+	self:On_Item_Update()
+	
+	-- Repair button state goes off (cause full repaired)
+	self.npc_up_repair:Enable(false)
+end
+
+
+-- Callbacks - object
+function UIInventory:actor_item_to_ruck(obj)
+	if self:IsShown() then
+		self:Print(nil, "Callback actor_item_to_ruck - %s", obj and obj:name())
+		self:On_Item_Update()
+	end
+	
+	-- Unequip artefacts if player unequipped outfit
+	if IsOutfit(obj) and (not db.actor:item_in_slot(7)) then
+		db.actor:iterate_belt( function(owner, arty)
+			db.actor:move_to_ruck(arty)
+		end)
+	end
+end
+
+function UIInventory:actor_item_to_slot(obj)
+	if self:IsShown() then
+		self:Print(nil, "Callback actor_item_to_slot - %s", obj and obj:name())
+		self:On_Item_Update()
+	end
+	
+	-- Unequip helmet/backpack if equipped outfit prevent them
+	if IsOutfit(obj) then
+		local c_outfit = obj:cast_CustomOutfit()
+		
+		local helm = db.actor:item_in_slot(12)
+		if (not c_outfit.bIsHelmetAvaliable) and helm then
+			db.actor:move_to_ruck(helm)
+		end
+		
+		local bkpk = db.actor:item_in_slot(13)
+		if (not c_outfit.bIsBackpackAvaliable) and bkpk then
+			db.actor:move_to_ruck(bkpk)
+		end
+	end
+end
+
+function UIInventory:actor_item_to_belt(obj)
+	if self:IsShown() then
+		self:Print(nil, "Callback actor_item_to_belt - %s", obj and obj:name())
+		self:On_Item_Update()
+	end
+end
+
+function UIInventory:actor_on_item_drop(obj)
+	if self:IsShown() then
+		self:Print(nil, "Callback actor_on_item_drop - %s", obj and obj:name())
+		self:On_Item_Update()
+	end
+	
+	-- Unequip artefacts if player unequipped outfit
+	if IsOutfit(obj) and (not db.actor:item_in_slot(7)) then
+		db.actor:iterate_belt( function(owner, arty)
+			db.actor:move_to_ruck(arty)
+		end)
+	end
+end
+
+function UIInventory:actor_on_item_use(obj)
+	if self:IsShown() then
+		self:Print(nil, "Callback actor_on_item_use - %s", obj and obj:name())
+		self:On_Item_Update()
+	end
+end
+
+function UIInventory:actor_on_item_put_in_box(npc, obj)
+	if self:IsShown() and (self.npc_id == npc:id()) then
+		self:Print(nil, "Callback actor_on_item_put_in_box - %s", obj and obj:name())
+		
+		self:On_Item_Update()
+		
+		itms_manager.play_item_sound(obj, 0.75)
+	end
+end
+
+function UIInventory:actor_on_item_take_from_box(npc, obj)
+	if self:IsShown() and (self.npc_id == npc:id()) then
+		self:Print(nil, "Callback actor_on_item_take_from_box - %s", obj and obj:name())
+		
+		self:On_Item_Update()
+	end
+end
+
+function UIInventory:npc_on_item_take(npc, obj)
+	if self:IsShown() and (self.npc_id == npc:id()) then
+		self:Print(nil, "Callback npc_on_item_take - %s", obj and obj:name())
+		
+		-- Companions exchange mode: don't show non-assigned items
+		if (self.mode == "loot") and self.npc_is_companion and (not axr_companions.is_assigned_item(npc:id(), obj:id())) then
+			return
+		end
+		
+		self:On_Item_Update()
+		
+		itms_manager.play_item_sound(obj, 0.75)
+	end
+end
+
+function UIInventory:npc_on_item_drop(npc, obj)
+	if self:IsShown() and (self.npc_id == npc:id()) then
+		self:Print(nil, "Callback npc_on_item_drop - %s", obj and obj:name())
+		self:On_Item_Update()
+	end
+end
+
+function UIInventory:npc_on_use(obj, who)
+	if (who:id() == AC_ID) and (not self:IsShown()) and IsStalker(obj) and (not obj:alive()) then
+		start("loot", obj)
+	end
+end
+
+function UIInventory:physic_object_on_use_callback(obj, who)
+	-- sometimes who isn't passed!
+	if who and (who:id() == AC_ID) and (not self:IsShown()) and IsInvbox(obj) then
+		start("loot", obj)
+	end
+end
+
+function UIInventory:actor_on_net_destroy()
+	if self:IsShown() then
+		self:Close()
+	end
+	
+	GUI = nil
+end
+
+-- Callbacks - UI
+function UIInventory:On_CC_DragDrop(bag_from, idx_from)
+	local obj_from = self.CC[bag_from]:GetObj(idx_from)
+	if (not obj_from) then
+		return
+	end
+	
+	-- When interacting with item picker, get parent cell bag and index
+	bag_from, idx_from = self:Picker_Ownership(bag_from, idx_from, obj_from)
+	
+	self:Print(nil, "Callback On_CC_DragDrop | bag: %s - idx: %s", bag_from, idx_from)
+	
+	-- Throw items outside
+	if self.trash:IsShown() and self.trash:IsCursorOverWindow() then
+		if self:Item_On_Mode("drop", bag_from) and self:Cond_NotQuest(obj_from, bag_from) then
+			self:Action_Drop(obj_from, bag_from)
+			return
+		end
+		
+	-- Drag Drop item on other item
+	else
+	
+		-- Get hovered container and cell
+		local bag_to, idx_to, obj_to
+		for name,cc in pairs(self.CC) do
+			bag_to, idx_to, obj_to = cc:GetCell_Focused()
+			if bag_to then
+				break
+			end
+		end
+		
+		-- When interacting with item picker, get parent cell bag and index
+		if obj_to then
+			bag_to, idx_to = self:Picker_Ownership(bag_to, idx_to, obj_to)
+		end
+		
+		self:Print(nil, "Callback On_CC_DragDrop | obj_f: %s - bag_f: %s - idx_f: %s | obj_t: %s - bag_t: %s - idx_t: %s", obj_from:name(), bag_from, idx_from, obj_to and obj_to:name(), bag_to, idx_to)
+		
+		-- Ruck/Slot to Slot
+		if (bag_to == "actor_equ") and (self:Cond_Equip(obj_from, bag_from) or bag_from == "actor_equ") and (not IsArtefact(obj_from)) then
+			local slot = (SYS_GetParam(2,obj_from:section(),"slot") or -1) + 1
+			local cslots = self.slot_cell[slot] or {}
+			for i=1,#cslots do
+				if (cslots[i] == idx_to) then
+					self:Print(nil, "Callback On_CC_DragDrop | Ruck to Slot | obj_from: %s - obj_to: %s - base slot: %s - new slot: %s", obj_from:name(), obj_to and obj_to:name(), slot, idx_to)
+					if obj_to then
+						db.actor:move_to_ruck(obj_to)
+					end
+
+					db.actor:move_to_slot(obj_from, idx_to)
+					
+					self:PlaySND(snd_item_to_slot)
+					break
+				end
+			end
+			
+		-- Ruck to Belt
+		elseif (bag_to == "actor_belt") and self:Cond_Equip(obj_from, bag_from) and IsArtefact(obj_from) then
+			self:Action_Equip(obj_from, bag_from)
+			
+		-- To Quick access
+		elseif (bag_to == "actor_quick") and IsItem("consumable",obj_from:section()) then
+			quick_item = exec_console_cmd("slot_" .. (idx_to - 1) .. " " .. obj_from:section())
+			self.update_info = true
+			return
+			
+		-- Case object to drop on
+		elseif obj_to then
+		
+			-- Attachment
+			if ((bag_to == "actor_bag") or (bag_to == "actor_equ")) and self:Cond_Attach(obj_from, "actor_bag", nil, nil, obj_to) then
+				self:Action_Attach(obj_from, "actor_bag", nil, nil, obj_to)
+				
+			-- Callback
+			else
+				SendScriptCallback("ActorMenu_on_item_drag_drop", obj_from, obj_to, self.bag_id[bag_from], self.bag_id[bag_to])
+			end
+			
+		-- No object to drop on
+		else
+			if (not bag_to) then
+				for bag,cc in pairs(self.CC) do
+					if (bag ~= "picker") and cc:IsCursorOverWindow() then
+						bag_to = bag
+						break
+					end
+				end
+			end
+			
+			-- Case bag to drop on
+			if bag_to then
+				
+				-- Move to other suitable bag
+				if self:Item_On_Mode("move", bag_from) and self:Cond_Move(obj_from, bag_from, nil, bag_to) then
+					if self.holding_ctrl and self:Cond_Childs(obj_from, bag_from) then
+						self:Action_Move_All(obj_from, bag_from)
+					else
+						self:Action_Move(obj_from, bag_from)
+					end
+					
+				-- Unequip
+				elseif self:Item_On_Mode("to_ruck", bag_from) and (bag_to == "actor_bag" or bag_to == "actor_trade_bag") then
+					self:Action_UnEquip(obj_from, bag_from)
+				end
+			end
+		end
+		
+		self:On_Item_Update()
+	end
+end
+
+function UIInventory:On_CC_Hover(bag, idx)
+--	self:Print(nil, "Callback On_CC_Hover | bag: %s - idx: %s", bag, idx)
+
+	local prev_idx = self.hover.idx
+	local prev_bag = self.hover.bag
+	self.hover.bag = bag
+	self.hover.idx = idx
+	self.hover.tg = time_global()
+	
+	-- Unhighlight all on hover changes
+	if (bag ~= prev_bag) or (idx ~= prev_idx) then
+		self:UnHighlight_All()
+	end
+	
+	-- Highlight hovered cell
+	if bag and idx then
+		local ci = self.CC[bag].cell[idx]
+		if ci and ci:IsShown() then
+			ci:Highlight(true, "def", (bag == "actor_equ") or (bag == "actor_belt") or (bag == "actor_quick"))
+		end
+	end
+	
+	-- On Item focus lost
+	if prev_idx and prev_bag and (prev_idx ~= idx) then
+		local obj = self.CC[prev_bag]:GetObj(prev_idx)
+		if obj then
+			SendScriptCallback("ActorMenu_on_item_focus_lost", obj)
+		end
+	end
+	
+	-- On Item focus receive
+	if idx and bag and (prev_idx ~= idx) then
+		local obj = self.CC[bag]:GetObj(idx)
+		if obj then
+			SendScriptCallback("ActorMenu_on_item_focus_receive", obj)
+		end
+	end
+
+	-- Highlight slots for equippable items
+	if ((self.slot_hl.idx ~= idx) or (self.slot_hl.bag ~= bag)) then
+		local force = (self.slot_hl.bag ~= bag) -- force unhighlight when switching bags to avoid stucking highlighting
+	
+		-- Less hooks
+		self.slot_hl.idx = idx
+		self.slot_hl.bag = bag
+		
+		-- Obviously we don't want to highlight compatible slots when hovered item is in a slot
+		local can_highlight = (bag ~= "actor_equ") and (bag ~= "actor_belt") and (bag ~= "actor_quick")
+		
+		-- Unhighlight all first
+		if force or can_highlight then
+			local cc1 = self.CC["actor_equ"]
+			for i=1,#cc1.cell do
+				cc1.cell[i]:Highlight(false)
+			end
+			local cc2 = self.CC["actor_belt"]
+			for i=1,#cc2.cell do
+				cc2.cell[i]:Highlight(false)
+			end
+			local cc3 = self.CC["actor_quick"]
+			for i=1,#cc3.cell do
+				cc3.cell[i]:Highlight(false)
+			end
+		end
+		
+		-- Highlight compatible items
+		if can_highlight and bag and idx then
+			local obj = self.CC[bag]:GetObj(idx)
+			if obj then
+			
+				-- For slots, we higlight when item is equippable
+				if self:Cond_Equip(obj, bag) then
+					local slot = (SYS_GetParam(2,obj:section(),"slot") or -1) + 1
+					local slot_cells = self.slot_cell[slot]
+					
+					-- For belt, we higlight when item is an artefact
+					if IsArtefact(obj) then
+						local cc = self.CC["actor_belt"]
+						for i=1,#cc.cell do
+							cc.cell[i]:Highlight(true, "def", true)
+						end
+						
+					elseif slot_cells then
+						local cc = self.CC["actor_equ"]
+						for i=1,#slot_cells do
+							local ci = cc.cell[ slot_cells[i] ]
+							if ci then
+								ci:Highlight(true, "def", true)
+							end
+						end
+					end
+					
+				-- For quick slots, we higlight when item is consumable
+				elseif IsItem("consumable", obj:section()) then
+					local cc = self.CC["actor_quick"]
+					for i=1,#cc.cell do
+						cc.cell[i]:Highlight(true, "def", true)
+					end
+				end
+			end
+		end
+	end
+end
+
+function UIInventory:On_CC_Mouse1(bag, idx)
+
+	-- Start or Hide picker
+	self:Picker_Toggle(bag, idx)
+
+	local obj = self.CC[bag]:GetObj(idx)
+	if (not obj) then
+		self:Print(nil, "Callback On_CC_Mouse1 | no object recieved!", bag, idx)
+		return
+	end
+	
+	-- When interacting with item picker, get parent cell bag and index
+	bag, idx = self:Picker_Ownership(bag, idx, obj)
+	
+	self:Print(nil, "Callback On_CC_Mouse1 | bag: %s - idx: %s", bag, idx)
+	
+	-- Upgrade tree
+	if self:IsMode(bag,"repair","actor_bag","actor_equ") then
+		self:RMode_InitItem(obj, bag, idx)
+	end
+end
+
+function UIInventory:On_CC_Mouse1_DB(bag, idx)
+
+	-- Fix for quick-slot double clicking crash the game
+	if (bag == "actor_quick") then 
+		--self.CC["actor_quick"]:AddItemManual(nil, nil, idx)
+		--exec_console_cmd("slot_"..(idx - 1).." (NULL)")
+		return
+	end
+	
+	local obj = self.CC[bag]:GetObj(idx)
+	if (not obj) then
+		self:Print(nil, "Callback On_CC_Mouse1_DB | no object recieved!", bag, idx)
+		return
+	end
+	
+	-- When interacting with item picker, get parent cell bag and index
+	bag, idx = self:Picker_Ownership(bag, idx, obj)
+	
+	self:Print(nil, "Callback On_CC_Mouse1_DB | bag: %s - idx: %s", bag, idx)
+	
+	-- Eat consumable
+	if self:Item_On_Mode("use", bag) and self:Cond_Use(obj, bag) then
+		self:Action_Use(obj, bag)
+		
+	-- Equip item
+	elseif self:Item_On_Mode("to_slot", bag) and self:Cond_Equip(obj, bag) then
+		self:Action_Equip(obj, bag)
+	
+	-- Unequip item
+	elseif self:Item_On_Mode("to_ruck", bag) then
+		self:Action_UnEquip(obj, bag)
+
+	-- Move items between bags
+	elseif self:Item_On_Mode("move", bag) and self:Cond_Move(obj, bag) then
+		if self.holding_ctrl and self:Cond_Childs(obj, bag) then
+			self:Action_Move_All(obj, bag)
+		else
+			self:Action_Move(obj, bag)
+		end
+		
+	-- Execute first custom property that support double-click
+	else
+		local i = 1
+		local mode = self.mode
+		
+		while (self.properties["custom_" .. i] ~= nil) do
+			
+			-- Check if double-click is enabled
+			if self:DB_Custom(obj, bag, nil, i) then
+				local props = self.properties["custom_" .. i]
+				
+				-- Check if prop is aimed for active container
+				local bag_allowed = true
+				if props.cont then
+					bag_allowed = props.cont[bag] and true or false
+				end
+				if props.cont_func and props.cont_func[1] and self[props.cont_func[1]] then
+					bag_allowed = self[props.cont_func[1]](self, obj, bag, unpack(props.cont_func)) and true or false
+				end
+				
+				-- Check if prop is aimed for active mode
+				local mode_allowed = true
+				if props.mode then
+					mode_allowed = props.mode[mode] and true or false
+				end
+				if props.mode_func and props.mode_func[1] and self[props.mode_func[1]] then
+					mode_allowed = self[props.mode_func[1]](self, obj, bag, unpack(props.mode_func)) and true or false
+				end
+				
+				if mode_allowed and bag_allowed then
+				
+					-- Evaluate preconditions
+					local cond = true
+					local k = 1
+					while cond and props["precondition" .. k] do
+						local precond = props["precondition" .. k]
+						if precond[1] and self[precond[1]] then
+							cond = self[precond[1]](self, obj, bag, unpack(precond)) and true or false
+						else
+							cond = false
+						end
+						k = k + 1
+					end
+					if cond then
+						local id = obj:id()
+						
+						-- Get prop name
+						local name = props.name
+						local func_name = props.name_func
+						if func_name and func_name[1] and self[func_name[1]] then
+							name = self[func_name[1]](self, id, bag, unpack(func_name)) or name
+						end
+						if name then
+						
+							-- Execute action
+							local func_action = props.action
+							if func_action and func_action[1] and self[func_action[1]] then
+								self[func_action[1]](self, id, bag, unpack(func_action))
+								break
+							end
+						end
+					end
+					
+				end
+			end
+		
+			i = i + 1
+		end
+	end
+end
+
+function UIInventory:On_CC_Mouse2(bag, idx)
+	-- Start or Hide picker
+	self:Picker_Toggle(bag, idx)
+	
+	local obj = self.CC[bag]:GetObj(idx)
+	if (not obj) then
+		self:Print(nil, "Callback On_CC_Mouse2 | no object recieved!", bag, idx)
+		return
+	end
+	
+	-- When interacting with item picker, get parent cell bag and index
+	bag, idx = self:Picker_Ownership(bag, idx, obj)
+	
+	self:Print(nil, "Callback On_CC_Mouse2 | bag: %s - idx: %s", bag, idx)
+	
+	if (not self.CC[bag].showcase) then
+		self:InitProperties(obj, bag)
+	end
+end
+
+function UIInventory:On_CC_Add(bag, idx, on_area)
+	self:Print(nil, "Callback On_CC_Add | bag: %s - idx: %s - on_area", bag, idx, on_area)
+	
+	-- Update info
+	self.update_info = true
+end
+
+function UIInventory:On_CC_Remove(bag, idx, on_area) -- after cell removal!
+	self:Print(nil, "Callback On_CC_Remove | bag: %s - idx: %s - on_area", bag, idx, on_area)
+	
+	-- Update info
+	self.update_info = true
+end
+
+function UIInventory:On_CC_Trasfer(bag_from, bag_to, idx_from, idx_to, obj)
+	self:Print(nil, "Callback On_CC_Trasfer | bag_from: %s - bag_to: %s - idx_from: %s - idx_to: %s", bag_from, bag_to, idx_from, idx_to)
+	
+	-- Special case for item picker
+	local cc = self.CC["picker"]
+	if cc:IsShown() and (cc.parent.bag == bag_from) then
+		cc:RemoveItem(obj)
+	end
+	
+	-- Update info
+	self.update_info = true
+end
+
+
+-- Cell management
+function UIInventory:On_Item_Exchange(npc_from, npc_to, obj)
+	npc_from:transfer_item(obj, npc_to)
+	
+	self:On_Item_Update()
+end
+
+function UIInventory:On_Item_Update()
+	self:Print(nil, "On_Item_Update")
+
+	-- Update info
+	self.tg_inv = time_global() - 30
+	self.update_info = true
+end
+
+
+-- Technical
+function UIInventory:PlaySND(snd, vol)
+	self:Print(nil, "PlaySND")
+	
+	-- Anti sound spam
+	local tg = time_global()
+	if self.tg_play and (tg - self.tg_play < 500) then
+		return
+	end
+	self.tg_play = tg
+	
+	snd:play(db.actor,0,sound_object.s2d)
+	snd.volume = vol or 1
+end
+
+function UIInventory:SetHint(text, pos)
+	if (not text) then
+		self.tg_hint = time_global()
+		self.hint_wnd:Show(false)
+		return
+	end
+	
+	if (time_global() < self.tg_hint + self.tg_hint_step) then
+		return
+	end
+	
+	self.hint_wnd:Show(true)
+	self.hint_wnd_text:SetText(text)
+	self.hint_wnd_text:AdjustHeightToText()
+	
+	local w = self.hint_wnd:GetWidth()
+	w = w >= 150 and w or 150
+	local h = self.hint_wnd_text:GetHeight()+44
+	h = h >= 265 and h or 265
+	self.hint_wnd:SetWndSize(vector2():set(w,h))
+	
+	pos = pos or GetCursorPosition()
+	pos.y = pos.y - self.hint_wnd:GetHeight()
+	pos.x = pos.x - self.hint_wnd:GetWidth()
+	self.hint_wnd:SetWndPos(pos)
+	
+	FitInRect(self.hint_wnd,Frect():set(0,0,1024,768),0,100)
+end
+
+function UIInventory:Update()
+	CUIScriptWnd.Update(self)
+	
+	-- Update all info: weight/prices/slots/bags/stats
+	self:UpdateInfo()
+
+	-- Update stats cycle
+	if (time_global() > self.tg_stats) then
+		self.tg_stats = time_global() + self.tg_stats_step
+		self:UpdateStats()
+	end
+	
+	-- Reinit loot mode (special case for boxes because they spawn items after opening inventory)
+	if self.box_init_update.state and (time_global() > self.box_init_update.tg) then
+		self:LMode_Init( self:GetPartner() )
+	end
+
+	-- More GUI are opened at once, distable inventory showcase elements
+	if Overlapped_UI() then
+		self:Picker_Toggle()
+		self.item_info:Update()
+		self.upgr_info:Update()
+		self:SetHint(false)
+		return
+	end
+	
+	-- Update upgrades info box
+	local hide_upgr_info = true
+	if (self.mode == "repair") and self.upgr.id then
+		for ii,ele in pairs(self.upx) do
+			if ele.base:IsShown() and ele.btn:IsCursorOverWindow() then
+				self.upgr_info:Update(ele.section, ele.prereq, ele.btn:GetCheck())
+				hide_upgr_info = false
+				break
+			end
+		end
+	end
+	if hide_upgr_info then
+		self.upgr_info:Update()
+	end
+	
+	-- Updating item info box and item cell containers
+	self.found_cell = false
+	local no_info = self.item_props:IsShown() or (self.item_in_hold and true or false)
+	for name,cc in pairs(self.CC) do
+		if cc:IsShown() then
+			-- We don't want to trigger info box for cells belong to bag below picker area
+			self.found_cell = cc:Update(self.item_info, no_info) or self.found_cell
+		end
+	end
+
+	-- Unhighlight all cells if no cell is focused on
+	if (self.found_cell) then
+		self:SetHint(false)
+		self:Picker_Update()
+		return
+	else
+		self.item_info:Update()
+		self:UnHighlight_All()
+	end
+	local show_hint = not self:Picker_Update()
+	
+	-- Hint
+	for name,v in pairs(self.stat) do
+		if show_hint and v and v.bar and v.bar:IsCursorOverWindow() then
+			local str = self.stat_list[name].hint
+			if str then
+				self:SetHint( game.translate_string(str) )
+			end
+			return
+		end
+	end
+	self:SetHint(false)
+end
+
+function UIInventory:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (res == false) then
+		for bag, cc in pairs(self.CC) do
+			if cc:IsShown() then
+				cc:OnKeyboard(dik, keyboard_action)
+			end
+		end
+		
+		if keyboard_action == E_RELEASE then
+		
+			-- This is needed to close the picker when player press mouse 1 elsewhere
+			if dik == K_M1 or dik == K_M2 then
+				if (not self:Picker_IsFocused()) and (self.tg_m1 + 25 < time_global()) then
+					self:Picker_Toggle(self.hover.bag, self.hover.idx)
+				end
+				
+			-- Take/Put all (SHIFT + T/P)
+			elseif (self.mode == "loot") and self.holding_shift then
+				if (dik == DIK_keys.DIK_P) then
+					self:LMode_PutAll()
+				
+				elseif (dik == DIK_keys.DIK_T) then
+					self:LMode_TakeAll()
+				end
+				
+			-- Refresh
+			elseif dik == DIK_keys.DIK_F5 then
+				if self.mode == "inventory" then
+					self:IMode_Init()
+				elseif self.mode == "loot" then
+					self:LMode_Init(self:GetPartner())
+				elseif self.mode == "trade" then
+					self:TMode_Init(self:GetPartner())
+				elseif self.mode == "repair" then
+					self:RMode_Init(self:GetPartner())
+				end
+			
+			------------------------------
+			elseif dik == K_CTRL then
+				self.holding_ctrl = false
+			elseif dik == K_SHFT then
+				self.holding_shift = false
+			end
+			------------------------------
+			
+		elseif keyboard_action == E_PRESS then
+			local bind = dik_to_bind(dik)
+			
+			------------------------------
+			if dik == K_CTRL then
+				self.holding_ctrl = true
+			elseif dik == K_SHFT then
+				self.holding_shift = true
+			------------------------------
+			
+			-- Exit
+			elseif (bind == key_bindings.kINVENTORY) or (bind == key_bindings.kUSE) then
+				if keybind_pass() then
+					self:Close()
+				end
+			
+			-- Exit
+			elseif dik == DIK_keys.DIK_ESCAPE then
+				self:Close()
+				
+			-- Sort tabs
+			else
+				for i=1,#self.sort_btn do
+
+					if (dik == DIK_keys["DIK_" .. i]) or (dik == DIK_keys["DIK_NUMPAD" .. i]) or i==10 and ((dik == DIK_keys["DIK_0" ]) or (dik == DIK_keys["DIK_NUMPAD0"])) then
+--[[Bartoche70 for my addon Bart's New Sorting Tabs --> To add a quick access for the tenth tab, 0 or keypad 0
+					--if (dik == DIK_keys["DIK_" .. i]) or (dik == DIK_keys["DIK_NUMPAD" .. i]) then
+--]]						
+						self:On_Sort(i,true)
+						self:On_Sort(i)
+						break
+					end
+				end
+			end
+		end
+	end
+	return res
+end
+
+function UIInventory:Close()
+	self:Print(nil, "Close")
+	
+	-- Sound effect
+	self:PlaySND(snd_close)
+	
+	self:HideDialog()
+	self:Show(false)
+	
+	change_last_mode(0)
+
+	Unregister_UI("UIInventory")
+end
+
+function UIInventory:Print(mark,fmt,...)
+	--printf( (mark or "/") .. " UIInventory | " .. fmt, ...)
+end
+
+
+-------------------------------------------------------------------
+-- Utilities
+-------------------------------------------------------------------
+function func_index(t,a,b)
+	return (t[a].index) < (t[b].index)
+end
+
+function overrides()
+
+	_G.hide_hud_inventory = ui_inventory.hide_actor_menu
+	actor_menu_inventory.CUIActorMenu_OnHideActorMenu = ui_inventory.hide_inventory
+	
+	-- Get inventory menu
+	_G.GetActorMenu = function()
+		if (not GUI) then
+			GUI = UIInventory()
+		end
+		return GUI
+	end
+	
+	ui_companion_inv.start = function(npc)
+		start("loot", npc)
+	end
+end
+
+function hide_actor_menu()
+	if GUI and GUI:IsShown() then
+		GUI:Close()
+		return true
+	end
+	local hud = get_hud()
+	if (hud) then
+		hud:HideActorMenu()
+		return true
+	end
+	return false
+end
+
+function hide_inventory()
+	if GUI and GUI:IsShown() then
+		GUI:Close()
+	end
+end
+
+function change_last_mode(mode)
+	actor_menu.actor_menu_mode(mode)
+end
+
+function is_enabled()
+	return enable_feature
+end
