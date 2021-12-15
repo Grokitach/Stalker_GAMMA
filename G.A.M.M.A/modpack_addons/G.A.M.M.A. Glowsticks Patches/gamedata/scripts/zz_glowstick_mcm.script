@@ -1,0 +1,865 @@
+----------------------------------------------------------------------------------------------------
+-- Glowstick Script made by Lucy c:
+----------------------------------------------------------------------------------------------------
+local despawn_time = 120 -- Time (in seconds) to despawn a glowstick after it stopped emitting light
+local enable_bs_mm_flicker = false -- Will be overwritten by MCM setting if MCM is installed
+local throw_force = 8000 -- Will be overwritten by MCM setting if MCM is installed
+local throw_key = key_bindings.kUSE -- Will be overwritten by MCM setting if MCM is installed
+local glowstick_stash_chance = 0.1 -- Will be overwritten by MCM setting if MCM is installed
+local glowstick_loot_chance = 1 -- Will be overwritten by MCM setting if MCM is installed
+----------------------------------------------------------------------------------------------------
+
+local glowsticks = {}
+
+local press_begin = 0
+local last_det_state = 0
+local next_gs_upd = 0
+local throw_time_after = 0
+local active_gs_drain = 0
+
+function actor_on_hud_animation_end(item, section, motion, state, slot)
+	if (string.find(section, "glowstick")) then
+	
+		if (motion == "anm_throw_stick") then
+			
+			local function hide_anm(sec)
+				game.play_hud_motion(1, "device_glowstick_hud_base", "anm_throw_hide", true, 2)
+				equip_next(sec)
+				return true
+			end
+			
+			CreateTimeEvent("glowstick","hide_anm",0.01,hide_anm,item:section())
+			alife_release_id(item:id())
+			return
+		end
+	
+		if (state == 1) then
+			local speed = ((motion == "anm_show_fast" or "anm_zoom_show_fast") and 2 or 1)
+			item:play_hud_motion(string.find(motion, "zoom") and "anm_zoom_show_real" or "anm_show_real", false, 0, speed, 0)
+		end
+	end
+end
+
+function actor_on_update()
+	local actor = db.actor
+	local det = actor:active_detector()
+	
+	if (det) then
+	
+		if (time_global() > next_gs_upd) then
+			if (string.find(det:section(), "glowstick")) then
+				if (det:condition() > 0.01) then
+					local new_c = clamp(det:condition() - active_gs_drain, 0.01, 0.9999)
+					det:set_condition(new_c)
+				end
+			end
+			
+			next_gs_upd = time_global() + 1000
+		end
+		
+		if (det:get_state() ~= last_det_state) then
+			last_det_state = det:get_state()
+			active_gs_drain = ini_sys:r_float_ex(det:section(), "power_drain", 0.001)
+		
+			-- Makes the glowstick light up before the draw animation ended
+			if (string.find(det:section(), "glowstick")) then
+				if (det:get_state() == 1 and axr_main.weapon_is_zoomed) then
+					det:switch_state(0)
+					det:play_hud_motion("anm_zoom_show_real", false, 0, 1, 0)
+				end
+			-- Ugly fix for the broken flashlight draw animation
+			elseif (string.find(det:section(), "flashlight")) then
+				if (det:get_state() == 1 and not axr_main.weapon_is_zoomed) then
+					local prev_con = det:condition()
+					det:set_condition(0.001)
+					det:switch_state(0)
+					local tm = det:play_hud_motion("anm_show", false, 1, 1, 0) / 1000
+					local function flashlight_fix(id,con_d)
+						local obj = level.object_by_id(id)
+						if (obj) then
+							obj:set_condition(con_d)
+						end
+						return true
+					end
+					CreateTimeEvent("glowstick","flashlight_fix",clamp(tm-0.5,0.1,999),flashlight_fix,det:id(),prev_con)
+				end
+			end
+		end
+		
+		if (press_begin ~= 0) then
+		
+			local shift_pressed = (key_state(DIK_keys.DIK_LSHIFT) == 1) or (key_state(DIK_keys.DIK_RSHIFT) == 1)
+		
+			if (det:get_state() ~= 0 or shift_pressed or not is_empty(_GUIs) or not game.hud_motion_allowed() or game.only_movekeys_allowed() or not string.find(det:section(), "glowstick")) then
+				press_begin = 0
+				return 
+			end
+		
+			if (time_global() > press_begin + 250) then
+
+				local rand = math.random(1,4)
+				
+				local tm = det:play_hud_motion("anm_throw_stick", true, 0, 4, 0) / 1000
+				level.add_cam_effector("camera_effects\\switch\\strong"..rand..".anm", 13370, false, '')
+				game.play_hud_anm("script\\gasmask.anm", 0, 0.6, 0.35, false)
+				game.only_allow_movekeys(true)
+				press_begin = 0
+				
+				CreateTimeEvent("glowstick","drop",tm-0.2,spawn_glowstick,det:id(),true)
+				
+				return
+			end
+		end
+	end
+end
+
+function spawn_glowstick(id, throw)
+
+	if (not id or not alife_object(id)) then return true end
+	local itm = level.object_by_id(id)
+	if (not itm or (not throw and itm:parent())) then return true end
+
+	local actor = db.actor
+	local section = itm:section()
+	local pos = actor:bone_position(throw and "eye_left" or "bip01_l_hand")
+	pos.y = pos.y + 0.1
+	local obj = alife_create("lights_glowstick", pos, actor:level_vertex_id(), actor:game_vertex_id())
+	
+	if (not obj) then 
+		printf("!Couldn't spawn Glowstick!")
+		return true
+	end
+	
+	local data = utils_stpk.get_lamp_data(obj)
+	
+	if (not data) then 
+		printf("!Couldn't get Glowstick data!")
+		return true
+	end
+	
+	local angle = device().cam_dir
+	angle.x = angle.x + math.random(-5,5)
+	angle.y = angle.y + math.random(-5,5)
+	angle.z = angle.z + math.random(-5,5)
+	obj.angle = angle
+	
+	local con_d = itm:condition()
+	
+	if (not throw) then
+		alife_release_id(itm:id())
+	end
+	
+	local light_section = ini_sys:r_string_ex(section, "light_section", "glowstick_definition")
+	local hud_section = ini_sys:r_string_ex(section, "hud", "device_glowstick_hud")
+	
+	data.visual_name = ini_sys:r_string_ex(section, "visual", "dynamics\\devices\\dev_glowstick\\dev_glowstick_glow")
+	data.light_flags = 45 -- Change to 47 for shadows
+	
+	-- Volumetric light
+	if (ini_sys:r_bool_ex(light_section, "volumetric", false)) then
+		data.light_flags = data.light_flags + 64 
+		
+		data.volumetric_quality = ini_sys:r_float_ex(light_section, "volumetric_quality", 0.5)
+		data.volumetric_intensity = ini_sys:r_float_ex(light_section, "volumetric_intensity", 0.5)
+		data.volumetric_distance = ini_sys:r_float_ex(light_section, "volumetric_distance", 0.5)
+	end
+	
+	-- Color
+	local color_s = ini_sys:r_string_ex(light_section, "color_r2", "0.0,0.4,0.3,0.8")
+	local _s = str_explode(color_s,",")
+	
+	for i=1,#_s do
+		_s[i] = clamp(round(tonumber(_s[i]) * 255), 0, 255)
+	end
+	
+	local function lshift(x, by)
+		return x * 2 ^ by
+	end
+	
+	data.main_color = lshift(bit_and(_s[4],0xff), 24) + lshift(bit_and(_s[1],0xff), 16) + lshift(bit_and(_s[2],0xff), 8) + bit_and(_s[3],0xff)
+	data.main_brightness = con_d <= 0.01 and 0 or (_s[1]/255 + _s[2]/255 + _s[3]/255) / 3 + 1
+	
+	data.main_color_animator = ini_sys:r_string_ex(light_section, "color_animator", "empty")
+	data.main_bone = ini_sys:r_string_ex(hud_section, "fire_bone", "light_bone_2")
+	data.main_range = ini_sys:r_float_ex(light_section, "range_r2", 15)
+	
+	glowsticks[obj.id] = {section, con_d}
+	
+	utils_stpk.set_lamp_data(data, obj)
+	
+	local function applyForce(id,throw)
+		local gl = level.object_by_id(id)
+		if (not gl) then return false end
+		
+		local dir = device().cam_dir
+		dir:mul(throw and throw_force or 100)
+		gl:get_physics_shell():apply_force(dir.x, dir.y, dir.z)
+		return true
+	end
+	
+	CreateTimeEvent("glowstick","throw",0,applyForce,obj.id,throw)
+	
+	return true
+end
+
+function actor_on_item_drop(itm)
+	if (not itm or not alife_object(itm:id())) then return end
+	if (not string.find(itm:section(),"glowstick")) then return end
+	CreateTimeEvent("glowstick","drop",0.01,spawn_glowstick,itm:id(),false)
+end
+
+function actor_on_first_update()
+	
+	for n,p in pairs(glowsticks) do
+		if glowsticks[n][2] <= 0.01 then
+			if (alife_object(n)) then
+				alife_release_id(n)
+			end
+			glowsticks[n] = nil
+		end
+	end
+	
+	throw_time_after = game.get_motion_length("device_glowstick_hud_base", "anm_throw_hide", 2.5) / 1000
+	
+	if (ui_mcm) then 
+		enable_bs_mm_flicker = ui_mcm.get("glowsticks/enable_bs_mm_flicker")
+		throw_force = ui_mcm.get("glowsticks/throw_force") * 1000
+		throw_key = tonumber(ui_mcm.get("glowsticks/throw_key"))
+		glowstick_stash_chance = ui_mcm.get("glowsticks/stash_chance")
+		glowstick_loot_chance = ui_mcm.get("glowsticks/loot_chance")
+	end
+end
+
+function equip_next(section)
+	local actor = db.actor
+	local next = actor:object(section)
+	
+	local function activate_detector()
+		game.only_allow_movekeys(false)
+		db.actor:show_detector()
+		return true
+	end
+	
+	if (next) then
+		actor:move_to_slot(next,9)
+	else
+		local function search(temp, item)
+			if (item and string.find(item:section(), "glowstick") and ini_sys:r_string_ex(item:section(), "class", nil) == "D_FLALIT") then
+				actor:move_to_slot(item,9)
+				return true
+			end
+		end
+		
+		actor:iterate_ruck(search)
+	end
+	
+	CreateTimeEvent("glowstick","draw_next",throw_time_after+0.3,activate_detector)
+	
+	return true
+end
+
+function _draw_detector()
+	db.actor:show_detector()
+	return true
+end
+
+function try_draw_on_take(id)
+
+	local actor = db.actor
+
+	if (actor:item_in_slot(9)) then return true end
+	if (not actor:object_id(id)) then return true end
+	actor:move_to_slot(actor:object_id(id),9)
+	
+	local itm = actor:active_item()
+	if (itm) then
+		local slot = ini_sys:r_s32(itm:section(), "slot")
+		if (slot ~= 0 and slot ~= 1 and slot ~= 5) then return true end
+	end
+	
+	local function __draw_detector()
+		db.actor:show_detector()
+		return true
+	end
+
+	CreateTimeEvent("glowstick","draw_next",0.1,__draw_detector)
+	return true
+end
+
+function on_key_press(key)
+	
+	local bind = dik_to_bind(key)
+	
+	if (bind == throw_key) then
+		press_begin = time_global()
+	end	 
+	
+	if (bind == key_bindings.kUSE) then
+		
+		local function iter(obj)
+			if (obj and obj:section() == "lights_glowstick") then
+				local pos2d = game.world2ui(obj:position())
+				if (pos2d.x < 350 or pos2d.x > 750 or pos2d.y < 250 or pos2d.y > 500) then return false end
+				if (not glowsticks[obj:id()]) then return false end
+				if (not obj:get_hanging_lamp():is_on()) then return false end
+				
+				local section = glowsticks[obj:id()][1] or "device_glowstick"
+				local con_d = glowsticks[obj:id()][2]
+				local newid = alife_create_item(section, db.actor, {cond = con_d}).id
+				glowsticks[obj:id()] = nil
+				alife_release_id(obj:id())
+				
+				CreateTimeEvent("glowstick","try_draw_on_take",0.1,try_draw_on_take,newid)
+				
+				-- Compatibility with FeelFried's pickup animation :3
+				if (take_item_anim and take_item_anim.actor_on_item_take) then 
+					local actor = db.actor
+					if (not actor:item_in_slot(9)) then 
+						local itm = actor:active_item()
+						if (itm) then
+							local slot = ini_sys:r_s32(itm:section(), "slot")
+							if (slot == 0 or slot == 1 or slot == 5) then return true end -- Don't play item take animation if we're going to draw the next glowstick
+						end
+					end
+					take_item_anim.actor_on_item_take(obj)
+				end
+				return true
+			end
+		end
+		
+		level.iterate_nearest(db.actor:position(), 2, iter)
+	end
+end
+
+function on_key_release(key)
+
+	local bind = dik_to_bind(key)
+	
+	if (bind == throw_key) then
+		press_begin = 0
+	end
+end
+
+function save_state(MDATA)
+	MDATA.glowsticks = glowsticks
+end
+
+function load_state(MDATA)
+	glowsticks = MDATA.glowsticks or {}
+end
+
+RegisterScriptCallback("actor_on_hud_animation_end", actor_on_hud_animation_end)
+RegisterScriptCallback("actor_on_item_drop", actor_on_item_drop)
+RegisterScriptCallback("actor_on_update", actor_on_update)
+RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+RegisterScriptCallback("on_key_press", on_key_press)
+RegisterScriptCallback("on_key_release", on_key_release)
+RegisterScriptCallback("save_state", save_state)
+RegisterScriptCallback("load_state", load_state)
+
+----------------------------------------------------------------------------------------------------
+-- Glowstick binder
+----------------------------------------------------------------------------------------------------
+function init(obj)
+	obj:bind_object(glowstick_binder(obj))
+end
+
+----------------------------------------------------------------------------------------------------
+class "glowstick_binder" (object_binder)
+function glowstick_binder:__init(obj) super(obj)
+	
+	self.first_update = true
+	self.next_update = time_global()
+end
+
+function glowstick_binder:update(delta)
+	
+	if (self.first_update) then
+		local con_d = glowsticks[self.object:id()] and glowsticks[self.object:id()][2] or 0.01
+		if (con_d > 0.01) then
+			self.object:get_hanging_lamp():turn_on()
+			self.object:set_tip_text("inventory_item_use")
+		end
+		
+		self.power_drain = ini_sys:r_float_ex(glowsticks[self.object:id()] and glowsticks[self.object:id()][1] or "device_glowstick", "power_drain", 0.001)
+		self.first_update = nil
+	end
+	
+	if (time_global() > self.next_update ) then
+		if (not glowsticks[self.object:id()]) then return end
+		
+		local con_d = glowsticks[self.object:id()][2]
+		
+		if (con_d > 0.01) then
+			local new_c = clamp(con_d - self.power_drain, 0.01, 0.9999)
+			glowsticks[self.object:id()][2] = new_c
+			
+			if (not self.object:get_hanging_lamp():is_on()) then
+				self.object:set_tip_text_default()
+				self.next_update = time_global() + 1000 * despawn_time
+				con_d = 0.01
+				return
+			end
+		elseif (self.object:get_hanging_lamp():is_on()) then
+			self.object:get_hanging_lamp():turn_off()
+			self.object:set_tip_text_default()
+			self.next_update = time_global() + 1000 * despawn_time
+			return
+		else
+			glowsticks[self.object:id()] = nil
+			alife_release_id(self.object:id())
+		end
+		
+		self.next_update = time_global() + 1000
+	end
+end
+
+function glowstick_binder:net_destroy()
+	glowsticks[self.object:id()] = nil
+end
+
+----------------------------------------------------------------------------------------------------
+
+function glowstick_binder:net_save_relevant()
+	return true
+end
+
+function glowstick_binder:save(packet)
+end
+
+function glowstick_binder:load(reader)
+end
+
+function glowstick_binder:reload(section)
+end
+
+function glowstick_binder:reinit()
+end
+
+function glowstick_binder:net_spawn(data)
+end
+
+----------------------------------------------------------------------------------------------------
+-- Mod Configuration Menu
+----------------------------------------------------------------------------------------------------
+
+function on_mcm_load()
+	options = 
+	{ 
+		id = "glowsticks", sh = true ,gr=
+		{
+			{ id = "title", type = "slide", link = "Glowstick_Banner.dds", size = {706,50}, spacing = 20 },
+			{ id = "enable_bs_mm_flicker", type = "check", val = 1, def = false },
+			{ id = "throw_force", type="track", val=2, min=5, max=20, step=1, def=8 },
+			{ id = "stash_chance", type="track", val=2, min=0.01, max=0.5, step=0.01, def=0.1 },
+			{ id = "loot_chance", type="track", val=2, min=0.1, max=2, step=0.1, def=1 },
+			{ id = "throw_key", type="list", val=0, no_str = true , def="kb_use", content = 
+				{
+					{tostring(key_bindings.kUSE),"kb_use"},
+					{tostring(key_bindings.kWPN_FUNC),"kb_func"},
+				},
+			},
+		}
+	}
+		
+	return options
+end
+
+function on_option_change()
+	if (ui_mcm) then
+		enable_bs_mm_flicker = ui_mcm.get("glowsticks/enable_bs_mm_flicker")
+		throw_force = ui_mcm.get("glowsticks/throw_force") * 1000
+		throw_key = tonumber(ui_mcm.get("glowsticks/throw_key"))
+		glowstick_stash_chance = ui_mcm.get("glowsticks/stash_chance")
+		glowstick_loot_chance = ui_mcm.get("glowsticks/loot_chance")
+	end
+end
+
+RegisterScriptCallback("on_option_change",on_option_change)
+
+----------------------------------------------------------------------------------------------------
+-- Miracle Machine + Brain Scorcher lights flicker (optional)
+----------------------------------------------------------------------------------------------------
+
+base_get_light_flicker = level_environment.get_light_flicker()
+
+function level_environment.get_light_flicker()
+
+	if (enable_bs_mm_flicker) then
+		local levelname = level.present() and level.name() or nil
+		
+		-- Miracle Machine
+		if (levelname == "l08u_brainlab" and not has_alife_info("yan_labx16_switcher_primary_off")) then
+			return true
+			
+		-- Brain Scorcher
+		elseif (levelname == "l10u_bunker" and not has_alife_info("bar_deactivate_radar_done")) then
+			return true
+		end
+	end
+
+	return base_get_light_flicker
+end
+
+----------------------------------------------------------------------------------------------------
+-- Trader Autoinject (thx arty <3) + Dead Body Loot + New Game Loadouts + Stashes
+----------------------------------------------------------------------------------------------------
+
+local trade_table = {
+
+	["bandit"] = {
+		[1] = {
+			["device_glowstick_orange"] = 1
+		},
+		[2] = {
+			["device_glowstick_orange"] = 2,
+			["device_glowstick_red"] = 1
+		},
+		[3] = {
+			["device_glowstick_orange"] = 3,
+			["device_glowstick_red"] = 2
+		},
+	},
+	["dolg"] = {
+		[1] = {
+			["device_glowstick_red"] = 1
+		},
+		[2] = {
+			["device_glowstick_red"] = 2
+		},
+		[3] = {
+			["device_glowstick_red"] = 3
+		},
+	},
+	["ecolog"] = {
+		[1] = {
+			["device_glowstick_orange"] = 1,
+			["device_glowstick_blue"] = 1
+		},
+		[2] = {
+			["device_glowstick_orange"] = 2,
+			["device_glowstick_blue"] = 2
+		},
+		[3] = {
+			["device_glowstick_orange"] = 3,
+			["device_glowstick_blue"] = 3
+		},
+	},
+	["freedom"] = {
+		[1] = {
+			["device_glowstick"] = 1
+		},
+		[2] = {
+			["device_glowstick"] = 2
+		},
+		[3] = {
+			["device_glowstick_orange"] = 2,
+			["device_glowstick"] = 3
+		},
+	},
+	["killer"] = {
+		[1] = {
+			["device_glowstick_blue"] = 1
+		},
+		[2] = {
+			["device_glowstick_blue"] = 2
+		},
+		[3] = {
+			["device_glowstick_blue"] = 3
+		},
+	},
+	["army"] = {
+		[1] = {
+			["device_glowstick_red"] = 1
+		},
+		[2] = {
+			["device_glowstick_red"] = 2
+		},
+		[3] = {
+			["device_glowstick_red"] = 3
+		},
+	},
+	["monolith"] = {
+		[1] = {
+			["device_glowstick_blue"] = 1
+		},
+		[2] = {
+			["device_glowstick_blue"] = 2
+		},
+		[3] = {
+			["device_glowstick_blue"] = 3
+		},
+	},
+	["greh"] = {
+		[1] = {
+			["device_glowstick_orange"] = 1
+		},
+		[2] = {
+			["device_glowstick_orange"] = 2,
+			["device_glowstick_red"] = 1
+		},
+		[3] = {
+			["device_glowstick_orange"] = 3,
+			["device_glowstick_red"] = 2
+		},
+	},
+	["stalker"] = {
+		[1] = {
+			["device_glowstick"] = 1
+		},
+		[2] = {
+			["device_glowstick"] = 2
+		},
+		[3] = {
+			["device_glowstick"] = 3
+		},
+	},
+	["csky"] = {
+		[1] = {
+			["device_glowstick_blue"] = 1
+		},
+		[2] = {
+			["device_glowstick_blue"] = 2
+		},
+		[3] = {
+			["device_glowstick_blue"] = 3
+		},
+	},
+	["isg"] = {
+		[1] = {
+			["device_glowstick"] = 1
+		},
+		[2] = {
+			["device_glowstick"] = 2,
+		},
+		[3] = {
+			["device_glowstick"] = 3,
+		},
+	},
+	["renegade"] = {
+		[1] = {
+			["device_glowstick_orange"] = 1
+		},
+		[2] = {
+			["device_glowstick_orange"] = 2,
+			["device_glowstick_red"] = 1
+		},
+		[3] = {
+			["device_glowstick_orange"] = 3,
+			["device_glowstick_red"] = 2
+		},
+	},
+}
+
+-- Trader stuff
+function spawn_glowosticks(npc)
+
+	local is_trader = trader_autoinject.get_trader_type(npc) == trader_autoinject.SUPPLIER
+	if not is_trader then return end
+
+	local community = npc:character_community() or "stalker"
+	local trader_table = trade_table[community] or trade_table["stalker"]
+	local supply_level = clamp(trader_autoinject.supply_level(npc, true) or 1, 1, 3)
+	
+	if trader_table[supply_level] then
+		trader_autoinject.spawn_items(npc, trader_table[supply_level], true)
+	end
+
+end
+
+local loot_table = {
+
+	["bandit"] = {
+		[1] = "device_glowstick_orange",
+		[2] = "device_glowstick",
+	},
+	["dolg"] = {
+		[1] = "device_glowstick_red",
+	},
+	["ecolog"] = {
+		[1] = "device_glowstick_orange",
+		[2] = "device_glowstick",
+		[3] = "device_glowstick_red",
+	},
+	["freedom"] = {
+		[1] = "device_glowstick",
+	},
+	["killer"] = {
+		[1] = "device_glowstick_blue",
+		[2] = "device_glowstick_orange",
+		[3] = "device_glowstick",
+	},
+	["army"] = {
+		[1] = "device_glowstick_red",
+		[2] = "device_glowstick_orange",
+		[3] = "device_glowstick_blue",
+		
+	},
+	["monolith"] = {
+		[1] = "device_glowstick_blue",
+	},
+	["greh"] = {
+		[1] = "device_glowstick_orange",
+	},
+	["stalker"] = {
+		[1] = "device_glowstick_blue",
+		[2] = "device_glowstick_orange",
+		[3] = "device_glowstick_red",
+		[4] = "device_glowstick",
+	},
+	["zombied"] = {
+		[1] = "device_glowstick_orange",
+		[2] = "device_glowstick_blue",
+		[3] = "device_glowstick_red",
+		[4] = "device_glowstick",
+	},
+	["csky"] = {
+		[1] = "device_glowstick_blue",
+		[2] = "device_glowstick_orange",
+		[3] = "device_glowstick_red",
+		[4] = "device_glowstick",
+	},
+	["isg"] = {
+		[1] = "device_glowstick",
+	},
+	["renegade"] = {
+		[1] = "device_glowstick_orange",
+		[2] = "device_glowstick_red",
+	},
+	
+}
+
+local rank_table = {
+	["novice"] 			= 0.05,
+	["trainee"] 		= 0.1,
+	["experienced"] 	= 0.15,
+	["professional"] 	= 0.2,
+	["veteran"] 		= 0.15,
+	["expert"] 			= 0.15,
+	["master"] 			= 0.1,
+	["legend"] 			= 0.1,
+}
+
+local sections_table = {
+	[1] = "device_glowstick",
+	[2] = "device_glowstick_red",
+	[3] = "device_glowstick_blue",
+	[4] = "device_glowstick_orange",
+}
+
+-- Dead body loot stuff
+function spawn_glowostick(npc, npc_rank, npc_comm)
+
+	local spawnchance = math.random()
+	local rank = npc_rank or "novice"
+	local comm = npc_comm or "stalker"
+	local rank_chance = rank_table[rank] or rank_table["novice"]
+	
+	if (spawnchance < rank_chance * glowstick_loot_chance) then
+		local looting_table = loot_table[comm] or loot_table["stalker"]
+		local sec_to_spawn = looting_table[math.random(1,#looting_table)] or "device_glowstick"
+		death_manager.spawn_with_condition(npc, sec_to_spawn, math.random(20,80)/100)
+	end
+	
+end
+
+TraderAuto = trader_autoinject.update
+
+function trader_autoinject.update(npc)
+    TraderAuto(npc)
+    spawn_glowosticks(npc)
+end
+
+SpawnCosmetics = death_manager.spawn_cosmetics
+
+function death_manager.spawn_cosmetics(npc, npc_id, npc_comm, npc_rank, visual, rand_condition)
+    SpawnCosmetics(npc, npc_id, npc_comm, npc_rank, visual, rand_condition)
+    spawn_glowostick(npc, npc_rank, npc_comm)
+end
+
+TrySpawnTreasure = treasure_manager.try_spawn_treasure
+
+function treasure_manager.try_spawn_treasure(box)
+	
+	local id = box:id()
+
+	if not (treasure_manager.caches[id]) then
+		return
+	end
+
+	if not (type(treasure_manager.caches[id]) == "string") then
+		return
+	end
+	
+	if (math.random() < glowstick_stash_chance) then
+		alife_create_item(sections_table[math.random(1,4)], box, {cond_r = {30,70}})
+	end
+	
+	TrySpawnTreasure(box)
+end
+
+_LoadLoadout = ui_mm_faction_select.UINewGame.LoadLoadout
+
+function ui_mm_faction_select.UINewGame.LoadLoadout(self, rand)
+	_LoadLoadout(self, rand)
+	
+	-- Copy existing loadout but remove the flashlight
+	local inv_sect_list = {}
+	local inv_point_list = {}
+	local i_size = 0
+	for idx,ci in pairs(self.CC["inventory"].cell) do
+		if (ci.section ~= "device_flashlight") then
+			i_size = i_size + 1
+			inv_sect_list[i_size] = ci.section
+			inv_point_list[i_size] = 0
+		end
+	end
+	
+	-- Add a glowstick
+	i_size = i_size + 1
+	inv_sect_list[i_size] = loot_table[self.selected_faction][1] or "device_glowstick"
+	inv_point_list[i_size] = 0
+	
+	-- Load the existing faction "shop"
+	i_size = 0
+	local load_sect_list = {}
+	local load_point_list = {}
+	for idx,ci in pairs(self.CC["loadout"].cell) do
+		i_size = i_size + 1
+		load_sect_list[i_size] = ci.section
+		load_point_list[i_size] = ci.flags.info or 0
+	end
+	
+	-- Add glowsticks
+	for i=1,#sections_table do
+		if (sections_table[i] ~= inv_sect_list[#inv_sect_list]) then
+			i_size = i_size + 1
+			load_sect_list[i_size] = sections_table[i]
+			load_point_list[i_size] = 150
+		end
+	end
+	
+	-- Add flashlight
+	i_size = i_size + 1
+	load_sect_list[i_size] = "device_flashlight"
+	load_point_list[i_size] = 300
+	
+	-- Reinit inventories to apply the changes
+	self.CC["inventory"]:Reinit(inv_sect_list, inv_point_list)
+	for idx,ci in pairs(self.CC["inventory"].cell) do
+		if ci:IsShown() then
+			local val = ci.flags.info or 0
+			ci.flags.value = val
+			ci.flags.value_str = game.translate_string("st_mm_new_game_points") .. ": " .. val
+		end
+	end
+	
+	self.CC["loadout"]:Reinit(load_sect_list, load_point_list)
+	for idx,ci in pairs(self.CC["loadout"].cell) do
+		if ci:IsShown() then
+			local val = ci.flags.info or 0
+			ci.flags.value = val
+			ci.flags.value_str = game.translate_string("st_mm_new_game_points") .. ": " .. val
+		end
+	end
+end
