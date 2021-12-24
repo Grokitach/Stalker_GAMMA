@@ -1,0 +1,331 @@
+skills_ini = ini_file_ex("plugins\\skills\\skills_base.ltx")
+skills_levels = {}
+skills_stats = {}
+skills_increments = {}
+options = {}
+
+local death_ini = nil
+local math_random = math.random
+local always_keep_item = {}
+local translate_string = game.translate_string
+local string_gsub = string.gsub
+local parse_keys = utils_data.parse_string_keys
+local str_explode = str_explode
+local is_empty = is_empty
+local random_key = random_key_table
+
+function get_max_weight_coef()
+    local actor = db.actor
+    local tot_weight = actor:get_total_weight()
+    local max_weight = actor:get_actor_max_weight()
+    local outfit = actor:item_in_slot(7)
+    local backpack = actor:item_in_slot(13)
+    max_weight = max_weight + (outfit and outfit:get_additional_max_weight() or 0)
+    max_weight = max_weight + (backpack and backpack:get_additional_max_weight() or 0)
+
+    actor:iterate_belt(function(owner, obj)
+        local c_arty = obj:cast_Artefact()
+        max_weight = max_weight + (c_arty and c_arty:AdditionalInventoryWeight() or 0)
+    end)
+
+    actor:cast_Actor():conditions():BoosterForEach(function(booster_type, booster_time, booster_value)
+        --eBoostMaxWeight
+        if (booster_type == 4) then
+            max_weight = max_weight + booster_value
+        end
+    end)
+    return tot_weight / max_weight
+end
+
+function actor_on_jump()
+    local coef = get_max_weight_coef()
+    increase_skill("endurance",  (1 - coef) * 10)
+    increase_skill("strength", coef * 10)
+end
+
+function actor_on_footstep()
+    local coef = get_max_weight_coef()
+    increase_skill("endurance",  1 - coef)
+    increase_skill("strength", 0.5 * coef)
+end
+
+function creature_on_before_hit(npc, shit, bone_id, flags)
+    if not (shit.draftsman and shit.draftsman:id() == AC_ID) then
+		return 
+	end
+    local wpn = db.actor:active_item()
+    if not wpn then return end
+    if IsWeapon(wpn) and (IsItem("fake_ammo_wpn",wpn:section())) then
+        increase_skill("strength", shit.power * (npc:alive() and 30 or 5))
+        shit.power = shit.power * skills_stats["strength"].melee_damage
+    end
+end
+
+local allowed_hit_types = {
+    [6] = true,
+    [7] = true,
+    [8] = true
+}
+
+function actor_on_before_hit(shit)
+    if shit.power < 0 or not (allowed_hit_types[shit.type]) then return end
+    increase_skill("survival", shit.power * 200)
+    local survival_resistance = skills_stats["survival"].resistance
+	shit.power = shit.power * survival_resistance
+end
+
+
+function update_endurance()
+    local pwb = skills_stats["endurance"].power_loss
+    exec_console_cmd("power_loss_bias " .. tostring(pwb))
+    
+    local speed_modifier = skills_stats["endurance"].speed_modifier
+    speed.add_speed("haruka_endurance_modifier_walk", speed_modifier, false, true)
+end
+
+function update_strength()
+    local skill_weight = skills_stats["strength"].weight_modifier
+	local skill_weight_base = skills_stats["strength"].base_weight
+    weight.add_weight("haruka_strength_modifier_base", skill_weight_base, true)
+    weight.multiply_weight("haruka_strength_modifier_mul", skill_weight, true)
+end
+
+function update_survival()
+    db.actor.bleeding = skills_stats["survival"].bleed_restore
+end
+
+local rank_table = {
+	["novice"]       = 30,
+    ["trainee"]      = 36,
+    ["experienced"]  = 42,
+    ["professional"] = 48,
+    ["veteran"]      = 54,
+    ["expert"]       = 60,
+    ["master"]       = 90,
+    ["legend"]       = 120
+}
+
+function npc_on_death_callback(victim, who)
+    if who and who:id() ~= AC_ID then 
+        return 
+    end
+    local rank = ranks.get_obj_rank_name(victim)
+    if rank and rank_table[rank] then
+        increase_skill("scavenging", rank_table[rank])
+    end
+end
+
+function monster_on_death_callback(victim, who)
+    if who and who:id() ~= AC_ID then 
+        return 
+    end
+    local health = ini_sys:r_string_ex(victim:section(), "Health") or 100
+    increase_skill("survival", health * 0.1)
+end
+
+
+function monster_on_loot_init(victim, loot_table)
+    if is_empty(loot_table) then return end
+    local hunting_skill = skills_stats["survival"].hunting_skill
+    local part = random_key(loot_table)
+    if hunting_skill > 0 then
+        if hunting_skill > math_random(100) then
+            loot_table[part].count = loot_table[part].count + 1
+        end
+    else
+        if -hunting_skill > math_random(100) then
+            loot_table[part].count = loot_table[part].count - 1
+        end
+    end
+end
+
+SpawnCosmetics = death_manager.spawn_cosmetics
+
+function death_manager.spawn_cosmetics(npc, npc_id, npc_comm, npc_rank, visual, rand_condition)
+    SpawnCosmetics(npc, npc_id, npc_comm, npc_rank, visual, rand_condition)
+    CreateTimeEvent("haruka_scavenger", "haruka_scavanger", 0.01, function()
+        scavanger_effect(npc)
+        return true
+    end)
+end
+
+function scavanger_effect(npc)
+    local scavenging_skill = skills_stats["scavenging"].scavenging_skill
+    local itr = scavenging_skill > 0 and function(npc, item)
+        local sec = item and item:section() or false
+        if not sec then return end
+        if scavenging_skill > math_random(100) and not always_keep_item[sec] then
+            if not (IsWeapon(item) or IsOutfit(item) or IsHeadgear(item)) then
+                alife_create_item(sec, npc, {["uses"] = 1, ["cond_r"] = {0.05, 0.2}})
+            end
+        end
+    end 
+    or function(npc, item)
+        local sec = item and item:section() or false
+        if not sec then return end
+        if -scavenging_skill > math_random(100) and not always_keep_item[sec] then
+            alife_release(item)
+        end
+    end 
+    npc:iterate_inventory(itr, npc)
+end
+
+function increase_skill(skill, amount)
+    if amount < 0 then return end
+	local key = "exp_multiplier_" .. skill
+    skills_levels[skill].experience = skills_levels[skill].experience + (amount  * options[key])
+end
+
+local colors = {
+    ["clr_green"] = "%" .. "%c[255,178,236,93]",
+    ["clr_cyan"] = "%" .. "%c[255,119,181,254]",
+    ["clr_red"] = "%" .. "%c[255,175,43,30]",
+    ["clr_yellow"] = "%" .. "%c[255,250,218,94]",
+    ["clr_white"] = "%" .. "%c[255,220,220,220]",
+    ["clr_purple"] = "%" .. "%c[255,138,43,226]"
+}
+
+function level_up_skill(name)
+    skills_levels[name].current_level = skills_levels[name].current_level + 1 
+    local skill = skills_levels[name]
+    local req = skill.requirement
+    skills_levels[name].prev_requirement = req
+    local base = skill.base_requirement
+    local level = skill.current_level
+    skills_levels[name].requirement = req + (base + (base * (level * 0.25)))
+    for stat, v in pairs(skills_stats[name]) do
+        if stat ~= "functor" then
+            skills_stats[name][stat] = skills_stats[name][stat] + skills_increments[name][stat]
+        end
+    end
+    local msg = parse_keys(translate_string("st_new_level_" .. name) , colors)
+    local header = parse_keys(translate_string("st_new_level_header"), {
+        ["name"] = translate_string("st_player_skills_" .. name),
+        ["level"] = level
+    })
+    db.actor:give_game_news(header, msg, "ui_skills_icon_" .. name, 0, 10000)
+    xr_sound.set_sound_play(AC_ID, "pda_tips")
+end
+
+local updated = 0
+local interval = 1000
+
+function update_stats()
+    if time_global() < updated then return end
+    updated = time_global() + interval
+    for skill, stats in pairs(skills_stats) do
+        if stats.functor then
+            exec(stats.functor)
+        end
+    end
+    for skill, stats in pairs(skills_levels) do
+        if (stats.experience > stats.requirement) and (stats.current_level ~= stats.max_level) then
+            level_up_skill(skill)
+        end
+    end
+end
+
+function exec(str)
+    if str then
+		str = str_explode(str,"%.")
+		if str[1] and str[2] and _G[ str[1] ] and _G[ str[1] ][ str[2] ] then
+			_G[ str[1] ][ str[2] ]()
+		else
+			printf("Could not exec function %s", str)
+		end
+	end
+end
+
+function save_state(m_data)
+    m_data.skills_levels = skills_levels
+end
+
+function load_state(m_data)
+    skills_levels = m_data.skills_levels or {}
+end
+
+local get_config = haru_skills_mcm.get_config
+
+function on_option_change()
+    options["exp_multiplier_strength"] = get_config("exp_multiplier_strength")
+    options["exp_multiplier_endurance"] = get_config("exp_multiplier_endurance")
+    options["exp_multiplier_scavenging"] = get_config("exp_multiplier_scavenging")
+    options["exp_multiplier_survival"] = get_config("exp_multiplier_survival")
+end
+
+function on_game_load()
+    death_ini = itms_manager.ini_death
+    local n = death_ini:line_count("keep_items")
+    for i=0,n-1 do
+        local result, id, value	= death_ini:r_line_ex("keep_items",i,"","")
+        if value == "true" then
+            always_keep_item[id] = true
+        end
+    end
+
+    local skills_sections = skills_ini:get_sections(true)
+    for skill, _ in pairs(skills_sections) do
+        local str = str_explode(skill, "_")
+        if str[#str] == "stats" then
+            skills_sections[skill] = nil
+        end
+    end
+    for skill, _ in pairs(skills_sections) do
+        local skills_info = skills_ini:collect_section(skill)
+        for k, v in pairs(skills_info) do
+            skills_info[k] = tonumber(skills_info[k])
+        end
+        if skills_levels[skill] then
+            skills_levels[skill].max_level = skills_info.max_level
+            skills_levels[skill].base_requirement = skills_info.base_requirement
+        else
+            skills_levels[skill] = skills_info
+            skills_levels[skill].current_level = 0
+            skills_levels[skill].prev_requirement = 0
+            skills_levels[skill].experience = 0
+            skills_levels[skill].requirement = skills_levels[skill].base_requirement
+        end
+    end
+
+    for skill, _ in pairs(skills_sections) do
+        local skills_info = skills_ini:collect_section(skill .. "_stats")
+        for k, v in pairs(skills_info) do
+            if k ~= "functor" then
+                skills_info[k] = tonumber(skills_info[k])
+            end
+        end
+        skills_increments[skill] = {}
+        for k, v in pairs(skills_info) do
+            local str = str_explode(k, "_")
+            if str[#str] == "increment" then
+                skills_info[k] = nil
+                skills_increments[skill][string_gsub(k, "_increment", "")] = v
+            end
+        end
+        
+        skills_stats[skill] = {}
+        for stat, val in pairs(skills_info) do
+            if stat ~= "functor" then
+                skills_stats[skill][stat] = val + (skills_increments[skill][stat] * skills_levels[skill].current_level) 
+            else
+                skills_stats[skill][stat] = val
+            end
+        end
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_footstep", actor_on_footstep)
+    RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
+    RegisterScriptCallback("npc_on_before_hit", creature_on_before_hit)
+    RegisterScriptCallback("monster_on_before_hit", creature_on_before_hit)
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
+    RegisterScriptCallback("actor_on_update", update_stats)
+    RegisterScriptCallback("npc_on_death_callback", npc_on_death_callback)
+    RegisterScriptCallback("monster_on_death_callback", monster_on_death_callback)
+    RegisterScriptCallback("monster_on_loot_init", monster_on_loot_init)
+    RegisterScriptCallback("on_game_load", on_game_load)
+    RegisterScriptCallback("on_option_change", on_option_change)
+	on_option_change()
+end
