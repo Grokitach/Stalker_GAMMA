@@ -1,0 +1,187 @@
+-- Hip dialog
+
+
+
+--====================< Preconditions >====================--
+function devushka_1_has()
+    if db.actor:object("wpn_wincheaster1300") then
+        return true
+    end
+    return false
+end
+function devushka_2_has()
+	local cnt = utils_item.get_amount(db.actor, "ammo_12x70_buck")
+    if (cnt >= 20) then
+        return true
+    end
+    return false
+end
+function devushka_31_has()
+    if db.actor:object("af_vyvert") then
+        return true
+    end
+    return false
+end
+function devushka_32_has()
+    if db.actor:object("af_fireball") then
+        return true
+    end
+    return false
+end
+function devushka_33_has()
+    if db.actor:object("af_electra_moonlight") then
+        return true
+    end
+    return false
+end
+function actor_has_tushonka()
+    if db.actor:object("conserva") then
+        return true
+    end
+    return false
+end
+function actor_has_medved()
+    if db.actor:object("detector_advanced") then
+        return true
+    end
+    return false
+end
+function devushka_help_1_has(first_speaker, second_speaker)
+	local item_sections = {
+		["artefact_container"] = 3}
+ 
+	local function calc(temp, item)
+		local sect = item:section()
+		if item_sections[sect] and item_sections[sect]>0 then
+			if item_sections[sect]==1 then
+				item_sections[sect] = nil
+			else
+				item_sections[sect] = item_sections[sect] - 1
+			end
+		end
+	end
+ 
+	db.actor:iterate_inventory(calc, db.actor)
+	return next(item_sections)==nil
+end 
+function devushka_help_2_has(first_speaker, second_speaker)
+	local item_sections = {
+		["medkit_ai3"] = 2}
+ 
+	local function calc(temp, item)
+		local sect = item:section()
+		if item_sections[sect] and item_sections[sect]>0 then
+			if item_sections[sect]==1 then
+				item_sections[sect] = nil
+			else
+				item_sections[sect] = item_sections[sect] - 1
+			end
+		end
+	end
+ 
+	db.actor:iterate_inventory(calc, db.actor)
+	return next(item_sections)==nil
+end
+
+function devushka_3_has_money(first_speaker, second_speaker)
+    return first_speaker:money() >= 60000
+end
+
+
+
+--====================< Actions >====================--
+function give_hip_tushonka(first_speaker, second_speaker)
+    dialogs.relocate_item_section_from_actor(first_speaker, second_speaker, "conserva")
+end
+function give_devushka_medved(first_speaker, second_speaker)
+    dialogs.relocate_item_section_from_actor(first_speaker, second_speaker, "detector_advanced")
+end
+function devushka_1_done(first_speaker, second_speaker)
+    dialogs.relocate_item_section_from_actor(first_speaker, second_speaker, "wpn_wincheaster1300")
+end
+function devushka_2_done(first_speaker, second_speaker)
+	local npc = dialogs.who_is_npc(first_speaker, second_speaker)
+    item_weapon.relocate_ammo_from_actor(db.actor, npc, "ammo_12x70_buck", 20)
+end
+function devushka_31_done(first_speaker, second_speaker)
+    dialogs.relocate_item_section_from_actor(first_speaker, second_speaker, "af_vyvert")
+end
+function devushka_32_done(first_speaker, second_speaker)
+    dialogs.relocate_item_section_from_actor(first_speaker, second_speaker, "af_fireball")
+end
+function devushka_33_done(first_speaker, second_speaker)
+    dialogs.relocate_item_section_from_actor(first_speaker, second_speaker, "af_electra_moonlight")
+end
+function devushka_help_1_done(first_speaker, second_speaker)
+    dialogs.relocate_item_section_from_actor(first_speaker, second_speaker, "artefact_container", 3)
+end
+function devushka_help_2_done(first_speaker, second_speaker)
+    dialogs.relocate_item_section_from_actor(first_speaker, second_speaker, "medkit_ai3", 2)
+end
+function devushka_4_done(first_speaker, second_speaker)
+    dialogs.relocate_item_section(second_speaker, "beer", "in")
+end
+function devushka_5_done(first_speaker, second_speaker)
+    dialogs.relocate_item_section(second_speaker, "marijuana", "in")
+end
+
+function poluchit_po_litsu(actor, npc)                                            
+    npc:force_set_goodwill(-5000, actor)
+end
+function hip_moovie_1(npc, actor)
+	npc:stop_talk()
+	actor:stop_talk()
+	xr_effects.enable_ui(db.actor, db.actor)	  
+	game.start_tutorial("hip_1")
+end
+
+function devushka_3_done_money(first_speaker, second_speaker) 
+ 	dialogs.relocate_money_from_actor(first_speaker, second_speaker, 60000)
+	xr_effects.inc_faction_goodwill_to_actor(db.actor, nil, {"stalker", 50})
+end
+
+function devushka_1_info()
+    news_manager.send_tip(db.actor, game.translate_string("st_hip_news_1"), 3, "hip", 11000, 1)
+end
+function devushka_2_info()
+    news_manager.send_tip(db.actor, game.translate_string("st_hip_news_2"), 3, "deth", 11000, 1)
+	news_manager.send_tip(db.actor, game.translate_string("st_hip_news_3"), 10, "hip", 11000, 1)
+end
+function devushka_3_info()
+    news_manager.send_tip(db.actor, game.translate_string("st_hip_news_4"), 3, "barman", 11000, 1)
+	news_manager.send_tip(db.actor, game.translate_string("st_hip_news_5"), 10, "hip", 11000, 1)
+end
+function devushka_4_info()
+    news_manager.send_tip(db.actor, game.translate_string("st_hip_news_6"), 3, "freedom2", 11000, 1)
+	news_manager.send_tip(db.actor, game.translate_string("st_hip_news_7"), 10, "hip", 11000, 1)
+end
+
+function devushka_give_present(first_speaker, second_speaker)
+	dialogs.relocate_item_section(second_speaker, "af_medusa_af_aam", "in", 1) 
+end
+
+function barmen_give_container(first_speaker, second_speaker)
+	dialogs.relocate_item_section(second_speaker, "artefact_container", "in", 3) 
+end
+function mikluha_give_medkit_bags(first_speaker, second_speaker)
+	dialogs.relocate_item_section(second_speaker, "medkit_ai3", "in", 2) 
+end
+
+function give_task_devushka_1()
+	mlr_utils.give_task('devushka_1_give')
+end
+function give_task_devushka_3()
+	mlr_utils.give_task('devushka_3_give')
+end
+function give_task_devushka_4()
+	mlr_utils.give_task('devushka_4_give')
+end
+function give_task_devushka_5()
+	mlr_utils.give_task('devushka_5_give')
+end
+function give_task_devushka_help_1()
+	mlr_utils.give_task('devushka_help_1_give')
+end
+function give_task_devushka_help_2()
+	mlr_utils.give_task('devushka_help_2_give')
+end
