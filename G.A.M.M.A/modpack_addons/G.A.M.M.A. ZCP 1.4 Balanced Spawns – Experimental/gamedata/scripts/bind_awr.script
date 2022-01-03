@@ -1,0 +1,501 @@
+--------------------------------------------------------------------
+-- Reworked by Tonex
+-- Last edit: 2019/5/18
+
+-- Adapted new changes for the system
+-- Cleaned a lot of bloated code that was previously used for updating vice meshes
+--------------------------------------------------------------------
+
+local MDATA = {}
+local settings_list = {}
+local angles_t = {}
+local mech_list_key = {}
+local debug_mode = false
+local debug_show_tables = false
+local ini_manager, settings, mesh_list, delay, ui
+
+-- Cache vice and their lamps in table to reuse
+local vice_id = {}
+local lamp_id = {}
+
+function access(obj) --| Access to a vice, taking into account possible death of the mechanic
+
+	if not (obj) then
+		return
+	end
+	
+	--// You should be able to use any workshop in Warfare mode 
+	if _G.WARFARE or (smr_amain_mcm.get_config("smr_enabled") and smr_stalkers_mcm.get_config("base_population") == "sim_smr_none") then
+		return true
+	end
+	
+	local name = obj:name()
+	dout(nil, "Request access for %s", name)
+
+	--// Mechanic is dead - access is unlimited
+	if angles_t[name] then
+		if angles_t[name][3] == 'dead' then
+			dout(nil, "Mechanic is dead. Full access")
+			return true
+		end
+	end
+	
+	--// Access was granted by a mechanic.
+	if db.actor:has_info(string.format("awr_%s_access",angles_t[name][1])) then
+		dout(nil, "Mechanic gave access")
+		return true
+	end
+	
+	--// Debugging
+	local npc = get_story_object(angles_t[name][1])
+	if npc then
+		if npc:alive() then
+			dout(nil, "Access not granted. NPC %s by id %s is alive", angles_t[name][1], npc:id())
+		else
+			dout(nil, "![ERROR] NPC %s by id %s bugged, because he is online and is not alive, but function OnDeath was not called", angles_t[name][1], npc:id())
+		end
+	end
+end
+
+function OnDeath(npc) --| Callback at the death of a mechanic
+	dout(nil, "Called for NPC, %s", npc:section())
+	if IsStalker(npc) and (not npc:alive()) then
+		local npc_s = npc:section()
+		dout(nil, "NPC %s exist and dead", npc:section())
+		for key, val in pairs(angles_t) do
+			if angles_t[key][1] == npc_s then
+				
+				local story_obj = get_story_object(angles_t[key][1])
+				if story_obj then
+					level.map_remove_object_spot(story_obj:id(), "ui_pda2_mechanic_location")
+				end
+				
+				--// Add a marker
+				SetMarker(key)
+				
+				full_access(key,npc_s)
+				
+				break
+			end
+		end
+	end
+end
+
+function SetMarker(name) --| The function of adding a marker to the map
+	local id = name and vice_id[name]
+	local s_obj = id and alife_object(id)
+	if s_obj then
+		dout(nil, "Add marker on parent object %s with ID %s", name, s_obj.id)
+		level.map_add_object_spot_ser(s_obj.id, "ui_pda2_mechanic_location", "st_mech_tiski")
+	end
+end
+
+function CloseDl() -- The closing function of the UI AWR at the end of time (provided that the UI is called and the actor is within 2 meters of the mesh)
+	if (ui) and ui:IsShown() then
+		dout(nil, "UI exist and already open")
+		ui:Close()
+	end
+end
+
+
+--=======================================< Callbacks >=======================================--
+
+function physic_object_on_use_callback(_obj,who) -- Binder function using vise mesh
+	if not (_obj) or not (string.match(_obj:name(), "awr")) then
+		return
+	end
+	
+	--// The condition for the "parent" vise, spawn through all.spawn
+	if access(_obj) and string.match(_obj:name(), "awr_tiski") and _obj:position():distance_to(db.actor:position()) < 1.5 then
+		
+		--// Checking the table for "empty"
+		r_unused()
+		
+		--// Gather mechanic info
+		local flag_1,flag_2,flag_3,flag_4 = false,false,false,false
+		local name = _obj:name()
+		local mechanic = name and angles_t[name] and angles_t[name][1]
+		if mechanic then
+			flag_1 = db.actor:has_info(mechanic .. "_upgrade_tier_1")
+			flag_2 = db.actor:has_info(mechanic .. "_upgrade_tier_2")
+			flag_3 = db.actor:has_info(mechanic .. "_upgrade_tier_3")
+			
+			local drugkit_done = ini_manager:r_string_ex("drugkit_access",mechanic)
+			if drugkit_done and db.actor:has_info(drugkit_done) then
+				flag_4 = true
+			end
+		end
+
+		local function start_ui()
+			--// Call UI
+			local hud = get_hud()
+			--if ui then
+				--ui:HideDialog()
+			--end
+			ui = ui_workshop and ui_workshop.get_workshop_ui(hud, mechanic, {flag_1,flag_2,flag_3,flag_4,false})
+			if (ui) then
+				dout(nil, "call UI")
+				ui:ShowDialog(true)
+			end
+			return true
+		end
+		
+		local delay = actor_effects.is_animations_on() and 2 or 0
+		actor_effects.play_item_fx("workshop_dummy")
+		CreateTimeEvent(0,"delay_workshop",delay,start_ui)
+	end
+end
+
+function actor_on_first_update() --| Callback of the first Update actor. It is executed one-time after loading, _after_ spawn of all objects from all.spawn, unlike on_game_load
+	local smatch = string.match
+	local sim = alife()
+	for i=1, 65534 do
+		local s_obj = sim:object(i)
+		if s_obj then
+			local name = s_obj:name()
+
+			--// If the vise is spawned all.spawn - save their values in the store
+			if smatch(name, '%w+%_awr%_tiski%_%d+') then
+				--// Cache vice id
+				vice_id[name] = i
+				angles_t[name] = l_v(name, angles_t[name])
+				
+				if debug_mode then
+					printf("/ Registered vice [%s] = %s", name, i)
+				end
+				
+			--// Cache vice lamps IDs
+			elseif smatch(name, '_awr_lamp') then
+				lamp_id[name] = i
+				
+				if debug_mode then
+					printf("/ Registered vice lamp [%s] = %s", name, i)
+				end
+			end
+		end
+	end
+	
+	--// Turn on lamps for all mechanics with a dead flag, otherwise it should be off
+	for key, val in pairs(angles_t) do
+	
+		--// Mechanic is dead -> grant full acces + turn on lamp
+		if angles_t[key][3] == 'dead' then
+			dout('actor_on_first_update', "%s is dead. Enable lamp(s) which assigned for %s", angles_t[key][1], key)
+			Lamp(angles_t[key][1], true)
+			full_access(key,npc_s)
+			
+		--// Mechanic is unmarked for death -> turn off lamp
+		else
+			dout('actor_on_first_update', "%s is alive. Disable lamp(s) which assigned for %s", angles_t[key][1], key)
+			Lamp(angles_t[key][1], false)
+			
+			--[[
+			// If Mechanic isn't around, grant unlimited access
+			local npc_s = angles_t[key][1]
+			local se_npc = get_story_se_object(npc_s)
+			if (not se_npc) then
+				full_access(key,npc_s)
+			end
+			--]]
+		end
+		
+		if db.actor:has_info(string.format('awr_%s_access', angles_t[key][1])) then
+			dout('actor_on_first_update', "%s gave access. Enable lamp(s) which assigned for %s", angles_t[key][1], key)
+			Lamp(angles_t[key][1], true)	
+		end
+	end
+
+	--// Remove extra tables for weapons whose parts have not been replaced.
+	r_unused()
+end
+
+function npc_on_death_callback(victim, who) -- Callback, NPC caused by death
+	if not (victim and who) then
+		return
+	end
+	
+	local name = victim:section()
+	local killer_name
+
+	if mech_list_key[name] then
+
+		dout('npc_on_death_callback', "NPC %s was killed by %s", victim:name(), who:name())
+		OnDeath(victim)
+
+		if IsStalker(who) then
+			killer_name = who:character_name()
+		else
+			killer_name = nil
+		end
+	
+		if who:id() == AC_ID then
+			local alife = alife()
+			local se_actor = alife:actor()
+			killer_name = se_actor:character_name()
+		end	
+		actor_menu.set_item_news('success', 'npc', "st_awr_dead_mechanic", victim:character_name(), killer_name or game.translate_string("st_by_unknown"))
+	else
+		-- if IsStalker(victim) then
+		-- 	awr_sf.dout('npc_on_death_callback', "NPC %s is not in list -> return", victim:name())			-- Отрабатывает для всех смертей, включать при необходимости
+		-- end
+		return
+	end
+end
+
+function save_state(m_data)
+	m_data.workshop = MDATA
+end
+
+function load_state(m_data)
+	MDATA = m_data.workshop or {}
+end
+
+function on_game_start()
+	ini_manager = itms_manager.ini_manager
+	settings = utils_data.collect_section(ini_manager,"workshop_settings")
+	mesh_list = utils_data.collect_section(ini_manager,"workshop_angles")
+
+	--for _, k in ipairs(settings) do
+		--settings_list[k] = ini_manager:r_float_ex("workshop_settings", k)
+	--end
+	
+	for _, k in ipairs(mesh_list) do
+		local t = parse_list(ini_manager,"workshop_angles", k)
+		angles_t[k] = {}
+		for _, v in ipairs(t) do
+			table.insert(angles_t[k], v)
+		end
+	end
+	
+	--// We enter data into the table keys for quick indexing by key, without using a loop
+	for key, val in pairs(angles_t) do
+		mech_list_key[val[1]] = 0
+	end
+	
+	RegisterScriptCallback("physic_object_on_use_callback", physic_object_on_use_callback)
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("npc_on_death_callback", npc_on_death_callback)
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
+end
+
+
+--=======================================< Utility >=======================================--
+function Lamp(npc_name, state) --| Toggle online workshop lamps on/off
+	for lamp_name,id in pairs(lamp_id) do
+		if string.match(lamp_name, string.format('_awr_lamp_%s', npc_name)) then
+			local se_lamp = alife_object(id)
+			if se_lamp then
+				local lamp = level.object_by_id(id)
+				if lamp then
+					if (state == true) then
+						lamp:get_hanging_lamp():turn_on()
+						dout(nil, "Lamp %s was turned on", lamp_name)
+					elseif (state == false) then
+						lamp:get_hanging_lamp():turn_off()
+						dout(nil, "Lamp %s was turned off", lamp_name)
+					end
+				end
+			end
+		end
+	end
+end
+
+function full_access(vice,npc_s) --| Give unlimited access to a workshop
+	--// 'Dead' flag in the table
+	angles_t[vice][3] = 'dead'
+	
+	--// Delete information if, before the death of a mechanic, he had access
+	if db.actor:has_info(string.format('awr_%s_access', npc_s)) then
+		db.actor:disable_info_portion(string.format('awr_%s_access', npc_s))
+		dout(nil, 'NPC is dead. Infoportion awr_%s_access has been removed', npc_s)
+	end
+	
+	--// Issuance of information
+	db.actor:give_info_portion(string.format("awr_%s_dead", npc_s))
+	
+	--// Turn on the lamps
+	Lamp(npc_s, true)
+	
+	--// Store data
+	s_v(vice, angles_t[vice])
+end
+
+function s_v(name,val) --|
+--// Функция сохранения данных в Store
+	dout(nil, "Save data to Store, table %s on value %s", name, val)
+
+	MDATA[name] = val
+	if debug_show_tables then print_table(MDATA, 'On Save') end
+end
+
+function l_v(name, def) --|
+--// Функция загрузки данных из Store
+	local function len(t)
+		local i = 0
+		for _ in pairs(t) do i = i + 1 end
+			return i
+	end
+
+	dout(nil, 'Trying to load %s from Store', name)
+	local m_data = alife_storage_manager.get_state()
+	if MDATA[name] and len(MDATA[name]) > 0 then
+		dout(nil, "Table %s with %s keys was loaded", name, len(MDATA[name]))
+		if debug_show_tables then print_table(MDATA, 'On Load') end
+		return MDATA[name] or def
+	else
+		dout(nil, 'Table %s does not exist or is empty. Skipped', name)
+	end
+	return def or nil
+end
+
+function r_unused() --|
+--// Функция удаления "пустых" таблиц с замененными деталями для оружия и флагами
+	local chk = 0
+	dout(nil, 'Searching unused tables in AWR Store table...')
+	if MDATA then
+		for k, _ in pairs(MDATA) do
+			if k:match('_upg') then
+				dout(nil, 'Checking %s table...', k)
+				local count = 0
+				for key, val in pairs(MDATA[k]) do
+					count = count + val
+				end
+				if count == 5 then
+					local flags = string.format('%s%s', k:gsub('[^%d+]', ''), '_flags')
+					dout(nil, '%s table have default values, tables %s and %s will be removed', k, k, flags)
+					MDATA[k] = nil
+					MDATA[flags] = nil
+					chk = chk + 2
+				else
+					dout(nil, 'Data in table %s is used. Skipped', k)
+				end
+			end
+		end
+		if chk == 0 then
+			dout(nil, 'AWR Store table have no unused tables')
+		else
+			dout(nil, 'Removed %s tables', chk)
+		end
+	else
+		dout(nil, 'AWR table does not exist')
+	end
+	if debug_show_tables then print_table(MDATA, 'On Remove Unused') end
+end
+
+function dout(call,fmt,...) --|
+--// Функция отладочного вывода (включен при debug_mode = true в awr_settings.ltx)
+	if not (debug_mode) then return end
+	if not (fmt) then return end
+	local fmt = tostring(fmt)
+	
+	--// Пытаемся определить из какой функции произошел вызов целевой функции
+	local caller_n = debug.getinfo(3, "n") and debug.getinfo(3, "n").name or "not specified"
+	local f_name = debug.getinfo(2, "n") and  debug.getinfo(2, "n").name or "not specified"
+
+	if call then
+		caller_n = tostring(call)
+	end
+	
+	if (select('#',...) >= 1) then
+		local i = 0
+		local p = {...}
+		local function sr(a)
+			i = i + 1
+			if (type(p[i]) == 'userdata') then
+				if (p[i].x and p[i].y) then
+					return vec_to_str(p[i])
+				end
+				return 'userdata'
+			end
+			return tostring(p[i])
+		end
+		fmt = string.gsub(fmt,"%%s",sr)
+	end
+		if (log) then
+			local str = string.format('[AWR]{%s->%s} %s', caller_n, f_name, fmt)
+			log(str)
+			--exec_console_cmd("flush")
+	else
+		exec_console_cmd("load ~#debug msg:"..str)
+	end	
+end
+
+function print_table(tbl,header,format_only) --|
+--// Функция для вывода содержимого таблицы в строковом виде
+	local txt = header and ("-- " .. tostring(header) .. "\n{\n\n") or "{\n\n"
+	local depth = 1
+
+	local function tab(amt)
+		local str = ""
+		for i=1,amt, 1 do
+			str = str .. "\t"
+		end
+		return str
+	end
+
+	local function table_to_string(tbl)
+		local size = 0
+		for k,v in pairs(tbl) do
+			size = size + 1
+		end
+
+		local key
+		local i = 1
+
+		for k,v in pairs(tbl) do
+			if (type(k) == "number") then
+				key = "[" .. k .. "]"
+			elseif (type(k) == "function" or type(k) == "string" or type(k) == "boolean" or type(k) == "table") then
+				key = "[\""..tostring(k) .. "\"]"
+			else 
+				key = "[____unknown_type]"
+			end
+
+			if (type(v) == "table") then
+				txt = txt .. tab(depth) .. key .. " =\n"..tab(depth).."{\n"
+				depth = depth + 1
+				table_to_string(v,tab(depth))
+				depth = depth - 1
+				txt = txt .. tab(depth) .. "}"
+			elseif (type(v) == "number" or type(v) == "boolean") then
+				txt = txt .. tab(depth) .. key .. " = " .. tostring(v)
+			elseif (type(v) == "userdata") then
+				if (v.diffSec) then 
+					local Y, M, D, h, m, s, ms = 0,0,0,0,0,0,0
+					Y, M, D, h, m, s, ms = v:get(Y, M, D, h, m, s, ms)
+					txt = strformat("%s%s%s = { Y=%s, M=%s, D=%s, h=%s, m=%s, s=%s, ms=%s } ",txt,tab(depth),key,Y, M, D, h, m, s, ms)
+				else
+					txt = txt .. tab(depth) .. key .. " = \"userdata\""
+				end
+			elseif (type(v) == "function") then
+				txt = txt .. tab(depth) .. key .. " = \"" .. tostring(v) .. "\""
+			elseif (type(v) == "string") then 
+				txt = txt .. tab(depth) .. key .. " = '" .. v .. "'"
+			else 
+				txt = txt .. tab(depth) .. key
+			end
+
+			if (i == size) then
+				txt = txt .. "\n"
+			else
+				txt = txt .. ",\n"
+			end
+
+			i = i + 1
+		end
+	end
+
+	table_to_string(tbl)
+
+	txt = txt .. "\n}"
+
+	if (format_only) then
+		return txt 
+	end
+	
+	printf(txt)
+	local file = io.open("gamedata\\awr_table.txt","a+")
+	file:write(txt.."\n\n")
+	file:close()
+end
