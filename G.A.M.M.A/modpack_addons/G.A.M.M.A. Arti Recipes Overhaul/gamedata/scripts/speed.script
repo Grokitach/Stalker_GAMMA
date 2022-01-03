@@ -1,0 +1,75 @@
+local speeds = {}
+local sprint_modifiers = {}
+local run_modifiers = {}
+local not_first_update = true
+
+local function actor_on_first_update() 
+    speeds[0] = db.actor:get_actor_run_coef()
+    speeds[1] = db.actor:get_actor_runback_coef()
+    speeds[2] = db.actor:get_actor_sprint_koef()
+    not_first_update = false
+end
+
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
+end 
+local function update_speeds()
+    if not_first_update then
+        actor_on_first_update()
+    end
+    local run_coef = 1
+    for k,v in pairs(run_modifiers) do
+        run_coef = run_coef * v
+    end
+    local sprint_coef = 1
+    for k,v in pairs(sprint_modifiers) do
+        sprint_coef = sprint_coef * v
+    end
+    db.actor:set_actor_run_coef(clamp(speeds[0] * run_coef, 1, 10))
+    db.actor:set_actor_runback_coef(clamp(speeds[1] * run_coef, 1, 10))
+    db.actor:set_actor_sprint_koef(clamp(speeds[2] * sprint_coef, 1, 10))
+end
+
+-- Usage: Add a speed modifier.
+-- Once a speed modifier is added, speed will be recalculated and set.
+-- run_modifiers affects run and runback, sprint_modifiers affects sprint
+-- Params:
+-- speed_key - Name of speed multiplier you want to add
+-- speed_mult - Speed multiplier as a number (e.g. 0.5 will halve speed)
+-- is_sprint - Boolean, if true adds to sprint modifier and updates accordingly, false adds to run modifier
+-- force - Boolean, will overwrite existing speed.
+-- Returns true if speed added successfully, false if key already exists (and nothing happens as result)
+function add_speed(speed_key, speed_mult, is_sprint, force)
+    if (is_sprint) then
+        if force or not sprint_modifiers[speed_key] then
+            -- printf("sprint: " .. speed_key .. " " .. speed_mult)
+            sprint_modifiers[speed_key] = speed_mult
+            update_speeds()
+            return true
+        else
+            return false
+        end
+    else
+        if force or not run_modifiers[speed_key] then
+            run_modifiers[speed_key] = speed_mult
+            update_speeds()
+            return true
+        else
+            return false
+        end
+    end
+end
+
+-- Usage: Drop a speed modifier. Once a speed modifier is dropped, speed will be recalculated and set. 
+-- Params
+-- speed_key - Name of speed multiplier to drop. Will drop from both tables.
+function remove_speed(speed_key)
+    if sprint_modifiers[speed_key] then
+        sprint_modifiers[speed_key] = nil
+    end
+    if run_modifiers[speed_key] then
+        run_modifiers[speed_key] = nil
+    end
+    update_speeds()
+end
