@@ -45,6 +45,89 @@ function on_game_load()
 	activate()
 end
 
+
+function get_actor_best_knife()
+
+	knife_model = nil
+
+	local knifesm = { 
+					"wpn_knife",
+					"wpn_knife2",
+					"wpn_knife3",
+					"wpn_knife4",
+					"wpn_knife5",
+					"wpn_knife6",
+					"wpn_knife7",
+					"wpn_knife8",
+					"wpn_knife9"
+				 }
+
+	local knifes_condition = { 
+					wpn_knife  = 0.04,
+					wpn_knife2 = 0.03,
+					wpn_knife3 = 0.02,
+					wpn_knife4 = 0.015,
+					wpn_knife5 = 0.01,
+					wpn_knife6 = 0.01,
+					wpn_knife7 = 0.01,
+					wpn_knife8 = 0.01,
+					wpn_knife9 = 0.02
+				 }
+	
+	if ( db.actor:object(knifesm[1]) ~= nil ) then
+		knife_to_degrade = db.actor:object(knifesm[1])
+		knife_model = knifesm[1]
+	end
+	
+	if ( db.actor:object(knifesm[2]) ~= nil ) then
+		knife_to_degrade = db.actor:object(knifesm[2])
+		knife_model = knifesm[2]
+	end
+	
+	if ( db.actor:object(knifesm[3]) ~= nil ) then
+		knife_to_degrade = db.actor:object(knifesm[3])
+		knife_model = knifesm[3]
+	end
+	
+	
+	if ( db.actor:object(knifesm[4]) ~= nil ) then
+		knife_to_degrade = db.actor:object(knifesm[4])
+		knife_model = knifesm[4]
+	end
+	
+	if ( db.actor:object(knifesm[5]) ~= nil ) then
+		knife_to_degrade = db.actor:object(knifesm[5])
+		knife_model = knifesm[5]
+	end
+
+	
+	if ( db.actor:object(knifesm[6]) ~= nil ) then
+		knife_to_degrade = db.actor:object(knifesm[6])
+		knife_model = knifesm[6]
+	end
+	
+	if ( db.actor:object(knifesm[7]) ~= nil ) then
+		knife_to_degrade = db.actor:object(knifesm[7])
+		knife_model = knifesm[7]
+	end
+	
+	if ( db.actor:object(knifesm[8]) ~= nil ) then
+		knife_to_degrade = db.actor:object(knifesm[8])
+		knife_model = knifesm[8]
+	end
+	
+	if ( db.actor:object(knifesm[9]) ~= nil ) then
+		knife_to_degrade = db.actor:object(knifesm[9])
+		knife_model = knifesm[9]
+	end
+
+	if knife_model then
+		local degradation = knifes_condition[knife_model]
+		local cond = knife_to_degrade:condition()
+		knife_to_degrade:set_condition(cond - degradation/4)
+	end
+end
+
 --< Addon control
 function on_key_release(key)
 	local bind = dik_to_bind(key)
@@ -101,12 +184,16 @@ function monster_on_actor_use(obj)
 		anim_exist_tm = nil
 		return
 	end
+	last_slot = db.actor:active_slot()
 	wpn = db.actor:active_item()
+
+	get_actor_best_knife()
+
 	if wpn then
-		wpn = wpn:clsid() == 168 and wpn:section() or "wpn_knife5"
+		wpn = wpn:clsid() == 168 and wpn:section() or knife_model
 		wpn = string.gsub(wpn,"-","_")
 	end
-	item_knife.degradate()
+	--item_knife.degradate()
 	used_monster = obj
 	level.disable_input()
 	anim_prepare()
@@ -161,7 +248,8 @@ function actor_on_update()
 	end
 	local anim_section_hud = nil
 	if used_monster then
-		anim_section_hud = "item_ea_harv_" .. ( wpn or "wpn_knife5" ) .. "_hud"
+		get_actor_best_knife()
+		anim_section_hud = "item_ea_harv_" .. ( wpn or knife_model ) .. "_hud"
 		start_anim(anim_section_hud)
 		anim_manager_monster()
 		return
@@ -266,6 +354,7 @@ end
 
 function stop_my_monster_anim()
 	ea_restore_actor()
+	db.actor:activate_slot(last_slot)
 	if used_monster:id() == 65535 or ( not take_item_anim ) then
 		used_monster = nil
 		return true
