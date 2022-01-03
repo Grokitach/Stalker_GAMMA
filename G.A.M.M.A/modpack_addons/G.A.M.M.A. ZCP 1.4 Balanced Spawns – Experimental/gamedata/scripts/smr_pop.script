@@ -1,0 +1,1438 @@
+--[[
+------------------------------------------------------------
+-- Survival Mode Remade - Setup Zone population and manage smart terrain spawms
+------------------------------------------------------------
+-- by dph-hcl
+------------------------------------------------------------
+]]--
+
+local function trace(...)
+    printf(...)
+end
+
+local random = math.random
+local table_insert = table.insert
+
+local function insert_n_times(t, item, n)
+    local n = n or 1
+    for i = 1, n do
+        table_insert(t, item)
+    end
+end
+
+
+local function array_flip(t)
+    local result = {}
+    for k, v in pairs(t) do
+        result[v] = k
+    end
+    return result
+end
+
+local zombie_spawn_table = {}
+local zombie_spawn_cfg = {
+    ["zombifiedp"] = { "zombied_sim_squad_novice", "zombied_sim_squad_advanced", "zombied_sim_squad_veteran" },
+    ["fracturep"] = { "simulation_fracture" },
+    ["snorkp"] = { "simulation_snork" },
+    ["bloodsuckerp"] = { "simulation_bloodsucker" },
+    ["psysuckerp"] = { "simulation_psysucker" },
+    ["blindp"] = { "simulation_zombie_blind_3zomb_civ", "simulation_zombie_blind_3zomb" },
+}
+
+
+local faction_spawn_table = {}
+local faction_spawn_cfg = {
+    "stalker", "bandit", "csky", "duty", "freedom", "merc", "army", "ecolog", "monolith", "renegade", "greh", "isg", "zombied"
+}
+
+local retarded_squad_names = {
+    ["duty_sim_squad_alpha"] = "dolg_sim_squad_alpha",
+    ["merc_sim_squad_alpha"] = "killer_sim_squad_alpha",
+    ["duty_sim_squad_trader"] = "dolg_sim_squad_trader",
+    ["duty_sim_squad_medic"] = "dolg_sim_squad_medic",
+    ["duty_sim_squad_barman"] = "dolg_sim_squad_barman",
+    ["duty_sim_squad_mechanic"] = "dolg_sim_squad_mechanic",
+}
+
+local mutant_spawn_table = {}
+local flipped_mutant_spawn_table = {}
+local mutant_spawn_cfg = {
+    ["psysucker_"] = "psysuckerp",
+    ["bloodsucker_"] = "bloodsuckerp",
+    ["boar_"] = "boarp",
+    ["snork_"] = "snorkp",
+    ["chimera_"] = "chimerap",
+    ["m_controller_"] = "controllerp",
+    ["dog_"] = "dogp",
+    ["tushkano_"] = "tushkanop",
+    ["pseudodog_"] = "dogp",
+    ["fracture_"] = "fracturep",
+    ["lurker_"] = "lurkerp",
+    ["cat_"] = "catp",
+    ["psy_dog_"] = "psydogp",
+    ["m_karlik_"] = "karlikp",
+    ["burer_"] = "burerp",
+    ["m_poltergeist_"] = "poltergeistp",
+    ["gigant_"] = "gigantp",
+    ["flesh_"] = "fleshp",
+    ["rat_"] = "ratp",
+    ["zombie_"] = "zombiep",
+    ["borya_"] = "boryap",
+    ["bibliotekar_"] = "bibliotekarp",
+}
+
+local unused_mutant_spawn_table = {}
+local unused_mutant_spawn_cfg = {
+    ["bloodsucker_strong_bigp"] = { "bloodsucker_strong_big" },
+    ["burer_electrap"] = { "burer_electra" },
+    ["burer_firerp"] = { "burer_fire" },
+    ["flesh_bolotp"] = { "flesh_bolot", "flesh_bolot1" },
+    ["gigant_jumperp"] = { "gigant_jumper" },
+    ["snork_no_maskp"] = { "snork_normal_no_mask", "snork_strong_no_mask", "snork_weak_no_mask" },
+    ["zombie_babkap"] = { "zombi_babka_1", "zombi_babka_2", "zombi_babka_3" },
+    ["zombie_gholp"] = { "zombie_ghol" },
+    ["zombie_ghostp"] = { "zombie_ghost" },
+    ["zombie_tetap"] = { "zombie_teta" },
+    ["zombie_wichp"] = { "zombie_wich" },
+}
+
+local mutant_spawn_squads = {
+    ["psysucker_"] = "simulation_psysucker",
+    ["bloodsucker_"] = "simulation_bloodsucker",
+    ["boar_"] = "simulation_boar",
+    ["snork_"] = "simulation_snork",
+    ["chimera_"] = "simulation_chimera",
+    ["m_controller_"] = "simulation_controller",
+    ["dog_"] = "simulation_dog",
+    ["tushkano_"] = "simulation_tushkano",
+    ["pseudodog_"] = "simulation_dog",
+    ["fracture_"] = "simulation_fracture",
+    ["lurker_"] = "simulation_lurker",
+    ["cat_"] = "simulation_cat",
+    ["psy_dog_"] = "simulation_psy_dog",
+    ["m_karlik_"] = "simulation_karlik",
+    ["burer_"] = "simulation_burer",
+    ["m_poltergeist_"] = "simulation_poltergeist",
+    ["gigant_"] = "simulation_gigant",
+    ["flesh_"] = "simulation_flesh",
+    ["rat_"] = "simulation_rats",
+    ["zombie_"] = "simulation_zombie",
+    ["borya_"] = "simulation_borya",
+    ["bibliotekar_"] = "simulation_bibliotekar",
+}
+
+-- spawn chance weights, more weight is more often
+-- if for example chimera is 1 and dog is 10,
+-- then dog spawns 10/1 = 10 times more often on average than chimera
+local mutant_spawn_per_level = {
+    ["k00_marsh"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 20)
+        insert_n_times(t, "bloodsucker_", 40)
+        insert_n_times(t, "boar_", 80)
+        insert_n_times(t, "snork_", 30)
+        insert_n_times(t, "chimera_", 17)
+        insert_n_times(t, "m_controller_", 20)
+        insert_n_times(t, "dog_", 90)
+        insert_n_times(t, "tushkano_", 70)
+        insert_n_times(t, "pseudodog_", 80)
+        insert_n_times(t, "fracture_", 40)
+        insert_n_times(t, "lurker_", 70)
+        insert_n_times(t, "cat_", 90)
+        insert_n_times(t, "psy_dog_", 40)
+        insert_n_times(t, "m_karlik_", 20)
+        insert_n_times(t, "burer_", 12)
+        insert_n_times(t, "m_poltergeist_", 50)
+        insert_n_times(t, "gigant_", 10)
+        insert_n_times(t, "flesh_", 100)
+        insert_n_times(t, "rat_", 40)
+        insert_n_times(t, "zombie_", 40)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l01_escape"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 15)
+        insert_n_times(t, "bloodsucker_", 24)
+        insert_n_times(t, "boar_", 80)
+        insert_n_times(t, "snork_", 40)
+        insert_n_times(t, "chimera_", 13)
+        insert_n_times(t, "m_controller_", 25)
+        insert_n_times(t, "dog_", 90)
+        insert_n_times(t, "tushkano_", 60)
+        insert_n_times(t, "pseudodog_", 80)
+        insert_n_times(t, "fracture_", 50)
+        insert_n_times(t, "lurker_", 50)
+        insert_n_times(t, "cat_", 80)
+        insert_n_times(t, "psy_dog_", 30)
+        insert_n_times(t, "m_karlik_", 20)
+        insert_n_times(t, "burer_", 12)
+        insert_n_times(t, "m_poltergeist_", 35)
+        insert_n_times(t, "gigant_", 12)
+        insert_n_times(t, "flesh_", 70)
+        insert_n_times(t, "rat_", 30)
+        insert_n_times(t, "zombie_", 50)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l02_garbage"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 20)
+        insert_n_times(t, "bloodsucker_", 32)
+        insert_n_times(t, "boar_", 80)
+        insert_n_times(t, "snork_", 40)
+        insert_n_times(t, "chimera_", 18)
+        insert_n_times(t, "m_controller_", 30)
+        insert_n_times(t, "dog_", 70)
+        insert_n_times(t, "tushkano_", 80)
+        insert_n_times(t, "pseudodog_", 70)
+        insert_n_times(t, "fracture_", 40)
+        insert_n_times(t, "lurker_", 40)
+        insert_n_times(t, "cat_", 60)
+        insert_n_times(t, "psy_dog_", 35)
+        insert_n_times(t, "m_karlik_", 25)
+        insert_n_times(t, "burer_", 20)
+        insert_n_times(t, "m_poltergeist_", 40)
+        insert_n_times(t, "gigant_", 16)
+        insert_n_times(t, "flesh_", 70)
+        insert_n_times(t, "rat_", 60)
+        insert_n_times(t, "zombie_", 40)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l03_agroprom"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 26)
+        insert_n_times(t, "bloodsucker_", 40)
+        insert_n_times(t, "boar_", 80)
+        insert_n_times(t, "snork_", 45)
+        insert_n_times(t, "chimera_", 20)
+        insert_n_times(t, "m_controller_", 37)
+        insert_n_times(t, "dog_", 60)
+        insert_n_times(t, "tushkano_", 80)
+        insert_n_times(t, "pseudodog_", 70)
+        insert_n_times(t, "fracture_", 32)
+        insert_n_times(t, "lurker_", 50)
+        insert_n_times(t, "cat_", 50)
+        insert_n_times(t, "psy_dog_", 40)
+        insert_n_times(t, "m_karlik_", 25)
+        insert_n_times(t, "burer_", 27)
+        insert_n_times(t, "m_poltergeist_", 45)
+        insert_n_times(t, "gigant_", 18)
+        insert_n_times(t, "flesh_", 70)
+        insert_n_times(t, "rat_", 20)
+        insert_n_times(t, "zombie_", 35)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["k01_darkscape"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 17)
+        insert_n_times(t, "bloodsucker_", 34)
+        insert_n_times(t, "boar_", 60)
+        insert_n_times(t, "snork_", 40)
+        insert_n_times(t, "chimera_", 20)
+        insert_n_times(t, "m_controller_", 35)
+        insert_n_times(t, "dog_", 60)
+        insert_n_times(t, "tushkano_", 40)
+        insert_n_times(t, "pseudodog_", 70)
+        insert_n_times(t, "fracture_", 50)
+        insert_n_times(t, "lurker_", 45)
+        insert_n_times(t, "cat_", 75)
+        insert_n_times(t, "psy_dog_", 40)
+        insert_n_times(t, "m_karlik_", 30)
+        insert_n_times(t, "burer_", 15)
+        insert_n_times(t, "m_poltergeist_", 50)
+        insert_n_times(t, "gigant_", 20)
+        insert_n_times(t, "flesh_", 60)
+        insert_n_times(t, "rat_", 10)
+        insert_n_times(t, "zombie_", 50)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l04_darkvalley"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 22)
+        insert_n_times(t, "bloodsucker_", 32)
+        insert_n_times(t, "boar_", 60)
+        insert_n_times(t, "snork_", 50)
+        insert_n_times(t, "chimera_", 23)
+        insert_n_times(t, "m_controller_", 30)
+        insert_n_times(t, "dog_", 60)
+        insert_n_times(t, "tushkano_", 50)
+        insert_n_times(t, "pseudodog_", 70)
+        insert_n_times(t, "fracture_", 30)
+        insert_n_times(t, "lurker_", 60)
+        insert_n_times(t, "cat_", 60)
+        insert_n_times(t, "psy_dog_", 35)
+        insert_n_times(t, "m_karlik_", 20)
+        insert_n_times(t, "burer_", 24)
+        insert_n_times(t, "m_poltergeist_", 42)
+        insert_n_times(t, "gigant_", 18)
+        insert_n_times(t, "flesh_", 70)
+        insert_n_times(t, "rat_", 30)
+        insert_n_times(t, "zombie_", 35)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l05_bar"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 15)
+        insert_n_times(t, "bloodsucker_", 20)
+        insert_n_times(t, "boar_", 80)
+        insert_n_times(t, "snork_", 35)
+        insert_n_times(t, "chimera_", 15)
+        insert_n_times(t, "m_controller_", 20)
+        insert_n_times(t, "dog_", 70)
+        insert_n_times(t, "tushkano_", 50)
+        insert_n_times(t, "pseudodog_", 80)
+        insert_n_times(t, "fracture_", 20)
+        insert_n_times(t, "lurker_", 25)
+        insert_n_times(t, "cat_", 60)
+        insert_n_times(t, "psy_dog_", 40)
+        insert_n_times(t, "m_karlik_", 15)
+        insert_n_times(t, "burer_", 12)
+        insert_n_times(t, "m_poltergeist_", 20)
+        insert_n_times(t, "gigant_", 25)
+        insert_n_times(t, "flesh_", 80)
+        insert_n_times(t, "rat_", 30)
+        insert_n_times(t, "zombie_", 40)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l06_rostok"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 31)
+        insert_n_times(t, "bloodsucker_", 40)
+        insert_n_times(t, "boar_", 40)
+        insert_n_times(t, "snork_", 55)
+        insert_n_times(t, "chimera_", 20)
+        insert_n_times(t, "m_controller_", 27)
+        insert_n_times(t, "dog_", 45)
+        insert_n_times(t, "tushkano_", 60)
+        insert_n_times(t, "pseudodog_", 40)
+        insert_n_times(t, "fracture_", 30)
+        insert_n_times(t, "lurker_", 20)
+        insert_n_times(t, "cat_", 50)
+        insert_n_times(t, "psy_dog_", 40)
+        insert_n_times(t, "m_karlik_", 25)
+        insert_n_times(t, "burer_", 25)
+        insert_n_times(t, "m_poltergeist_", 55)
+        insert_n_times(t, "gigant_", 17)
+        insert_n_times(t, "flesh_", 40)
+        insert_n_times(t, "rat_", 20)
+        insert_n_times(t, "zombie_", 45)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l07_military"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 35)
+        insert_n_times(t, "bloodsucker_", 48)
+        insert_n_times(t, "boar_", 50)
+        insert_n_times(t, "snork_", 40)
+        insert_n_times(t, "chimera_", 25)
+        insert_n_times(t, "m_controller_", 32)
+        insert_n_times(t, "dog_", 40)
+        insert_n_times(t, "tushkano_", 50)
+        insert_n_times(t, "pseudodog_", 60)
+        insert_n_times(t, "fracture_", 35)
+        insert_n_times(t, "lurker_", 35)
+        insert_n_times(t, "cat_", 40)
+        insert_n_times(t, "psy_dog_", 50)
+        insert_n_times(t, "m_karlik_", 30)
+        insert_n_times(t, "burer_", 23)
+        insert_n_times(t, "m_poltergeist_", 45)
+        insert_n_times(t, "gigant_", 25)
+        insert_n_times(t, "flesh_", 50)
+        insert_n_times(t, "rat_", 10)
+        insert_n_times(t, "zombie_", 50)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l08_yantar"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 42)
+        insert_n_times(t, "bloodsucker_", 32)
+        insert_n_times(t, "boar_", 30)
+        insert_n_times(t, "snork_", 55)
+        insert_n_times(t, "chimera_", 23)
+        insert_n_times(t, "m_controller_", 45)
+        insert_n_times(t, "dog_", 30)
+        insert_n_times(t, "tushkano_", 50)
+        insert_n_times(t, "pseudodog_", 40)
+        insert_n_times(t, "fracture_", 55)
+        insert_n_times(t, "lurker_", 35)
+        insert_n_times(t, "cat_", 22)
+        insert_n_times(t, "psy_dog_", 50)
+        insert_n_times(t, "m_karlik_", 35)
+        insert_n_times(t, "burer_", 30)
+        insert_n_times(t, "m_poltergeist_", 55)
+        insert_n_times(t, "gigant_", 25)
+        insert_n_times(t, "flesh_", 35)
+        insert_n_times(t, "rat_", 15)
+        insert_n_times(t, "zombie_", 50)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l09_deadcity"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 35)
+        insert_n_times(t, "bloodsucker_", 32)
+        insert_n_times(t, "boar_", 25)
+        insert_n_times(t, "snork_", 50)
+        insert_n_times(t, "chimera_", 25)
+        insert_n_times(t, "m_controller_", 45)
+        insert_n_times(t, "dog_", 20)
+        insert_n_times(t, "tushkano_", 30)
+        insert_n_times(t, "pseudodog_", 35)
+        insert_n_times(t, "fracture_", 50)
+        insert_n_times(t, "lurker_", 20)
+        insert_n_times(t, "cat_", 20)
+        insert_n_times(t, "psy_dog_", 35)
+        insert_n_times(t, "m_karlik_", 30)
+        insert_n_times(t, "burer_", 25)
+        insert_n_times(t, "m_poltergeist_", 30)
+        insert_n_times(t, "gigant_", 25)
+        insert_n_times(t, "flesh_", 15)
+        insert_n_times(t, "rat_", 30)
+        insert_n_times(t, "zombie_", 60)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l10_limansk"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 35)
+        insert_n_times(t, "bloodsucker_", 40)
+        insert_n_times(t, "boar_", 20)
+        insert_n_times(t, "snork_", 45)
+        insert_n_times(t, "chimera_", 30)
+        insert_n_times(t, "m_controller_", 40)
+        insert_n_times(t, "dog_", 20)
+        insert_n_times(t, "tushkano_", 30)
+        insert_n_times(t, "pseudodog_", 40)
+        insert_n_times(t, "fracture_", 30)
+        insert_n_times(t, "lurker_", 20)
+        insert_n_times(t, "cat_", 20)
+        insert_n_times(t, "psy_dog_", 40)
+        insert_n_times(t, "m_karlik_", 30)
+        insert_n_times(t, "burer_", 25)
+        insert_n_times(t, "m_poltergeist_", 35)
+        insert_n_times(t, "gigant_", 17)
+        insert_n_times(t, "flesh_", 15)
+        insert_n_times(t, "rat_", 20)
+        insert_n_times(t, "zombie_", 35)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l10_radar"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 50)
+        insert_n_times(t, "bloodsucker_", 32)
+        insert_n_times(t, "boar_", 20)
+        insert_n_times(t, "snork_", 40)
+        insert_n_times(t, "chimera_", 30)
+        insert_n_times(t, "m_controller_", 50)
+        insert_n_times(t, "dog_", 20)
+        insert_n_times(t, "tushkano_", 15)
+        insert_n_times(t, "pseudodog_", 25)
+        insert_n_times(t, "fracture_", 35)
+        insert_n_times(t, "lurker_", 23)
+        insert_n_times(t, "cat_", 20)
+        insert_n_times(t, "psy_dog_", 45)
+        insert_n_times(t, "m_karlik_", 45)
+        insert_n_times(t, "burer_", 30)
+        insert_n_times(t, "m_poltergeist_", 40)
+        insert_n_times(t, "gigant_", 27)
+        insert_n_times(t, "flesh_", 15)
+        insert_n_times(t, "rat_", 10)
+        insert_n_times(t, "zombie_", 60)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l10_red_forest"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 40)
+        insert_n_times(t, "bloodsucker_", 48)
+        insert_n_times(t, "boar_", 15)
+        insert_n_times(t, "snork_", 20)
+        insert_n_times(t, "chimera_", 35)
+        insert_n_times(t, "m_controller_", 40)
+        insert_n_times(t, "dog_", 15)
+        insert_n_times(t, "tushkano_", 20)
+        insert_n_times(t, "pseudodog_", 25)
+        insert_n_times(t, "fracture_", 15)
+        insert_n_times(t, "lurker_", 30)
+        insert_n_times(t, "cat_", 20)
+        insert_n_times(t, "psy_dog_", 30)
+        insert_n_times(t, "m_karlik_", 12)
+        insert_n_times(t, "burer_", 20)
+        insert_n_times(t, "m_poltergeist_", 30)
+        insert_n_times(t, "gigant_", 15)
+        insert_n_times(t, "flesh_", 10)
+        insert_n_times(t, "rat_", 10)
+        insert_n_times(t, "zombie_", 20)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l11_hospital"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 31)
+        insert_n_times(t, "bloodsucker_", 40)
+        insert_n_times(t, "boar_", 10)
+        insert_n_times(t, "snork_", 65)
+        insert_n_times(t, "chimera_", 20)
+        insert_n_times(t, "m_controller_", 40)
+        insert_n_times(t, "dog_", 15)
+        insert_n_times(t, "tushkano_", 60)
+        insert_n_times(t, "pseudodog_", 13)
+        insert_n_times(t, "fracture_", 30)
+        insert_n_times(t, "lurker_", 10)
+        insert_n_times(t, "cat_", 18)
+        insert_n_times(t, "psy_dog_", 25)
+        insert_n_times(t, "m_karlik_", 45)
+        insert_n_times(t, "burer_", 25)
+        insert_n_times(t, "m_poltergeist_", 27)
+        insert_n_times(t, "gigant_", 10)
+        insert_n_times(t, "flesh_", 10)
+        insert_n_times(t, "rat_", 15)
+        insert_n_times(t, "zombie_", 25)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l11_pripyat"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 31)
+        insert_n_times(t, "bloodsucker_", 40)
+        insert_n_times(t, "boar_", 15)
+        insert_n_times(t, "snork_", 45)
+        insert_n_times(t, "chimera_", 30)
+        insert_n_times(t, "m_controller_", 40)
+        insert_n_times(t, "dog_", 15)
+        insert_n_times(t, "tushkano_", 30)
+        insert_n_times(t, "pseudodog_", 18)
+        insert_n_times(t, "fracture_", 25)
+        insert_n_times(t, "lurker_", 20)
+        insert_n_times(t, "cat_", 55)
+        insert_n_times(t, "psy_dog_", 25)
+        insert_n_times(t, "m_karlik_", 40)
+        insert_n_times(t, "burer_", 25)
+        insert_n_times(t, "m_poltergeist_", 45)
+        insert_n_times(t, "gigant_", 32)
+        insert_n_times(t, "flesh_", 10)
+        insert_n_times(t, "rat_", 15)
+        insert_n_times(t, "zombie_", 25)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l12_stancia"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 42)
+        insert_n_times(t, "bloodsucker_", 36)
+        insert_n_times(t, "boar_", 20)
+        insert_n_times(t, "snork_", 45)
+        insert_n_times(t, "chimera_", 30)
+        insert_n_times(t, "m_controller_", 50)
+        insert_n_times(t, "dog_", 18)
+        insert_n_times(t, "tushkano_", 15)
+        insert_n_times(t, "pseudodog_", 25)
+        insert_n_times(t, "fracture_", 25)
+        insert_n_times(t, "lurker_", 15)
+        insert_n_times(t, "cat_", 17)
+        insert_n_times(t, "psy_dog_", 25)
+        insert_n_times(t, "m_karlik_", 30)
+        insert_n_times(t, "burer_", 27)
+        insert_n_times(t, "m_poltergeist_", 40)
+        insert_n_times(t, "gigant_", 35)
+        insert_n_times(t, "flesh_", 15)
+        insert_n_times(t, "rat_", 10)
+        insert_n_times(t, "zombie_", 40)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l12_stancia_2"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 42)
+        insert_n_times(t, "bloodsucker_", 36)
+        insert_n_times(t, "boar_", 20)
+        insert_n_times(t, "snork_", 45)
+        insert_n_times(t, "chimera_", 30)
+        insert_n_times(t, "m_controller_", 50)
+        insert_n_times(t, "dog_", 18)
+        insert_n_times(t, "tushkano_", 15)
+        insert_n_times(t, "pseudodog_", 25)
+        insert_n_times(t, "fracture_", 25)
+        insert_n_times(t, "lurker_", 15)
+        insert_n_times(t, "cat_", 17)
+        insert_n_times(t, "psy_dog_", 25)
+        insert_n_times(t, "m_karlik_", 30)
+        insert_n_times(t, "burer_", 27)
+        insert_n_times(t, "m_poltergeist_", 40)
+        insert_n_times(t, "gigant_", 35)
+        insert_n_times(t, "flesh_", 15)
+        insert_n_times(t, "rat_", 10)
+        insert_n_times(t, "zombie_", 40)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l13_generators"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 42)
+        insert_n_times(t, "bloodsucker_", 36)
+        insert_n_times(t, "boar_", 20)
+        insert_n_times(t, "snork_", 45)
+        insert_n_times(t, "chimera_", 30)
+        insert_n_times(t, "m_controller_", 50)
+        insert_n_times(t, "dog_", 18)
+        insert_n_times(t, "tushkano_", 15)
+        insert_n_times(t, "pseudodog_", 25)
+        insert_n_times(t, "fracture_", 25)
+        insert_n_times(t, "lurker_", 15)
+        insert_n_times(t, "cat_", 17)
+        insert_n_times(t, "psy_dog_", 25)
+        insert_n_times(t, "m_karlik_", 30)
+        insert_n_times(t, "burer_", 27)
+        insert_n_times(t, "m_poltergeist_", 40)
+        insert_n_times(t, "gigant_", 35)
+        insert_n_times(t, "flesh_", 15)
+        insert_n_times(t, "rat_", 10)
+        insert_n_times(t, "zombie_", 40)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l03u_agr_underground"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 5)
+        insert_n_times(t, "bloodsucker_", 33)
+        insert_n_times(t, "boar_", 5)
+        insert_n_times(t, "snork_", 45)
+        insert_n_times(t, "chimera_", 5)
+        insert_n_times(t, "m_controller_", 18)
+        insert_n_times(t, "dog_", 10)
+        insert_n_times(t, "tushkano_", 50)
+        insert_n_times(t, "pseudodog_", 8)
+        insert_n_times(t, "fracture_", 30)
+        insert_n_times(t, "lurker_", 11)
+        insert_n_times(t, "cat_", 19)
+        insert_n_times(t, "psy_dog_", 10)
+        insert_n_times(t, "m_karlik_", 30)
+        insert_n_times(t, "burer_", 18)
+        insert_n_times(t, "m_poltergeist_", 15)
+        insert_n_times(t, "gigant_", 4)
+        insert_n_times(t, "flesh_", 5)
+        insert_n_times(t, "rat_", 10)
+        insert_n_times(t, "zombie_", 33)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l04u_labx18"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 8)
+        insert_n_times(t, "bloodsucker_", 26)
+        insert_n_times(t, "boar_", 5)
+        insert_n_times(t, "snork_", 45)
+        insert_n_times(t, "chimera_", 5)
+        insert_n_times(t, "m_controller_", 22)
+        insert_n_times(t, "dog_", 7)
+        insert_n_times(t, "tushkano_", 30)
+        insert_n_times(t, "pseudodog_", 8)
+        insert_n_times(t, "fracture_", 22)
+        insert_n_times(t, "lurker_", 45)
+        insert_n_times(t, "cat_", 16)
+        insert_n_times(t, "psy_dog_", 10)
+        insert_n_times(t, "m_karlik_", 17)
+        insert_n_times(t, "burer_", 25)
+        insert_n_times(t, "m_poltergeist_", 55)
+        insert_n_times(t, "gigant_", 7)
+        insert_n_times(t, "flesh_", 5)
+        insert_n_times(t, "rat_", 10)
+        insert_n_times(t, "zombie_", 25)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l08u_brainlab"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 45)
+        insert_n_times(t, "bloodsucker_", 22)
+        insert_n_times(t, "boar_", 5)
+        insert_n_times(t, "snork_", 35)
+        insert_n_times(t, "chimera_", 7)
+        insert_n_times(t, "m_controller_", 40)
+        insert_n_times(t, "dog_", 7)
+        insert_n_times(t, "tushkano_", 30)
+        insert_n_times(t, "pseudodog_", 8)
+        insert_n_times(t, "fracture_", 45)
+        insert_n_times(t, "lurker_", 26)
+        insert_n_times(t, "cat_", 14)
+        insert_n_times(t, "psy_dog_", 20)
+        insert_n_times(t, "m_karlik_", 40)
+        insert_n_times(t, "burer_", 25)
+        insert_n_times(t, "m_poltergeist_", 35)
+        insert_n_times(t, "gigant_", 8)
+        insert_n_times(t, "flesh_", 5)
+        insert_n_times(t, "rat_", 10)
+        insert_n_times(t, "zombie_", 55)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l10u_bunker"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 45)
+        insert_n_times(t, "bloodsucker_", 36)
+        insert_n_times(t, "boar_", 5)
+        insert_n_times(t, "snork_", 35)
+        insert_n_times(t, "chimera_", 20)
+        insert_n_times(t, "m_controller_", 60)
+        insert_n_times(t, "dog_", 7)
+        insert_n_times(t, "tushkano_", 30)
+        insert_n_times(t, "pseudodog_", 8)
+        insert_n_times(t, "fracture_", 25)
+        insert_n_times(t, "lurker_", 20)
+        insert_n_times(t, "cat_", 12)
+        insert_n_times(t, "psy_dog_", 32)
+        insert_n_times(t, "m_karlik_", 28)
+        insert_n_times(t, "burer_", 40)
+        insert_n_times(t, "m_poltergeist_", 35)
+        insert_n_times(t, "gigant_", 8)
+        insert_n_times(t, "flesh_", 5)
+        insert_n_times(t, "rat_", 10)
+        insert_n_times(t, "zombie_", 35)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l12u_sarcofag"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 20)
+        insert_n_times(t, "bloodsucker_", 20)
+        insert_n_times(t, "boar_", 5)
+        insert_n_times(t, "snork_", 45)
+        insert_n_times(t, "chimera_", 7)
+        insert_n_times(t, "m_controller_", 40)
+        insert_n_times(t, "dog_", 7)
+        insert_n_times(t, "tushkano_", 22)
+        insert_n_times(t, "pseudodog_", 8)
+        insert_n_times(t, "fracture_", 11)
+        insert_n_times(t, "lurker_", 5)
+        insert_n_times(t, "cat_", 7)
+        insert_n_times(t, "psy_dog_", 8)
+        insert_n_times(t, "m_karlik_", 25)
+        insert_n_times(t, "burer_", 40)
+        insert_n_times(t, "m_poltergeist_", 35)
+        insert_n_times(t, "gigant_", 8)
+        insert_n_times(t, "flesh_", 5)
+        insert_n_times(t, "rat_", 10)
+        insert_n_times(t, "zombie_", 15)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l12u_control_monolith"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 20)
+        insert_n_times(t, "bloodsucker_", 20)
+        insert_n_times(t, "boar_", 5)
+        insert_n_times(t, "snork_", 45)
+        insert_n_times(t, "chimera_", 7)
+        insert_n_times(t, "m_controller_", 40)
+        insert_n_times(t, "dog_", 7)
+        insert_n_times(t, "tushkano_", 22)
+        insert_n_times(t, "pseudodog_", 8)
+        insert_n_times(t, "fracture_", 11)
+        insert_n_times(t, "lurker_", 5)
+        insert_n_times(t, "cat_", 7)
+        insert_n_times(t, "psy_dog_", 8)
+        insert_n_times(t, "m_karlik_", 25)
+        insert_n_times(t, "burer_", 40)
+        insert_n_times(t, "m_poltergeist_", 35)
+        insert_n_times(t, "gigant_", 8)
+        insert_n_times(t, "flesh_", 5)
+        insert_n_times(t, "rat_", 10)
+        insert_n_times(t, "zombie_", 15)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["l13u_warlab"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 45)
+        insert_n_times(t, "bloodsucker_", 8)
+        insert_n_times(t, "boar_", 5)
+        insert_n_times(t, "snork_", 18)
+        insert_n_times(t, "chimera_", 7)
+        insert_n_times(t, "m_controller_", 35)
+        insert_n_times(t, "dog_", 7)
+        insert_n_times(t, "tushkano_", 12)
+        insert_n_times(t, "pseudodog_", 8)
+        insert_n_times(t, "fracture_", 11)
+        insert_n_times(t, "lurker_", 5)
+        insert_n_times(t, "cat_", 7)
+        insert_n_times(t, "psy_dog_", 8)
+        insert_n_times(t, "m_karlik_", 30)
+        insert_n_times(t, "burer_", 40)
+        insert_n_times(t, "m_poltergeist_", 60)
+        insert_n_times(t, "gigant_", 8)
+        insert_n_times(t, "flesh_", 5)
+        insert_n_times(t, "rat_", 5)
+        insert_n_times(t, "zombie_", 32)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["zaton"] = (function()
+        local t = {} --similar to kordon/garbage
+        insert_n_times(t, "psysucker_", 20)
+        insert_n_times(t, "bloodsucker_", 34)
+        insert_n_times(t, "boar_", 70)
+        insert_n_times(t, "snork_", 25)
+        insert_n_times(t, "chimera_", 20)
+        insert_n_times(t, "m_controller_", 30)
+        insert_n_times(t, "dog_", 80)
+        insert_n_times(t, "tushkano_", 40)
+        insert_n_times(t, "pseudodog_", 70)
+        insert_n_times(t, "fracture_", 32)
+        insert_n_times(t, "lurker_", 40)
+        insert_n_times(t, "cat_", 75)
+        insert_n_times(t, "psy_dog_", 45)
+        insert_n_times(t, "m_karlik_", 17)
+        insert_n_times(t, "burer_", 15)
+        insert_n_times(t, "m_poltergeist_", 45)
+        insert_n_times(t, "gigant_", 18)
+        insert_n_times(t, "flesh_", 85)
+        insert_n_times(t, "rat_", 20)
+        insert_n_times(t, "zombie_", 40)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["jupiter"] = (function()
+        local t = {} -- more or less random
+        insert_n_times(t, "psysucker_", 40)
+        insert_n_times(t, "bloodsucker_", 50)
+        insert_n_times(t, "boar_", 70)
+        insert_n_times(t, "snork_", 50)
+        insert_n_times(t, "chimera_", 50)
+        insert_n_times(t, "m_controller_", 60)
+        insert_n_times(t, "dog_", 70)
+        insert_n_times(t, "tushkano_", 60)
+        insert_n_times(t, "pseudodog_", 70)
+        insert_n_times(t, "fracture_", 50)
+        insert_n_times(t, "lurker_", 60)
+        insert_n_times(t, "cat_", 70)
+        insert_n_times(t, "psy_dog_", 60)
+        insert_n_times(t, "m_karlik_", 50)
+        insert_n_times(t, "burer_", 50)
+        insert_n_times(t, "m_poltergeist_", 60)
+        insert_n_times(t, "gigant_", 50)
+        insert_n_times(t, "flesh_", 70)
+        insert_n_times(t, "rat_", 10)
+        insert_n_times(t, "zombie_", 50)
+        insert_n_times(t, "bibliotekar_", 15)
+        insert_n_times(t, "borya_", 5)
+        return t
+    end)(),
+    ["jupiter_underground"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 10)
+        insert_n_times(t, "bloodsucker_", 20)
+        insert_n_times(t, "boar_", 5)
+        insert_n_times(t, "snork_", 35)
+        insert_n_times(t, "chimera_", 5)
+        insert_n_times(t, "m_controller_", 17)
+        insert_n_times(t, "dog_", 7)
+        insert_n_times(t, "tushkano_", 40)
+        insert_n_times(t, "pseudodog_", 8)
+        insert_n_times(t, "fracture_", 15)
+        insert_n_times(t, "lurker_", 20)
+        insert_n_times(t, "cat_", 25)
+        insert_n_times(t, "psy_dog_", 12)
+        insert_n_times(t, "m_karlik_", 22)
+        insert_n_times(t, "burer_", 32)
+        insert_n_times(t, "m_poltergeist_", 27)
+        insert_n_times(t, "gigant_", 7)
+        insert_n_times(t, "flesh_", 5)
+        insert_n_times(t, "rat_", 70)
+        insert_n_times(t, "zombie_", 35)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["pripyat"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 30)
+        insert_n_times(t, "bloodsucker_", 24)
+        insert_n_times(t, "boar_", 15)
+        insert_n_times(t, "snork_", 30)
+        insert_n_times(t, "chimera_", 30)
+        insert_n_times(t, "m_controller_", 35)
+        insert_n_times(t, "dog_", 50)
+        insert_n_times(t, "tushkano_", 70)
+        insert_n_times(t, "pseudodog_", 55)
+        insert_n_times(t, "fracture_", 50)
+        insert_n_times(t, "lurker_", 30)
+        insert_n_times(t, "cat_", 70)
+        insert_n_times(t, "psy_dog_", 55)
+        insert_n_times(t, "m_karlik_", 17)
+        insert_n_times(t, "burer_", 25)
+        insert_n_times(t, "m_poltergeist_", 35)
+        insert_n_times(t, "gigant_", 30)
+        insert_n_times(t, "flesh_", 17)
+        insert_n_times(t, "rat_", 10)
+        insert_n_times(t, "zombie_", 60)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["labx8"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 20)
+        insert_n_times(t, "bloodsucker_", 25)
+        insert_n_times(t, "boar_", 5)
+        insert_n_times(t, "snork_", 45)
+        insert_n_times(t, "chimera_", 7)
+        insert_n_times(t, "m_controller_", 40)
+        insert_n_times(t, "dog_", 7)
+        insert_n_times(t, "tushkano_", 22)
+        insert_n_times(t, "pseudodog_", 8)
+        insert_n_times(t, "fracture_", 11)
+        insert_n_times(t, "lurker_", 5)
+        insert_n_times(t, "cat_", 7)
+        insert_n_times(t, "psy_dog_", 8)
+        insert_n_times(t, "m_karlik_", 25)
+        insert_n_times(t, "burer_", 40)
+        insert_n_times(t, "m_poltergeist_", 35)
+        insert_n_times(t, "gigant_", 8)
+        insert_n_times(t, "flesh_", 5)
+        insert_n_times(t, "rat_", 10)
+        insert_n_times(t, "zombie_", 15)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+    ["k02_trucks_cemetery"] = (function()
+        local t = {}
+        insert_n_times(t, "psysucker_", 15)
+        insert_n_times(t, "bloodsucker_", 18)
+        insert_n_times(t, "boar_", 60)
+        insert_n_times(t, "snork_", 40)
+        insert_n_times(t, "chimera_", 22)
+        insert_n_times(t, "m_controller_", 30)
+        insert_n_times(t, "dog_", 50)
+        insert_n_times(t, "tushkano_", 80)
+        insert_n_times(t, "pseudodog_", 60)
+        insert_n_times(t, "fracture_", 30)
+        insert_n_times(t, "lurker_", 50)
+        insert_n_times(t, "cat_", 65)
+        insert_n_times(t, "psy_dog_", 25)
+        insert_n_times(t, "m_karlik_", 20)
+        insert_n_times(t, "burer_", 18)
+        insert_n_times(t, "m_poltergeist_", 32)
+        insert_n_times(t, "gigant_", 22)
+        insert_n_times(t, "flesh_", 55)
+        insert_n_times(t, "rat_", 20)
+        insert_n_times(t, "zombie_", 35)
+        insert_n_times(t, "bibliotekar_", 10)
+        insert_n_times(t, "borya_", 30)
+        return t
+    end)(),
+}
+
+--filtered mutant spawn table, prepared on game start
+local filtered_spawn_table = {}
+
+local function get_total_weight_on_level(level_name)
+    local filtered_spawn_table_on_level = {}
+    for i, mutant in pairs(mutant_spawn_per_level[level_name]) do
+        -- filter disabled mutants in menu
+        if flipped_mutant_spawn_table[mutant] then
+            table_insert(filtered_spawn_table_on_level, mutant)
+        end
+    end
+    return filtered_spawn_table_on_level
+end
+
+local function get_weighted_monster_spawn(level_name)
+    --when return nil, make sure to set default value in parent function
+    if not filtered_spawn_table[level_name] then
+        trace("level %s not found, returning nil", level_name)
+        return nil
+    end
+
+    local t = filtered_spawn_table[level_name]
+    local squad = t[random(#t)]
+    printf("spawning %s", squad)
+    return squad
+end
+
+local function please_die_sid()
+    local ids = {"red_forester_tech", "esc_m_trader"}
+    for i, n in ipairs(ids) do
+        smr_debug.get_log().info("population", "removing story object %s", n)
+        local so = get_story_object_id(n)
+        if so then alife_release_id(so) end
+    end
+end
+
+function get_unused_mutant_spawn_table()
+    if next(unused_mutant_spawn_table) == nil then
+        for m, c in pairs(unused_mutant_spawn_cfg) do
+            if (smr_mutants_mcm.get_config(m) == true) then
+                local mn = str_explode(m, "_")
+                if not unused_mutant_spawn_table[mn[1]] then
+                    unused_mutant_spawn_table[mn[1]] = {}
+                end
+                for i, v in ipairs(c) do
+                    table.insert(unused_mutant_spawn_table[mn[1]], v)
+                end
+            end
+        end
+        -- smr_debug.get_log().log_table("population/monsters", "FOO", unused_mutant_spawn_table)
+    end
+    return unused_mutant_spawn_table
+end
+
+function get_zombie_spawn_table()
+    if next(zombie_spawn_table) == nil then
+        for k, n in pairs(zombie_spawn_cfg) do
+            if smr_zombies_mcm.get_config(k) then
+                for i, s in ipairs(n) do
+                    table.insert(zombie_spawn_table, s)
+                end
+            end
+        end
+        if next(zombie_spawn_table) == nil or smr_zombies_mcm.get_config("zombiesp") then
+            for i = 1, smr_zombies_mcm.get_config("zombies_amount") do
+                table.insert(zombie_spawn_table, "simulation_zombie")
+            end
+        end
+    end
+    return zombie_spawn_table
+end
+
+function get_faction_spawn_table()
+    if next(faction_spawn_table) == nil then
+        for k, n in ipairs(faction_spawn_cfg) do
+            if smr_stalkers_mcm.get_config(n) then
+                table.insert(faction_spawn_table, n)
+            end
+        end
+    end
+    if next(faction_spawn_table) == nil then
+        table.insert(faction_spawn_table, "stalker")
+    end
+    return faction_spawn_table
+end
+
+function is_squad_faction_enabled(squad)
+    local t = get_faction_spawn_table()
+    local faction = ini_sys:r_string_ex(squad, "faction")
+    if faction == "dolg" then
+        faction = "duty"
+    end
+    if faction == "killer" then
+        faction = "merc"
+    end
+    for i, f in ipairs(t) do
+        if (faction == f) then
+            return true
+        end
+    end
+    return false
+end
+
+function get_mutant_spawn_table()
+    if next(mutant_spawn_table) == nil then
+        for m, c in pairs(mutant_spawn_cfg) do
+            if (smr_mutants_mcm.get_config(c) == true) then
+                table_insert(mutant_spawn_table, m)
+            end
+        end
+        if next(mutant_spawn_table) == nil then
+            table_insert(mutant_spawn_table, "chimera_")
+        end
+        flipped_mutant_spawn_table = array_flip(mutant_spawn_table)
+    end
+    return mutant_spawn_table
+end
+
+local function is_mutant_type_enabled(section)
+    local t = get_mutant_spawn_table()
+    for i, m in pairs(t) do
+        if (string.sub(section, 1, string.len(m)) == m) then
+            return true
+        end
+    end
+    return false
+end
+
+local function get_random_enabled_mutant_squad(smart)
+    -- mutant spawn table {"psysucker_", "bloodsucker_", ...}
+    local t = get_mutant_spawn_table() 
+    if smr_mutants_mcm.get_config("balanced_mutants") then
+        trace("ZCP Balanced Mutants enabled")
+        local level_name = alife():level_name(game_graph():vertex(smart.m_game_vertex_id):level_id())
+        trace("Level name: %s", level_name)
+        return mutant_spawn_squads[get_weighted_monster_spawn(level_name) or t[random(#t)]]
+    else
+        return mutant_spawn_squads[t[random(#t)]]
+    end
+end
+
+local function get_common_squad_type(squad_name)
+    local ss = str_explode(squad_name, "_")
+    if  ss[4] == "novice"
+        or ss[4] == "advanced"
+        or ss[4] == "veteran"
+        or ss[4] == "alpha"
+        or ss[4] == "trader"
+        or ss[4] == "medic"
+        or ss[4] == "barman"
+        or ss[4] == "mechanic"
+    then
+        return ss[4]
+    end
+    return false
+end
+
+local function release_npc_or_squad(npc, squad)
+    alife_release(npc)
+    if (squad:npc_count() <= 1) then
+        alife_release_id(squad.id)
+    end
+end
+
+local function try_spawn_faction(orig_spawn, smart)
+    if (not orig_spawn) then
+        return false
+    end
+    -- setup comparable squad of random enabled faction
+    local t = get_faction_spawn_table()
+    local st = { "novice", "veteran", "advanced" }
+    local squad_type = get_common_squad_type(orig_spawn) or st[random(#st)]
+    local tt = t[random(#t)] .. "_sim_squad_" .. squad_type
+    for n, r in pairs(retarded_squad_names) do
+        if tt == n then
+            tt = r
+        end
+    end
+    -- random stalkers
+    if  smr_stalkers_mcm.get_config("random_stalkers")
+        and (random(1,100) <= smr_stalkers_mcm.get_config("random_stalkers_chance"))
+        -- only replace common squads with random stalkers
+        and (ini_sys:r_bool_ex(orig_spawn, "common"))
+        -- check if smart is base
+        and (not smr_civil_war.smart_is_base(smart:name()))
+    then
+        smr_debug.get_log().info("population/stalkers", "replaced squad %s with random stalkers %s (smart: %s)", orig_spawn, tt, smart:name())
+        return tt
+    end
+    -- check if faction is enabled
+    if is_squad_faction_enabled(orig_spawn) then
+        smr_debug.get_log().info("population/stalkers", "faction enabled - returning %s", orig_spawn)
+        return orig_spawn
+    end
+    -- replace if option enabled
+    if not smr_stalkers_mcm.get_config("factions_replace_squads") then
+        smr_debug.get_log().info("population/stalkers", "faction %s not enabled - not spawning squad %s", ini_sys:r_string_ex(orig_spawn,"faction"), orig_spawn)
+        return false
+    end
+    smr_debug.get_log().info("population/stalkers", "faction %s not enabled: replaced squad %s with random stalkers %s", ini_sys:r_string_ex(orig_spawn,"faction"), orig_spawn, tt)
+    return tt
+end
+
+local function add_random_npc_to_squad(squad, smart)
+    local npcs = ini_sys:r_string_ex(squad:section_name(),"npc_random")
+    if (not npcs) then
+        npcs = ini_sys:r_string_ex(squad:section_name(),"npc")
+    end
+    local t = parse_names(npcs)
+    local section = t[random(#t)]
+    local faction = ini_sys:r_string_ex(squad:section_name(), "faction")
+    if is_squad_monster[faction] and (not is_mutant_type_enabled(section)) then
+        smr_debug.get_log().warn("population/monsters", "could not add %s to squad %s (type disabled)", section, squad:section_name(), faction)
+        return nil
+    end
+    local npc = alife_create(section, smart)
+    if not npc then
+        smr_debug.get_log().error("population/monsters", "error while adding %s to squad %s", section, squad:section_name())
+        return nil
+    end
+    squad:register_member(npc.id)
+    smr_debug.get_log().info("population/monsters", "added %s to squad %s", section, squad:section_name())
+    return npc
+end
+
+-- ---
+-- ENTRY POINTS
+-- ---
+
+-- smart_terrain.se_smart_terrain:try_respawn()
+-- simulation_board:fill_start_position()
+function smr_handle_spawn(orig_spawn, smart)
+    -- player wished for control
+    if has_alife_info("actor_made_wish_for_control") then
+        return SIMBOARD:create_squad(smart, "simulation_controller_psy")
+    end
+    -- ZCP not enabled
+    if not smr_amain_mcm.get_config("smr_enabled") then
+        smr_debug.get_log().info("population", "not replacing spawn -- ZCP disabled")
+        return SIMBOARD:create_squad(smart, orig_spawn)
+    end
+    -- zombies
+    local rnd = random(1,100)
+    if  smr_zombies_mcm.get_config("zombie_spawn")
+        and rnd <= smr_zombies_mcm.get_config("zombie_chance")
+        -- only replace common squads
+        and ini_sys:r_bool_ex(orig_spawn,"common")
+        -- skip bases
+        and (not smr_civil_war.smart_is_base(smart))
+    then
+        local t = get_zombie_spawn_table()
+        local tt = t[random(#t)]
+        smr_debug.get_log().info("population/zombies", "replaced squad %s with zombie variant %s (%s <= %s)", orig_spawn, tt, rnd, smr_zombies_mcm.get_config("zombie_chance"))
+        return SIMBOARD:create_squad(smart, tt)
+    end
+    local faction = ini_sys:r_string_ex(orig_spawn, "faction")
+    -- mutant squads
+    if is_squad_monster[faction] then
+        if  (string.sub(orig_spawn, 1, string.len("simulation_")) == "simulation_")
+            and smr_mutants_mcm.get_config("random_mutants")
+            and (random(1,100) <= smr_mutants_mcm.get_config("random_mutants_chance"))
+        then
+            trace("calling random mutant spawn")
+            local m = get_random_enabled_mutant_squad(smart)
+            smr_debug.get_log().info("population/monsters", "replaced squad %s with random mutant %s", orig_spawn, m)
+            return SIMBOARD:create_squad(smart, m)
+        end
+    -- stalker squads
+    else
+        local maybe_squad_section = try_spawn_faction(orig_spawn, smart)
+        if maybe_squad_section then
+            return SIMBOARD:create_squad(smart, maybe_squad_section)
+        end
+        return nil
+    end
+    -- return original spawn
+    return SIMBOARD:create_squad(smart, orig_spawn)
+end
+
+-- smart_terrain.se_smart_terrain:try_respawn()
+function smart_can_respawn(smart)
+    local name = smart:name()
+    local last_respawn_update = smart.last_respawn_update
+    -- default value
+    if (not smr_amain_mcm.get_config("smr_enabled")) and (smr_amain_mcm.get_config("respawn_idle") ~= 86400) then
+        smr_debug.get_log().info("population/smart", "default respawn check value: ZCP disabled or respawn_idle set to 86400 (testing for smart %s)", name)
+        return last_respawn_update == nil or curr_time:diffSec(last_respawn_update) > smart.respawn_idle
+    end
+    -- last update was nil
+    local cfg = smr_amain_mcm.get_config("respawn_idle")
+    if last_respawn_update == nil then
+        smr_debug.get_log().info("population/smart", "respawn check sucessful for smart %s (last update was nil)", name)
+        return true
+    end
+    -- respawns disabled
+    if cfg == -1 then
+        smr_debug.get_log().info("population/smart", "respawn check failed: respawns disabled (testing for smart %s)", name)
+        return false
+    end
+    -- use ZCP config value
+    local diff = game.get_game_time():diffSec(last_respawn_update)
+    if diff > cfg then
+        smr_debug.get_log().info("population/smart", "respawn check sucessful for smart %s (last update was %s, diff is %s)", name, last_respawn_update, diff)
+        return true
+    else
+        return false
+    end
+end
+
+-- smart_terrain.se_smart_terrain:try_respawn()
+-- simulation_board:fill_start_position()
+function get_stalker_pop_factor()
+    if smr_amain_mcm.get_config("smr_enabled") then
+        smr_debug.get_log().info("population/stalkers", "overriding population factor")
+        return smr_amain_mcm.get_config("stalker_pop_factor")
+    end
+    smr_debug.get_log().info("population/stalkers", "ZCP disabled: using default population factor")
+    return ui_options.get("alife/general/alife_stalker_pop")
+end
+
+-- smart_terrain.se_smart_terrain:try_respawn()
+-- simulation_board:fill_start_position()
+function get_monster_pop_factor()
+    if smr_amain_mcm.get_config("smr_enabled") then
+        smr_debug.get_log().info("population/monsters", "overriding population factor")
+        return smr_amain_mcm.get_config("monster_pop_factor")
+    end
+    smr_debug.get_log().info("population/monsters", "ZCP disabled: using default population factor")
+    return ui_options.get("alife/general/alife_mutant_pop")
+end
+
+-- sim_board.simulation_board:create_squad()
+function remove_disabled_mutants_from_squad(squad, spawn_smart)
+    if (not smr_amain_mcm.get_config("smr_enabled")) then
+        return
+    end
+    local sim = alife()
+    -- remove disabled mutants
+    for k in squad:squad_members() do
+        local se_obj = k.object or k.id and sim:object(k.id)
+        if  IsMonster(nil, se_obj:clsid())
+            and (not get_object_story_id(se_obj.id))
+            and (not is_mutant_type_enabled(se_obj:section_name()))
+        then
+            smr_debug.get_log().info("population/monsters", "releasing disabled mutant %s in squad %s", se_obj:section_name(), squad:section_name())
+            alife_release(se_obj)
+        end
+    end
+    -- remove last squad member
+    if  (squad:npc_count() <= 1) and (string.sub(squad:name(), 1, string.len("simulation_")) == "simulation_") then
+        -- I don't think there's a way to just get the first squad member...
+        for k in squad:squad_members() do
+            local se_obj = k.object or k.id and sim:object(k.id)
+            if  IsMonster(nil, se_obj:clsid())
+                and (not get_object_story_id(se_obj.id))
+                and (not is_mutant_type_enabled(se_obj:section_name()))
+            then
+                alife_release_id(squad.id)
+                smr_debug.get_log().info("population/monsters", "releasing monster squad %s", squad:section_name())
+                if smr_mutants_mcm.get_config("types_replace_squads") then
+                    local rnd = get_random_enabled_mutant_squad(spawn_smart)
+                    smr_debug.get_log().info("population/monsters", "released monster squad %s replaced with %s", squad:section_name(), rnd)
+                    SIMBOARD:create_squad(spawn_smart, rnd)
+                end
+            end
+        end
+    end
+end
+-- sim_board.simulation_board:create_squad()
+function replace_mutant_variants_in_squad(squad, smart)
+    local vt = get_unused_mutant_spawn_table()
+    local sim = alife()
+    for k in squad:squad_members() do
+        local se_obj = k.object or k.id and sim:object(k.id)
+        for m, v in pairs(vt) do
+            if  (str_explode(se_obj:section_name(), "_")[1] == m)
+                and (random(1,100) <= smr_mutants_mcm.get_config("unused_types_chance"))
+             then
+                release_npc_or_squad(se_obj, squad)
+                local mrs = v[random(#v)]
+                local mr = alife_create(mrs, smart)
+                smr_debug.get_log().info("population/monsters", "replaced %s with variant %s in squad %s", se_obj:section_name(), mrs, squad:section_name())
+                squad:register_member(mr.id)
+            end
+        end
+    end
+end
+
+-- sim_board.simulation_board:create_squad()
+function adjust_squad_size(squad, smart)
+    if not ini_sys:r_bool_ex(squad:section_name(),"common") then
+        return
+    end
+    local variance
+    local squad_size
+    if is_squad_monster[ini_sys:r_string_ex(squad:section_name(), "faction")] then
+        variance = smr_mutants_mcm.get_config("squad_size_variance")
+        squad_size = smr_mutants_mcm.get_config("squad_size")
+    else
+        variance = smr_stalkers_mcm.get_config("squad_size_variance")
+        squad_size = smr_stalkers_mcm.get_config("squad_size")
+    end
+    local fac = variance + squad_size
+    if (fac == 1.0) then
+        smr_debug.get_log().info("population", "no adjustment to squad size for %s", squad:section_name())
+        return
+    end
+    if get_story_squad(squad:section_name()) then
+        smr_debug.get_log().warn("population", "no adjustment to squad size for %s (story squad)", squad:section_name())
+        return
+    end
+    
+    local target_count = squad:npc_count() * fac
+    local target_diff = target_count - squad:npc_count()
+    smr_debug.get_log().info("population", "adjusting squad %s size: from %s to %s (diff: %s, factor: %s)", squad:section_name(), squad:npc_count(), target_count, target_diff, fac)
+    if (target_diff > 0) then
+        for i=target_diff, 0, -1 do
+            if i < 1 then
+                if (random() < i) then
+                    add_random_npc_to_squad(squad, smart)
+                end
+                break
+            else
+                add_random_npc_to_squad(squad, smart)
+            end
+        end
+        smr_debug.get_log().info("population", "adjusted squad %s size up: new count is %s", squad:section_name(), squad:npc_count())
+    elseif (target_diff < 0) then
+        for k in squad:squad_members() do
+            local sim = alife()
+            local se_obj = k.object or k.id and sim:object(k.id)
+            if (target_diff >= 0) then
+                break
+            elseif (target_diff < -1) then
+                alife_release(se_obj)
+                target_diff = target_diff + 1
+            elseif (target_diff == -1) then
+                release_npc_or_squad(se_obj, squad)
+                target_diff = target_diff + 1
+            else
+                if random() < target_diff then
+                    alife_release(se_obj)
+                end
+                break
+            end
+        end
+        smr_debug.get_log().info("population", "adjusted squad %s size down: new count is %s", squad:section_name(), squad:npc_count())
+    end
+end
+
+-- simulation_board:fill_start_position()
+function get_population_preset()
+    if smr_amain_mcm.get_config("smr_enabled") and (smr_stalkers_mcm.get_config("base_population") ~= "sim_smr_default") then
+        smr_debug.get_log().info("population", "using population preset %s", "misc\\"..smr_stalkers_mcm.get_config("base_population")..".ltx")
+        return ini_file("misc\\"..smr_stalkers_mcm.get_config("base_population")..".ltx")
+    else 
+        smr_debug.get_log().info("population", "using default population preset")
+        return ini_file("misc\\simulation.ltx")
+    end 
+end
+
+local function actor_on_first_update()
+    if smr_amain_mcm.get_config("smr_enabled") and (smr_stalkers_mcm.get_config("base_population") == "sim_smr_none") then
+        smr_debug.get_log().info("population", "removing story objects")
+        please_die_sid()
+    end
+end
+
+function on_game_start()
+    get_mutant_spawn_table()
+    --prepare mutant spawns
+    for level, t in pairs(mutant_spawn_per_level) do
+        filtered_spawn_table[level] = get_total_weight_on_level(level)
+    end
+    
+    RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+end

@@ -1,0 +1,187 @@
+--[[
+------------------------------------------------------------
+-- DPHs debug logger
+------------------------------------------------------------
+-- You may distribute this together with your addon as long as you keep this header intact.
+-- Latest version available from:  https://www.moddb.com/mods/stalker-anomaly/addons/dphs-debug-logger
+--
+-- by dph-hcl
+------------------------------------------------------------
+]]--
+
+LOG_LEVEL_INFO = 1
+LOG_LEVEL_WARNING = 2
+LOG_LEVEL_ERROR = 3
+
+log_levels = {
+    [LOG_LEVEL_INFO] = "INFO",
+    [LOG_LEVEL_WARNING] = "WARNING",
+    [LOG_LEVEL_ERROR] = "ERROR"
+}
+
+local default_cfg = {
+    ["file"] = "dph.log",
+    ["targets"] = {
+        ["log"] = 1,
+        ["gamelog"] = 2,
+        ["pda"] = 3,
+    }
+}
+
+function new(cfg, mods)
+    -- setup private properties
+    local private = {}
+    private.modules = {}
+    private.enabled = false
+
+    local public = {}
+
+    public.config = default_cfg
+    for k, v in pairs(cfg) do
+        public.config[k] = v
+    end
+
+    private.targets = {
+        ["log"] = function(mod, level, entry, ...)
+            local ln = public.format_entry(mod, level, entry, ...)
+            local file = io.open(public.config.file,"a+")
+            if not file then
+                printe(public.format_entry("dph_debug_log/log", LOG_LEVEL_ERROR, "Unable to open logfile %s! Entry logged on the following line.", public.config.file))
+                printf(public.format_entry(mod, level, entry, ...))
+            end
+            file:write(ln .. "\n")
+            file:close()
+        end,
+        ["gamelog"] = function (mod, level, entry, ...)
+            local ln = public.format_entry(mod, level, entry, ...)
+            if level >= 3 then
+                printe(ln)
+            else
+                printf(ln)
+            end
+        end,
+        ["pda"] = function (mod, level, entry, ...)
+            local ln = entry
+            if (select('#',...) >= 1) then
+                ln = string.format(entry, ...)
+            end
+            if (db) and (db.actor) then
+                db.actor:give_game_news("[" .. log_levels[level] .. "] " .. mod, ln, "", 5000, 10000)
+            else
+                printe(public.format_entry("dph_debug_log/pda", LOG_LEVEL_ERROR, "Could not send message to PDA: Actor does not exist! Entry logged on the following line."))
+                printf(public.format_entry(mod, level, entry, ...))
+            end
+        end,
+    }
+
+    private.compare_paths = function(pt, mt)
+        m = tostring(mt)
+        p = tostring(pt)
+        if (not m) or (not p) then
+            return false
+        end
+        local mm = str_explode(m, "/")
+        local pp = str_explode(p, "/")
+        for i, seg in ipairs(mm) do
+            if (not pp[i]) or (seg ~= pp[i]) then
+                return false
+            end
+        end
+        return true
+    end
+
+    private.module_enabled = function(mod)
+        for i, m in ipairs(private.modules) do
+            if private.compare_paths(mod, m) then
+                return true
+            end
+        end
+        return false
+    end
+
+    private.log_entry = function(mod, level, entry, ...)
+        if (private.enabled) and private.module_enabled(mod) then
+            for t, l in pairs(public.config.targets) do
+                if level >= l then public.log_to_target(t, mod, level, entry, ...) end
+            end
+        end
+    end
+
+    -- public interface
+    public.enable = function()
+        private.enabled = true
+        public.info("dph_debug_log", "DPHs DEBUG LOGGER VERSION %s | Log instance started", public.version())
+        return private.enabled
+    end
+
+    public.disable = function()
+        private.enabled = false
+        return private.enabled
+    end
+
+    public.register_module = function(m)
+        table.insert(private.modules, m)
+    end
+
+    public.unregister_module = function(mod)
+        for i, m in ipairs(private.modules) do
+            if mod == m then private.modules[i] = nil end
+        end
+    end
+
+    public.define_target = function(name, log_function)
+        private.targets[name] = log_function
+    end
+
+    public.log_to_target = function(target, mod, level, entry, ...)
+        local status, err = pcall(private.targets[target], mod, level, entry, ...)
+        if err then
+            printe(public.format_entry("dph_debug_log", LOG_LEVEL_ERROR, "Target %s threw an exception while logging <%s> %s", target, mod, entry))
+            printe("ERROR: %s", err)
+            printf(public.format_entry(mod, level, entry, ...))
+        end
+    end
+
+    public.format_entry = function(mod, level, entry, ...)
+        local strf = entry
+        if (select('#',...) >= 1) then
+            strf = string.format(entry, ...)
+        end
+        local n1 = "[" .. log_levels[level] .. "]" .. string.rep(" ", 8 - #log_levels[level])
+        local n2 = "<" .. mod .. ">" .. string.rep(" ", 28 - #mod)
+        return (n1 .. n2 .. strf)
+    end
+
+    public.info = function(mod, entry, ...)
+        return private.log_entry(mod, LOG_LEVEL_INFO, entry, ...)
+    end
+
+    public.warn = function(mod, entry, ...)
+        return private.log_entry(mod, LOG_LEVEL_WARNING, entry, ...)
+    end
+
+    public.error = function(mod, entry, ...)
+        return private.log_entry(mod, LOG_LEVEL_ERROR, entry, ...)
+    end
+
+    public.pda = function(mod, entry, ...)
+        return public.log_to_target("pda", mod, LOG_LEVEL_INFO, entry, ...)
+    end
+
+    public.log_table = function(mod, name, tbl)
+        local ts = utils_data.print_table(tbl, false, true)
+        public.info(mod, "TABLE %s \n%s", name, ts)
+    end
+
+    public.version = function()
+        return 1
+    end
+
+    -- constructor
+    for i, m in ipairs(mods) do
+        public.register_module(m)
+    end
+    public.register_module("dph_debug_log")
+
+    return public
+end
