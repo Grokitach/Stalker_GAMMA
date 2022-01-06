@@ -1,7 +1,7 @@
-# Stalker_GAMMA
+# Stalker GAMMA
 S.T.A.L.K.E.R. Anomaly G.A.M.M.A. modpack definition files.
 
-##Get the client to use this repository
+## Get the client to use this repository
 
 G.A.M.M.A. stands for Grok's Automated Modular Modpack for Anomaly.
 
@@ -9,7 +9,7 @@ To get the latest Stalker GAMMA client and install intructions, head to the asso
 
 https://discord.gg/KT2bEHZQbh
 
-##Description
+## Description
 
 G.A.M.M.A. aims at providing a balanced survival, scavenging, cooking, crafting and repairing focused experience with a long progression and smooth gameplay.
 
