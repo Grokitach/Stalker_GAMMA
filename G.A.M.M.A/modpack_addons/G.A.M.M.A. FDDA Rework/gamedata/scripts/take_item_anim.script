@@ -2,7 +2,7 @@
 item pickup animation script
 Author: Feel_Fried
 --]]
-local skin_anim, harv_usage_snd
+local skin_anim, harv_usage_snd,enable_take
 local bool_to_number={ [true]=1, [false]=0 }
 local ltx = ini_file("items\\items\\anims_loot_list.ltx")
 
@@ -20,9 +20,11 @@ function loadsettings()
 	if ui_mcm then
 		enable_animations = ui_mcm.get("EA_settings/enable_animations")
 		default_dist = ui_mcm.get("EA_settings/take_dist")
+		enable_take = ui_mcm.get("EA_settings/take_item_anim")
 	else
 		enable_animations = ui_options.get("video/player/animations")
 		default_dist = 0.12
+		enable_take = true
 	end
 end
 
@@ -33,7 +35,7 @@ function actor_on_item_take(item)
 	--item pickup animation
 	local checkrun = level.actor_moving_state()
 	local check = bool_to_number[not enhanced_animations.used_item] + bool_to_number[not anim_used] + bool_to_number[not enhanced_animations.fake_monster] + bool_to_number[enable_animations] + ((string.sub(item:section(),1,4) == 'anim') and 0 or 1) + ((checkrun >= 2000) and 0 or 1)
-	if ( dist > default_dist ) and check == 6 then
+	if ( dist > default_dist ) and (check == 6) and enable_take then
 		game.play_hud_motion(db.actor:active_slot()==0 and 2 or 1, "item_ea_take_hud", "anm_ea_take", true, 1.4)
 		anim_used = true
 		CreateTimeEvent("anim_delay", "anim_delay", 0.5, anim_delay)
