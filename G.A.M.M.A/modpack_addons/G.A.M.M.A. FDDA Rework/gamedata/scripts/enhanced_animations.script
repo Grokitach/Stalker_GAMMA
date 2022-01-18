@@ -30,8 +30,8 @@ local ini_eff = {}
 enable_animations = true
 mutant_loot_mod = true
 ini_eff = ini_file("items\\items\\animations_settings.ltx")
-local active_slot,anim_section,anim_exist_tm,wpn,item_usage_snd,monster_usage_snd,item,anim_use_time,obj_m,used_monster = nil
-used_item,ea_flag,fake_monster,det_active = nil
+local active_slot,anim_exist_tm,wpn,item_usage_snd,monster_usage_snd,item,anim_use_time,obj_m,used_monster = nil
+used_item,ea_flag,fake_monster,det_active,anim_section = nil
 
 function on_game_start()
 	RegisterScriptCallback("on_game_load",on_game_load)
@@ -171,8 +171,8 @@ end
 function use_item(obj)
 	item = obj:section()
 	obj_m = obj
-	hide_hud_inventory()
 	used_item = item
+	hide_hud_inventory()
 	anim_section = ini_eff:r_string_ex(item, "anm")
 	mask_hud_switcher()
 	anim_prepare()
@@ -225,6 +225,7 @@ function anim_manager_item(anim_section_hud)
 	end
 	alife_create_item("items_anm_dummy",db.actor)
 	CreateTimeEvent("ea_anim_stoper", "stop_my_item_anim", anim_exist_tm, stop_my_item_anim)
+	ea_callbacks.EA_SendScriptCallback("ea_on_item_use",used_item,anim_exist_tm)
 end
 
 function anim_manager_monster()
@@ -339,12 +340,15 @@ end
 
 --eating fake item to stop default items sound and delayed item using
 function eat_my_obj()
-	db.actor:eat(obj_m)
+	if obj_m then
+		db.actor:eat(obj_m)
+	end
 	db.actor:eat(db.actor:object("items_anm_dummy"))
 	return true
 end
 
 function stop_my_item_anim()
+	ea_callbacks.EA_SendScriptCallback("ea_on_item_anim_stop",used_item)
 	ea_restore_actor()
 	mask_hud_switcher()
 	used_item = nil
