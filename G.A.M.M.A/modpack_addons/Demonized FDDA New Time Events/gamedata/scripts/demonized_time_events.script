@@ -1,0 +1,69 @@
+-- Copypasted time events that doesn't require any checks
+-- Processing on actor on update
+-- Shamely copied by demonized
+
+local time_global = time_global
+local pairs = pairs
+local unpack = unpack
+
+local ev_queue = {}
+
+function CreateTimeEvent(ev_id,act_id,timer,f,...)
+	if not (ev_queue[ev_id]) then
+		ev_queue[ev_id] = {}
+		ev_queue[ev_id].__size = 0
+	end
+
+	if not (ev_queue[ev_id][act_id]) then
+		ev_queue[ev_id][act_id] = {}
+		ev_queue[ev_id][act_id].timer = time_global() + timer*1000
+		ev_queue[ev_id][act_id].f = f
+		ev_queue[ev_id][act_id].p = {...}
+		ev_queue[ev_id].__size = ev_queue[ev_id].__size + 1
+	end
+	-- printf("creating demonized time event %s, %s, %s", ev_id, act_id, ev_queue[ev_id][act_id].timer)
+end
+
+function RemoveTimeEvent(ev_id,act_id)
+	if (ev_queue[ev_id] and ev_queue[ev_id][act_id]) then
+		ev_queue[ev_id][act_id] = nil
+		ev_queue[ev_id].__size = ev_queue[ev_id].__size - 1
+	end
+end
+
+function ResetTimeEvent(ev_id,act_id,timer)
+	if (ev_queue[ev_id] and ev_queue[ev_id][act_id]) then
+		ev_queue[ev_id][act_id].timer = time_global() + timer*1000
+	end
+end
+
+function ProcessEventQueue(force)
+	for event_id,actions in pairs(ev_queue) do
+		for action_id,act in pairs(actions) do
+			if (action_id ~= "__size") then
+				-- printf("process demonized time events, act.timer %s, time_global %s", act.timer, time_global())
+				if (force) or (time_global() >= act.timer) then
+					-- utils_data.debug_write(strformat("event_queue: event_id=%s action_id=%s",event_id,action_id))
+					if (act.f(unpack(act.p)) == true) then
+						ev_queue[event_id][action_id] = nil
+						ev_queue[event_id].__size = ev_queue[event_id].__size - 1
+					end
+				end
+			end
+		end
+
+		if (ev_queue[event_id].__size == 0) then
+			ev_queue[event_id] = nil
+		end
+	end
+	
+	return false
+end
+
+local function process_queue()
+	ProcessEventQueue()
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_update", process_queue)
+end
