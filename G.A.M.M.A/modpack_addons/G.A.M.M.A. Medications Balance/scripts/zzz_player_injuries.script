@@ -1,0 +1,1808 @@
+-- Mora's Edit January 20, 2021
+local disable_hud_fps_fix_tmr = 0.2			-- sec
+
+------------------------ SETTINGS ------------------------
+local healingitems=true -- Enable healing items
+local regen=0 -- Automatic blue health regeneration on each limb. Setting it to 90000 would mean each 90 seconds 1 health point restores
+local damagescale=1.0 -- Damage scale to body parts from recieved damage; 0.5 means half of normal limbs do have 50 hp, torso has 100 hp and head has 50 hp
+local easyhealing=false -- If easy healing is enabled, you wont need to use post healing items and first aid items would restore blue health
+local hud_vertical_spacing=25--27 -- How low hitbox hud will be drown. The higher the number, the lower the HUD. 0 is default ~in the middle of screen.
+
+local hide_default_hud= (zzz_player_injuries_mcm.get_config("TEXT_BASED_PATCH")) and false or true
+local show_player_name=true
+local hide_if_healthy=false
+
+--====== marked everything i added with 'xcvb' to make it easier to find in case someone wants to change/modify anything from new effects ======
+local NEW_LIMB_PENALTIES_FEATURE = zzz_player_injuries_mcm.get_config("NEW_LIMB_PENALTIES_FEATURE")	-- will keep it on loading just in case
+
+-- It's very important to keep the correct ratio between "effects_mult" and "maxhp" as shown in example
+local effects_mult = 1 -- Divide this by maxhp and damagescale multipliers. Example "effects_mult = 1/10" if (default maxhp)*10, damagescale*10, medicines*10 etc (more immersive and harmful effects don't reduce the whole chunks)
+local prev_time = nil
+local head_tbl = {}
+local tinnitus_play = false
+
+function save_state(m_data)
+    m_data.head_tbl = head_tbl
+end
+
+function load_state(m_data)
+    head_tbl = m_data.head_tbl or {}
+end
+
+local aim_anm = {"earthquake_1","earthquake_2"}
+local rightleg_anm = {"med1","med4"}
+local leftleg_anm = {"med2","med3"}
+local bothlegs_anm = {"strong1","strong2","strong4"}
+
+function on_option_change()
+	if r(head_tbl.volume) ~= r(ui_options.get("sound/general/master_volume")) then
+		head_tbl.volume = (ui_options.get("sound/general/master_volume"))
+	end
+end
+
+-- shameful steal from arti
+local speeds = {}
+
+function actor_on_first_update()
+	local options_vol = ui_options.get("sound/general/master_volume")
+	if not (head_tbl.volume) then head_tbl.volume = options_vol end
+    speeds[0] = db.actor:get_actor_run_coef()
+    speeds[1] = db.actor:get_actor_runback_coef()
+    speeds[2] = db.actor:get_actor_sprint_koef()
+end
+------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------
+
+local last_damaged_hitbox=nil
+local showtexthud=(zzz_player_injuries_mcm.get_config("TEXT_BASED_PATCH")) and 2 or 0 --1 large left down, 2 default center 0 texture
+local show_hud_type=2
+local show_hud_change_time=0
+local myhealth=0
+local healthstatus=true
+local init=false
+local timeregen=time_global()
+
+local display_width=2560
+local display_height=1440
+local display_ratio=169
+local display={}
+display.types={}
+display.types[43]=1.3333
+display.types[169]=1.7777
+display.types[1610]=1.56
+
+local maxhp={}
+maxhp.head=11
+maxhp.torso=11
+maxhp.leftarm=5
+maxhp.rightarm=5
+maxhp.leftleg=5
+maxhp.rightleg=5
+
+local health={}
+health.head=maxhp.head
+health.torso=maxhp.torso
+health.leftarm=maxhp.leftarm
+health.rightarm=maxhp.rightarm
+health.leftleg=maxhp.leftleg
+health.rightleg=maxhp.rightleg
+
+local preview={}
+
+preview.health={}
+preview.health.head=nil
+preview.health.torso=nil
+preview.health.leftarm=nil
+preview.health.rightarm=nil
+preview.health.leftleg=nil
+preview.health.rightleg=nil
+
+preview.bonus={}
+preview.bonus.head=nil
+preview.bonus.torso=nil
+preview.bonus.leftarm=nil
+preview.bonus.rightarm=nil
+preview.bonus.leftleg=nil
+preview.bonus.rightleg=nil
+
+
+local timedhp={}
+timedhp.head=0
+timedhp.torso=0
+timedhp.leftarm=0
+timedhp.rightarm=0
+timedhp.leftleg=0
+timedhp.rightleg=0
+
+local hud_blink_timer={}
+hud_blink_timer.head=0
+hud_blink_timer.torso=0
+hud_blink_timer.leftarm=0
+hud_blink_timer.rightarm=0
+hud_blink_timer.leftleg=0
+hud_blink_timer.rightleg=0
+hud_blink_timer.blinktime=1000
+
+local medkits={}
+medkits.lastregen=time_global()
+medkits.timedhealth=60000
+medkits.morphine={head=8,torso=5,rightleg=4,leftleg=4,rightarm=4,leftarm=4,timeregen=60000}
+medkits.rebirth={head=11,torso=11,rightleg=5,leftleg=5,rightarm=5,leftarm=5,timeregen=60000}
+medkits.adrenalin={head=10,torso=10,rightleg=5,leftleg=5,rightarm=5,leftarm=5,timeregen=80000}
+medkits.cocaine={harming=true,head=8,torso=4,rightleg=3,leftleg=3,rightarm=3,leftarm=3,timeregen=180000}
+medkits.analgetic={head=3,torso=3,rightleg=2,leftleg=2,rightarm=2,leftarm=2,timeregen=60000}
+medkits.salicidic_acid={harming=true,head=5,torso=5,rightleg=3,leftleg=3,rightarm=3,leftarm=3,timeregen=40000}
+medkits.stimpack={head=5,torso=5,rightleg=3,leftleg=3,rightarm=3,leftarm=3,timeregen=50000}
+medkits.stimpack_army={head=5,torso=7,rightleg=3,leftleg=3,rightarm=3,leftarm=3,timeregen=65000}
+medkits.stimpack_scientic={head=6,torso=9,rightleg=4,leftleg=4,rightarm=4,leftarm=4,timeregen=75000}
+medkits.medkit={head=5,torso=5,rightleg=2,leftleg=2,rightarm=2,leftarm=2,timeregen=30000}
+medkits.medkit_army={head=7,torso=8,rightleg=3,leftleg=3,rightarm=3,leftarm=3,timeregen=40000}
+medkits.medkit_scientic={head=10,torso=8,rightleg=4,leftleg=4,rightarm=4,leftarm=4,timeregen=50000}
+medkits.jgut={rightleg=5,leftleg=5,rightarm=5,leftarm=5,timeregen=40000}
+medkits.survival_kit={torso=11,rightleg=3,leftleg=3,rightarm=3,leftarm=3,timeregen=100000}
+medkits.bandage={head=2,torso=2,rightleg=3,leftleg=3,rightarm=3,leftarm=3,timeregen=40000}
+
+local healhelp={}
+--healhelp.bandage={rightleg=2,leftleg=2,rightarm=2,leftarm=2}
+healhelp.caffeine={head=3}
+healhelp.drug_psy_blockade={head=5,rightleg=2,leftleg=2,rightarm=2,leftarm=2}
+healhelp.drug_sleepingpills={head=8}
+healhelp.drug_booster={torso=6}
+healhelp.drug_anabiotic={head=11,torso=11,rightleg=11,leftleg=11,rightarm=11,leftarm=11}
+healhelp.rebirth={head=8,torso=8,rightleg=4,leftleg=4,rightarm=4,leftarm=4}
+healhelp.glucose_s={head=2,torso=2,rightleg=2,leftleg=2,rightarm=2,leftarm=2}
+healhelp.glucose={head=4,torso=4,rightleg=3,leftleg=3,rightarm=3,leftarm=3}
+healhelp.medkit_army={rightleg=1,leftleg=1,rightarm=1,leftarm=1}
+healhelp.medkit_scientic={rightleg=2,leftleg=2,rightarm=2,leftarm=2}
+healhelp.salicidic_acid={rightleg=2,leftleg=2,rightarm=2,leftarm=2}
+healhelp.analgetic={torso=2,rightleg=1,leftleg=1,rightarm=1,leftarm=1}
+healhelp.stimpack_army={head=2,torso=2,rightleg=1,leftleg=1,rightarm=1,leftarm=1}
+healhelp.stimpack_scientic={head=3,torso=6,rightleg=1,leftleg=1,rightarm=1,leftarm=1}
+healhelp.tetanus={head=5,rightleg=3,leftleg=3,rightarm=3,leftarm=3}
+healhelp.drug_coagulant={torso=3}
+healhelp.yadylin={head=4,torso=4,rightleg=2,leftleg=2,rightarm=2,leftarm=2}
+healhelp.survival_kit={torso=11,rightleg=3,leftleg=3,rightarm=3,leftarm=3}
+healhelp.akvatab={rightleg=4,leftleg=4,rightarm=4,leftarm=4}
+healhelp.vinca={torso=3}
+healhelp.antibio_chlor={head=1,torso=2}
+healhelp.antibio_sulfad={torso=2,rightarm=1,leftarm=1}
+healhelp.antiemetic={head=2,rightleg=1,leftleg=1}
+healhelp.antirad={rightleg=2,leftleg=2}
+healhelp.antirad_cystamine={head=3,torso=3}
+healhelp.antirad_kalium={head=1,torso=1,rightleg=1,leftleg=1,rightarm=1,leftarm=1}
+healhelp.drug_antidot={head=4,torso=2}
+healhelp.drug_radioprotector={head=1,rightleg=1,leftleg=1,rightarm=1,leftarm=1}
+
+
+if easyhealing then
+	healhelp.morphine={harming=true,head=8,torso=5,rightleg=4,leftleg=4,rightarm=4,leftarm=4,timeregen=60000}
+	healhelp.rebirth={harming=true,head=11,torso=11,rightleg=5,leftleg=5,rightarm=5,leftarm=5,timeregen=60000}
+	healhelp.adrenalin={harming=true,head=10,torso=10,rightleg=5,leftleg=5,rightarm=5,leftarm=5,timeregen=80000}
+	healhelp.cocaine={harming=true,head=8,torso=4,rightleg=3,leftleg=3,rightarm=3,leftarm=3,timeregen=180000}
+	healhelp.analgetic={harming=true,head=3,torso=3,rightleg=2,leftleg=2,rightarm=2,leftarm=2,timeregen=60000}
+	healhelp.salicidic_acid={harming=true,head=5,torso=5,rightleg=3,leftleg=3,rightarm=3,leftarm=3,timeregen=40000}
+	healhelp.stimpack={harming=true,head=5,torso=5,rightleg=3,leftleg=3,rightarm=3,leftarm=3,timeregen=50000}
+	healhelp.stimpack_army={harming=true,head=5,torso=7,rightleg=3,leftleg=3,rightarm=3,leftarm=3,timeregen=65000}
+	healhelp.stimpack_scientic={harming=true,head=6,torso=9,rightleg=4,leftleg=4,rightarm=4,leftarm=4,timeregen=75000}
+	healhelp.medkit={head=5,torso=5,rightleg=2,leftleg=2,rightarm=2,leftarm=2,timeregen=30000}
+	healhelp.medkit_army={head=7,torso=8,rightleg=3,leftleg=3,rightarm=3,leftarm=3,timeregen=40000}
+	healhelp.medkit_scientic={head=10,torso=8,rightleg=4,leftleg=4,rightarm=4,leftarm=4,timeregen=50000}
+	healhelp.yadylin={head=2,torso=2,rightleg=2,leftleg=2,rightarm=2,leftarm=2,timeregen=90000}
+	healhelp.bandage={torso=2,torso=2,rightleg=3,leftleg=3,rightarm=3,leftarm=3,timeregen=40000}
+end
+
+
+local playername
+
+function trace_this(to_trace1)
+    local log_file = io.open("log_memory_npc", "a")
+    log_file:write(to_trace1)
+    log_file:close(log_file)
+end
+
+local function GetConditionFromFloat(float,bodypart)
+	if bodypart then
+		if hud_blink_timer[bodypart] then
+			if time_global()-hud_blink_timer[bodypart]<hud_blink_timer.blinktime then
+				return "critical"
+			end
+		end
+	end
+	-- if float>=0.99 then
+		-- --return "good"
+		-- return "blue"
+	-- elseif float>=0.79 then
+		-- --return "ok"
+		-- return "blue"
+	-- elseif float>=0.33 then
+		-- return "blue"
+	-- elseif float>=0.19 then
+		-- return "critical"
+	-- else
+		-- return "critical"
+	-- end
+	return "blue"
+end
+local colors={}
+--colors.blue="%c[0,50,200,200]"
+
+-- colors.good="%c[0,0,255,0]"
+-- colors.ok="%c[0,150,255,0]"
+-- colors.medium="%c[0,255,255,0]"
+-- colors.danger="%c[0,255,100,0]"
+-- colors.critical="%c[0,255,0,0]"
+
+colors.blue="%c[0,56,115,255]"
+colors.good="%c[0,15,143,20]"
+colors.ok="%c[0,138,204,51]"
+colors.medium="%c[0,255,208,0]"
+colors.danger="%c[0,255,79,0]"
+colors.critical="%c[0,230,10,10]"
+colors.grey="%c[0,161,161,161]"
+
+colors.preview_health="%c[0,140,0,255]"
+colors.preview_bonus="%c[0,0,212,24]"
+
+colors.blank="%c[0,156,156,156]"
+colors.white="%c[0,255,255,255]"
+--colors.grey="%c[0,185,185,185]"
+colors.black="%c[0,0,0,0]"
+
+local function SaveHealthStatus()
+	utils_obj.save_var(db.actor,"health.head",health.head)
+	utils_obj.save_var(db.actor,"health.torso",health.torso)
+	utils_obj.save_var(db.actor,"health.rightarm",health.rightarm)
+	utils_obj.save_var(db.actor,"health.leftarm",health.leftarm)
+	utils_obj.save_var(db.actor,"health.rightleg",health.rightleg)
+	utils_obj.save_var(db.actor,"health.leftleg",health.leftleg)
+	
+	utils_obj.save_var(db.actor,"timedhp.head",timedhp.head)
+	utils_obj.save_var(db.actor,"timedhp.torso",timedhp.torso)
+	utils_obj.save_var(db.actor,"timedhp.rightarm",timedhp.rightarm)
+	utils_obj.save_var(db.actor,"timedhp.leftarm",timedhp.leftarm)
+	utils_obj.save_var(db.actor,"timedhp.rightleg",timedhp.rightleg)
+	utils_obj.save_var(db.actor,"timedhp.leftleg",timedhp.leftleg)
+end
+local function LoadHealthStatus()
+	health.head=utils_obj.load_var(db.actor,"health.head") or maxhp.head
+	health.torso=utils_obj.load_var(db.actor,"health.torso") or maxhp.torso
+	health.rightarm=utils_obj.load_var(db.actor,"health.rightarm") or maxhp.rightarm
+	health.leftarm=utils_obj.load_var(db.actor,"health.leftarm") or maxhp.leftarm
+	health.rightleg=utils_obj.load_var(db.actor,"health.rightleg") or maxhp.rightleg
+	health.leftleg=utils_obj.load_var(db.actor,"health.leftleg") or maxhp.leftleg
+	
+	timedhp.head=utils_obj.load_var(db.actor,"timedhp.head") or 0
+	timedhp.torso=utils_obj.load_var(db.actor,"timedhp.torso") or 0
+	timedhp.rightarm=utils_obj.load_var(db.actor,"timedhp.rightarm") or 0
+	timedhp.leftarm=utils_obj.load_var(db.actor,"timedhp.leftarm") or 0
+	timedhp.rightleg=utils_obj.load_var(db.actor,"timedhp.rightleg") or 0
+	timedhp.leftleg=utils_obj.load_var(db.actor,"timedhp.leftleg") or 0
+end
+
+
+local function PartialDamage()
+	local armsbroken=0
+	local legsbroken=0
+	if health.leftarm==0 then armsbroken=armsbroken+1 end
+	if health.rightarm==0 then armsbroken=armsbroken+1 end
+	
+	if health.leftleg==0 then legsbroken=legsbroken+1 end
+	if health.rightleg==0 then legsbroken=legsbroken+1 end
+	
+	-- trace_this("Legsbroken "..legsbroken.."\n")
+	-- trace_this("Pierna izq "..health.leftleg.."\n")
+	-- trace_this("Pierna der "..health.rightleg.."\n\n")
+	if health.torso==0 then
+		db.actor.health=-1
+	end
+	if health.head== 0 then
+		db.actor.health=-1
+	end
+
+	-- not gonna rewrite it xd
+	if NEW_LIMB_PENALTIES_FEATURE then return end
+
+	if armsbroken>0 then
+		if armsbroken==1 then
+			local activeslot=db.actor:active_slot()
+			if activeslot==2 or activeslot==3 then
+				local item_in_slot=db.actor:item_in_slot(activeslot)
+				if item_in_slot then
+					local section_name=item_in_slot:section()
+					--printf("# section name: %s",j)
+					local weight
+					if ini_sys:section_exist(section_name,"inv_weight") then
+						weight=ini_sys:r_float_ex(section_name,"inv_weight")
+						--printf("# weight: %s",weight)
+					else
+						--printf("! weight doesnt' exist!")
+					end
+					if weight then
+						if weight>1.7 then
+							actor_menu.set_msg(1, "One of your arms is wounded, you can't hold this.", 8)
+							db.actor:drop_item(item_in_slot)
+						end
+					end
+				end
+			end
+		else
+			local activeslot=db.actor:active_slot()
+			if activeslot==2 or activeslot==3 or activeslot==1 then
+				local item_in_slot=db.actor:item_in_slot(activeslot)
+				actor_menu.set_msg(1, "Both your arms are wounded, you can't hold this.", 8)
+				db.actor:drop_item(item_in_slot)
+			end
+		end
+	end
+	if legsbroken>0 then
+		local vec=db.actor:get_movement_speed()
+		local movementspeed=(vec.x*vec.x)+(vec.y*vec.y)+(vec.z*vec.z)
+		local stamina=db.actor.power 
+		if legsbroken==1 then
+			-- trace_this("Piernas rotas "..movementspeed.."\n")
+			if movementspeed>30 then db.actor.power=0.01 actor_menu.set_msg(1, "Your leg is damaged, you cannot run.", 8) end
+		else
+			local msg=""
+			for i=1,68 do
+				msg=msg.." "
+			end
+			
+			msg=msg.."Both legs are damaged, you cannot walk."
+			if not (movementspeed<60 and movementspeed>50) and not(movementspeed<22 and movementspeed>20)and not(movementspeed<3 and movementspeed>=0) then
+				db.actor.power=0.0 actor_menu.set_msg(1, msg, 10) 
+				-- trace_this("Actor power"..msg.."\n")
+			end
+		end
+	end
+
+end
+
+--======== xcvb =================================
+function r(val)
+	local shet = round_idp(val, 3)
+
+	return shet
+end
+
+function get_body_state()
+	local crouch = IsMoveState('mcCrouch')
+	local accel = IsMoveState('mcAccel')
+	local body_st = "stand"
+
+	if crouch then
+		if accel then body_st = "low_crouch"
+		else body_st = "crouch"
+		end
+	end
+
+	return body_st
+end
+
+function shaking_hands()
+
+	if not (NEW_LIMB_PENALTIES_FEATURE) then return end
+
+	local activeslot = db.actor:active_slot()
+	if not (activeslot == 2 or activeslot == 3 or activeslot == 1) then return end
+
+	local item_in_slot = db.actor:item_in_slot(activeslot)
+	if not (item_in_slot) then return end
+
+	local section_name = item_in_slot:section()
+	local weight
+	if not (ini_sys:section_exist(section_name, "inv_weight")) then return end
+
+	weight = ini_sys:r_float_ex(section_name, "inv_weight")
+	local body_state = get_body_state()
+	local cam_power = 0
+	local left_arm = health.rightarm * effects_mult
+	left_arm = left_arm >=1 and left_arm or 0.75
+	local right_arm = health.leftarm * effects_mult
+	right_arm = right_arm >=1 and right_arm or 0.75
+	local arms_sum = left_arm + right_arm
+	local max_arms_sum = (maxhp.rightarm + maxhp.leftarm) * effects_mult
+
+	if arms_sum < (max_arms_sum * (zzz_player_injuries_mcm.get_config("arm_penalty_minimum_hp") * 0.1)) then
+		if (left_arm < right_arm / 1.5) or (right_arm < left_arm / 1.5) then
+			cam_power = 1.15 * weight / arms_sum
+			cam_power = (body_state == "crouch") and (0.8 * weight / arms_sum) or cam_power
+			cam_power = (body_state == "low_crouch") and (0.4 * weight / arms_sum) or cam_power
+		else
+			cam_power = 0.8 * weight / arms_sum
+			cam_power = (body_state == "crouch") and (0.55 * weight / arms_sum) or cam_power
+			cam_power = (body_state == "low_crouch") and (0.3 * weight / arms_sum) or cam_power
+		end
+
+		cam_power = clamp(cam_power, 0, 3)
+		cam_power = cam_power * (zzz_player_injuries_mcm.get_config("arm_animation_power"))
+		local cam_power_scope = cam_power * 0.2
+		if item_in_slot:weapon_is_scope() then
+			cam_power = cam_power_scope
+		end
+		-- play anm
+		level.add_cam_effector("camera_effects\\" .. aim_anm[math.random(#aim_anm)] .. ".anm", 9921, true, "", 0, true, cam_power)
+	end
+	--	news_manager.send_tip(db.actor, r(cam_power), 0, nil, 1500)
+
+end
+
+function shaking_hands_remove()
+	level.remove_cam_effector(9921)
+end
+
+function limp_speed_slow()
+
+	if not (NEW_LIMB_PENALTIES_FEATURE) then return end
+
+	local legs_summ = (health.leftleg + health.rightleg) * effects_mult
+	local run_coef = 1
+	local sprint_coef = 1
+	local run_coef = 0.0625 * legs_summ + 0.375
+	local sprint_coef = 0.0625 * legs_summ + 0.375
+	local real_sprint_coef = 0.025 * legs_summ + 0.75
+	speed.add_speed("bhs_speed_run", run_coef, false, true)
+--	speed.add_speed("bhs_speed_runback", run_coef, false, true)
+	speed.add_speed("bhs_speed_sprint", real_sprint_coef, true, true)
+
+--	local vec = db.actor:get_movement_speed()
+--	local ms = (vec.x)^2 + (vec.y)^2 + (vec.z)^2
+--	news_manager.send_tip(db.actor, r(ms), 0, nil, 1500)
+
+end
+
+local leftleg_flag = false
+local rightleg_flag = false
+local bothlegs_flag = false
+
+function legs_limp()
+
+	if not (NEW_LIMB_PENALTIES_FEATURE) then return end
+
+	local right_l = health.leftleg * effects_mult -- right is left
+	local left_l = health.rightleg * effects_mult
+	local legs_sum = left_l + right_l
+	local max_right_l = maxhp.leftleg * effects_mult * (zzz_player_injuries_mcm.get_config("leg_penalty_minimum_hp") * 0.2)
+	local max_left_l = maxhp.rightleg * effects_mult * (zzz_player_injuries_mcm.get_config("leg_penalty_minimum_hp") * 0.2)
+	local max_legs_sum = max_left_l + max_right_l
+
+	if (right_l == left_l) and (legs_sum < max_legs_sum) then
+		bothlegs_flag = true
+		leftleg_flag, rightleg_flag = false
+	--	printf("bothlegs_flag = true")
+	elseif (left_l < max_left_l) and (left_l < right_l) then
+		leftleg_flag = true
+		rightleg_flag, bothlegs_flag = false
+	--	printf("leftleg_flag = true")
+	elseif (right_l < max_right_l) and (right_l < left_l) then
+		rightleg_flag = true
+		leftleg_flag, bothlegs_flag = false
+	--	printf("rightleg_flag = true")
+	elseif (legs_sum >= max_legs_sum) then
+		leftleg_flag, rightleg_flag, bothlegs_flag = false
+	--	printf("ALL = false")
+	end
+
+end
+
+function torso_penalty()
+
+	if not (NEW_LIMB_PENALTIES_FEATURE) then return end
+
+	local torso_health = health.torso * effects_mult
+	local torso_max_hp = maxhp.torso * effects_mult
+	torso_health = torso_health > torso_max_hp and torso_max_hp or (health.torso * effects_mult)
+	local t_diff = (torso_max_hp - torso_health) / effects_mult
+	local t_cap = 1 - t_diff * 0.035
+
+	if (t_diff > 0) and (db.actor.health > t_cap) then
+		db.actor.health = t_cap
+	end
+
+end
+
+local tg_effects_regen = 0
+local tg_effects_regen_delay = 500
+local tg_stage_2_effects = 0
+local tg_stage_2_effects_delay = 15000 	-- just in case, duration of ppe is 7250
+
+function bhs_concussion()
+
+	if not (NEW_LIMB_PENALTIES_FEATURE) then return end
+
+	local tg = time_global()
+	local rnd = math.random(1, 100)
+	local current = health.head * effects_mult
+	if not (head_tbl.previous) then head_tbl.previous = current end
+	local previous = head_tbl.previous
+	local volume_sound_x = get_console_cmd(2,"snd_volume_eff")
+	local volume_sound_x_fade = 0.01
+
+	local anm_damage_threshold = 2
+	local damage_taken = previous - current
+	damage_taken = damage_taken > 0 and damage_taken or 0
+
+	local max_head = maxhp.head * effects_mult
+	local effector_k = damage_taken / max_head
+	local effector_power = effector_k * (zzz_player_injuries_mcm.get_config("head_animation_power"))
+
+--	actor_menu.set_msg(1, strformat("head.tbl.volume: %s, console_volume: %s, stage: %s", r(head_tbl.volume), r(get_console_cmd(2,"snd_volume_eff")), r(head_tbl.stage)))
+
+	-- removing effects if hp between previous and current yellow or blue (or dead)
+	if (previous == current) or (current <= 0) then
+		exec_console_cmd("snd_volume_eff " .. head_tbl.volume)
+		level.remove_pp_effector(99133)
+		head_tbl.stage = 0
+	end
+
+	-- stage 1
+	if (head_tbl.stage == 1) then
+		level.add_pp_effector("concussion_bhs.ppe", 99123, false)
+		exec_console_cmd("snd_volume_eff " .. volume_sound_x_fade)
+		CreateTimeEvent(0, "set_stage_two", 10, set_stage_two)
+	end
+	-- stage 2 xd
+	if (head_tbl.stage == 2) and (tg > tg_stage_2_effects) then
+		if (tinnitus_play) then
+			local snd = sound_object("bhs\\tinnitusx")
+			snd:play_no_feedback(db.actor, sound_object.s2d, 0, VEC_ZERO, 1.0, 1.0)
+			snd.volume = effector_k * 3
+			tinnitus_play = false
+		end
+		-- random chance for head shake
+		if (damage_taken > anm_damage_threshold) and (rnd <= effector_k * 10) then
+			level.add_cam_effector("camera_effects\\wake_up.anm", 96872, false, "", 0, true, effector_power)
+		end
+		level.add_pp_effector("concussion_post_bhs.ppe", 99133, false)
+		tg_stage_2_effects = tg + tg_stage_2_effects_delay
+	end
+
+	level.set_pp_effector_factor(99123, effector_power)
+	level.set_pp_effector_factor(99133, effector_power)
+
+	-- regen
+	if tg > tg_effects_regen then
+		head_tbl.previous = clamp(head_tbl.previous - 0.01, current, head_tbl.previous)		-- effector's power decrease: 	 50 sec for each lost HP
+		tg_effects_regen = tg + tg_effects_regen_delay
+	end
+--	news_manager.send_tip(db.actor, string.format("previous: %s . current: %s", r(head_tbl.previous), r(current)), 0, nil, 1500)
+
+end
+
+function set_stage_two()
+	exec_console_cmd("snd_volume_eff " .. head_tbl.volume)
+	head_tbl.stage = 2
+	tinnitus_play = true
+	return true
+end
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+
+
+--19 head
+--15 - head
+--16 - head
+--17 - head
+
+--13 - upper torso
+--12 - middle torso
+--11 - lower torso
+--2 pelvis
+
+--20 left shoulder
+--21 left upper arm
+--22 left forearm
+--23 left hand
+
+--33 right shoulder
+--34 right upepr arm
+--35 right forearm
+--36 right hand
+
+--3 left upper leg
+--4 left lower leg
+
+--7 right upeprleg
+--8 right lower leg
+
+local hitboxes={}
+hitboxes[19]="head"
+hitboxes[17]="head"
+hitboxes[16]="head"
+hitboxes[15]="head"
+hitboxes[14]="head"
+hitboxes[13]="torso"
+hitboxes[12]="torso"
+hitboxes[11]="torso"
+hitboxes[2]="torso"
+hitboxes[20]="leftarm"
+hitboxes[21]="leftarm"
+hitboxes[22]="leftarm"
+hitboxes[23]="leftarm"
+hitboxes[33]="rightarm"
+hitboxes[34]="rightarm"
+hitboxes[35]="rightarm"
+hitboxes[36]="rightarm"
+hitboxes[3]="leftleg"
+hitboxes[4]="leftleg"
+hitboxes[7]="rightleg"
+hitboxes[8]="rightleg"
+
+local function actor_on_hit_callback(obj, amount, local_direction, who, bone_id)
+    printf("! actor got hit in %s", bone_id)
+
+    if bone_id == 65535 then -- toxic anomalies and radiation
+        bone_id = math.random(1,2)
+        if bone_id == 1 then
+            bone_id = 19
+	else
+            bone_id = 13
+        end
+    end
+
+    if bone_id == 0 then -- attributes fall damage to left or right leg
+        bone_id = math.random(1,2)
+        if bone_id == 1 then
+            bone_id = 3
+	else
+            bone_id = 7
+        end
+    end
+
+    if hitboxes[bone_id] then
+        last_damaged_hitbox=hitboxes[bone_id]
+        text=hitboxes[bone_id]
+    else  -- if an unknown bone is hit, arms or torso are hit
+        bone_id = math.random(1,3)
+        if     bone_id == 1 then
+            bone_id = 33
+        elseif bone_id == 2 then
+            bone_id = 23
+		elseif bone_id == 3 then
+			bone_id = 11
+        end
+        last_damaged_hitbox=hitboxes[bone_id]
+        text=hitboxes[bone_id]
+    end
+
+    --printf("! actor got hit in %s, id %s",text, bone_id)
+end
+
+local function recieved_damage(amount)
+	local index=0
+	for k,v in pairs(health) do
+		index=index+1
+	end
+	local random_number=math.random(1,index)
+	local choosen_hitbox={}
+	-- trace_this("random"..random_number.."\n")
+	if random_number==1 then
+		choosen_hitbox="head"
+	elseif random_number==2 then
+		choosen_hitbox="torso"
+	elseif random_number==3 then
+		choosen_hitbox="leftarm"
+	elseif random_number==4 then
+		choosen_hitbox="rightarm"
+	elseif random_number==5 then
+		choosen_hitbox="leftleg"
+	elseif random_number==6 then
+		choosen_hitbox="rightleg"
+	end
+	if last_damaged_hitbox then
+		choosen_hitbox=last_damaged_hitbox
+		last_damaged_hitbox=nil
+	end
+	
+
+	local damage
+	damage=math.ceil((amount*100)/11*damagescale)
+	local damage_head=math.ceil((amount*2*100)/11*damagescale)
+	
+	
+	if choosen_hitbox=="head" then
+		hud_blink_timer.head=time_global()
+		health.head=health.head-damage_head
+		if health.head<=0 then health.head=0 actor_menu.set_msg(1, "Head fatally damaged!", 8) end
+		utils_obj.save_var(db.actor,"health.head",health.head)
+		-- xcvb
+		if damage_head > (zzz_player_injuries_mcm.get_config("head_penalty_minimum_hp") - 1) then
+			head_tbl.stage = 1
+		end
+		-------
+		
+	elseif choosen_hitbox=="torso" then
+		hud_blink_timer.torso=time_global()
+		health.torso=health.torso-damage
+		if health.torso<=0 then health.torso=0 actor_menu.set_msg(1, "Torso fatally damaged!", 8) end
+		utils_obj.save_var(db.actor,"health.torso",health.torso)
+		
+	elseif choosen_hitbox=="leftarm" then
+		hud_blink_timer.leftarm=time_global()
+		health.leftarm=health.leftarm-damage
+		if health.leftarm<=0 then health.leftarm=0 actor_menu.set_msg(1, "Right arm damaged!", 8) end
+		utils_obj.save_var(db.actor,"health.leftarm",health.leftarm)
+		
+	elseif choosen_hitbox=="rightarm" then
+		hud_blink_timer.rightarm=time_global()
+		health.rightarm=health.rightarm-damage
+		if health.rightarm<=0 then health.rightarm=0 actor_menu.set_msg(1, "Left arm damaged!", 8) end
+		utils_obj.save_var(db.actor,"health.rightarm",health.rightarm)
+		
+	elseif choosen_hitbox=="leftleg" then
+		hud_blink_timer.leftleg=time_global()
+		health.leftleg=health.leftleg-damage
+		if health.leftleg<=0 then 
+			if health.rightleg>0 then
+				health.leftleg=0 actor_menu.set_msg(1, "Right leg damaged!", 8) 
+			end
+		end
+		utils_obj.save_var(db.actor,"health.leftleg",health.leftleg)
+		
+	elseif choosen_hitbox=="rightleg" then
+		hud_blink_timer.rightleg=time_global()
+		health.rightleg=health.rightleg-damage
+		if health.rightleg<=0 then 
+			if health.leftleg>0 then
+				health.rightleg=0 actor_menu.set_msg(1, "Left leg damaged!", 8) 
+			end
+		end
+		utils_obj.save_var(db.actor,"health.rightleg",health.rightleg)
+		
+	end
+	timeregen=time_global()
+end
+local progress_stamina=nil
+local progress_health=nil
+local progress_health_head=nil
+local progress_health_torso=nil
+local progress_health_rightarm=nil
+local progress_health_leftarm=nil
+local progress_health_rightleg=nil
+local progress_health_leftleg=nil
+
+
+local progress_health_head_time=nil
+local progress_health_torso_time=nil
+local progress_health_rightarm_time=nil
+local progress_health_leftarm_time=nil
+local progress_health_rightleg_time=nil
+local progress_health_leftleg_time=nil
+
+local scuffed_fix = false	
+local function HUDUpdate()
+	if showtexthud>=1 then --text
+		local staticname="body_health_system_text"
+		if showtexthud==1 then
+			staticname="body_health_system_text"
+		elseif showtexthud==2 then
+			staticname="cop_debug"
+		end
+		local hud = get_hud()
+		local hud_d = hud:GetCustomStatic(staticname)
+		local wnd
+		
+		if not healthstatus or show_hud_type~=2 then --not show
+			if (hud_d ~= nil) then
+				hud:RemoveCustomStatic(staticname)
+				hud_d = nil
+			end
+			return
+		end
+		
+		if (hud_d == nil) then
+			hud:AddCustomStatic(staticname,true)
+			hud_d = hud:GetCustomStatic(staticname)
+			wnd = hud_d:wnd()
+			if (wnd ~= nil) then
+				wnd:SetAutoDelete(true)
+			end
+		end
+		
+		if (hud_d ~= nil) then
+			wnd = hud_d:wnd()
+			local str=""
+			if hud_vertical_spacing or hud_vertical_spacing>0 then
+				for i=1,hud_vertical_spacing do
+					str=str.." \\n"
+				end
+			end
+			
+			local showparts=true
+			if hide_if_healthy then
+				showparts=false
+				for k,v in pairs(health) do
+					if (v<maxhp[k]) or (timedhp[k]>0) then
+						showparts=true
+						break
+					end
+				end
+			end
+			if not showparts then
+				str=str.." \\n".." \\n".." \\n".." \\n"
+			end
+			if show_player_name then
+				str=str..colors.grey..db.actor:character_name().."\\n"
+			else
+				str=str.." \\n"
+			end
+			
+			local function AddToHUDCircles(array,text,class,array2)
+				if class=="main" and showparts then
+					str = str..colors[GetConditionFromFloat(health[array]/maxhp[array],array)]
+					for i=1,(preview.health[array] or health[array])-(preview.bonus[array] or timedhp[array]) do
+						str=str.."•"
+					end
+					str=str..colors.good
+					for i=1,(preview.bonus[array] or timedhp[array]) do
+						str=str.."•"
+					end
+					str=str..colors.blank
+					for i=1,maxhp[array]-(preview.health[array] or health[array]) do
+						str=str.."•"
+					end
+					local whatcolor="grey"
+					if health[array]<=4 then whatcolor="critical" end
+					if health[array]==0 then whatcolor="blank" end
+					-- local hp_addition=preview.health[array]
+					-- if hp_addition>0 then 
+						-- text=text..colors.blue.." +"..hp_addition
+					-- end
+					-- local green_addition=preview.bonus[array]
+					-- if green_addition>0 then
+						-- text=text..colors.good.." +"..green_addition
+					-- end
+					str=str..colors[whatcolor].." // "..text.."\\n"--.." H:"..health[array].." T:"..timedhp[array].." PH:"..preview.health[array].." PB:"..preview.bonus[array].."\\n"
+				end
+			if not (zzz_player_injuries_mcm.get_config("TEXT_BASED_PATCH")) then	
+				if class=="condition" then
+					local hp_in_ints=math.floor(db.actor.health*11)
+					str = str..colors.blue
+					if db.actor.health>=1.0 then hp_in_ints=11 end
+					if db.actor.health<=0.0 then hp_in_ints=0 end
+					for i=1,hp_in_ints do
+						str=str.."•"
+					end
+					str=str..colors.blank
+					for i=1,11-hp_in_ints do
+						str=str.."•"
+					end
+					local whatcolor="grey"
+					if db.actor.health<=0.4 then whatcolor="critical" end
+					if db.actor.health<=0 then whatcolor="blank" end
+					str=str..colors[whatcolor].." // "..text.."\\n"
+				elseif class=="stamina" then
+					local hp_in_ints=math.floor(db.actor.power*11)
+					str = str..colors.blue
+					if db.actor.power>=1.0 then hp_in_ints=11 end
+					if db.actor.power>0.98 then hp_in_ints=11 end
+					if db.actor.power<=0.0 then hp_in_ints=0 end
+					for i=1,hp_in_ints do
+						str=str.."•"
+					end
+					str=str..colors.blank
+					for i=1,11-hp_in_ints do
+						str=str.."•"
+					end
+					local whatcolor="grey"
+					-- if db.actor.power<=0.4 then whatcolor="critical" end
+					-- if db.actor.power<=0 then whatcolor="blank" end
+					str=str..colors[whatcolor].." // "..text.."\\n"
+				end
+			end
+				if class=="limbs" and showparts then
+					str = str..colors[GetConditionFromFloat(health[array]/maxhp[array],array)]
+					for i=1,(preview.health[array] or health[array])-(preview.bonus[array] or timedhp[array]) do
+						str=str.."•"
+					end
+					str=str..colors.good
+					for i=1,(preview.bonus[array] or timedhp[array]) do
+						str=str.."•"
+					end
+					str=str..colors.blank
+					for i=1,maxhp[array]-(preview.health[array] or health[array]) do
+						str=str.."•"
+					end
+					str=str.." "
+					if (preview.health[array2] or health[array2])<maxhp[array2] then
+						str=str..colors.blank
+						for i=1,maxhp[array2]-(preview.health[array2] or health[array2]) do
+							str=str.."•"
+						end
+						str=str..colors.good
+						for i=1,(preview.bonus[array2] or timedhp[array2]) do
+							str=str.."•"
+						end
+						str = str..colors[GetConditionFromFloat(health[array2]/maxhp[array2],array2)]
+						for i=1,(preview.health[array2] or health[array2])-(preview.bonus[array2] or timedhp[array2]) do
+							str=str.."•"
+						end
+					else
+						str=str..colors.good
+						for i=1,(preview.bonus[array2] or timedhp[array2]) do
+							str=str.."•"
+						end
+						for i=1,(preview.health[array2] or health[array2])-(preview.bonus[array2] or timedhp[array2]) do
+							str = str..colors[GetConditionFromFloat(health[array2]/maxhp[array2],array2)]
+							str=str.."•"
+						end
+					end
+					local whatcolor="grey"
+					if (health[array]==0 or health[array2]==0) then whatcolor="critical" end
+					if (health[array]==0 and health[array2]==0) then whatcolor="blank" end
+					-- local hp_addition=preview.health[array]
+					-- if hp_addition>0 then 
+						-- text=text..colors.blue.." +"..hp_addition
+					-- end
+					-- local green_addition=preview.bonus[array]
+					-- if green_addition>0 then
+						-- text=text..colors.good.." +"..green_addition
+					-- end
+					str=str..colors[whatcolor].." // "..text.."\\n"--.." H[1]:"..health[array].." T[1]:"..timedhp[array].." PH[1]:"..preview.health[array].." PB[1]:"..preview.bonus[array].." H[2]:"..health[array2].." T[2]:"..timedhp[array2].." PH[2]:"..preview.health[array2].." PB[2]:"..preview.bonus[array2].."\\n"
+				end
+			end
+			
+			local preview_show=false
+			for k,v in pairs(preview.health) do
+				if preview.health[k] then
+					preview_show=true
+					break
+				end
+			end
+			for k,v in pairs(preview.bonus) do
+				if preview.bonus[k] then
+					preview_show=true
+					break
+				end
+			end
+			
+			AddToHUDCircles("head","Head","main")
+			AddToHUDCircles("torso","Torso","main")
+			AddToHUDCircles("leftarm","Arms","limbs","rightarm")
+			AddToHUDCircles("leftleg","Legs","limbs","rightleg")
+			if not (zzz_player_injuries_mcm.get_config("TEXT_BASED_PATCH")) then
+				AddToHUDCircles(nil,"Condition","condition")
+				AddToHUDCircles(nil,"Stamina","stamina")
+			end
+			
+			local green = math.floor(255 * ((100 - 100)/100))
+			local red = math.floor(255 * (100/100))
+			wnd:TextControl():SetTextST(str)
+			wnd:TextControl():SetTextColor(GetARGB(255, 255, 255, 255))
+
+			
+			local hud = get_hud()
+			if not (hud) then 
+				return 
+			end
+		end
+	else --pics
+		local staticname="body_health_system"
+		if display.types[display_ratio] then
+			if display_ratio~=169 then
+				staticname=staticname.."_"..tostring(display_ratio)
+			end
+		end
+		local hud = get_hud()
+		local hud_d = hud:GetCustomStatic(staticname)
+		local wnd
+		
+		if not healthstatus or show_hud_type~=2 then --not show
+			if (hud_d ~= nil) then
+				hud:RemoveCustomStatic(staticname)
+				hud_d = nil
+			end
+			goto otherhudparts
+		end
+		
+		if (hud_d == nil) then
+			hud:AddCustomStatic(staticname,true)
+			hud_d = hud:GetCustomStatic(staticname)
+			wnd = hud_d:wnd()
+			if (wnd ~= nil) then
+				wnd:SetAutoDelete(true)
+			end
+		end
+		
+		if (hud_d ~= nil) then
+			wnd = hud_d:wnd()
+
+			
+			local hud = get_hud()
+			if not (hud) then 
+				return 
+			end
+		end
+		
+		::otherhudparts::
+
+		local function ParamBar(barhandler,customstatic,barname,param,param_max,showbg)
+		
+			---- minimal bgs ----
+			local staticname 
+			if showbg then
+				staticname=customstatic.."_bg"
+			else
+				staticname="bhs_garbage"
+			end
+			if display.types[display_ratio] then
+				if display_ratio~=169 then
+					staticname=staticname.."_"..tostring(display_ratio)
+				end
+			end
+			local hud = get_hud()
+			local hud_d = hud:GetCustomStatic(staticname)
+			local wnd
+			
+			if not healthstatus or show_hud_type~=1 or (not showbg) then --not show
+				if (hud_d ~= nil) then
+					hud:RemoveCustomStatic(staticname)
+					hud_d = nil
+				end
+			else
+				if (hud_d == nil) then
+					hud:AddCustomStatic(staticname,true)
+					hud_d = hud:GetCustomStatic(staticname)
+					wnd = hud_d:wnd()
+					if (wnd ~= nil) then
+						wnd:SetAutoDelete(true)
+					end
+				end
+				
+				if (hud_d ~= nil) then
+					wnd = hud_d:wnd()
+					
+					local hud = get_hud()
+					if not (hud) then 
+						goto progressbars 
+					end
+				end
+			
+			end
+			-------------------
+			::progressbars::
+			
+			if display.types[display_ratio] then
+				if display_ratio~=169 then
+					customstatic=customstatic.."_"..tostring(display_ratio)
+					barname=barname.."_"..tostring(display_ratio)
+				end
+			end
+			
+			local cs_name = hud:GetCustomStatic(customstatic) 
+			if (cs_name == nil) then 
+				if not (scuffed_fix) then
+					hud:AddCustomStatic(customstatic, true)
+					local xml = CScriptXmlInit()
+					xml:ParseFile("ui_body_health.xml")
+					cs_name = hud:GetCustomStatic(customstatic)
+					local w = cs_name:wnd()
+					barhandler = xml:InitProgressBar(barname, w)		
+					barhandler:Show(true)
+					barhandler:SetProgressPos(55)
+					scuffed_fix = true
+					CreateTimeEvent("bvcx", "bvcx", disable_hud_fps_fix_tmr, worst_possible_fix)
+				end
+			else
+				if not param_max then --default 0 to 100
+					param=param*100
+					if not param then param=0 end
+					barhandler:SetProgressPos(param)
+				else
+					param=param*100/param_max
+					if not param then param=0 end
+					barhandler:SetProgressPos(param)
+				end
+			end
+			if show_hud_type<1 or (time_global()-show_hud_change_time<50) then --not show
+				if (cs_name ~= nil) then
+					hud:RemoveCustomStatic(customstatic)
+					cs_name = nil
+				end
+				-- barhandler:Show(false)
+			-- else
+				-- barhandler:Show(true)
+			end
+			return barhandler
+		end
+		
+		--- green bkg lines equials health -----
+		progress_health_head_time=ParamBar(progress_health_head_time,"bhs_health_head_bar_green","bhs_health_bodypart_green",				preview.health.head or health.head,maxhp.head,false)
+		progress_health_torso_time=ParamBar(progress_health_torso_time,"bhs_health_torso_bar_green","bhs_health_bodypart_green",			preview.health.torso or health.torso,maxhp.torso,false)
+		progress_health_rightarm_time=ParamBar(progress_health_rightarm_time,"bhs_health_rightarm_bar_green","bhs_health_bodypart_green",	preview.health.rightarm or health.rightarm,maxhp.rightarm,false)
+		progress_health_leftarm_time=ParamBar(progress_health_leftarm_time,"bhs_health_leftarm_bar_green","bhs_health_bodypart_green",		preview.health.leftarm or health.leftarm,maxhp.leftarm,false)
+		progress_health_rightleg_time=ParamBar(progress_health_rightleg_time,"bhs_health_rightleg_bar_green","bhs_health_bodypart_green",	preview.health.rightleg or health.rightleg,maxhp.rightleg,false)
+		progress_health_leftleg_time=ParamBar(progress_health_leftleg_time,"bhs_health_leftleg_bar_green","bhs_health_bodypart_green",		preview.health.leftleg or health.leftleg,maxhp.leftleg,false)
+		-----------------------------
+		
+		--- blue bkg health equals heals-timedhp -----
+		if not (zzz_player_injuries_mcm.get_config("TEXT_BASED_PATCH")) then
+			progress_stamina=ParamBar(progress_stamina,"bhs_stamina_bar","bhs_stamina",db.actor.power,nil,true)
+		end
+		progress_health=ParamBar(progress_health,"bhs_health_bar","bhs_health",db.actor.health,nil,true)
+		
+		local function nil_math(array)
+			local arg=health[array]-timedhp[array]
+			if preview.health[array] or preview.bonus[array] then
+				arg=(preview.health[array] or 0)-(preview.bonus[array] or 0)
+			end
+			return arg
+		end
+		
+		progress_health_head=ParamBar(progress_health_head,"bhs_health_head_bar","bhs_health_bodypart",				nil_math("head"),maxhp.head,true)
+		progress_health_torso=ParamBar(progress_health_torso,"bhs_health_torso_bar","bhs_health_bodypart",			nil_math("torso"),maxhp.torso,true)
+		progress_health_rightarm=ParamBar(progress_health_rightarm,"bhs_health_rightarm_bar","bhs_health_bodypart",	nil_math("rightarm"),maxhp.rightarm,true)
+		progress_health_leftarm=ParamBar(progress_health_leftarm,"bhs_health_leftarm_bar","bhs_health_bodypart",	nil_math("leftarm"),maxhp.leftarm,true)
+		progress_health_rightleg=ParamBar(progress_health_rightleg,"bhs_health_rightleg_bar","bhs_health_bodypart",	nil_math("rightleg"),maxhp.rightleg,true)
+		progress_health_leftleg=ParamBar(progress_health_leftleg,"bhs_health_leftleg_bar","bhs_health_bodypart",	nil_math("leftleg"),maxhp.leftleg,true)
+		-------------------------------------
+	end
+end
+
+function worst_possible_fix()
+	scuffed_fix = false
+	return true
+end
+
+local function on_key_press(dik)
+	if dik == DIK_keys.DIK_H then
+		 -- if healthstatus then
+				-- healthstatus=false
+				-- xr_sound.set_sound_play(db.actor:id(), "pda_tips")
+		-- else
+			-- healthstatus=true
+			-- staticplacement=lazyworkaroundplacement
+			-- xr_sound.set_sound_play(db.actor:id(), "pda_alarm")
+		-- end
+		if showtexthud>0 then
+			healthstatus=not healthstatus
+		else
+			if show_hud_type==0 then show_hud_type=1 show_hud_change_time=time_global()
+			elseif show_hud_type==1 then show_hud_type=2 show_hud_change_time=time_global()
+			elseif show_hud_type==2 then show_hud_type=0 show_hud_change_time=time_global() 
+			end
+		end
+		xr_sound.set_sound_play(db.actor:id(), "pda_tips")
+		HUDUpdate()
+	 -- elseif dik==DIK_keys.DIK_J then
+		-- health.rightarm=health.rightarm-1
+	 -- elseif dik==DIK_keys.DIK_K then
+		-- health.leftarm=health.leftarm-1
+		-- db.actor:give_game_news("resolution", tostring(options) or "nil", db.actor:character_icon(), 0, 10000)
+		-- xr_sound.set_sound_play(db.actor:id(), "pda_tips")
+	end
+end
+
+--====== xcvb ================================================
+
+ local function actor_on_weapon_zoom_in(wpn)
+	shaking_hands()
+end
+ 
+ local function actor_on_weapon_zoom_out(wpn)
+	shaking_hands_remove()
+ end
+ 
+local tg_anm = 0
+local delay_anm_play = 500
+
+cooldown = 2500
+state_cooldown = 0
+local function actor_on_footstep(material,power,hud_view,flags)
+
+	if not (NEW_LIMB_PENALTIES_FEATURE) then return end
+
+	local tg = time_global()
+	local right_l = health.leftleg * effects_mult		-- right is left
+	local left_l = health.rightleg * effects_mult
+	if right_l < 1 then right_l = 0.8 end			-- exp will still make big difference between 1 and 0.8
+	if left_l < 1 then left_l = 0.8 end
+	local legs_sum = (right_l + left_l) * effects_mult
+	local left_limp = math.exp(1.5/left_l)			-- 
+	local right_limp = math.exp(1.5/right_l)
+	local both_limp = (right_limp + left_limp) / 2
+	local mst = IsMoveState('mcSprint')				-- sprint is tearing animations apart, the only way is to increase delay for it
+
+	if tg > tg_anm then
+		if leftleg_flag then
+			if not mst then
+				level.add_cam_effector("camera_effects\\switch\\" .. leftleg_anm[math.random(#leftleg_anm)] .. ".anm", 99251, false, "", 0, false, ((left_limp - 1) * (zzz_player_injuries_mcm.get_config("leg_animation_power"))) )
+				tg_anm = tg + delay_anm_play end
+		--	actor_menu.set_msg(1, strformat("Left leg HP: %s | Left leg Power: %s", left_l, left_limp))
+		elseif rightleg_flag then
+			if not mst then
+				level.add_cam_effector("camera_effects\\switch\\" .. rightleg_anm[math.random(#rightleg_anm)] .. ".anm", 99261, false, "", 0, false, ((right_limp - 1) * (zzz_player_injuries_mcm.get_config("leg_animation_power"))) )
+				tg_anm = tg + delay_anm_play end
+		--	actor_menu.set_msg(1, strformat("Right leg HP: %s | Right leg Power: %s", right_l, right_limp))
+		elseif bothlegs_flag then
+			level.add_cam_effector("camera_effects\\switch\\" .. bothlegs_anm[math.random(#bothlegs_anm)] .. ".anm", 99271, false, "", 0, false, ((both_limp - 1) * (zzz_player_injuries_mcm.get_config("leg_animation_power"))) )
+			if not mst then tg_anm = tg + delay_anm_play
+			else tg_anm = tg + delay_anm_play * 1.6 end
+		--	actor_menu.set_msg(1, strformat("Both legs HP: %s | Both legs Power: %s", legs_sum, both_limp))
+		end
+	end
+
+	local l_leg_power = 0
+	local r_leg_power = 0
+	local hit_power = 0
+	local cr = IsMoveState('mcCrouch')
+	local low_cr = cr and IsMoveState('mcAccel')
+
+	if mst then		-- comment this and uncomment next one for super memes !!
+--	if (not (cr or low_cr) ) and (left_l < 1 or right_l < 1) then
+		if left_l <= (zzz_player_injuries_mcm.get_config("leg_limping_damage_minimum_hp")) then 
+			l_leg_power = 0.0290
+		end
+
+		if right_l <= (zzz_player_injuries_mcm.get_config("leg_limping_damage_minimum_hp")) then
+			r_leg_power = 0.0290
+		end
+
+		hit_power = (l_leg_power + r_leg_power) / 2
+
+	--	printf("hit_power: " .. (hit_power))
+		local file
+		local sound_play = math.random(1,100)
+		if (hit_power > 0) and (state_cooldown < time_global()) and (sound_play <= 13) then
+			if zzz_player_injuries_mcm.get_config("new_voice_sounds") then
+				local helmet = (db.actor:item_in_slot(12) or db.actor:get_current_outfit())
+				if helmet then
+					muffle = "m_"
+				else
+					muffle = ""
+				end
+				file = "bhs\\" .. muffle .. "pain_" .. sound_play
+			else
+				file = "actor\\pain_" .. sound_play
+			end
+
+			file_to_say = sound_object( file )
+			file_to_say:play(db.actor,0,sound_object.s2d)
+
+			level.add_pp_effector("blur_bhs.ppe", math.random(655808, 655820), false)
+
+			state_cooldown = time_global() + cooldown
+
+			actor_health = db.actor.health
+			actor_health_reduced = actor_health - hit_power
+			db.actor:set_health_ex(actor_health_reduced)
+		end
+	end
+
+
+end
+------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------
+
+local function actor_on_sleep(hours)
+	for k,v in pairs(timedhp) do
+		health[k]=health[k]-timedhp[k]
+		if health[k]=="head" or health[k]=="torso" and health[k]<=0 then health[k]=1 end
+		timedhp[k]=0
+	end
+	local hoursleft=hours
+	local head_difference=maxhp.head-health.head
+	if head_difference>0 then
+		if hoursleft>head_difference then
+			health.head=maxhp.head
+			hoursleft=hoursleft-head_difference
+			utils_obj.save_var(db.actor,"health.head",health.head)
+		else
+			health.head=health.head+hoursleft
+			utils_obj.save_var(db.actor,"health.head",health.head)
+			return 
+		end
+	end
+	local torso_difference=maxhp.torso-health.torso
+	if torso_difference>0 then
+		if hoursleft>torso_difference then
+			health.torso=maxhp.torso
+			hoursleft=hoursleft-torso_difference
+			utils_obj.save_var(db.actor,"health.torso",health.torso)
+		else
+			health.torso=health.torso+hoursleft
+			utils_obj.save_var(db.actor,"health.torso",health.torso)
+			return 
+		end
+	end
+	local rightarm_difference=maxhp.rightarm-health.rightarm
+	if rightarm_difference>0 then
+		if hoursleft>rightarm_difference then
+			health.rightarm=maxhp.rightarm
+			hoursleft=hoursleft-rightarm_difference
+			utils_obj.save_var(db.actor,"health.rightarm",health.rightarm)
+		else
+			health.rightarm=health.rightarm+hoursleft
+			utils_obj.save_var(db.actor,"health.rightarm",health.rightarm)
+			return 
+		end
+	end
+	local leftarm_difference=maxhp.leftarm-health.leftarm
+	if leftarm_difference>0 then
+		if hoursleft>leftarm_difference then
+			health.leftarm=maxhp.leftarm
+			hoursleft=hoursleft-leftarm_difference
+			utils_obj.save_var(db.actor,"health.leftarm",health.leftarm)
+		else
+			health.leftarm=health.leftarm+hoursleft
+			utils_obj.save_var(db.actor,"health.leftarm",health.leftarm)
+			return 
+		end
+	end
+	local rightleg_difference=maxhp.rightleg-health.rightleg
+	if rightleg_difference>0 then
+		if hoursleft>rightleg_difference then
+			health.rightleg=maxhp.rightleg
+			hoursleft=hoursleft-rightleg_difference
+			utils_obj.save_var(db.actor,"health.rightleg",health.rightleg)
+		else
+			health.rightleg=health.rightleg+hoursleft
+			utils_obj.save_var(db.actor,"health.rightleg",health.rightleg)
+			return 
+		end
+	end
+	local leftleg_difference=maxhp.leftleg-health.leftleg
+	if leftleg_difference>0 then
+		if hoursleft>leftleg_difference then
+			health.leftleg=maxhp.leftleg
+			hoursleft=hoursleft-leftleg_difference
+			utils_obj.save_var(db.actor,"health.leftleg",health.leftleg)
+		else
+			health.leftleg=health.leftleg+hoursleft
+			utils_obj.save_var(db.actor,"health.leftleg",health.leftleg)
+			return 
+		end
+	end
+end
+
+local is_body_parts_damaged = false
+local function check_body_parts()
+	local head_difference = maxhp.head - health.head
+	local torso_difference = maxhp.torso - health.torso
+	local rightarm_difference = maxhp.rightarm - health.rightarm
+	local leftarm_difference = maxhp.leftarm - health.leftarm
+	local rightleg_difference = maxhp.rightleg - health.rightleg
+	local leftleg_difference = maxhp.leftleg - health.leftleg
+	
+	is_body_parts_damaged = false
+	
+	if (head_difference > 0 or torso_difference > 0 or rightarm_difference > 0 or leftarm_difference > 0 or rightleg_difference > 0 or leftleg_difference > 0) then
+		is_body_parts_damaged = true
+	end
+end
+
+old_is_actor_not_healthy = dialogs.is_actor_not_healthy
+function dialogs.is_actor_not_healthy(first_speaker, second_speaker)
+	check_body_parts()
+	
+	if (is_body_parts_damaged == true) then
+		return true
+	end
+	
+	return old_is_actor_not_healthy(first_speaker, second_speaker)
+end
+
+old_is_actor_injured = dialogs.is_actor_injured
+function dialogs.is_actor_injured(first_speaker, second_speaker)
+	check_body_parts()
+
+	if (is_body_parts_damaged == true) and (db.actor:money() >= 1850) then
+		return true
+	end
+	
+	return old_is_actor_injured(first_speaker, second_speaker)
+end
+
+old_is_actor_injured_irradiated = dialogs.is_actor_injured_irradiated
+function dialogs.is_actor_injured_irradiated(first_speaker, second_speaker)
+	check_body_parts()
+
+	if (is_body_parts_damaged == true) and (db.actor.radiation > 0) and (db.actor:money() >= 3350) then
+		return true
+	end
+	
+	return old_is_actor_injured_irradiated(first_speaker, second_speaker)
+end
+
+local function heal_body_parts()
+	timedhp.head = 0
+	health.head = maxhp.head
+
+	timedhp.torso = 0
+	health.torso = maxhp.torso
+	
+	timedhp.rightarm = 0
+	health.rightarm = maxhp.rightarm
+
+	timedhp.leftarm = 0
+	health.leftarm = maxhp.leftarm
+	
+	timedhp.rightleg = 0
+	health.rightleg=maxhp.rightleg
+
+	timedhp.leftleg = 0
+	health.leftleg=maxhp.leftleg
+
+	SaveHealthStatus()
+end
+
+old_heal_actor_injury_radiation = dialogs.heal_actor_injury_radiation
+function dialogs.heal_actor_injury_radiation(first_speaker, second_speaker)
+	old_heal_actor_injury_radiation(first_speaker, second_speaker)
+
+	check_body_parts()
+	
+	if (is_body_parts_damaged == true) then
+		heal_body_parts()
+	end
+end
+
+old_heal_actor_injury = dialogs.heal_actor_injury
+function dialogs.heal_actor_injury(first_speaker, second_speaker)
+	old_heal_actor_injury(first_speaker, second_speaker)
+
+	check_body_parts()
+	
+	if (is_body_parts_damaged == true) then
+		heal_body_parts()
+	end
+end
+
+function actor_on_update()
+	--actor_menu.set_msg("width:"..device().width.." height:"..device().height)
+	
+	local newhealth=db.actor.health
+	local amount=myhealth-newhealth
+	if amount>0.0293 then
+		recieved_damage(amount)
+		--printf("! %s",amount
+		-- trace_this("Amount"..amount.."\n")
+	end
+
+	
+	myhealth=db.actor.health
+	for k,v in pairs(health) do
+		if v>maxhp[k] then health[k]=maxhp[k] end
+		if v<=0 then health[k]=0 end
+		if health[k]<timedhp[k] then timedhp[k]=health[k] end
+	end
+	for k,v in pairs(preview.health) do
+		if v>maxhp[k] then preview.health[k]=maxhp[k] end
+		if v<=0 then preview.health[k]=0 end
+		if preview.health[k]<preview.bonus[k] then preview.bonus[k]=health[k] end
+	end
+	if time_global()-medkits.lastregen>medkits.timedhealth then
+		medkits.lastregen=time_global()
+		for k,v in pairs(timedhp) do
+			if v>0 then 
+				timedhp[k]=timedhp[k]-1
+				health[k]=health[k]-1
+			end
+			if v<0 then
+				timedhp[k]=0
+			end
+		end
+		SaveHealthStatus()
+	end
+	if regen>0 and init then
+		
+		if time_global()-timeregen>regen then
+			if health.head~=maxhp.head 				then health.head=health.head+1 end
+			if health.torso~=maxhp.torso 			then health.torso=health.torso+1 end
+			if health.rightarm~=maxhp.rightarm 		then health.rightarm=health.rightarm+1 end
+			if health.leftarm~=maxhp.leftarm 		then health.leftarm=health.leftarm+1 end
+			if health.rightleg~=maxhp.rightleg		then health.rightleg=health.rightleg+1 end
+			if health.leftleg~=maxhp.leftleg 		then health.leftleg=health.leftleg+1 end
+			SaveHealthStatus()
+			timeregen=time_global()
+		end
+	end
+	if not init then
+	
+		display_width=device().width
+		display_height=device().height
+		local currentratio=display_width/display_height
+		
+		local closest=999
+		local closestkey=999
+		for k,v in pairs(display.types) do
+			local d=math.abs(currentratio-v)
+			if d<closest then closest=d closestkey=k end
+		end
+		display_ratio=closestkey
+		--actor_menu.set_msg(display_ratio,1)
+		
+		LoadHealthStatus()
+		init=true
+	end
+	
+	-- trace_this("Entre\n")
+	if not (zzz_player_injuries_mcm.get_config("TEXT_BASED_PATCH")) then
+		local hidehudonce=false
+		if hide_default_hud and not hidehudonce then
+			local maingameui = ActorMenu.get_maingame()
+			maingameui.m_ui_hud_states.m_ui_health_bar_show = false
+			maingameui.m_ui_hud_states.m_ui_stamina_bar_show = false
+			-- maingameui.m_ui_hud_states.m_ui_psy_bar_show = false
+			hidehudonce=true
+		end
+	end
+
+	local speedvector=db.actor:get_movement_speed()
+	local movementspeed=(speedvector.x*speedvector.x)+(speedvector.y*speedvector.y)+(speedvector.z*speedvector.z)
+
+	-- xcvb ---
+	limp_speed_slow()
+	torso_penalty()
+	bhs_concussion()
+	local curr_time = game.get_game_time()
+	if (prev_time == nil) then prev_time = curr_time end
+	if (curr_time:diffSec(prev_time) > 3) then
+		prev_time = curr_time
+		legs_limp()
+	end
+	----------------------------
+	HUDUpdate()
+	PartialDamage()
+end
+
+local function actor_on_before_death()
+	HUDUpdate()
+	health.head=maxhp.head
+	health.torso=maxhp.torso
+	health.rightarm=maxhp.rightarm
+	health.leftarm=maxhp.leftarm
+	health.rightleg=maxhp.rightleg
+	health.leftleg=maxhp.leftleg
+	timedhp.head=0
+	timedhp.torso=0
+	timedhp.rightarm=0
+	timedhp.leftarm=0
+	timedhp.rightleg=0
+	timedhp.leftleg=0
+	SaveHealthStatus()
+end
+
+-- base_notify = actor_menu.set_notification
+
+-- function actor_menu.set_notification(typ, texture, tm, snd)
+    -- base_notify(typ, texture, tm, snd)
+    -- local hud = get_hud()
+    -- if(hud) then
+        -- cs = hud:GetCustomStatic("notify_icon")
+        -- pos = cs:wnd():GetWndPos()
+        -- pos.x = 8
+        -- pos.y = 600
+        -- cs:wnd():SetWndPos(pos)
+    -- end
+-- end
+
+-- how's it going?
+local function MedicineUsed(name,health,timedhp)
+	local ret_lastregen,ret_timedhealth=medkits.lastregen,medkits.timedhealth
+	if medkits[name] then
+		ret_lastregen=time_global()
+		ret_timedhealth=medkits[name].timeregen
+		for k,v in pairs(timedhp) do
+			local bonus=medkits[name][k]
+			if bonus then
+				if medkits[name].harming then
+					health[k]=health[k]+bonus
+					timedhp[k]=v+bonus
+				else
+					if health[k]+bonus>maxhp[k] then
+						local amounttoheal=maxhp[k]-health[k]
+						health[k]=health[k]+amounttoheal
+						timedhp[k]=v+amounttoheal
+					else
+						health[k]=health[k]+bonus
+						timedhp[k]=v+bonus
+					end
+				end
+			end
+		end
+	end
+	if healhelp[name] then
+		for k,v in pairs(timedhp) do
+			if healhelp[name][k] then
+				timedhp[k]=timedhp[k]-healhelp[name][k]
+				if timedhp[k]<0 then timedhp[k]=0 end
+			end
+		end
+	end
+	return ret_lastregen,ret_timedhealth
+end
+
+local function actor_on_item_use(obj,objname)
+	if healingitems then
+		medkits.lastregen,medkits.timedhealth=MedicineUsed(objname,health,timedhp)
+	end
+	
+	SaveHealthStatus()
+end
+
+local function InitializePreviewBars()
+	-- db.actor:give_game_news("init", "yes", db.actor:character_icon(), 0, 10000)
+	-- xr_sound.set_sound_play(db.actor:id(), "pda_tips")
+	preview.health.head=health.head
+	preview.health.torso=health.torso
+	preview.health.rightarm=health.rightarm
+	preview.health.leftarm=health.leftarm
+	preview.health.rightleg=health.rightleg
+	preview.health.leftleg=health.leftleg
+	
+	preview.bonus.head=timedhp.head
+	preview.bonus.torso=timedhp.torso
+	preview.bonus.rightarm=timedhp.rightarm
+	preview.bonus.leftarm=timedhp.leftarm
+	preview.bonus.rightleg=timedhp.rightleg
+	preview.bonus.leftleg=timedhp.leftleg
+end
+local function EmptyPreviewBars()
+	-- db.actor:give_game_news("empty", "yes", db.actor:character_icon(), 0, 10000)
+	-- xr_sound.set_sound_play(db.actor:id(), "pda_tips")
+	for k,v in pairs(preview.health) do
+		preview.health[k]=nil
+	end
+	for k,v in pairs(preview.bonus) do
+		preview.bonus[k]=nil
+	end
+end
+
+local focused_item
+
+local function copy_table(t)
+	local n={}
+	for k,v in pairs(t) do
+		if type(v)=='table' then
+			n[k]=copy_table(v)
+		else
+			n[k]=v
+		end
+	end
+	return n
+end
+
+local function ActorMenu_on_item_focus_receive(item)
+	
+	if item:id()~=focused_item then
+		EmptyPreviewBars()
+	end
+	local item_name=item:section()
+	focused_item=item:id()
+	if medkits[item_name] or healhelp[item_name] then
+		-- InitializePreviewBars()
+		preview.health=copy_table(health)
+		preview.bonus=copy_table(timedhp)
+		MedicineUsed(item_name,preview.health,preview.bonus)
+	end
+	
+	-- if medkits[item_name] then
+		-- for med_k,med_v in pairs(medkits[item_name]) do
+			-- local health_v=health[med_k]
+			-- local hitbox=med_k
+			-- if health_v~=nil then --this hitbox would be greened
+				-- local totalgreen=medkits[item_name][hitbox]
+				-- local emptyhealth=maxhp[hitbox]-health_v
+				-- if emptyhealth>totalgreen then --difference
+					-- preview.health[hitbox]=health[hitbox]+totalgreen
+					-- if medkits[item_name].harming then
+						-- preview.bonus[hitbox]=timedhp[hitbox]+totalgreen
+					-- else
+						-- preview.bonus[hitbox]=timedhp[hitbox]+emptyhealth
+					-- end
+				-- else
+					-- local remaininggreen=emptyhealth-totalgreen -- hd4-tg7=3
+					-- preview.health[hitbox]=maxhp[hitbox]
+					-- if medkits[item_name].harming then
+						-- preview.bonus[hitbox]=timedhp[hitbox]+totalgreen
+					-- else
+						-- preview.bonus[hitbox]=timedhp[hitbox]+emptyhealth
+					-- end
+				-- end
+				
+			-- end
+		-- end
+	-- end
+	-- if healhelp[item_name] then
+		-- for med_k,med_v in pairs(healhelp[item_name]) do
+			-- local timedhp_v=timedhp[med_k]
+			-- local hitbox=med_k
+			-- if timedhp_v~=nil then --this hitbox would be blued
+				-- local total_green_to_blue=healhelp[item_name][hitbox]
+				-- local need_to_transform=timedhp[hitbox]
+				-- if need_to_transform<total_green_to_blue then
+					-- preview.bonus[hitbox]=0
+				-- else
+					-- preview.bonus[hitbox]=timedhp[hitbox]-total_green_to_blue
+				-- end
+			-- end
+		-- end
+	-- end
+	-- -----
+	-- for k,v in pairs(preview.health) do
+		-- if v<0 then 
+			-- preview.health[k]=0 
+		-- elseif v>maxhp[k] then 
+			-- preview.health[k]=maxhp[k]
+		-- end
+	-- end
+	-- for k,v in pairs(preview.bonus) do
+		-- if v<0 then 
+			-- preview.bonus[k]=0 
+		-- elseif v>maxhp[k] then 
+			-- preview.bonus[k]=maxhp[k]
+		-- end
+	-- end
+	-- -- end 
+end
+
+local function ActorMenu_on_item_focus_lost(item)
+	--printf("! on item forus lost "..(item and item:section() or "nil"))
+	if focused_item==item:id() then
+		EmptyPreviewBars()
+		focused_item=nil
+	end
+end
+
+local function ActorMenu_on_mode_changed(mode,last_mode)
+	if last_mode==1 then --inv closed
+		EmptyPreviewBars()
+		focused_item=nil
+	elseif last_mode==4 then --looting closed
+		EmptyPreviewBars()
+		focused_item=nil
+	end
+end
+
+-- local function npc_on_hit_callback(npc,amount,local_direction,who,bone_index)
+	-- local npc_name=npc:character_name() or "nil"
+	-- local npc_icon=npc:character_icon() or "nil"
+	-- local amount
+	-- local attacker_name
+	-- if who and who:id() == db.actor:id() then
+		-- local wherehit
+		-- -- if type(bone_index)=="number" then
+			-- -- if bone_index == 14 or bone_index == 15 then 
+			-- -- wherehit = "Eyes"
+			-- -- elseif bone_index == 16 or bone_index == 13 then 
+			-- -- wherehit = "Head"
+			-- -- elseif bone_index == 17 then 
+			-- -- wherehit = "Neck"
+			-- -- elseif bone_index == 9 or bone_index == 10 or bone_index == 11 or bone_index == 18 then 
+			-- -- wherehit = "Torso"    
+			-- -- elseif bone_index >= 1 and bone_index <= 4 then 
+			-- -- wherehit = "Left Leg"    
+			-- -- elseif bone_index >= 5 and bone_index <= 8 then 
+			-- -- wherehit = "Right Leg"    
+			-- -- elseif bone_index >= 19 and bone_index <=30 then 
+			-- -- wherehit = "Left Arm"
+			-- -- elseif bone_index >= 31 and bone_index <=42 then 
+			-- -- wherehit = "Right Arm"
+			-- -- end
+		-- -- end
+		-- if not wherehit then wherehit=bone_index end
+		-- db.actor:give_game_news("npc_on_hit_callback", "name: "..npc_name.." where:"..wherehit, npc_icon , 0, 10000)
+		-- xr_sound.set_sound_play(db.actor:id(), "pda_tips")
+	-- end
+-- end
+
+function on_game_start()
+	RegisterScriptCallback("on_option_change", on_option_change)									-- xcvb
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)							-- xcvb
+	RegisterScriptCallback("on_key_press",on_key_press)
+	RegisterScriptCallback("save_state",save_state)															-- xcvb
+	RegisterScriptCallback("load_state",load_state)															-- xcvb
+	RegisterScriptCallback("actor_on_weapon_zoom_in",actor_on_weapon_zoom_in) 		-- xcvb
+	RegisterScriptCallback("actor_on_weapon_zoom_out",actor_on_weapon_zoom_out) 	-- xcvb
+	RegisterScriptCallback("actor_on_footstep",actor_on_footstep)									-- xcvb
+	RegisterScriptCallback("actor_on_sleep",actor_on_sleep)
+	RegisterScriptCallback("actor_on_hit_callback",actor_on_hit_callback)
+	RegisterScriptCallback("actor_on_update",actor_on_update)
+	RegisterScriptCallback("actor_on_before_death",actor_on_before_death)
+	RegisterScriptCallback("actor_on_item_use",actor_on_item_use)
+	RegisterScriptCallback("ActorMenu_on_item_focus_receive",ActorMenu_on_item_focus_receive)
+	RegisterScriptCallback("ActorMenu_on_item_focus_lost",ActorMenu_on_item_focus_lost)
+	RegisterScriptCallback("ActorMenu_on_mode_changed",ActorMenu_on_mode_changed)
+	
+	--RegisterScriptCallback("npc_on_hit_callback", npc_on_hit_callback)
+end
