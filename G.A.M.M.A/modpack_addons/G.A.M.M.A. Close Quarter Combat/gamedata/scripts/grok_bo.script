@@ -49,7 +49,7 @@ bip01_head 			 		= 4,
 eyelid_1 			 		= 5, 
 eye_left 			 		= 5, 
 eye_right 			 		= 5, 
-jaw_1 		 		 		= 4,
+jaw_1 		 		 		= 3,
 
 bip01_l_clavicle	 		= 0.85,
 bip01_l_upperarm	 		= 0.8, 
@@ -129,7 +129,7 @@ function monster_on_before_hit(monster,shit,bone_id)
 	spec_monster_mult	= 1.00
 	bone_mult		= 1.00
 
-	printf("///////////   Mutant Hit registered: GBO v1.6.6   //////////////////")
+	printf("///////////   Mutant Hit registered: GBO v1.6.1   //////////////////")
 	printf('%s about to be hit by %s in bone %s', monster and monster:name(), shit and shit.draftsman and shit.draftsman:name(), bone_id)
 
 	if (string.match(sec, "knife")) then
@@ -157,15 +157,15 @@ function monster_on_before_hit(monster,shit,bone_id)
 
 	if ammo_section == "ammo_12x70_buck" or ammo_section == "ammo_12x70_buck_bad" or 
 	   ammo_section == "ammo_20x70_buck" or ammo_section == "ammo_23x75_shrapnel" then
-		ammo_mult = 0.78
+		ammo_mult = 0.85
 	end
 
 	if ammo_section == "ammo_12x76_zhekan" or ammo_section == "ammo_12x76_zhekan_bad" then
-		ammo_mult = 1.40
+		ammo_mult = 1.15
 	end
 
 	if ammo_section == "ammo_23x75_barrikada" then
-		ammo_mult = 2.50
+		ammo_mult = 5.00
 	end
 
 	if ammo_section == "ammo_9x19_pbp" or ammo_section == "ammo_9x19_pbp_bad" 
@@ -184,44 +184,15 @@ function monster_on_before_hit(monster,shit,bone_id)
 	end
 
  	if ammo_section == "ammo_11.43x23_hydro"  or ammo_section == "ammo_11.43x23_hydro_bad"  then
-		ammo_mult = 1.25
+		ammo_mult = 1.22
 	end
 
  	if ammo_section == "ammo_11.43x23_fmj"  or ammo_section == "ammo_11.43x23_fmj_bad"  then
 		ammo_mult = 1.20
 	end
 
-	-- /// save gun barrel data ///
-	if (IsWeapon(wpn) and (not IsItem("fake_ammo_wpn",wpn:section()))) or (wpn:parent() and wpn:parent():id() ~= 0) then
-		barrel_condition = nil
-		local parts = se_load_var(wpn:id(), wpn:name(), "parts")
-		if parts ~= nil then
-			for k,v in pairs(parts) do
-				if string.find(k, "barrel") then
-					barrel_condition = v / 100
-				end
-			end
-
-			if barrel_condition == nil then
-				barrel_condition = 1
-			end
-		else
-			barrel_condition = 1
-		end
-
-		barrel_condition_corrected = barrel_condition * 1.5
-
-		if barrel_condition_corrected > 1 then
-			barrel_condition_corrected = 1
-		end
-	else
-		barrel_condition = 1
-		barrel_condition_corrected = 1
-	end
-
-	-- /// mutants body parts multipliers ///
 	if string.find(monster:name(), "giant") then
-		spec_monster_mult = 2.00
+		spec_monster_mult = 3.00
 		if (bone_id == 1) then
 			bone_mult = 2.50
 			printf("Critical Hit!")
@@ -229,7 +200,7 @@ function monster_on_before_hit(monster,shit,bone_id)
 	end
 
 	if string.find(monster:name(), "chimera") then
-		spec_monster_mult = 0.85
+		spec_monster_mult = 0.90
 		if (bone_id == 33 or bone_id == 24 or bone_id == 25 or bone_id == 23 or bone_id == 28) then
 			bone_mult = 2.00
 			printf("Critical Hit!")
@@ -299,7 +270,7 @@ function monster_on_before_hit(monster,shit,bone_id)
 
 	shit.power = shit.power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * mutant_mult * ammo_mult * spec_monster_mult * bone_mult * cqc_mult
 
-	printf("Barrel condition: %s, GBO output damage: %s", barrel_condition, shit.power)
+	printf("GBO output damage: %s", shit.power)
 	return
 end
 
@@ -341,7 +312,7 @@ function npc_on_before_hit(npc,shit,bone_id)
 		return
 	end
 
-	printf("///////////   Stalker Hit registered: GBO v1.6.6  //////////////////")
+	printf("///////////   Stalker Hit registered: GBO v1.6.1  //////////////////")
 	printf('%s about to be hit by %s in bone %s', npc and npc:name(), shit and shit.draftsman and shit.draftsman:name(), bone_id)
 	
 --////////////// DATA PARSING OF HELL - A BONES AND BOOLETS TALE //////////////
@@ -366,35 +337,6 @@ function npc_on_before_hit(npc,shit,bone_id)
 	local shooter_pos = shooter:position()
 	local dist = npc_pos:distance_to(shooter_pos)
 
-
-	-- /// save gun barrel data ///
-
-	if (IsWeapon(wpn) and (not IsItem("fake_ammo_wpn",wpn:section()))) or (wpn:parent() and wpn:parent():id() ~= 0) then
-		barrel_condition = nil
-		local parts = se_load_var(wpn:id(), wpn:name(), "parts")
-		if parts ~= nil then
-			for k,v in pairs(parts) do
-				if string.find(k, "barrel") then
-					barrel_condition = v / 100
-				end
-			end
-
-			if barrel_condition == nil then
-				barrel_condition = 1
-			end
-		else
-			barrel_condition = 1
-		end
-
-		barrel_condition_corrected = barrel_condition * 1.12
-
-		if barrel_condition_corrected > 1 then
-			barrel_condition_corrected = 1
-		end
-	else
-		barrel_condition = 1
-		barrel_condition_corrected = 1
-	end
 
 --	/////// AMMO SPECIFIC BONES REDIRECTION //////
 
@@ -510,7 +452,7 @@ function npc_on_before_hit(npc,shit,bone_id)
 
 
 	--printf("// Ammo data :")
-	printf('%s shot with %s, Weapon power= %s, AP power= %s, Hit multiplier= %s, Air res= %s, Distance= %s m, Barrel condition: %s', ammo_section, sec, wpn_hit_power, k_ap, k_hit, air_res, dist, barrel_condition)
+	printf('%s shot with %s, Weapon power= %s, AP power= %s, Hit multiplier= %s, Air res= %s, Distance= %s m', ammo_section, sec, wpn_hit_power, k_ap, k_hit, air_res, dist)
 	printf('Bone hit= %s, Bone damage mult= %s, Bone AP scale= %s, Bone hit fraction= %s, Bone armor= %s', custom_bone_name, custom_bone_dmg[custom_bone_id], custom_bone_ap[custom_bone_id], custom_bone_hf[custom_bone_id], custom_bone_value[custom_bone_id])
 
 	local custom_bone_armor = custom_bone_value[custom_bone_id]
@@ -536,11 +478,11 @@ function npc_on_before_hit(npc,shit,bone_id)
 		end
 	end
 
-	local k_ap = k_ap * custom_bone_ap_scale * barrel_condition_corrected -- reduce bullet ap following npc ap scale and barrel condition
+	local k_ap = k_ap * custom_bone_ap_scale -- reduce bullet ap following npc ap scale
 
 	k_ap = k_ap / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 )))
 
-	shit.power = wpn_hit_power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * k_hit * custom_bone_dmg_mult * custom_bone_ap_scale * 1.1 * sniper_bad_bone_shit_reduce * barrel_condition_corrected 
+	shit.power = wpn_hit_power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * k_hit * custom_bone_dmg_mult * custom_bone_ap_scale * 1.1 * sniper_bad_bone_shit_reduce
 
 	local armor_loss_increment = tonumber(k_ap * 0.60) -- reduce bone armor depending on k_ap
 
