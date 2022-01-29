@@ -1,0 +1,1767 @@
+;[[
+
+; Tronex
+; 2019/5/29
+; Treasure system
+; -----------------------
+
+; Items are divided by kinds and tiers in their sections
+; Item kind acts as the group the item belongs to. While tier detemine the importance of the item among others in the same group
+;
+; The script will pick items to stash based on their kind and tiers, all is configurable here
+; Items will get picked randomly based on tier and kind until stash weight get "filled"
+; Item's kind detemine item's chance to appear and it's impact on the remaining weight
+; Item's tier acts as a multiplier for item's kind stats. So higher tiers will have rarer chances and higher impacts
+; A stash get a random "weight" to allow a certain amount of items inside.
+; Everytime an item is added to the stash, the remaining weight will decreased based on item's "impact"
+
+; Sashes have 2 groups: common - rare
+; Each has its own settings as explained above
+; Rare stashes are defined by included their unique names under the section [rare_stashes_names]
+; once one of these stashes get picked, script will decide what items to spawn in based on rare stashes settings
+; otherwise, common stash settings will be picked for anything else
+
+; Grok
+; 2020/01/02
+; Stash Overhaul Edits
+;
+;Implements SteelHawk's Stash Overhaul alongside my own edits of the stash loot table.
+
+;]]
+;--================================================================================================================
+
+
+;-- (NO LONER USED!!!) Names of stashes we want them to be rare if they ever got picked
+[rare_stashes_names]
+        agr_q3_t_a                                 = true
+        agr_q4_n                                   = true
+        agr_smart_terrain_4_2_box                  = true
+        agr_smart_terrain_5_2_box                  = true
+        dark_valley_treasure_19                    = true
+        esc_treasure_15                            = true
+        gar_treasure_18                            = true
+        gar_treasure_5                             = true
+        gar_treasure_quest_reward_in_anomaly       = true
+        hos_treasure_2                             = true
+        l06_rostok_level_prefix_inventory_box_0009 = true
+        l06_rostok_level_prefix_inventory_box_0014 = true
+        l06_rostok_level_prefix_inventory_box_0017 = true
+        l06_rostok_level_prefix_inventory_box_0019 = true
+        l06_rostok_level_prefix_inventory_box_0020 = true
+        l10_radar_level_prefix_inventory_box       = true
+        l10_radar_level_prefix_inventory_box_0000  = true
+        l10_radar_level_prefix_inventory_box_0003  = true
+        l10_radar_level_prefix_inventory_box_0004  = true
+        lim_treasure_8                             = true
+        mar_treasure_44                            = true
+        mar_treasure_5                             = true
+        mar_treasure_6                             = true
+        mar_treasure_8                             = true
+        mil_additional_quest_1_box                 = true
+        mil_treasure_20                            = true
+        red_q1_t_l                                 = true
+        red_q2_t_a                                 = true
+        red_recover_item_2_spawn                   = true
+        red_treasure_20                            = true
+        red_treasure_7                             = true
+        stash_gen_undegr_mlr1                      = true
+        stash_gen_undegr_mlr2                      = true
+        trc_inventory_box_0005                     = true
+        trc_inventory_box_0013                     = true
+        trc_inventory_box_0019                     = true
+        trc_inventory_box_0027                     = true
+        trc_inventory_box_0030                     = true
+        val_q9_n                                   = true
+        yan_q6_n                                   = true
+        yan_smart_terrain_3_4_box                  = true
+        yantar_treasure_11                         = true
+        yantar_treasure_12                         = true
+        yantar_treasure_6                          = true
+
+;-- Names of stashes to exclude from the system (bugged)
+[blacklist_stashes_names]
+mar_treasure_10
+mar_q_n_7
+mil_q10_n
+yantar_treasure_11
+secret_fanat
+gar_smart_terrain_5_8_box
+
+;--TB-Added
+;agr_treasure_8				;it is possible to jump into tree
+bar_arena_inventory_box_2	;impossible to get into this room
+kbo_actor_box_1				;the stash is physically stuck inside the safe object
+;mil_q8_n_a					;cannot get into the area, too frictionless (actually you can, you can climb the debris!)
+red_forester_radio			;remove because if playing as bandit the door to the room is locked
+red_forest_box_4_5			;confusing side part of the same box as another stash on the top
+red_treasure_10				;cannot get into the tree
+red_treasure_9				;cannot get into the tree	
+val_q7_n					;above the cross but not obvious it is just about obtainable
+val_recover_item_2_spawn	;stuck somewhere underground
+zat_b22_medic_inv_box		;inside a locked cabin
+
+
+;--================================================================================================================
+;-- Settings of common stashes
+;--================================================================================================================
+
+[settings_common]
+min_weight = 1500		;-- Min possible weight of stash
+max_weight = 2500		;-- Max possible weight of stash
+num_of_tiers = 5
+
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+;--                     |             KIND            	|				TIER (chance multiplier) , (impact multiplier)                       |
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+[kind_tier_effect_common];--chance (%)      | impact	| Tier 1    	| Tier 2        	| Tier 3        	| Tier 4       		| Tier 5
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+;i_arty                  = 	1   			, 700      , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;i_arty_junk             = 	1  			, 400       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;i_arty_cont             = 	5  			, 800       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;i_mutant_belt           = 	1  			, 300       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+;i_mutant_raw           = 	80  			, 150       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;i_mutant_cooked        = 	70  			, 200       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+i_food                  = 	70  			, 200       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+i_drink                 = 	70  			, 200       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+i_medical               = 	30  			, 300       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+i_device                = 	4  			, 800       , 1	, 1     	, 0.5 , 1.25    	, 0.45 , 1.5    	, 0.35 , 2      	, 0.25, 3
+i_tool                  = 	8  			, 200       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+i_repair                = 	4  			, 800       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+i_upgrade               = 	15  			, 200       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.4 , 3
+i_kit                	= 	15  			, 800       , 1	, 1     	, 1   , 1.25    	, 0.9  , 1.5    	, 0.7  , 2      	, 0.5 , 3
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+i_part                  = 	90  			, 25       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;i_mutant_part           = 	1  			, 100       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+i_misc                  = 	70  			, 25        , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+o_light                 = 	8   			, 500      , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+o_medium                = 	8   			, 600      , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+o_sci                   = 	6   			, 700      , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+o_heavy                 = 	1   			, 800      , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+w_ammo                  = 	30  			, 150       , 1	, 1     	, 1   , 1    		, 0.9  , 1.25    	, 0.75 , 1.5    	, 0.5 , 2
+w_melee                 = 	5  			, 700       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+w_explosive             = 	5  			, 300       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+w_misc                  = 	20  			, 300       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+w_pistol                = 	4   			, 500       , 1	, 1     	, 0.8 , 1    	, 0.75 , 1    	, 0.3  , 1      	, 0.01 , 1
+w_shotgun               = 	4   			, 600      , 1	, 1     	, 0.8 , 1    	, 0.75 , 1    	, 0.6  , 1      	, 0.05 , 1
+w_rifle                 = 	4   			, 800      , 1	, 1     	, 0.8 , 1    	, 0.75 , 1    	, 0.6  , 1      	, 0.05 , 1
+w_sniper                = 	1   			, 800      , 1	, 1     	, 0.8 , 1   	, 0.75 , 1   	, 0.6  , 1      	, 0.05 , 1
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+
+
+
+;--================================================================================================================
+;-- Settings of rare stashes
+;--================================================================================================================
+[settings_rare]
+min_weight          = 2000 		;-- Min possible weight of stash
+max_weight          = 3500		;-- Max possible weight of stash
+num_of_tiers        = 5
+
+;-- when player get a rare stash, completed task number is resetted to start calculate for the next one
+;-- [completed_task_num]: Number of completed tasks in order to have a chance (start_chance) of receiving a rare stash next time we get a coordinate
+;-- [start_chance]: Chance of getting a rare stash is: start_chance x ( num of completed tasks / completed_task_num )
+;-- [reward_bonus]: please note that first rare stash will reward with the first item in "progressive_reward" only, and 2nd item on 2nd rare stash, then it will resets to first item. Order MATTERS!
+
+completed_task_num	= 7
+start_chance        = 60
+reward_bonus 	= itm_basickit, itm_drugkit, itm_ammokit
+
+
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+;--                     |             KIND            	|				TIER (chance multiplier) , (impact multiplier)                       |
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+[kind_tier_effect_rare];--  chance (%)      | impact	| Tier 1    	| Tier 2        	| Tier 3        	| Tier 4       		| Tier 5
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+;i_arty                  = 	1   			, 700      , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;i_arty_junk             = 	1  			, 400       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;i_arty_cont             = 	10  			, 200       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;i_mutant_belt           = 	1  			, 300       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+;i_mutant_raw            = 	1  			, 150       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;i_mutant_cooked         = 	1  			, 200       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+i_food                  = 	40  			, 150       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+i_drink                 = 	40  			, 150       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+i_medical               = 	40  			, 300       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+i_device                = 	4  			, 800       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+i_tool                  = 	8  			, 200       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+i_repair                = 	4  			, 1000       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+i_upgrade               = 	20  			, 200       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+i_kit                	= 	18  			, 800      	, 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+;i_part                  = 	40	  			, 50       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;i_mutant_part           = 	1	  			, 150       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;i_misc                  = 	1	  			, 80        , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+o_light                 = 	10   			, 500      , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+o_medium                = 	10  			, 600      , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+o_sci                   = 	8   			, 700      , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+o_heavy                 = 	1   			, 800      , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+w_ammo                  = 	10	  			, 200       , 1	, 1     	, 1   , 1    		, 0.9  , 1.25    	, 0.75 , 1.5    	, 0.5 , 2
+w_melee                 = 	5  			, 700       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+w_explosive             = 	5  			, 500       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+w_misc                  = 	20  			, 300       , 1	, 1     	, 0.8 , 1.25    	, 0.75 , 1.5    	, 0.6  , 2      	, 0.5 , 3
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+w_pistol                = 	5   			, 400       , 1	, 1     	, 0.8 , 1    	, 0.75 , 1    	, 0.3  , 1      	, 0.01 , 1
+w_shotgun               = 	8   			, 400      , 1	, 1     	, 0.8 , 1    	, 0.75 , 1    	, 0.6  , 1      	, 0.05 , 1
+w_rifle                 = 	8   			, 400      , 1	, 1     	, 0.8 , 1    	, 0.75 , 1    	, 0.6  , 1      	, 0.05 , 1
+w_sniper                = 	5   			, 1000      , 1	, 1     	, 0.8 , 1   	, 0.75 , 1   	, 0.6  , 1      	, 0.05 , 1
+;--------------------------------------------------------------------------------------------------------------------------------------------|
+
+
+;--================================================================================================================
+;-- List of sections to include in stashes, with ability to blacklist any for specific economy difficulties
+;--================================================================================================================
+;-- Example 1: (lead_box  = 3) will prevent the lead box from getting included in stashes in (survivalist) difficulty
+;-- Example 2: (lead_box  = 1,3) will prevent the lead box from getting included in stashes in (stalker) and (survivalist) difficulty
+[possible_items]
+
+;--========================================================================
+;--========================================================================
+;-- Stash Overhaul Additions
+;--========================================================================
+;--========================================================================
+
+;-- Very Light Suits/Outfits
+
+novice_outfit
+novice_outfit_camo
+novice_outfit_tourist
+bandit_novice_outfit
+bandit_novice_outfit_alt
+cs_novice_outfit
+dolg_novice_outfit
+redline_novice_outfit
+svoboda_novice_outfit
+
+cs_light_novice_outfit
+cs_light_outfit
+
+;-- Medium Suits/Outfits
+
+stalker_outfit
+stalker_autumn_outfit
+stalker_bear_outfit
+stalker_drought_outfit
+stalker_graphite_outfit
+stalker_predator_outfit
+stalker_salamander_outfit
+stalker_tigerstripe_outfit
+cs_stalker_outfit
+ecolog_guard_outfit
+
+merc_outfit
+merc_scout_outfit
+merc_fighter_outfit
+merc_jackal_outfit
+merc_sunset_outfit
+merc_coyote_outfit
+banditmerc_outfit
+dolg_voin_outfit
+greh_armored_outfit
+greh_armored_camo_outfit
+isg_lcs_outfit
+isg_lcs_camo_outfit
+isg_lcs_urban_outfit
+renegademerc_outfit
+ghillie_outfit
+
+bandit_sun_outfit
+isg_outfit
+isg_camo_outfit
+merc_nighthunter_outfit
+merc_sun_outfit
+merc_wolven_outfit
+monolith_outfit
+svoboda_light_outfit
+
+dolg_outfit
+dolg_red_outfit
+dolg_scout_outfit
+greh_ps5_outfit
+svoboda_heavy_outfit_2
+bandit_ps5_outfit
+
+cs_medium_outfit
+
+;-- Heavy Suits/Outfits
+
+cs_heavy_outfit
+military_outfit
+dolg_heavy_outfit
+dolg_heavy_redline_outfit
+dolg_pantsir_outfit
+military_bandit_outfit
+military_freedom_outfit
+military_merc_outfit
+military_monolit_outfit
+military_sky_outfit
+
+;-- Varied Suits/Outfits
+
+nomad_outfit
+travel_outfit
+wastelander_outfit
+
+nbc_outfit
+bandit_nbc_outfit
+cs_nbc_outfit
+monolith_nbc_outfit
+nbc_dolg_outfit
+nbc_freedom_outfit
+
+
+trenchcoat_outfit
+greh_trenchcoat_outfit
+monolith_trenchcoat_outfit
+trenchcoat_brown_outfit
+trenchcoat_green_outfit
+trenchcoat_dolg_brown_outfit
+trenchcoat_freedom_brown_outfit
+
+;-- Scientific Suits/Outfits
+
+scientific_outfit
+bandit_scientific_dark_outfit
+bandit_scientific_outfit
+cs_scientific_outfit
+cs_scientific_outfit_good
+dolg_scientific_outfit
+dolg_scientific_red_outfit
+dolg_scientific_wood_outfit
+isg_scientific_outfit
+merc_ace_outfit
+merc_combat_scientific_outfit
+merc_scientific_armored_outfit
+merc_scientific_outfit
+monolith_scientific_light_outfit
+monolith_scientific_outfit
+renegade_scientific_outfit
+svoboda_scientific_outfit
+hybrid_outfit
+
+ecolog_outfit_orange
+ecolog_outfit_blue
+ecolog_outfit_green
+ecolog_outfit_white
+ecolog_outfit_yello
+ecolog_outfit_red
+
+;-- Medium/Heavy Suits/Outfits
+
+army_outfit
+specops_outfit							= 3
+dolg_specops_red_outfit					= 3
+specops_bandit_outfit					= 3
+specops_dolg_outfit						= 3
+specops_merc_outfit						= 3
+svoboda_heavy_outfit					= 3
+
+;-- Heavy/Assault Suits/Outfits
+
+light_dolg_outfit
+light_freedom_outfit
+light_isg_outfit
+light_loner_outfit
+light_merc_outfit
+light_monolit_outfit
+light_voen_outfit
+
+;-- Exo-Frames(Light/Medium) Suits/Outfits
+
+exolight_outfit							= 3,2
+exo_wood_outfit							= 3,2
+bandit_exolight_outfit					= 3,2
+cs_exolight_outfit						= 3,2
+dolg_exolight_outfit					= 3,2
+exo_dolg_outfit							= 3,2
+exo_dolg_red_outfit						= 3,2
+exo_dolg_urban_outfit					= 3,2
+exo_dolg_wood_outfit					= 3,2
+merc_exolight_outfit					= 3,2
+exo_merc_grass_outfit					= 3,2
+exo_merc_urban_outfit					= 3,2
+exo_merc_wood_outfit					= 3,2
+isg_exolight_outfit						= 3,2
+military_exolight_outfit				= 3,2
+monolith_exolight_outfit				= 3,2
+svoboda_exolight_outfit					= 3,2
+freedom_exo_vineleaf_outfit				= 3,2
+
+;-- Exo Prototypes
+
+stalker_proto_exo_outfit				= 3,2
+cs_stalker_proto_exo_outfit				= 3,2
+dolg_heavy_proto_exo_outfit				= 3,2
+dolg_proto_exo_outfit					= 3,2
+ecolog_proto_exo_outfit					= 3,2
+isg_proto_exo_outfit					= 3,2
+military_proto_exo_outfit				= 3,2
+monolith_proto_exo_outfit				= 3,2
+svoboda_light_proto_exo_outfit			= 3,2
+
+;-- exoskeleton/Nosrog (Heavy/Very Heavy) Suits/Outfits
+
+exo_outfit								= 3,2
+bandit_exo_outfit						= 3,2
+cs_exo_outfit							= 3,2
+dolg_exo_outfit							= 3,2
+ecolog_exo_outfit						= 3,2
+greh_exo_outfit							= 3,2
+isg_exo_outfit							= 3,2
+merc_exo_outfit							= 3,2
+military_exo_outfit						= 3,2
+monolith_exo_outfit						= 3,2
+renegade_exo_outfit						= 3,2
+svoboda_exo_outfit						= 3,2
+
+army_nosorog_outfit						= 3,2
+dolg_nosorog_outfit						= 3,2
+freedom_nosorog_outfit					= 3,2
+isg_nosorog_outfit						= 3,2
+merc_nosorog_outfit						= 3,2
+monolith_nosorog_outfit					= 3,2
+
+
+;-- Varied Helmets/Backpacks
+
+;-- Legit Artefacts
+
+af_itcher
+af_pin
+af_cristall
+af_fireball								= 3
+af_blood
+af_mincer_meat
+af_bracelet
+af_baloon								= 3
+af_electra_sparkler
+af_sponge
+af_ring
+af_electra_flash						= 3
+af_cristall_flower
+af_lobster_eyes
+af_electra_moonlight
+af_black_spray							= 3
+af_medusa
+af_vyvert
+af_empty
+af_full_empty							= 3
+af_night_star
+af_gravi
+af_gold_fish							= 3
+af_dummy_glassbeads
+af_eye
+af_fire									= 3
+af_dummy_battery
+af_dummy_dummy
+af_ice									= 3
+af_soul
+af_fuzz_kolobok
+af_glass								= 3
+
+;-- Quest/Special Artefacts (Disabled, Remove the ; near name to enable them in stash spawns)
+
+;af_compass
+;af_oasis_heart
+;af_monolith
+;af_death_lamp
+
+;-- Pistols
+
+wpn_aps
+wpn_beretta
+wpn_beretta_alt
+wpn_beretta_camo
+wpn_beretta_modern
+wpn_colt1911
+wpn_colt1911_alt
+wpn_colt1911_camo
+wpn_colt1911_custom
+wpn_colt1911_duty
+wpn_colt1911_merc
+wpn_colt1911_modern
+wpn_colt1911_new
+wpn_colt_kimber
+wpn_cz75
+wpn_cz75_auto
+wpn_desert_eagle
+wpn_desert_eagle_custom
+wpn_desert_eagle_modern
+wpn_fn57
+wpn_fnp45
+wpn_fnp45_custom
+wpn_fnx45
+wpn_fnx45_alt
+wpn_fnx45_custom
+wpn_fort
+wpn_glock
+wpn_glock_custom
+wpn_glock_modern
+wpn_mp443
+wpn_gsh18
+wpn_gsh18_custom
+wpn_hpsa
+wpn_hpsa_alt
+wpn_oc33
+wpn_pb
+wpn_pb_custom
+wpn_pm
+wpn_pm_custom
+wpn_pmm
+wpn_sig220
+wpn_sig220_custom
+wpn_tt33
+wpn_tt33_modern
+wpn_usp
+wpn_usp_custom
+wpn_usp_match
+wpn_walther
+wpn_walther_custom
+wpn_kiparis
+
+wpn_apb
+wpn_cz52
+wpn_fnc
+
+wpn_fn57
+wpn_usp_tac
+wpn_glock17
+wpn_glock17_m1
+wpn_pm_actor
+wpn_colt1911_n
+wpn_walther_p99
+wpn_sig220_n
+wpn_sig226
+
+;-- SMG/Semi Rifles
+
+wpn_bizon
+wpn_bizon_1p29
+wpn_bizon_kobra
+wpn_bizon_ps01
+wpn_mp5
+wpn_mp5_eot
+wpn_mp5_ac10632
+wpn_mp5_acog
+wpn_mp5_alt
+wpn_mp5_alt_ac10632
+wpn_mp5_alt_acog
+wpn_mp5_alt_eot
+wpn_mp5_custom
+wpn_mp5_custom_ac10632
+wpn_mp5_custom_acog
+wpn_mp5_custom_eot
+wpn_mp5sd
+wpn_mp5sd_eot
+wpn_mp5sd_ac10632
+wpn_mp5sd_acog
+wpn_mp5sd_custom
+wpn_mp5sd_custom_ac10632
+wpn_mp5sd_custom_acog
+wpn_mp5sd_custom_eot
+wpn_mp5sd_new
+wpn_mp5sd_new_ac10632
+wpn_mp5sd_new_acog
+wpn_mp5sd_new_eot
+wpn_p90
+wpn_p90_ac10632
+wpn_p90_acog
+wpn_p90_eot
+wpn_pp2000
+wpn_pp2000_ac10632
+wpn_pp2000_acog
+wpn_pp2000_eot
+wpn_ppsh41
+wpn_ppsh41_rednew
+wpn_ppsh41_woodnew
+wpn_ump45
+wpn_ump45_ac10632
+wpn_ump45_acog
+wpn_ump45_custom
+wpn_ump45_custom_ac10632
+wpn_ump45_custom_acog
+wpn_ump45_custom_eot
+wpn_ump45_eot
+wpn_vityaz
+wpn_vityaz_ac10632
+wpn_vityaz_acog
+wpn_vityaz_eot
+wpn_vz61
+wpn_vz61_alt
+wpn_vz61_camo
+wpn_vz61_freedom
+
+wpn_mp7
+wpn_mp7_ac10632
+wpn_mp7_acog
+wpn_mp7_c-more
+wpn_mp7_eot
+
+;-- Shotgun
+
+wpn_bm16
+wpn_bm16_alt
+wpn_bm16_full
+wpn_bm16_full_alt
+wpn_mossberg590
+wpn_mp133
+wpn_mp153
+wpn_protecta
+wpn_protecta_aim
+wpn_protecta_camo
+wpn_protecta_custom
+wpn_saiga12s							= 3
+wpn_saiga12s_1p29						= 3
+wpn_saiga12s_kobra						= 3
+wpn_saiga12s_ps01						= 3
+wpn_spas12
+wpn_spas12_custom
+wpn_toz34
+wpn_toz34_bull
+wpn_toz34_custom
+wpn_toz34_decor
+wpn_toz34_mark4
+wpn_toz34_obrez
+wpn_toz34_obrez_custom
+wpn_toz34_obrez_decor
+wpn_wincheaster1300
+wpn_usas12								= 3
+wpn_vepr								= 3
+wpn_vepr_1p29							= 3
+wpn_vepr_kobra							= 3
+wpn_vepr_ps01							= 3
+
+wpn_fort500
+wpn_remington870
+wpn_remington870_ac10632
+wpn_remington870_c-more
+wpn_remington870_eot
+
+wpn_ks23_kaban
+wpn_saiga12s_isg
+wpn_ks23
+wpn_saiga12s_m2
+wpn_saiga12s_m1
+wpn_toz106
+wpn_toz106_m1
+wpn_mp153_m1
+
+;-- Rifles/AR's
+
+wpn_9a91
+wpn_9a91_1p29
+wpn_9a91_kobra
+wpn_9a91_ps01
+wpn_9a91_pso1m21
+
+wpn_ak74_isg
+wpn_ak74_pmc
+wpn_ak12_custom
+wpn_m4_ru556
+wpn_ak74u_tac
+wpn_akm_isg
+wpn_ak74u_m1_isg
+wpn_ak74u_isg
+wpn_m4_tac
+wpn_ak12_m1
+wpn_ak105_sp
+wpn_ak74m_beard
+wpn_ak74u_n1
+wpn_fal_aus
+wpn_fal_sa58_osw
+wpn_ak74_n
+wpn_ak74m_n
+wpn_ak104_alfa
+wpn_rpk74_16
+wpn_abakan_n
+
+;-- AK and AK Variants Start ... Yay ...
+
+wpn_abakan
+wpn_abakan_1p29
+wpn_abakan_kobra
+wpn_abakan_ps01
+wpn_abakan_camo
+wpn_abakan_camo_1p29
+wpn_abakan_camo_kobra
+wpn_abakan_camo_ps01
+wpn_aek
+wpn_aek_1p29
+wpn_aek_kobra
+wpn_aek_ps01
+wpn_aek_camo
+wpn_aek_camo_1p29
+wpn_aek_camo_kobra
+wpn_aek_camo_ps01
+wpn_aek_duty
+wpn_aek_duty_1p29
+wpn_aek_duty_kobra
+wpn_aek_duty_ps01
+wpn_ak
+wpn_aks
+wpn_ak12
+wpn_ak12_ac10632
+wpn_ak12_acog
+wpn_ak12_eot
+wpn_ak74
+wpn_ak74_1p29
+wpn_ak74_kobra
+wpn_ak74_ps01
+wpn_ak74_alt
+wpn_ak74_alt_1p29
+wpn_ak74_alt_kobra
+wpn_ak74_alt_ps01
+wpn_ak74_custom
+wpn_ak74_custom_1p29
+wpn_ak74_custom_kobra
+wpn_ak74_custom_ps01
+wpn_ak74_modern
+wpn_ak74_modern_1p29
+wpn_ak74_modern_kobra
+wpn_ak74_modern_ps01
+wpn_ak74_old
+wpn_ak74m
+wpn_ak74m_1p29
+wpn_ak74m_kobra
+wpn_ak74m_ps01
+wpn_ak74m_camo
+wpn_ak74m_camo_1p29
+wpn_ak74m_camo_kobra
+wpn_ak74m_camo_ps01
+wpn_ak74m_alt
+wpn_ak74m_alt_1p29
+wpn_ak74m_alt_kobra
+wpn_ak74m_alt_ps01
+wpn_ak74m_custom
+wpn_ak74m_custom_1p29
+wpn_ak74m_custom_kobra
+wpn_ak74m_custom_ps01
+wpn_ak74m_duty
+wpn_ak74m_duty_1p29
+wpn_ak74m_duty_kobra
+wpn_ak74m_duty_ps01
+wpn_ak74m_pka
+wpn_ak101
+wpn_ak101_1p29
+wpn_ak101_ac10632
+wpn_ak101_acog
+wpn_ak101_eot
+wpn_ak101_kobra
+wpn_ak101_ps01
+wpn_ak101_camo
+wpn_ak101_camo_1p29
+wpn_ak101_camo_ac10632
+wpn_ak101_camo_acog
+wpn_ak101_camo_eot
+wpn_ak101_camo_kobra
+wpn_ak101_camo_ps01
+wpn_ak102
+wpn_ak102_ac10632
+wpn_ak102_acog
+wpn_ak102_eot
+wpn_ak102_1p29
+wpn_ak102_kobra
+wpn_ak102_ps01
+wpn_ak103
+wpn_ak103_1p29
+wpn_ak103_kobra
+wpn_ak103_ps01
+wpn_ak103_camo
+wpn_ak103_camo_1p29
+wpn_ak103_camo_kobra
+wpn_ak103_camo_ps01
+wpn_ak104
+wpn_ak104_1p29
+wpn_ak104_kobra
+wpn_ak104_ps01
+wpn_ak105
+wpn_ak105_1p29
+wpn_ak105_kobra
+wpn_ak105_ps01
+wpn_akm
+wpn_akm_1p29
+wpn_akm_kobra
+wpn_akm_ps01
+wpn_akms
+wpn_akms_1p29
+wpn_akms_kobra
+wpn_akms_ps01
+wpn_akms_alt
+wpn_akms_alt_1p29
+wpn_akms_alt_kobra
+wpn_akms_alt_ps01
+wpn_aks74
+wpn_aks74_1p29
+wpn_aks74_kobra
+wpn_aks74_ps01
+wpn_aks74_new
+wpn_aks74_new_1p29
+wpn_aks74_new_kobra
+wpn_aks74_new_ps01
+wpn_ak74u
+wpn_ak74u_kobra
+wpn_ak74u_1p29
+wpn_ak74u_ps01
+wpn_ak74u_camo
+wpn_ak74u_camo_1p29
+wpn_ak74u_camo_kobra
+wpn_ak74u_camo_ps01
+wpn_ak74u_custom
+wpn_ak74u_custom_1p29
+wpn_ak74u_custom_kobra
+wpn_ak74u_custom_ps01
+wpn_ak74u_old
+wpn_ak74_rpk
+
+;-- AK and AK Variants End ... Really?? 134 Variants? ...
+
+;-- Rifles/AR's Continue
+
+wpn_aug
+wpn_aug_custom
+wpn_aug_freedom
+wpn_aug_merc
+wpn_aug_modern
+wpn_fn2000								= 3
+wpn_fn2000_camo							= 3
+wpn_fn2000_custom						= 3
+wpn_g36									= 3
+wpn_g36_camo							= 3
+wpn_g36k								= 3
+wpn_galil
+wpn_galil_custom
+wpn_galil_modern
+wpn_ace21
+wpn_ace21_ac10632
+wpn_ace21_acog
+wpn_ace21_eot
+wpn_groza
+wpn_hk416
+wpn_hk416_ac10632
+wpn_hk416_acog
+wpn_hk416_eot
+wpn_l85
+wpn_l85_alt
+wpn_l85_custom
+wpn_l85_modern
+wpn_l85a2
+wpn_l85a2_alt
+wpn_l85a2_custom
+wpn_l85a2_modern
+wpn_lr300
+wpn_lr300_ac10632
+wpn_lr300_acog
+wpn_lr300_eot
+wpn_lr300_camo
+wpn_lr300_camo_ac10632
+wpn_lr300_camo_acog
+wpn_lr300_camo_eot
+wpn_lr300_custom
+wpn_lr300_custom_ac10632
+wpn_lr300_custom_acog
+wpn_lr300_custom_eot
+wpn_m4
+wpn_m4_ac10632
+wpn_m4_acog
+wpn_m4_eot
+wpn_m4a1
+wpn_m4a1_ac10632
+wpn_m4a1_acog
+wpn_m4a1_eot
+wpn_m4a1_camo
+wpn_m4a1_camo_ac10632
+wpn_m4a1_camo_acog
+wpn_m4a1_camo_eot
+wpn_m4a1_custom
+wpn_m4a1_custom_ac10632
+wpn_m4a1_custom_acog
+wpn_m4a1_custom_eot
+wpn_m4a1_freedom
+wpn_m4a1_freedom_ac10632
+wpn_m4a1_freedom_acog
+wpn_m4a1_freedom_eot
+wpn_m16
+wpn_m16_ac10632
+wpn_m16_acog
+wpn_m16_eot
+wpn_m16a2
+wpn_scar								= 3
+wpn_scar_ac10632						= 3
+wpn_scar_acog							= 3
+wpn_scar_eot							= 3
+wpn_scar_custom							= 3
+wpn_scar_custom_ac10632					= 3
+wpn_scar_custom_acog					= 3
+wpn_scar_custom_eot						= 3
+wpn_scar_new							= 3
+wpn_scar_new_ac10632					= 3
+wpn_scar_new_acog						= 3
+wpn_scar_new_eot						= 3
+wpn_sig550
+wpn_sig550_ac10632
+wpn_sig550_eot
+wpn_sig550_acog
+wpn_sig550_camo
+wpn_sig550_camo_ac10632
+wpn_sig550_camo_acog
+wpn_sig550_camo_eot
+wpn_sig550_custom
+wpn_sig550_custom_ac10632
+wpn_sig550_custom_acog
+wpn_sig550_custom_eot
+wpn_sig552
+wpn_sig552_ac10632
+wpn_sig552_acog
+wpn_sig552_eot
+wpn_sks
+wpn_sks_modern
+wpn_type63
+wpn_val
+wpn_val_1p29
+wpn_val_kobra
+wpn_val_modern
+wpn_val_modern_1p29
+wpn_val_modern_kobra
+wpn_val_modern_ps01
+wpn_val_pso1m21
+wpn_vihr
+wpn_vihr_1p29
+wpn_vihr_kobra
+wpn_vihr_ps01
+wpn_vihr_pso1m21
+wpn_vsk94
+wpn_vsk94_1p29
+wpn_vsk94_kobra
+wpn_vsk94_pso1m21
+wpn_famas3
+wpn_famas3_ac10632
+wpn_famas3_acog
+wpn_famas3_eot
+
+wpn_ash12
+wpn_ash12_ac10632
+wpn_ash12_acog
+wpn_ash12_c-more
+wpn_ash12_eot
+wpn_fal
+wpn_fal_ac10632
+wpn_fal_acog
+wpn_fal_c-more
+wpn_fal_eot
+wpn_mk14
+wpn_mk14_ac10632
+wpn_mk14_acog
+wpn_mk14_c-more
+wpn_mk14_eot
+wpn_xm8
+wpn_xm8_ac10632
+wpn_xm8_ac11090
+wpn_xm8_acog
+wpn_xm8_c-more
+wpn_xm8_eot
+
+wpn_m4_butcher
+
+;-- Sniper
+
+wpn_sig550_sniper						= 3
+wpn_g3sg1								= 3
+wpn_g3									= 3
+wpn_g3_ac10632							= 3
+wpn_g3_acog								= 3
+wpn_g3_eot								= 3
+
+wpn_gauss								= 3
+
+wpn_l96a1
+wpn_l96a1m
+wpn_m98b
+wpn_mosin
+wpn_sr25								= 3
+wpn_sv98								= 3
+wpn_sv98_custom							= 3
+wpn_svd									= 3
+wpn_svd_1p29							= 3
+wpn_svd_ps01							= 3
+wpn_svd_kobra							= 3
+wpn_svd_custom							= 3
+wpn_svd_custom_1p29						= 3
+wpn_svd_custom_kobra					= 3
+wpn_svd_custom_ps01						= 3
+wpn_svt40
+wpn_svt40_modern
+wpn_svu									= 3
+wpn_svu_kobra							= 3
+wpn_svu_1p29							= 3
+wpn_svu_ps01							= 3
+wpn_svu_alt								= 3
+wpn_svu_alt_1p29						= 3
+wpn_svu_alt_kobra						= 3
+wpn_svu_alt_ps01						= 3
+wpn_vintorez							= 3
+wpn_vintorez_1p29						= 3
+wpn_vintorez_kobra						= 3
+wpn_vintorez_1pn93						= 3
+wpn_vintorez_pso1m21					= 3
+wpn_vintorez_alt						= 3
+wpn_vintorez_alt_1p29					= 3
+wpn_vintorez_alt_kobra					= 3
+wpn_vintorez_alt_pso1m21				= 3
+wpn_vssk								= 3
+
+wpn_vintorez_isg
+wpn_svds_pmc
+wpn_dvl10_m1
+wpn_dvl10
+wpn_vintorez_m1
+wpn_vintorez_m2
+wpn_val_tac
+wpn_vintorez_n1
+wpn_sks_tac
+wpn_sks_molot
+wpn_svds
+wpn_svd_m1
+
+wpn_m82
+wpn_remington700
+wpn_wa2000
+
+;-- Heavy
+
+wpn_m249								= 3
+wpn_m249_ac10632						= 3
+wpn_m249_acog							= 3
+wpn_m249_eot							= 3
+wpn_pkm									= 3
+wpn_pkp									= 3
+wpn_rpd									= 3
+wpn_rpk									= 3
+wpn_rpk74								= 3
+wpn_rpk74_1p29							= 3
+wpn_rpk74_kobra							= 3
+wpn_rpk74_ps01							= 3
+
+;-- Explosives (Currently not working)
+
+;wpn_rg-6
+;wpn_rpg7
+;wpn_m79
+
+;-- Medical Additions
+
+bandage
+medkit
+medkit_scientic							= 3
+medkit_army								= 3
+
+;--========================================================================
+;--========================================================================
+;-- Stash Overhaul Additions End
+;--========================================================================
+;--========================================================================
+
+
+;-- Ammo
+ammo_9x18_fmj
+ammo_9x18_pmm
+ammo_9x18_ap
+ammo_9x19_pbp
+ammo_9x19_fmj
+ammo_9x19_ap
+ammo_11.43x23_hydro
+ammo_11.43x23_fmj
+ammo_12x70_buck
+ammo_12x76_zhekan
+ammo_12x76_dart
+ammo_357_hp_mag
+ammo_5.45x39_fmj
+ammo_5.45x39_ep
+ammo_5.45x39_ap
+ammo_5.56x45_fmj
+ammo_5.56x45_ss190
+ammo_5.56x45_ap
+ammo_5.7x28_ss190
+ammo_5.7x28_ss195
+ammo_9x39_ap
+ammo_9x39_pab9
+ammo_7.62x39_fmj
+ammo_7.62x39_ap
+ammo_7.62x51_fmj
+ammo_7.62x51_ap
+ammo_7.62x25_p
+ammo_7.62x25_ps
+ammo_7.92x33_fmj
+ammo_7.92x33_ap
+ammo_7.62x54_7h1
+ammo_7.62x54_7h14
+ammo_magnum_300
+ammo_12.7x55_fmj
+ammo_12.7x55_ap
+ammo_pkm_100
+ammo_7.62x54_ap
+ammo_vog-25
+ammo_m209
+ammo_og-7b
+ammo_gauss
+
+;ammo_9x18_fmj_bad
+;ammo_9x18_pmm_bad
+;ammo_9x18_ap_bad
+;ammo_9x19_pbp_bad
+;ammo_9x19_fmj_bad
+;ammo_9x19_ap_bad
+;ammo_11.43x23_hydro_bad
+;ammo_11.43x23_fmj_bad
+;ammo_12x70_buck_bad
+;ammo_12x76_zhekan_bad
+;ammo_12x76_dart_bad
+;ammo_5.45x39_ap_bad
+;ammo_5.45x39_ep_bad
+;ammo_5.45x39_fmj_bad
+;ammo_9x39_ap_bad
+;ammo_9x39_pab9_bad
+;ammo_5.56x45_fmj_bad
+;ammo_5.56x45_ss190_bad
+;ammo_5.56x45_ap_bad
+;ammo_og-7b_bad
+;ammo_vog-25_bad
+;ammo_m209_bad
+;ammo_pkm_100_bad
+;ammo_357_hp_mag_bad
+;ammo_5.7x28_ss190_bad
+;ammo_5.7x28_ss195_bad
+;ammo_7.62x51_fmj_bad
+;ammo_7.62x51_ap_bad
+;ammo_7.62x25_p_bad
+;ammo_7.62x25_ps_bad
+;ammo_7.62x39_ap_bad
+;ammo_7.62x39_fmj_bad
+;ammo_7.62x54_7h1_bad
+;ammo_7.62x54_7h14_bad
+;ammo_7.62x54_ap_bad
+;ammo_7.92x33_fmj_bad
+;ammo_7.92x33_ap_bad
+;ammo_magnum_300_bad
+;ammo_12.7x55_fmj_bad
+;ammo_12.7x55_ap_bad
+;ammo_gauss_bad
+
+;ammo_9x18_fmj_verybad
+;ammo_9x18_pmm_verybad
+;ammo_9x18_ap_verybad
+;ammo_9x19_pbp_verybad
+;ammo_9x19_fmj_verybad
+;ammo_9x19_ap_verybad
+;ammo_11.43x23_hydro_verybad
+;ammo_11.43x23_fmj_verybad
+;ammo_12x70_buck_verybad
+;ammo_12x76_zhekan_verybad
+;ammo_12x76_dart_verybad
+;ammo_5.45x39_ap_verybad
+;ammo_5.45x39_ep_verybad
+;ammo_5.45x39_fmj_verybad
+;ammo_9x39_ap_verybad
+;ammo_9x39_pab9_verybad
+;ammo_5.56x45_fmj_verybad
+;ammo_5.56x45_ss190_verybad
+;ammo_5.56x45_ap_verybad
+;ammo_og-7b_verybad
+;ammo_vog-25_verybad
+;ammo_m209_verybad
+;ammo_pkm_100_verybad
+;ammo_357_hp_mag_verybad
+;ammo_5.7x28_ss190_verybad
+;ammo_5.7x28_ss195_verybad
+;ammo_7.62x25_p_verybad
+;ammo_7.62x25_ps_verybad
+;ammo_7.62x39_ap_verybad
+;ammo_7.62x39_fmj_verybad
+;ammo_7.62x51_fmj_verybad
+;ammo_7.62x51_ap_verybad
+;ammo_7.62x54_7h1_verybad
+;ammo_7.62x54_7h14_verybad
+;ammo_7.62x54_ap_verybad
+;ammo_7.92x33_fmj_verybad
+;ammo_7.92x33_ap_verybad
+;ammo_magnum_300_verybad
+;ammo_12.7x55_fmj_verybad
+;ammo_12.7x55_ap_verybad
+;ammo_gauss_verybad
+
+;-- Explosives
+mine_new
+explo_metalcan_powder
+ied_new
+ied_rpg_new
+
+;-- Artefacts
+lead_box
+af_iam                                  = 3
+af_aac                                  = 3,2
+
+af_cocoon
+af_cell
+af_fountain
+af_spaika
+af_signet
+af_repei
+af_bat
+af_sun
+af_ear
+af_chelust
+af_atom
+af_lighthouse
+af_fire_loop
+af_zhelch
+af_sandstone
+af_kislushka
+af_black_angel
+af_grapes
+af_skull_miser
+af_star_phantom
+af_medallion
+af_peas
+af_generator
+af_fonar
+af_tapeworm
+af_moh
+af_serofim
+af_elektron
+af_kogot
+
+;-- Drink
+mineral_water__1
+mineral_water__2
+mineral_water__3
+beer
+vodka
+joint
+energy_drink
+
+;-- Smoke
+cigarettes_lucky__1                        = 3
+cigarettes_lucky__2                      = 3,2
+cigarettes_lucky__3
+cigarettes_russian__1
+cigarettes_russian__2
+cigarettes_russian__3
+cigarettes__1
+cigarettes__2
+cigarettes__3                            = 3,2
+cigar1__1
+cigar1__2
+cigar1__3
+cigar2__1
+cigar2__2                                = 3,2
+cigar2__3
+cigar3__1
+cigar3__2
+cigar3__3                                = 3,2
+hand_rolling_tobacco__1 					= 3
+hand_rolling_tobacco__2
+hand_rolling_tobacco__3
+
+;-- Medical
+glucose
+yadylin
+drug_sleepingpills__2
+drug_sleepingpills__3
+
+;-- Food
+caffeine__1
+caffeine__2
+caffeine__3
+caffeine__4
+caffeine__5
+chocolate_p
+tushonka                                ;= 3
+protein                                 ;= 3,2
+kolbasa                                 ;= 3
+tomato                                  ;= 3,2
+corn
+chili
+conserva
+beans
+
+
+;-- Devices
+detector_simple
+detector_advanced                       = 3
+detector_elite                          = 3
+detector_scientific                     = 3
+device_pda_2                            = 3
+device_pda_3                            = 3
+device_torch_dummy                      = 3
+device_torch_nv_1                       = 3
+device_torch_nv_2                       = 3
+device_torch_nv_3                       = 3
+
+;-- Kits
+itm_basickit
+itm_advancedkit
+itm_expertkit
+itm_drugkit
+itm_ammokit
+cooking__1
+army_bowler__3
+
+;-- Tools
+harmonica_a
+kerosene__1
+kerosene__2
+charcoal__1
+charcoal__2
+matches
+compression_bag
+batteries_dead
+grooming
+swiss_knife
+money_600_700
+money_300_400
+
+;-- Repair
+rasp_tool__1
+rasp_tool__2
+ramrod_tool__1
+ramrod_tool__2
+toolkit_p
+toolkit_s
+toolkit_r5
+toolkit_r7
+sewing_kit_a
+sewing_kit_h
+helmet_repair_kit
+light_repair_kit
+medium_repair_kit
+heavy_repair_kit
+exo_repair_kit
+sewing_thread
+leatherman_tool
+heavy_sewing_thread
+
+
+;-- Misc
+hand_watch
+jar
+ball_hammer
+duct_tape
+e_syringe
+steel_wool
+jewelry_box
+porn
+porn2
+rope
+cutlery
+tarpaulin
+roubles
+underwear
+beadspread
+cards
+boots
+gloves
+mirror
+welding_goggles
+grease
+picture_woman
+broken_detector
+headlamp
+flashlight_broken
+walkie
+radio
+radio2
+
+;-- upgrade kits
+upgr_o_1_health
+upgr_o_1_bleed
+upgr_o_1_armor
+upgr_o_1_damage
+upgr_o_1_durability
+upgr_o_1_power
+upgr_o_1_chem
+upgr_o_1_burn
+upgr_o_1_shock
+upgr_o_1_psi
+upgr_o_1_rad
+upgr_o_1_carry
+upgr_o_1_arty
+upgr_o_1_run
+upgr_o_1_weight
+upgr_o_2_health
+upgr_o_2_bleed
+upgr_o_2_armor
+upgr_o_2_damage
+upgr_o_2_durability
+upgr_o_2_power
+upgr_o_2_chem
+upgr_o_2_burn
+upgr_o_2_shock
+upgr_o_2_psi
+upgr_o_2_rad
+upgr_o_2_carry
+upgr_o_2_arty
+upgr_o_2_run
+upgr_o_2_weight
+upgr_o_3_health
+upgr_o_3_bleed
+upgr_o_3_armor
+upgr_o_3_damage
+upgr_o_3_durability
+upgr_o_3_power
+upgr_o_3_chem
+upgr_o_3_burn
+upgr_o_3_shock
+upgr_o_3_psi
+upgr_o_3_rad
+upgr_o_3_carry
+upgr_o_3_arty
+upgr_o_3_run
+upgr_o_3_weight
+upgr_w_1_weight
+upgr_w_1_muffle
+upgr_w_1_grenade_mount
+upgr_w_1_reliability
+upgr_w_1_speed
+upgr_w_1_recoil
+upgr_w_1_magazine
+upgr_w_1_scope
+upgr_w_1_dispersion
+upgr_w_1_calibre
+upgr_w_1_inertion
+upgr_w_1_rpm
+upgr_w_1_scope_mount
+upgr_w_1_firemode
+upgr_w_2_weight
+upgr_w_2_muffle
+upgr_w_2_grenade_mount
+upgr_w_2_reliability
+upgr_w_2_speed
+upgr_w_2_recoil
+upgr_w_2_magazine
+upgr_w_2_scope
+upgr_w_2_dispersion
+upgr_w_2_calibre
+upgr_w_2_inertion
+upgr_w_2_rpm
+upgr_w_2_scope_mount
+upgr_w_2_firemode
+upgr_w_3_weight
+upgr_w_3_muffle
+upgr_w_3_grenade_mount
+upgr_w_3_reliability
+upgr_w_3_speed
+upgr_w_3_recoil
+upgr_w_3_magazine
+upgr_w_3_scope
+upgr_w_3_dispersion
+upgr_w_3_calibre
+upgr_w_3_inertion
+upgr_w_3_rpm
+upgr_w_3_scope_mount
+upgr_w_3_firemode
+
+;-- Parts
+prt_w_barrel_1
+prt_w_barrel_2
+prt_w_barrel_3
+prt_w_barrel_4
+prt_w_barrel_5
+prt_w_barrel_6
+prt_w_barrel_7
+prt_w_barrel_8
+prt_w_barrel_9
+prt_w_barrel_10
+prt_w_barrel_11
+prt_w_barrel_12
+prt_w_trigger_components_1
+prt_w_trigger_components_2
+prt_w_trigger_components_3
+prt_w_trigger_components_4
+prt_w_trigger_components_5
+prt_w_trigger_components_6
+prt_w_bolt_carrier_1
+prt_w_bolt_carrier_2
+prt_w_bolt_carrier_3
+prt_w_bolt_carrier_4
+prt_w_bolt_carrier_5
+prt_w_bolt_carrier_6
+prt_w_bolt_carrier_7
+prt_w_bolt_carrier_8
+prt_w_bolt_carrier_9
+prt_w_bolt_carrier_10
+prt_w_bolt_carrier_11
+prt_w_bolt_1
+prt_w_bolt_2
+prt_w_bolt_3
+prt_w_bolt_4
+prt_w_bolt_5
+prt_w_bolt_6
+prt_w_bolt_7
+prt_w_bolt_8
+prt_w_bolt_9
+prt_w_bolt_10
+prt_w_bolt_11
+prt_w_bolt_12
+prt_w_bolt_13
+prt_w_bolt_14
+prt_w_bolt_15
+prt_w_bolt_16
+prt_w_bolt_17
+prt_w_gas_tube_1
+prt_w_gas_tube_2
+prt_w_gas_tube_3
+prt_w_gas_tube_4
+prt_w_gas_tube_5
+prt_w_gas_tube_6
+prt_w_gas_tube_7
+prt_w_gas_tube_8
+prt_w_gas_tube_9
+prt_w_gas_tube_10
+prt_w_gas_tube_11
+prt_w_p_barrel_1
+prt_w_p_barrel_2
+prt_w_p_barrel_3
+prt_w_p_barrel_4
+prt_w_p_barrel_5
+prt_w_p_barrel_6
+prt_w_p_barrel_7
+prt_w_p_trigger_1
+prt_w_p_trigger_2
+prt_w_p_trigger_3
+prt_w_p_trigger_4
+prt_w_p_spring_1
+prt_w_p_spring_2
+prt_w_p_spring_3
+prt_w_p_spring_4
+prt_w_p_spring_5
+prt_w_p_spring_6
+prt_o_fabrics_1
+prt_o_fabrics_2
+prt_o_fabrics_3
+prt_o_fabrics_4
+prt_o_retardant_1
+prt_o_retardant_2
+prt_o_retardant_3
+prt_o_retardant_4
+prt_o_retardant_5
+prt_o_retardant_6
+prt_o_retardant_7
+prt_o_retardant_8
+prt_o_retardant_9
+prt_o_retardant_10
+prt_o_retardant_11
+prt_o_retardant_12
+prt_o_retardant_13
+prt_o_retardant_14
+prt_o_retardant_15
+prt_o_retardant_16
+prt_o_retardant_17
+prt_o_retardant_18
+prt_o_retardant_19
+prt_o_retardant_20
+prt_o_ballistic_1
+prt_o_ballistic_2
+prt_o_ballistic_3
+prt_o_ballistic_4
+prt_o_ballistic_5
+prt_o_ballistic_6
+prt_o_ballistic_7
+prt_o_ballistic_8
+prt_o_ballistic_9
+prt_o_ballistic_10
+prt_o_ballistic_11
+prt_o_ballistic_12
+prt_o_ballistic_13
+prt_o_ballistic_14
+prt_o_ballistic_15
+prt_o_ballistic_16
+prt_o_ballistic_17
+prt_o_ballistic_18
+prt_o_ballistic_19
+prt_o_ballistic_20
+;prt_o_support_1
+prt_i_ammo
+prt_i_paper
+prt_i_textolite
+prt_i_capacitors
+prt_i_transistors
+prt_i_resistors
+prt_i_copper
+prt_i_scrap
+prt_i_fasteners
+prt_i_plastic
+
+
+;-- Stash bonus rewards from tasks
+[stash_bonus]
+mineral_water__1
+mineral_water__2
+mineral_water__3
+beer
+vodka
+joint
+
+cigarettes_lucky__1                      = 3
+cigarettes_lucky__2                      = 3,2
+cigarettes_lucky__3
+cigarettes_russian__1
+cigarettes_russian__2
+cigarettes_russian__3
+cigarettes__1
+cigarettes__2
+cigarettes__3                            = 3,2
+cigar1__1
+cigar1__2
+cigar1__3
+cigar2__1
+cigar2__2                                = 3,2
+cigar2__3
+cigar3__1
+cigar3__2
+cigar3__3                                = 3,2
+hand_rolling_tobacco__1 				 = 3
+hand_rolling_tobacco__2
+caffeine__3
+caffeine__4
+caffeine__5
+chocolate_p
+tushonka                                ;= 3
+protein                                 ;= 3,2
+kolbasa                                 ;= 3
+tomato                                  ;= 3,2
+corn
+chili
+conserva
+beans
+
+rasp_tool__1
+rasp_tool__2
+ramrod_tool__1
+ramrod_tool__2
+
+cooking__1
+cooking__2
+army_bowler__2
+army_bowler__3
+
+upgr_o_2_health
+upgr_o_2_bleed
+upgr_o_2_armor
+upgr_o_2_damage
+upgr_o_2_durability
+upgr_o_2_power
+upgr_o_2_chem
+upgr_o_2_burn
+upgr_o_2_shock
+upgr_o_2_psi
+upgr_o_2_rad
+upgr_o_2_carry
+upgr_o_2_arty
+upgr_o_2_run
+upgr_o_2_weight
+upgr_o_3_health
+upgr_o_3_bleed
+upgr_o_3_armor
+upgr_o_3_damage
+upgr_o_3_durability
+upgr_o_3_power
+upgr_o_3_chem
+upgr_o_3_burn
+upgr_o_3_shock
+upgr_o_3_psi
+upgr_o_3_rad
+upgr_o_3_carry
+upgr_o_3_arty
+upgr_o_3_run
+upgr_o_3_weight
+
+upgr_w_2_weight
+upgr_w_2_muffle
+upgr_w_2_grenade_mount
+upgr_w_2_reliability
+upgr_w_2_speed
+upgr_w_2_recoil
+upgr_w_2_magazine
+upgr_w_2_scope
+upgr_w_2_dispersion
+upgr_w_2_calibre
+upgr_w_2_inertion
+upgr_w_2_rpm
+upgr_w_2_scope_mount
+upgr_w_2_firemode
+upgr_w_3_weight
+upgr_w_3_muffle
+upgr_w_3_grenade_mount
+upgr_w_3_reliability
+upgr_w_3_speed
+upgr_w_3_recoil
+upgr_w_3_magazine
+upgr_w_3_scope
+upgr_w_3_dispersion
+upgr_w_3_calibre
+upgr_w_3_inertion
+upgr_w_3_rpm
+upgr_w_3_scope_mount
+upgr_w_3_firemode
+
+af_cocoon
+af_cell
+af_fountain
+af_spaika
+af_signet
+af_repei
+af_bat
+af_sun
+af_ear
+af_chelust
+af_atom
+af_lighthouse
+af_fire_loop
+af_zhelch
+af_sandstone
+af_kislushka
+af_black_angel
+af_grapes
+af_skull_miser
+af_star_phantom
+af_medallion
+af_peas
+af_generator
+af_fonar
+af_tapeworm
+af_moh
+af_serofim
+af_elektron
+af_kogot
+
+
+[isg_stash_bonus]
+b_1  		= 	bandage,bandage,jgut
+b_2  		= 	antirad,vodka2
+b_3  		= 	cigarettes_lucky,box_matches
+b_4  		= 	mineral_water,water_drink
+b_5  		= 	ration_ru__3
+b_6  		= 	ration_ukr__3
+b_7  		= 	af_iam
+b_8  		= 	af_aac
+b_9  		= 	af_aam
+b_10 		= 	lead_box,batteries_dead
+b_11 		= 	medkit
+b_12 		= 	medkit_scientic
+b_13 		= 	medkit_army
+b_14 		= 	stimpack_army
+b_15 		= 	stimpack_scientic
+b_16 		= 	survival_kit
+b_17 		= 	medkit_ai1
+b_18 		= 	medkit_ai2
+b_19 		= 	medkit_ai3
+b_20		= 	batteries_dead,batteries_dead,batteries_dead,swiss_knife
+b_21		= 	helmet_repair_kit,duct_tape,steel_wool
+b_22		= 	rasp_tool,ramrod_tool
+b_23		= 	sewing_thread,heavy_sewing_thread
