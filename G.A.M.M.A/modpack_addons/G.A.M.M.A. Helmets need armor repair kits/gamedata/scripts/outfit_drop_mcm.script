@@ -1,0 +1,124 @@
+local default_chances = {
+    ["_chance"] = 100,
+    ["helmet_light_chance"] = 85,
+    ["helmet_medium_chance"] = 70,
+    ["helmet_heavy_chance"] = 40,
+    ["helmet_exo_chance"] = 25,
+    ["outfit_light_chance"] = 70,
+    ["outfit_medium_chance"] = 50,
+    ["outfit_heavy_chance"] = 30,
+    ["outfit_exo_chance"] = 10,
+    ["parts_chance"] = 70,
+    ["debug"] = false,
+}
+
+function on_mcm_load()
+    op = { id= "outfitdrop",sh=true ,gr={
+        {id = "helmet_light_chance", type = "track", val = 2, min=5,max=100,step=1, def = 85},
+        {id = "helmet_medium_chance", type = "track", val = 2, min=5,max=100,step=1, def = 70},
+        {id = "helmet_heavy_chance", type = "track", val = 2, min=5,max=100,step=1, def = 40},
+        {id = "helmet_exo_chance", type = "track", val = 2, min=5,max=100,step=1, def = 25},
+        {id = "outfit_light_chance", type = "track", val = 2, min=5,max=100,step=1, def = 70},
+        {id = "outfit_medium_chance", type = "track", val = 2, min=5,max=100,step=1, def = 50},
+        {id = "outfit_heavy_chance", type = "track", val = 2, min=5,max=100,step=1, def = 30},
+        {id = "outfit_exo_chance", type = "track", val = 2, min=5,max=100,step=1, def = 10},
+        {id = "parts_chance", type = "track", val = 2, min=5,max=100,step=1, def = 70},
+        {id = "debug", type = "check", val = 1, def=false},
+
+    }
+}
+return op
+end
+
+function get_config(key)
+    if (ui_mcm and ui_mcm.get("outfitdrop/"..key)) then return ui_mcm.get("outfitdrop/"..key) else return default_chances[key] end
+end
+
+function print_dbg( text , ...)
+	if get_config("debug") then
+		printf( " %s |  "..text ,time_global(), ...)
+	end
+	return nil
+end
+
+function death_manager.spawn_cosmetics(npc, npc_id, npc_comm, npc_rank, visual, rand_condition)
+    
+    print_dbg("custom spawn cosmetics")
+	local coef = get_comb_coeff(npc_rank,npc_comm)^0.44
+	local visual = visual or npc:get_visual_name()
+	local tbl = death_manager.get_outfit_by_npc_visual(visual)
+	local outfit_section = tbl and tbl[1]
+	local helmet_section = tbl and tbl[2]
+
+	-- Spawn patch
+	if ini_sys:section_exist(npc_comm .. "_patch") then
+		alife_create_item(npc_comm .. "_patch", npc)
+	end
+	
+	-- Spawn outfit
+	local outfit_id
+	if outfit_section and ini_sys:section_exist(outfit_section)  then
+        local condition = rand_condition and (math.random(75,85)/100) or death_manager.get_condition_by_rank(npc_rank, coef)
+        if death_manager.validate_drop(outfit_section) then
+            outfit_id = death_manager.spawn_with_condition(npc, outfit_section, condition)
+        else
+            print_dbg("try spawn parts instead")
+            spawn_parts_instead(npc, outfit_section, condition)
+        end
+	end
+	
+	-- Spawn helmet
+	local helmet_id
+	if helmet_section and ini_sys:section_exist(helmet_section) and  death_manager.validate_drop(helmet_section) then
+		local condition = rand_condition and (math.random(75,85)/100) or death_manager.get_condition_by_rank(npc_rank, coef)
+		helmet_id = death_manager.spawn_with_condition(npc, helmet_section, condition)
+	end
+
+	-- Confirm that an outfit is created
+	return outfit_id
+end
+
+ValidateDrop = death_manager.validate_drop
+function death_manager.validate_drop(section)
+    local type = SYS_GetParam(0, section, "repair_type") or ""
+    print_dbg("Type is %s", type)
+    if type == "outfit_novice" then type = "outfit_light" end
+    if type == "outfit" then type = "outfit_medium" end
+    local chance = get_config(type.."_chance") or default_chances[type.. "_chance"] or 50
+    print_dbg("Chance to drop %s is %s",section, chance)
+    if math.random(100) <= chance then
+        return ValidateDrop(section)
+    end
+    return false
+end
+
+function spawn_parts_instead(npc, section, cond)
+    if math.random(100) > get_config("parts_chance") then return end
+	local parts = itms_manager.ini_parts:r_string_ex("con_parts_list", section)
+	if (not parts) then return end
+	local parts_tbl = str_explode(parts,",")
+    local tot_con = cond * #parts_tbl
+    shuffle_table(parts_tbl)
+    ind = 1
+    print_dbg("total con is %s", tot_con)
+    while tot_con > 0 and ind < #parts_tbl + 1 do
+        local cond_to_set = math.random()
+        cond_to_set = cond_to_set > tot_con and tot_con or cond_to_set
+        print_dbg("Creating part %s with condition %s", parts_tbl[ind], cond_to_set)
+        if string.find(parts_tbl[ind], "helm_") then
+            death_manager.spawn_with_condition(npc, parts_tbl[ind], cond_to_set)
+        else
+            alife_create_item(parts_tbl[ind], npc, {cond = cond_to_set})
+        end
+        ind = ind + 1
+        tot_con = tot_con - cond_to_set
+    end
+end
+
+function get_comb_coeff(rank,comm)
+	local rank_coeffs_table = {novice = 0.3, trainee = 0.4, experienced = 0.5, professional = 0.6, veteran = 0.7, expert = 0.8, master = 0.9, legend = 1}
+	local comm_coeffs_table = {zombied = 1, ecolog = 7, bandit = 10, freedom = 15, stalker = 17, clearsky = 20, dolg = 23, killer = 25, army = 27, monolith = 30}
+	local rank_coeff = rank_coeffs_table[rank] or 0
+	local comm_coeff = comm_coeffs_table[comm] or 0
+	return rank_coeff * comm_coeff / (rank_coeffs_table.legend * comm_coeffs_table.monolith)
+end
