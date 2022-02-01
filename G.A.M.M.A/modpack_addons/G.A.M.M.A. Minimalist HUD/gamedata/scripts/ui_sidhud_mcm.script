@@ -1,0 +1,324 @@
+--[[
+Scripted Components of SidHUD
+16/11/2020
+Anomaly game scripts used as reference: item_weapon.script actor_status.script by Tronex
+This work is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License
+Author: RavenAscendant
+--]]
+
+--ammo display colors 
+
+clr_list ={}
+
+ clr_list = {
+	["fmj_ammo"]		= {
+		["new"]		=	{bright = GetARGB(255, 238, 155, 23), dark = GetARGB(150, 238, 155, 23)},
+		["old"]		=	{bright = GetARGB(255, 200, 168, 131), dark = GetARGB(150, 200, 168, 131)},},
+	
+	["ap_ammo"]		= {
+		["new"]		=	{bright = GetARGB(255, 238, 155, 23), dark = GetARGB(150, 238, 155, 23)},
+		["old"]		=	{bright = GetARGB(255, 200, 168, 131), dark = GetARGB(150, 200, 168, 131)},},
+	
+	["third_ammo"]		= {
+		["new"]		=	{bright = GetARGB(255, 238, 155, 23), dark = GetARGB(150, 238, 155, 23)},
+		["old"]		=	{bright = GetARGB(255, 200, 168, 131), dark = GetARGB(150, 200, 168, 131)},}
+	
+}
+
+
+
+
+
+-- Update rate
+local tg_update = 0
+local tg_update_step = 100 --[ms] lower hud is more snappy, higher it uses less cpu time.
+
+--Status hud X/Y cord override
+status_hud_x = 0
+status_hud_y = 0
+notify_icon_x = 128
+notify_icon_y = 700
+
+
+--settings defaults
+ options = {
+radhealthshow = true, 	-- radiation over health bar
+}
+
+function loadsetting()
+	
+	local option_section = ui_mcm and "mcm" or "options"
+	path = ui_mcm and "sidhud/" or "video/hud/" 
+	--modules
+
+
+	--armor condition bar option(s)
+
+	options.radhealthshow = axr_main.config:r_value(option_section,path.."radhealthshow",1,options.radhealthshow)
+
+	--armor condition bar option(s)
+
+--printf("sidhud weaponshow load post "..tostring(options.weaponshow))
+	if HUD ~= nil then
+		HUD:Refresh(true)
+	end
+
+end
+
+
+
+----------------------------------
+--	HUD (SidHUD)
+----------------------------------
+
+HUD = nil
+------- UISidHud is built on the skeleton of UIIndicators from actor_status.script
+function activate_hud()
+	RegisterScriptCallback("actor_on_net_destroy",actor_on_net_destroy)
+	RegisterScriptCallback("on_console_execute",on_console_execute)
+	RegisterScriptCallback("GUI_on_show",update_hud)
+	RegisterScriptCallback("GUI_on_hide",update_hud)
+	
+	
+	if HUD == nil then
+		HUD = UISidHud()
+		get_hud():AddDialogToRender(HUD)
+	end
+	HUD:Update(true)
+end
+
+function deactivate_hud()
+	if HUD ~= nil then
+		get_hud():RemoveDialogToRender(HUD)
+		HUD = nil
+	end
+	
+	UnregisterScriptCallback("actor_on_net_destroy",actor_on_net_destroy)
+	UnregisterScriptCallback("on_console_execute",on_console_execute)
+	UnregisterScriptCallback("GUI_on_show",update_hud)
+	UnregisterScriptCallback("GUI_on_hide",update_hud)
+
+end
+
+function update_hud()
+	if HUD ~= nil then
+		HUD:Update(true)
+	end
+end
+
+function actor_on_net_destroy()
+	if HUD ~= nil then
+		get_hud():RemoveDialogToRender(HUD)
+		HUD = nil
+	end
+end
+
+function on_console_execute(name)
+	if name == "hud_draw" and HUD then
+		HUD:Update(true)
+	end
+end
+
+-------
+class "UISidHud" (CUIScriptWnd)
+
+function UISidHud:__init() super()
+	
+	self.ratio  = utils_xml.screen_ratio()
+	self._tmr   = time_global()
+	self.index  = 0
+	self.W      = 20
+	self.offset = 10
+	self.lastwpn = 0
+
+	
+	
+	self:InitControls()
+end
+
+function UISidHud:__finalize()
+end
+
+function UISidHud:InitControls()
+	local xml  = CScriptXmlInit()
+	xml:ParseFile("ui_sidhud_component.xml")
+
+-- dialog is an invisible window that contains all the rest of the hud elements. It is hidden and shown to make SidHud behave like the in-game main hud as much as possible.
+	self.dialog = xml:InitStatic("sidhud", self)
+	self.dialog:Show(false)
+
+-- armor and weapon condition and radhealth bars
+	self.radhealthwindow = xml:InitStatic("sidhud:rad_health", self.dialog )	
+	self.radhealthbar = xml:InitProgressBar("sidhud:rad_health:value", self.radhealthwindow)
+	self.radhealthbar:Show(true)
+
+	--Hide disabled modules
+	self:Refresh()	
+end
+
+function UISidHud:Clear()
+	self.dialog:Show(false)
+end
+
+function UISidHud:Refresh()
+	self.radhealthwindow:Show(options.radhealthshow)
+end
+
+function UISidHud:Update(force)
+	CUIScriptWnd.Update(self)
+	
+	local tg = time_global()
+	if force then
+		self._tmr = tg - 1
+	end
+	if self._tmr >= tg then
+
+		return
+	else
+--	--printf("SidHUD: we're on Update increment timer ")
+
+		self._tmr = tg + tg_update_step
+	end
+		--printf("SidHUD: we're on Update update ")
+	
+	self.radhealthbar:SetProgressPos(db.actor.radiation * 100)
+	
+	--printf("SidHUD: before show")
+
+	self.dialog:Show(true)
+	--printf("SidHUD: after show")
+
+end
+
+
+----------------------------------
+--	Callbacks
+----------------------------------
+
+local function actor_on_first_update()
+	--printf("SidHUD: we're on actor_on_first_update")
+	
+	activate_hud()
+end
+
+local function actor_on_update()
+	--printf("SidHUD: we're on actor_on_update")
+	
+	local tg = time_global()
+	if tg < tg_update then
+			--printf("SidHUD: we're on actor_on_update no update")
+
+		return
+	end
+		--printf("SidHUD: we're on actor_on_update update")
+
+	tg_update = tg + tg_update_step
+	--adjust the actor status hud out of our way. 
+	pos = actor_status.HUD and actor_status.HUD:GetWndPos()
+	if pos and  pos.x ~= status_hud_x then
+		pos.x = status_hud_x
+		pos.y = status_hud_y	
+		actor_status.HUD:SetWndPos(pos)
+	end
+	
+	if HUD then 
+		HUD:Update(false) 
+	end
+end
+function sidclear()
+	if HUD then 	
+		HUD:Clear()
+	end
+end
+
+
+function module_toggle(mod)
+
+	options[mod] = not options[mod];
+
+	if HUD then
+		HUD:Refresh()
+	end
+end
+
+function get_setting(name)
+
+return options[name]
+
+end
+
+function set_setting(name)
+
+
+	val = axr_main.config:r_value("options", "video/hud/"..name,1)
+printf("SidHUD "..name..tostring(val))
+	if (val ~= nil) then
+		options[name] = val
+	
+	end
+
+end
+
+
+
+function inject_options_UI()
+	--if MCM exists it already has these options.
+	if ui_mcm then
+		return
+	end
+
+	
+	--make sure the options table exists
+	if (#ui_options.options == 0) then
+		ui_options.init_opt_base()
+	end
+	
+	
+--	t = ui_options.get_opt_table("video/hud") -- get the hud table
+	id_1 = 0
+	id_2 = 0
+	for i=1, #ui_options.options do
+		if ui_options.options[i].id == "video" then id_1 = i end
+	end
+	
+	for i=1, #ui_options.options[id_1].gr do
+		if (ui_options.options[id_1].gr[i].id == "hud") then id_2 = i end
+	end
+---	inject_options_to_table(t)
+	inject_options_to_table(ui_options.options[id_1].gr[id_2].gr)
+	
+end
+
+function on_mcm_load()
+	t = {}
+	inject_options_to_table(t)
+	sh_options = { id= "sidhud"      	,sh=true 	 ,gr=t}
+	
+	return sh_options
+end
+
+
+function inject_options_to_table(t)
+	table.insert(t, {id = "sidslide", type = "slide", link = "ui\\sidhud\\Banner.dds",size = {512,50}, text= "ui_mm_video_hud_sidslide"})
+	table.insert(t, {id = "radhealthshow", type = "check", val = 1, def = options.radhealthshow,})
+end	
+
+
+
+function on_game_start()
+
+	inject_options_UI()
+	loadsetting()
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
+	RegisterScriptCallback("actor_on_update",actor_on_update)
+	RegisterScriptCallback("actor_on_before_death",sidclear)
+	RegisterScriptCallback("on_option_change", loadsetting)
+	
+
+	--add_console_command("sidhud_armorbar", function() module_toggle("armorbar") end )
+end
+
+
+
+
+
