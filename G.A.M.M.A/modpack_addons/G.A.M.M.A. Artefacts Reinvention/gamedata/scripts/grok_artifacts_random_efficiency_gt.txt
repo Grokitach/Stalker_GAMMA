@@ -1,0 +1,85 @@
+surge_window = 3
+arti_min_eff = 5
+arti_max_eff = 25
+arti_surge_min_eff = 60
+arti_surge_max_eff = 65
+arti_psystorm_min_eff = 80
+arti_psystorm_max_eff = 85
+
+delay = 100
+tg = time_global()
+g_time = game.get_game_time()
+
+
+surge_happened = 0
+psystorm_happened = 0
+
+function grok_surge_checker()
+
+-- Function delayer
+	g_time = utils_data.CTimeToSec(game.get_game_time())
+	printf(g_time)
+
+-- Surge timer
+	surge_init_time = utils_data.CTimeToSec(surge_init_time)
+	printf(surge_init_time)
+
+	surge_init_time_window = surge_init_time + (surge_window * 3600)
+	printf(surge_init_time_window)
+
+	if (g_time <= surge_init_time_window) then
+		surge_happened = 1
+	else
+		surge_happened = 0
+	end
+
+-- Psy Storm timer
+    psistorm_init_time = utils_data.CTimeToSec(psistorm_init_time)
+	printf(psistorm_init_time)
+
+	psistorm_init_time_window = psistorm_init_time + (surge_window * 3600)
+
+	if (g_time <= psistorm_init_time_window) then
+		psystorm_happened = 1
+	else
+		psystorm_happened = 0
+	end
+end
+
+
+function grok_arti_random_efficiency(obj)
+	if (IsArtefact(obj) and obj:condition() == 1) then
+		printf("Grok is changing artefacts condition to random")
+
+		if (surge_happened == 0 or psystorm_happened == 0) then
+			cond = (math.random(arti_min_eff, arti_max_eff) / 100)
+		end
+
+		if psystorm_happened == 1 then
+			cond = (math.random(arti_psystorm_min_eff, arti_psystorm_max_eff) / 100)
+		end
+
+		if surge_happened == 1 then
+			cond = (math.random(arti_surge_min_eff, arti_surge_max_eff) / 100)
+		end
+
+		obj:set_condition(cond)
+	end
+end
+
+function load_state(m_data)
+	if (m_data.PsiStormManager) then 
+		psistorm_init_time = m_data.PsiStormManager.inited_time and utils_data.CTime_from_table(m_data.PsiStormManager.inited_time)
+	end
+
+	if (m_data.SurgeManager) then
+		surge_init_time = m_data.SurgeManager.inited_time and utils_data.CTime_from_table(m_data.SurgeManager.inited_time)
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_item_to_ruck", grok_arti_random_efficiency)
+	RegisterScriptCallback("actor_on_item_take", grok_arti_random_efficiency)
+	RegisterScriptCallback("actor_on_update", grok_surge_checker)
+	RegisterScriptCallback("load_state", load_state)
+end

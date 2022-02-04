@@ -1,0 +1,2156 @@
+
+--[[
+	Created by Tronex
+	2019/2/23
+	Last edit: 2020/3/15
+	Workshop UI
+	
+	Repair/Upgrade/Craft DIY interface
+--]]
+
+
+workshop_toolkits = {
+	"itm_basickit",
+	"itm_advancedkit",
+	"itm_expertkit",
+	"itm_drugkit",
+	"itm_ammokit",
+	"itm_artefactskit"
+}
+
+
+local enable_debug = false
+
+local clr_list = {
+	["g"]    = utils_xml.get_color("d_green"),
+	["y"]    = utils_xml.get_color("yellow"),
+	["o"]    = utils_xml.get_color("d_orange"),
+	["r"]    = utils_xml.get_color("d_red"),
+	["b"]    = utils_xml.get_color("d_cyan"),
+	["b1"]   = utils_xml.get_color("pda_blue"),
+	["b2"]   = utils_xml.get_color("d_blue"),
+	["p"]    = utils_xml.get_color("d_purple"),
+	["dark"] = utils_xml.get_color("ui_gray_2"),
+}
+
+-------------------------------------------------------------------
+GUI = nil -- instance, don't touch
+function get_workshop_ui(...)
+	if (not GUI) then
+		GUI = UIWorkshop()
+	end
+	
+	if (GUI) and (not GUI:IsShown()) then
+		GUI:Reset(...)
+		GUI:ShowDialog(true)
+		Register_UI("UIWorkshop","ui_workshop")
+		
+		return GUI
+	end
+end
+
+
+-------------------------------------------------------------------
+class "list_element" (CUIListBoxItem)
+
+function list_element:__init(idx, name) super(idx, name)
+	
+	self.idx					= idx
+	self.name					= name
+
+	self.text					= self:GetTextItem()
+	self.text:SetWndRect		(Frect():set(0,0,300,22))
+	self:SetTextColor			(GetARGB(255, 130, 128, 120))
+	self.text:SetFont			(GetFontLetterica18Russian())
+	self.text:SetWndSize		(vector2():set(400,22))
+	self.text:SetEllipsis		(true)
+	self.text:SetText			(game.translate_string(self.name))
+end
+
+function list_element:__finalize()
+end
+
+
+
+--######################################################################################################################
+--#														< WOKSHOP > 	  												#
+--######################################################################################################################
+
+class "UIWorkshop" (CUIScriptWnd)
+
+function UIWorkshop:__init() super()
+	self:InitControls()
+	self:InitCallBacks()
+end
+
+function UIWorkshop:__finalize()
+end
+
+function UIWorkshop:InitControls()
+	self:SetWndRect(Frect():set(0,0,1024,768))
+	--self:SetAutoDelete(true)
+	
+	local xml
+	
+	self.xml = CScriptXmlInit()
+	xml = self.xml
+	xml:ParseFile("ui_workshop.xml")
+
+	self.background    = xml:InitStatic("background", self)
+	
+	self.dialog	= xml:InitStatic("workshop:frame",self)
+	
+	self.cap_tab = xml:InitTextWnd("workshop:cap_tab" , self.dialog)
+	self.info_ico = xml:InitStatic("workshop:pic_info" , self.dialog)
+	
+	self.btn_tab_state = self.xml:Init3tButton("workshop:btn_state", self.dialog)
+	self:Register(self.btn_tab_state, "button_state")
+	
+	self.btn_tab_repair = self.xml:Init3tButton("workshop:btn_repair", self.dialog)
+	self:Register(self.btn_tab_repair, "button_repair")
+	
+	self.btn_tab_upgrade = self.xml:Init3tButton("workshop:btn_upgrade", self.dialog)
+	self:Register(self.btn_tab_upgrade, "button_upgrade")
+	
+	self.btn_tab_craft = self.xml:Init3tButton("workshop:btn_craft", self.dialog)
+	self:Register(self.btn_tab_craft, "button_craft")
+	
+	self.dlg_state				= UIWorkshopState(xml, self, 0, 0)
+	self.dlg_state:Show			(true)
+	self.dialog:AttachChild		(self.dlg_state)
+	xml:InitWindow				("tab_size", 0, self.dlg_state)
+	
+	self.dlg_repair				= UIWorkshopRepair(xml, self, 0, 0)
+	self.dlg_repair:Show		(false)
+	self.dialog:AttachChild		(self.dlg_repair)
+	xml:InitWindow				("tab_size", 0, self.dlg_repair)
+	
+	self.dlg_upgrade			= UIWorkshopUpgrade(xml, self, 0, 0)
+	self.dlg_upgrade:Show		(false)
+	self.dialog:AttachChild		(self.dlg_upgrade)
+	xml:InitWindow				("tab_size", 0, self.dlg_upgrade)
+	
+	self.dlg_craft				= UIWorkshopCraft(xml, self, 0, 0)
+	self.dlg_craft:Show			(false)
+	self.dialog:AttachChild		(self.dlg_craft)
+	xml:InitWindow				("tab_size", 0, self.dlg_craft)
+	
+	self.item_info = utils_ui.UIInfoItem(self, 500)
+	self.upgr_info = utils_ui.UIInfoUpgr(self, 500)
+end
+
+function UIWorkshop:InitCallBacks()
+	self:AddCallback("button_state",		ui_events.BUTTON_CLICKED,         self.OnButton_state,			self)
+	self:AddCallback("button_repair",		ui_events.BUTTON_CLICKED,         self.OnButton_repair,			self)
+	self:AddCallback("button_upgrade",		ui_events.BUTTON_CLICKED,         self.OnButton_upgrade,		self)
+	self:AddCallback("button_craft",		ui_events.BUTTON_CLICKED,         self.OnButton_craft,			self)
+end
+
+function UIWorkshop:Reset(owner, mechanic, toolkits_workshop, dbg)
+	self.dbg = dbg and true or false
+	self.owner = owner
+	self.mechanic = mechanic
+	self.toolkits_workshop = toolkits_workshop or {}
+	self.toolkits_state = {}
+	for i=1,#workshop_toolkits do
+		if self.toolkits_workshop[i] or db.actor:object(workshop_toolkits[i]) then
+			self.toolkits_state[i] = true
+		else
+			self.toolkits_state[i] = false
+		end
+	end
+
+	-- Switch to state tab
+	self:OnButton_state()
+
+	-- Background depends on UI owner
+	if device():is_paused() then
+		self.background:Show(true)
+	else
+		self.background:Show(false)
+	end
+end
+
+function UIWorkshop:OnButton_state()
+	self.cap_tab:SetText(game.translate_string("st_tab_state"))
+	self.dlg_repair:Show(false)
+	self.dlg_upgrade:Show(false)
+	self.dlg_craft:Show(false)
+	
+	self.dlg_state:Show(true)
+	self.dlg_state:Reset()
+end
+
+function UIWorkshop:OnButton_repair()
+	self.cap_tab:SetText(game.translate_string("st_tab_repair"))
+	self.dlg_state:Show(false)
+	self.dlg_upgrade:Show(false)
+	self.dlg_craft:Show(false)
+	
+	self.dlg_repair:Show(true)
+	self.dlg_repair:Reset()
+end
+
+function UIWorkshop:OnButton_upgrade()
+	self.cap_tab:SetText(game.translate_string("st_tab_upgrade"))
+	self.dlg_state:Show(false)
+	self.dlg_repair:Show(false)
+	self.dlg_craft:Show(false)
+	
+	self.dlg_upgrade:Show(true)
+	self.dlg_upgrade:Reset()
+end
+
+function UIWorkshop:OnButton_craft()
+	self.cap_tab:SetText(game.translate_string("st_tab_craft"))
+	self.dlg_state:Show(false)
+	self.dlg_repair:Show(false)
+	self.dlg_upgrade:Show(false)
+	
+	self.dlg_craft:Show(true)
+	self.dlg_craft:Reset()
+end
+
+function UIWorkshop:Close()
+	self.dlg_state:Show			(false)
+	self.dlg_repair:Show		(false)
+	self.dlg_upgrade:Show		(false)
+	self.dlg_craft:Show			(false)
+	
+	self:HideDialog()
+	self:Show(false)
+	Unregister_UI("UIWorkshop")
+	
+	if device():is_paused() then
+		exec_console_cmd("main_menu off")
+	end
+end
+
+
+
+--######################################################################################################################
+--#															1. STATE													#
+--######################################################################################################################
+
+class "UIWorkshopState" (CUIScriptWnd)
+
+function UIWorkshopState:__init(xml, owner, x, y) super(xml, owner, x, y)
+	self.owner = owner
+	self.xml = xml
+	
+	self:InitControls(x, y)
+	self:InitCallBacks()
+end
+
+function UIWorkshopState:__finalize()
+end
+
+function UIWorkshopState:InitControls(x, y)
+	local xml = self.xml
+	
+	self:SetWndPos(vector2():set(x,y))
+	--self:SetAutoDelete(true)
+
+	self.btn_back = xml:Init3tButton("workshop:state:btn_back", self)
+	self:Register(self.btn_back, "button_cancel")
+	
+	self.toolkit_b = {}
+	self.toolkit_txt = {}
+	self.toolkit_ico = {}
+	self.toolkit_ico_temp = {}
+	
+	for i=1,#workshop_toolkits do
+		self.toolkit_b[i] = xml:InitStatic("workshop:state:pic_toolkit_" .. tostring(i) .. "_b", self)
+		self.toolkit_txt[i] = xml:InitTextWnd("workshop:state:txt_toolkit_" .. tostring(i), self)
+		self.toolkit_ico[i] = xml:InitStatic("workshop:state:pic_toolkit_" .. tostring(i), self)
+	end
+	
+	self.info_text = xml:InitTextWnd("workshop:text_info" , self)
+	--SetTip("state_intro", nil, nil, nil, true, self.info_text)
+end
+
+function UIWorkshopState:InitCallBacks()
+	self:AddCallback("button_cancel",		ui_events.BUTTON_CLICKED,         self.Close,			self)
+end
+
+
+function UIWorkshopState:Reset()
+	self.toolkits_state = dup_table(self.owner.toolkits_state or {})
+	self.toolkits_workshop = dup_table(self.owner.toolkits_workshop or {})
+
+	-- Toolkits availability
+	for i=1,#workshop_toolkits do
+		local toolkit_sec = workshop_toolkits[i]
+		local clr = clr_list["g"]
+		local avail
+		if self.toolkits_workshop[i] then
+			self.toolkit_ico[i]:InitTexture("ui_inGame2_btn_workshop_toolkit_" .. tostring(i) .. "_h")
+			avail = game.translate_string("st_itm_desc_state_avail_workshop")
+		elseif self.toolkits_state[i] then
+			self.toolkit_ico[i]:InitTexture("ui_inGame2_btn_workshop_toolkit_" .. tostring(i) .. "_h")
+			avail = game.translate_string("st_itm_desc_state_avail")
+		else
+			self.toolkit_ico[i]:InitTexture("ui_inGame2_btn_workshop_toolkit_" .. tostring(i) .. "_d")
+			clr = clr_list["r"]
+			avail = game.translate_string("st_itm_desc_state_not_avail")
+		end
+		--self.toolkit_ico[i]::SetStretchTexture(true)
+		local str = ui_item.get_sec_name(toolkit_sec) .. "\\n " .. clr .. avail
+		
+		self.toolkit_txt[i]:SetText(str)
+	end
+	
+	-- Mechanic availability
+	local mech_name = game.translate_string("st_ui_workshop_owner_nobody")
+	local str_intro = game.translate_string("st_ui_workshop_info_state_intro")
+	local str_owner = game.translate_string("st_ui_workshop_owner")
+	local mech_sec = self.owner.mechanic
+	if mech_sec then
+		local obj_mech = get_story_object(mech_sec)
+		if obj_mech then
+			mech_name = obj_mech:character_name()
+		end
+	end
+	self.info_text:SetText( str_intro .. clr_list["b2"] .. " \\n � " .. strformat(str_owner,mech_name) )
+end
+
+
+function UIWorkshopState:Close()
+	self.owner:Close()
+end
+
+function UIWorkshopState:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (res == false) then
+		local bind = dik_to_bind(dik)
+		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+			if dik == DIK_keys.DIK_ESCAPE then
+				self:Close()
+			end
+		end
+	end
+	return res
+end
+
+
+
+--######################################################################################################################
+--#															2. REPAIR													#
+--######################################################################################################################
+
+class "UIWorkshopRepair" (CUIScriptWnd)
+
+function UIWorkshopRepair:__init(xml, owner, x, y) super(xml, owner, x, y)
+	self.owner = owner
+	self.xml = xml
+	
+	-- little trick to get clicked item from inv
+	self.selected_btn = nil
+	self.highlight_btn = nil
+
+	self.parts = {} -- table of item parts section with their original condition, index is part number
+	self.new_con = {} -- table of replacement item parts objects, index is part number
+	
+	self.toolkit = {}
+	self.toolkit_inv = {}
+	self.toolkit_pick = {}
+	
+	self:InitControls(x, y)
+	self:InitCallBacks()
+end
+
+function UIWorkshopRepair:__finalize()
+end
+
+function UIWorkshopRepair:InitControls(x, y)
+	local xml = self.xml
+
+	self:SetWndPos(vector2():set(x,y))
+	--self:SetAutoDelete(true)
+
+	xml:InitStatic("workshop:repair:cap_inv", self)
+	xml:InitStatic("workshop:repair:cap_toolkit", self)
+	xml:InitStatic("workshop:repair:cap_inv_parts", self)
+	xml:InitStatic("workshop:repair:pic_inv_b", self)
+	xml:InitStatic("workshop:repair:pic_inv_parts_b", self)
+	
+	self.dot = xml:InitStatic("workshop:repair:pic_c_dot", self)
+	self.line_r = xml:InitStatic("workshop:repair:pic_c_line_r", self)
+	
+	self.btn_back = xml:Init3tButton("workshop:repair:btn_back", self)
+	self:Register(self.btn_back, "button_cancel")
+	
+	self.btn_repair = xml:Init3tButton("workshop:repair:btn_repair", self)
+	self:Register(self.btn_repair, "button_repair")
+	
+	
+	-- Repair parts
+	self.itm_line     = {}
+	self.itm_b        = {}
+	self.itm_selected = {}
+	self.itm_name     = {}
+	self.itm_con      = {}
+	self.itm_ico      = {}
+	self.itm_ico_temp = {}
+	self.itm_btn      = {}
+	for i=1,6 do
+		self.itm_line[i]     = xml:InitStatic("workshop:repair:pic_c_line_" .. tostring(i) , self)
+		self.itm_b[i]        = xml:InitStatic("workshop:repair:pic_item_" .. tostring(i) .. "_b" , self)
+		self.itm_selected[i] = xml:InitStatic("workshop:repair:pic_item_selected_" .. tostring(i) , self)
+		self.itm_btn[i]      = xml:Init3tButton("workshop:repair:inv_btn_part_" .. tostring(i) , self)
+		self.itm_name[i]     = xml:InitTextWnd("workshop:repair:text_item_" .. tostring(i) .. "_name" , self)
+		self.itm_con[i]      = xml:InitTextWnd("workshop:repair:text_item_" .. tostring(i) .. "_con" , self)
+		self.itm_ico[i]      = xml:InitStatic("workshop:repair:pic_item_" .. tostring(i) , self)
+		self.itm_ico_temp[i] = xml:InitStatic("workshop:repair:pic_item_" .. tostring(i) , self)
+
+		self:Register(self.itm_btn[i],"button_click_part")
+	end
+	
+	-- Repair item
+	self.itm_b_r        = xml:InitStatic("workshop:repair:pic_item_r_b" , self)
+	self.itm_ico_r      = xml:InitStatic("workshop:repair:pic_item_r" , self)
+	self.itm_ico_temp_r = xml:InitStatic("workshop:repair:pic_item_r" , self)
+	self.itm_con_r      = xml:InitTextWnd("workshop:repair:text_item_r_con" , self)
+	
+	-- Required toolkit
+	self.itm_b_rq        = xml:InitStatic("workshop:repair:pic_item_rq_b" , self)
+	self.itm_ico_rq      = xml:InitStatic("workshop:repair:pic_item_rq" , self)
+	self.itm_ico_temp_rq = xml:InitStatic("workshop:repair:pic_item_rq" , self)
+	self.itm_num_rq      = xml:InitTextWnd("workshop:repair:text_item_rq_num" , self)
+	
+	self.info_text = xml:InitTextWnd("workshop:text_info" , self)
+	
+	self.CC = {
+		["inventory"] = utils_ui.UICellContainer("inventory", self, nil, "workshop:repair:cont_inv", self),
+		["parts"] = utils_ui.UICellContainer("parts", self, nil, "workshop:repair:cont_part", self),
+	}
+	
+	self.CC["parts"].disable_bar = true
+	for name,cc in pairs(self.CC) do
+		cc.can_select	 = true
+		cc.disable_drag  = true
+		cc.disable_stack = true -- important, to sync indexes with meals table
+		cc:SetGridSpecs(35, 2)
+	end
+end
+
+function UIWorkshopRepair:InitCallBacks()
+	self:AddCallback("button_cancel",		ui_events.BUTTON_CLICKED,         self.Close,			self)
+	self:AddCallback("button_repair",		ui_events.BUTTON_CLICKED,         self.Repair,			self)
+	
+	self:AddCallback("button_inv",			ui_events.BUTTON_CLICKED,         self.ListPartScheme,			self)
+	self:AddCallback("button_click_part",	ui_events.BUTTON_CLICKED,         self.ListSpareParts,		self)
+	self:AddCallback("button_inv_part",		ui_events.BUTTON_CLICKED,         self.ReplacePart,		self)
+end
+
+
+function UIWorkshopRepair:Reset()
+	self.toolkits_state = dup_table(self.owner.toolkits_state or {})
+	self.toolkits_workshop = dup_table(self.owner.toolkits_workshop or {})
+	
+	self.btn_back:Show(false)
+	self.btn_repair:Enable(false)
+	self.dot:Show(false)
+	self.line_r:Show(false)
+	self.itm_b_r:Show(false)
+	self.itm_con_r:SetText("")
+	self.itm_ico_r:Show(false)
+	for i=1,6 do
+		self.itm_line[i]:Show(false)
+		self.itm_b[i]:Show(false)
+		self.itm_selected[i]:Show(false)
+		self.itm_btn[i]:Show(false)
+		self.itm_name[i]:SetText("")
+		self.itm_con[i]:SetText("")
+		self.itm_ico[i]:InitTexture("ui_button_inv_d")
+	end
+
+	self:ListInventory()
+end
+
+function UIWorkshopRepair:Update()
+	CUIScriptWnd.Update(self)
+
+	-- Updating item info box and item cell containers
+	local info_box = self.owner.item_info
+	
+	local found_cell = false
+	for name,cc in pairs(self.CC) do
+		found_cell = cc:Update(info_box) or found_cell
+	end
+	if found_cell then
+		return
+	end
+	
+	local focused = false
+	for i=1,6 do 
+		if self.parts[i] and self.parts[i].sec and (self.parts[i].sec ~= "na") and self.itm_ico[i]:IsCursorOverWindow() then
+			info_box:Update(nil, self.parts[i].sec)
+			focused = true
+			--return
+		end
+		if self.itm_btn[i] and self.itm_btn[i]:IsCursorOverWindow() then
+			self.highlight_btn = i
+			focused = true
+			--return
+		end
+		if focused then
+			return
+		end 
+	end
+	
+	info_box:Update()
+end 
+
+
+function UIWorkshopRepair:ListInventory()
+	self.CC["parts"]:Reset()
+	
+	local inv, size_t = {}, 0
+	db.actor:iterate_inventory(function(owner,obj)
+		local sec = obj:section()
+		sec = ini_sys:r_string_ex(sec,"parent_section") or sec -- for weapons with scopes
+		if itms_manager.ini_parts:r_string_ex("con_parts_list",sec) then
+			size_t = size_t + 1
+			inv[size_t] = obj
+		end
+	end)
+	
+	self.CC["inventory"]:Reinit(inv)
+
+	SetTip("repair_intro", nil, nil, nil, true, self.info_text)
+end
+
+function UIWorkshopRepair:ListPartScheme()
+	local obj = self.CC["inventory"]:GetCell_Selected(true)
+	if (not obj) then
+		return
+	end
+		
+	-- Reset
+	self.CC["parts"]:Reset()
+	empty_table(self.new_con)
+	empty_table(self.parts)
+	self.selected_btn = nil
+	self.highlight_btn = nil
+	local ps_cnt = 0
+	
+	--self.dot:Show(true)
+	--self.line_r:Show(true)
+	self.itm_b_r:Show(true)
+	
+	itms_manager.play_item_sound(obj)
+	
+	local sec = obj:section()
+	sec = ini_sys:r_string_ex(sec,"parent_section") or sec -- for weapons with scopes
+	local con = math.ceil(100*(obj:condition()))
+	utils_xml.set_upgr_icon(obj, sec, self.itm_ico_r, self.itm_ico_temp_r)
+	self.itm_con_r:SetText(con .. "%")
+	
+	-- Prepare toolkit
+	local toolkits_num = self:UpdateToolkits(0)
+	
+	-- Prepare parts
+	local parts = itms_manager.ini_parts:r_string_ex("con_parts_list",sec)
+	parts = parts and str_explode(parts,",") or {}
+	local parts_con = item_parts.get_parts_con(obj, nil, true)
+	for i=1,#parts do
+		self.parts[i] = {}
+		self.parts[i].sec = parts[i]
+		self.parts[i].con = parts_con[parts[i]]
+	end
+	
+	for i=1,6 do
+		if self.parts[i] and self.parts[i].sec and (self.parts[i].sec ~= "na") and self.parts[i].con then
+			local part_name = ui_item.get_sec_name(self.parts[i].sec) or ""
+			local con = utils_item.get_cond_static(self.parts[i].con)
+			local clr = utils_xml.get_color_con(con)
+			local obj_part = db.actor:object(self.parts[i].sec)
+			--self.itm_line[i]:Show(true)
+			self.itm_b[i]:Show(true)
+			self.itm_selected[i]:InitTexture("ui_button_inv_d")
+			self.itm_selected[i]:Show(true)
+			self.itm_btn[i]:Show(obj_part and (toolkits_num > 0) and true or false)
+			self.itm_name[i]:SetText(part_name)
+			self.itm_con[i]:SetText(clr .. con .. "%")
+			utils_xml.set_icon(self.parts[i].sec, obj_part == nil, self.itm_ico_temp[i], self.itm_ico[i])
+			ps_cnt = ps_cnt + (obj_part and 1 or 0)
+		else
+			self.itm_line[i]:Show(false)
+			self.itm_b[i]:Show(false)
+			self.itm_selected[i]:Show(false)
+			self.itm_btn[i]:Show(false)
+			self.itm_name[i]:SetText("")
+			self.itm_con[i]:SetText("")
+			self.itm_ico[i]:InitTexture("ui_button_inv_d")
+		end
+	end
+	
+	if (toolkits_num > 0) then
+		SetTip("repair_tip_1", "repair_warning_1", "repair_solution_1", self.toolkit, (ps_cnt == #self.parts), self.info_text)
+	else
+		SetTip("repair_tip_1", "repair_warning_2", "repair_solution_2", self.toolkit, false, self.info_text)
+	end
+end
+
+function UIWorkshopRepair:ListSpareParts()
+	if (not self.highlight_btn) then
+		return
+	end
+	
+	self.selected_btn = self.highlight_btn
+	local sec_part = self.parts[self.selected_btn].sec
+	local con_part = self.parts[self.selected_btn].con
+	
+	local cc = self.CC["parts"]
+	local inv, inf, size_t = {},{}, 0
+	db.actor:iterate_inventory(function(owner,obj)
+		local sec = obj:section()
+		if (sec == sec_part) then
+			size_t = size_t + 1
+			inv[size_t] = obj
+			inf[size_t] = math.ceil(obj:condition() * 100)
+		end
+	end)
+	
+	cc:Reinit(inv, inf)
+	
+	local fnt = GetFontSmall()
+	for idx,ci in pairs(self.CC["parts"].cell) do
+		if ci:IsShown() then
+			local con100 = ci.flags.info
+			local con = ci.flags.info / 100
+			local g = clamp(512 * con, 0, 255)
+			local r = clamp(512 * (1- con), 0, 255)
+			ci:Add_CustomText(con100.."%", nil, nil, GetARGB(255,r,g,50), fnt)
+		end
+	end
+	
+	-- Hide unusable parts
+	for idx,ci in pairs(cc.cell) do
+		local obj = ci:IsShown() and cc:GetObj(idx)
+		if obj then
+			if (obj:condition() <= (con_part / 100)) then
+				ci.flags.usable = false
+				ci:Colorize("hide")
+			else
+				ci.flags.usable = true
+				ci:Colorize("def")			
+			end
+		end
+	end
+
+	SetTip("repair_tip_3", "repair_warning_3", "repair_solution_3", sec_part, pst, self.info_text)
+end
+
+function UIWorkshopRepair:ReplacePart()
+	local obj_part = self.CC["parts"]:GetCell_Selected(true)
+	if not (obj_part and self.selected_btn) then
+		return
+	end
+	
+	self.itm_selected[self.selected_btn]:InitTexture("ui_button_inv_t")
+		
+	print_ws("- UIWorkshopRepair:ReplacePart() | picked replacement part (%s) [%s] - condition: %s", obj_part:id(), obj_part:section(), obj_part:condition())
+	
+	-- Save the condition of selected part
+	local new_part_con = math.ceil(obj_part:condition()*100)
+	
+	self.new_con[self.selected_btn] = {}
+	self.new_con[self.selected_btn].id = obj_part:id()
+	self.new_con[self.selected_btn].con = new_part_con
+	
+	-- Calculate individual condition and update text
+	self.btn_repair:Enable(true)
+	local tot_con = 0
+	local cnt = 0
+	local active = 0
+	for i=1,6 do
+		if self.parts[i] and self.parts[i].sec and (self.parts[i].sec ~= "na") then
+			local t = self.parts[i].con
+			if self.new_con[i] then
+				t = self.new_con[i].con
+				active = active + 1
+			end
+			local clr = utils_xml.get_color_con(t)
+			self.itm_con[i]:SetText(clr .. t .. "%")
+			tot_con = tot_con + t --AdjustCon(self.parts[i].sec, t, #self.parts, IsOutfit(self.object))
+			cnt = cnt + 1
+		end
+	end
+	
+	-- Calculate total condition and update text
+	tot_con = clamp(math.ceil(tot_con/cnt),0,100)
+	self.itm_con_r:SetText(tot_con .. "%")
+	
+	-- Update remaining toolkit count
+	--self:UpdateToolkits(active)
+	
+	-- Hide part inventory
+	self.CC["parts"]:Reset()
+	
+	utils_obj.play_sound("interface\\items\\inv_items_cloth_" .. tostring(math.random(2,3)))
+	
+	SetTip("repair_tip_4", nil, nil, nil, true, self.info_text)
+	
+	-- Reset
+	self.selected_btn = nil
+	self.highlight_btn = nil
+end
+
+function UIWorkshopRepair:UpdateToolkits(num)
+	local obj = self.CC["inventory"]:GetCell_Selected(true)
+	if (not obj) then
+		return
+	end
+	
+	empty_table(self.toolkit_inv)
+	empty_table(self.toolkit_pick)
+	local toolkits_num = 0
+	self.toolkit = "na"
+	local main_sec = obj:section()
+	local repair_type = ini_sys:r_string_ex(main_sec,"repair_type") or main_sec
+	for k,v in pairs(GetItemList("workshop")) do
+		if v[repair_type] then
+			self.toolkit = k
+			print_ws("- UIWorkshopRepair:UpdateToolkits(%s) | picked proper tookit [%s] to use for [%s]", num, k, main_sec)
+			break
+		end
+	end
+	if self.toolkit then
+		self.toolkit_inv = utils_item.collect_amount(db.actor, self.toolkit)
+		for _,uses in pairs(self.toolkit_inv) do
+			toolkits_num = toolkits_num + uses
+		end
+		
+		if (num > 0) then
+			for i=1,num do
+				local id = random_key_table(self.toolkit_inv)
+				local uses = self.toolkit_inv[id]
+				if uses and uses > 0 then
+					uses = uses - 1
+					self.toolkit_pick[#self.toolkit_pick + 1] = id
+					if uses == 0 then
+						self.toolkit_inv[id] = nil
+					else
+						self.toolkit_inv[id] = uses
+					end
+				end
+			end
+		end
+		
+		local toolkits_remain = toolkits_num - #self.toolkit_pick
+		for i=1,6 do
+			if self.parts[i] and self.parts[i].sec and (not self.new_con[i]) then
+				if (toolkits_remain < 1) then
+					self.itm_btn[i]:Enable(false)
+				else
+					self.itm_btn[i]:Enable(true)
+				end
+			end
+		end
+		
+		utils_xml.set_icon(self.toolkit, toolkits_remain < 1, self.itm_ico_temp_rq, self.itm_ico_rq)
+		self.itm_num_rq:SetText((toolkits_remain > 0 and clr_list["g"] or clr_list["r"]) .. tostring(toolkits_remain))
+		
+		return toolkits_remain
+	else
+		printe("! UIWorkshopRepair:UpdateToolkits(%s) | no proper repair toolkit is found for item [%s], make sure it is supported by repair tools sections", num, main_sec)
+	end
+	return 0
+end
+
+
+function UIWorkshopRepair:On_CC_Mouse1(cont, idx)
+	local ci = self.CC[cont].cell[idx]
+	if (not ci) then
+		return
+	end
+	
+	if cont == "inventory" then
+		self:ListPartScheme()
+	elseif cont == "parts" then
+		self:ReplacePart()
+	end
+end
+
+function UIWorkshopRepair:Close()
+	self.owner:Close()
+end
+
+function UIWorkshopRepair:Repair()
+	local obj = self.CC["inventory"]:GetCell_Selected(true)
+	if (not obj) then
+		return
+	end
+	
+	local sim = alife()
+	local tot_con = 0
+	local cnt = 0
+	if is_not_empty(self.new_con) then
+		for i=1,6 do
+			if self.parts[i] and self.parts[i].sec and (self.parts[i].sec ~= "na") then
+				if self.new_con[i] and self.new_con[i].id then
+					local temp = self.parts[i].con
+					self.parts[i].con = self.new_con[i].con
+					print_ws("- UIWorkshopRepair:Repair() | replaced part spotted | part: %s - condition: %s - order: %s - id: %s", self.parts[i].sec, self.new_con[i].con, i, self.new_con[i].id)
+					
+					-- Release replacement parts
+					if temp < 0 then
+						alife_release_id(self.new_con[i].id)
+					else
+						local part = get_object_by_id(self.new_con[i].id)
+						part:set_condition(temp/100)
+					end
+				end
+				
+				tot_con = tot_con + self.parts[i].con --AdjustCon(self.parts[i].sec, self.parts[i].con, #self.parts, IsOutfit(self.object))
+				cnt = cnt + 1
+				print_ws("/ UIWorkshopRepair:Repair() | total condition calculation | part: %s - condition: %s - order: %s - total sum: %s", self.parts[i].sec, self.parts[i].con, i, tot_con)
+			end
+		end
+	else
+		print_ws("! UIWorkshopRepair:Repair() | no new parts have been replaced")
+		return
+	end
+	
+	-- Discharge tools
+	for i=1,#self.toolkit_pick do
+		local obj_tool = level.object_by_id(self.toolkit_pick[i])
+		if obj_tool then
+			utils_item.discharge(obj_tool)
+			print_ws("/ UIWorkshopRepair:Repair() | discharged toolkit (%s)", self.toolkit_pick[i])
+		else
+			printe("!ERROR UIWorkshopRepair:Repair() | can't discharge toolkit with id (%s). Object not found!", self.toolkit_pick[i])
+		end
+	end
+	
+	-- Apply condition changes
+	local id = obj:id()
+	local sec = obj:section()
+	sec = ini_sys:r_string_ex(sec,"parent_section") or sec -- for weapons with scopes
+	
+	local final_con = (cnt > 0) and (clamp(math.ceil(tot_con/cnt),1,100)/100)
+	local weapon = level.object_by_id(id)
+	if weapon and not IsWeapon(weapon) and final_con and (final_con >= 0) and (final_con <= 1) then
+		weapon:set_condition(final_con)
+		print_ws("- UIWorkshopRepair:Repair() | object with id (%s) is set to a new condition: %s", id, final_con)
+	else
+		printe("! UIWorkshopRepair:Repair() | object with id (%s) is either not found. Or didn't register new condition (%s)!", id, final_con)
+	end
+	
+	local result_part_tbl = {}
+	result_part_tbl[sec] = math.ceil(tot_con/cnt)
+	for i=1,#self.parts do
+		result_part_tbl[self.parts[i].sec] = self.parts[i].con
+	end
+	item_parts.set_parts_con(id, result_part_tbl)
+	
+	for k,v in pairs(result_part_tbl) do
+		print_ws("~ UIWorkshopRepair:Repair() | item's new part table [%s] = %s",k,v)
+	end
+	
+	-- Effect
+	actor_effects.play_item_fx("craft_dummy")
+
+	self:Close()
+end
+
+
+function UIWorkshopRepair:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (res == false) then
+		for name,cc in pairs(self.CC) do
+			cc:OnKeyboard(dik, keyboard_action)
+		end
+	
+		local bind = dik_to_bind(dik)
+		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+			if dik == DIK_keys.DIK_ESCAPE then
+				self:Close()
+			end
+		end
+	end
+	return res
+end
+
+
+
+--######################################################################################################################
+--#															3. UPGRADE													#
+--######################################################################################################################
+
+class "UIWorkshopUpgrade" (CUIScriptWnd)
+
+function UIWorkshopUpgrade:__init(xml, owner, x, y) super(xml, owner, x, y)
+	self.owner = owner
+	self.xml = xml
+	self.ini = ini_file("items\\weapons\\upgrades_properties.ltx")
+	
+	self.step = 0
+	self.update_cache = {}
+	
+	self.inst_upgr = {}
+	self.inst_upgr_xml = {}
+	
+	self.upgr = {} -- upgr[group][index] = {name, desc, icon, part}
+	self.upgr_xml = {}
+	self.upgr_idx = {}
+	self.upgr_tools = {}
+	self.upgr_tools_pick = {}
+	self.upgr_toolkit = nil
+	self.upgr_flags = {}
+	self.upgr_order = {}
+	
+	local size_t = 0
+	local upg_gr = { [1] = "first", [2] = "secon", [3] = "third", [4] = "fourt", [5] = "fifth" }
+	local upg_ind = { [1] = "a", [2] = "b", [3] = "c", [4] = "d", [5] = "e", [6] = "f" }
+	for i=1,#upg_gr do
+		for ii=1,#upg_ind do
+			size_t = size_t + 1
+			self.upgr_order[size_t] = upg_gr[i] .. upg_ind[ii]
+		end
+	end
+	
+	self:InitControls(x, y)
+	self:InitCallBacks()
+end
+
+function UIWorkshopUpgrade:__finalize()
+end
+
+function UIWorkshopUpgrade:InitControls(x, y)
+	local xml = self.xml
+
+	self:SetWndPos(vector2():set(x,y))
+	--self:SetAutoDelete(true)
+
+	-- Base
+	xml:InitStatic("workshop:upgrade:cap_inv", self)
+	xml:InitStatic("workshop:upgrade:cap_upgrades", self)
+	
+	xml:InitStatic("workshop:upgrade:pic_inv_b", self)
+	xml:InitStatic("workshop:upgrade:pic_upgr_menu_b", self)
+	xml:InitStatic("workshop:upgrade:pic_item_r_b", self)
+	
+	xml:InitStatic("workshop:upgrade:pic_c_line_1", self)
+	--xml:InitStatic("workshop:upgrade:pic_c_line_2", self)
+	xml:InitStatic("workshop:upgrade:pic_c_line_3", self)
+	--xml:InitStatic("workshop:upgrade:pic_c_line_4", self)
+	
+	self.btn_back = xml:Init3tButton("workshop:upgrade:btn_back", self)
+	self:Register(self.btn_back, "button_cancel")
+	
+	self.btn_upgrade = xml:Init3tButton("workshop:upgrade:btn_upgrade", self)
+	self:Register(self.btn_upgrade, "button_upgrade")
+	
+	-- Object
+	self.itm_ico_r = xml:InitStatic("workshop:upgrade:pic_item_r" , self)
+	self.itm_ico_temp_r = xml:InitStatic("workshop:upgrade:pic_item_r" , self)
+	
+	-- Required tookit
+	self.itm_cap_rq = xml:InitStatic("workshop:upgrade:cap_toolkit" , self)
+	self.itm_b_rq = xml:InitStatic("workshop:upgrade:pic_item_rq_b" , self)
+	self.itm_ico_rq = xml:InitStatic("workshop:upgrade:pic_item_rq" , self)
+	self.itm_ico_temp_rq = xml:InitStatic("workshop:upgrade:pic_item_rq" , self)
+	self.itm_num_rq = xml:InitTextWnd("workshop:upgrade:text_item_rq_num" , self)
+	
+	self.info_text = xml:InitTextWnd("workshop:text_info" , self)
+	
+	-- Inventory
+	self.CC = utils_ui.UICellContainer("inventory", self, nil, "workshop:upgrade:cont_inv", self)
+	self.CC.can_select	 = true
+	self.CC.disable_drag  = true
+	self.CC.disable_stack = true -- important, to sync indexes with meals table
+	self.CC:SetGridSpecs(35, 2)
+	
+	-- Upgrades tree
+	self.scroll_upgr = xml:InitScrollView("workshop:upgrade:scrollbar_upgr", self)
+end
+
+function UIWorkshopUpgrade:InitCallBacks()
+	self:AddCallback("button_cancel",		ui_events.BUTTON_CLICKED,         self.Close,			self)
+	self:AddCallback("button_upgrade",		ui_events.BUTTON_CLICKED,         self.Upgrade,		self)
+
+	self:AddCallback("button_inv",			ui_events.BUTTON_CLICKED,         self.OnButton_inv,			self)
+	self:AddCallback("check_upgrade", 		ui_events.BUTTON_CLICKED, 			self.EvaluateUpgrades, 		self)
+end
+
+
+function UIWorkshopUpgrade:Reset()
+	self.toolkits_state = dup_table(self.owner.toolkits_state or {})
+	self.toolkits_workshop = dup_table(self.owner.toolkits_workshop or {})
+	
+	self.scroll_upgr:Clear()
+	empty_table(self.upgr_xml)
+	self.itm_ico_r:Show(false)
+	self.btn_back:Show(false)
+	self.btn_upgrade:Enable(false)
+	
+	self:LoadInventory()
+end
+
+function UIWorkshopUpgrade:Update()
+	CUIScriptWnd.Update(self)
+	
+	local info_box = self.owner.item_info
+	local upgr_box = self.owner.upgr_info
+	
+	-- Item upgrade toolkit
+	if self.itm_ico_rq:IsCursorOverWindow() and self.upgr_toolkit then
+		self.update_cache["type"] = 1 -- reset cache
+		upgr_box:Update()
+		info_box:Update(nil,self.upgr_toolkit)
+		return
+	end
+	
+	-- Item cell containers
+	local found_cell = self.CC:Update(info_box)
+	if (found_cell) then
+		self.update_cache["type"] = 1 -- reset cache
+		upgr_box:Update()
+		return
+	end
+	
+	-- Upgrade tree
+	for k1,v1 in pairs(self.upgr_xml) do  
+		for k2,v2 in pairs(v1) do
+			if v2.pic:IsCursorOverWindow() and self.upgr[k1][k2] then
+				-- Cache
+				if (self.update_cache["type"] == 2) and (self.update_cache["k1"] == k1) and (self.update_cache["k2"] == k2) then
+					upgr_box:Update(self.update_cache["section"], self.update_cache["prereq"], self.update_cache["installed"])
+					return
+				end
+
+				local section = self.upgr[k1][k2].section
+				local installed = self.inst_upgr[section]
+				local prereq = ""
+				local t = self.upgr_flags[k1][k2]
+				local has_prereq = false
+				for i=1,#t do
+					if (not t[i]) then
+						local str = game.translate_string("st_ui_workshop_no_upgr_" .. tostring(i))
+						if (i == 1) then
+							local main_tool = self.upgr_toolkit or ""
+							str = strformat(str, ui_item.get_sec_name(main_tool))
+						elseif (i == 2) then
+							local tool = self.upgr[k1][k2].tool or ""
+							str = strformat(str, ui_item.get_sec_name(tool))
+						end
+						prereq = prereq .. "\\n - " .. str
+						has_prereq = true
+					end
+				end
+				if has_prereq then
+					prereq = game.translate_string("st_upgr_disable") .. prereq
+				elseif installed then
+					prereq = game.translate_string("st_upgr_installed")
+				end
+
+				-- Cache
+				self.update_cache["type"] = 2
+				self.update_cache["k1"] = k1
+				self.update_cache["k2"] = k2
+				self.update_cache["section"] = section
+				self.update_cache["installed"] = installed
+				self.update_cache["prereq"] = prereq
+				
+				upgr_box:Update(section, prereq, installed)
+				info_box:Update()
+				return
+				
+			-- Upgrade kit
+			elseif v2.itm:IsCursorOverWindow() and self.upgr[k1][k2] then
+			
+				self.update_cache["type"] = 1 -- reset cache
+				local tool = self.upgr[k1][k2].tool
+				if tool then
+					upgr_box:Update()
+					info_box:Update(nil,tool)
+					return
+				end
+			end
+		end
+	end
+	
+	upgr_box:Update()
+	info_box:Update()
+end 
+
+
+function UIWorkshopUpgrade:On_CC_Mouse1(cont, idx)
+	local obj = self.CC:GetCell_Selected(true)
+	if (not obj) then
+		return
+	end
+	
+	empty_table(self.inst_upgr)
+	empty_table(self.inst_upgr_xml)
+	empty_table(self.upgr_tools)
+	empty_table(self.upgr_tools_pick)
+	empty_table(self.update_cache)
+	self.btn_upgrade:Enable(false)
+	self.step = 0
+	
+	-- Sound effect for the item
+	itms_manager.play_item_sound(obj)
+
+	-- Get installed upgrades
+	self.inst_upgr = utils_item.get_upgrades_installed(obj, nil, true)
+
+	-- Get workshop kit
+	self.upgr_toolkit = self:GetWorkshopkit(obj) or "na"
+	if (self.upgr_toolkit == "na") then
+		printe("! Workshop UI | no proper repair toolkit is found for item [%s], make sure it is supported by repair tools sections", obj:section())
+	end
+	
+	-- Get upgrade kits in inventory
+	self.upgr_tools = self:CollectUpgradekits( self.upgr_toolkit )
+	
+	-- List the upgrade tree
+	self:ListUpgradeTree()
+	
+	-- Decide what upgrades to lock/unlock/etc...
+	self:EvaluateUpgrades()
+end
+
+function UIWorkshopUpgrade:LoadInventory()
+	local inv, size_t = {}, 0
+	db.actor:iterate_inventory(function(owner,obj)
+		local sec = obj:section()
+		local upgr_list = ini_sys:r_string_ex(sec,"upgrades")
+		if upgr_list and (upgr_list ~= "") then
+			size_t = size_t + 1
+			inv[size_t] = obj
+		end
+	end)
+	
+	self.CC:Reinit(inv)
+	
+	SetTip("upgrade_intro", nil, nil, nil, true, self.info_text)
+end
+
+function UIWorkshopUpgrade:ListUpgradeTree()
+	local obj = self.CC:GetCell_Selected(true)
+	if (not obj) then
+		return
+	end
+	
+	local xml = self.xml
+	local sec = obj:section()
+	
+	-- Setup item icon
+	utils_xml.set_upgr_icon(obj, sec, self.itm_ico_r, self.itm_ico_temp_r)
+	
+	-- Workshop kit info
+	self:SetkitInfo(self.upgr_toolkit, self.itm_num_rq, self.itm_ico_rq, self.itm_ico_temp_rq)
+
+	-- Get upgrade tree
+	self.scroll_upgr:Clear()
+	self.upgr = utils_item.get_upgrades_tree(sec)
+	if not (self.upgr and is_not_empty(self.upgr)) then
+		return
+	end
+	
+	-- List upgrade tree
+	empty_table(self.upgr_xml)
+	local _st
+	for k1,v1 in pairs(self.upgr) do
+		_st = xml:InitStatic("workshop:upgrade:pic_upgr_form", nil)
+		self.upgr_idx[k1] = xml:InitTextWnd("workshop:upgrade:text_upgr_idx", _st)
+		self.upgr_idx[k1]:SetText(tostring(k1))
+		self.upgr_xml[k1] = {}
+		self.inst_upgr_xml[k1] = {}
+		for k2,v2 in pairs(v1) do
+			local t = {}
+			t.base = xml:InitStatic("workshop:upgrade:upgr_" .. tostring(k2),_st)
+			t.b = xml:InitStatic("workshop:upgrade:upgr:back",_st)
+			t.itm = xml:InitStatic("workshop:upgrade:upgr:ico",_st)
+			t.itm_temp = xml:InitStatic("workshop:upgrade:upgr:ico",_st)
+			t.txt = xml:InitTextWnd("workshop:upgrade:upgr:txt",_st)
+			t.pic = xml:InitStatic("workshop:upgrade:upgr:pic",_st)
+			--t.msk = xml:InitStatic("workshop:upgrade:upgr:mask",_st)
+			t.btn = xml:InitCheck("workshop:upgrade:upgr:btn",_st) --Init3tButton
+			
+			local offset_y = 0
+			if ((k2 == 1) and (not self.upgr[k1][2])) or ((k2 == 3) and (not self.upgr[k1][4])) or ((k2 == 5) and (not self.upgr[k1][6])) then
+				offset_y = 25
+			end
+			
+			
+			utils_xml.adjust_pos_to_element(t.base, 0, offset_y, t.b, t.itm, t.itm_temp, t.txt, t.pic, t.btn)
+			
+			-- Upgrade icon
+			t.pic:InitTexture(v2.icon)
+			t.pic:SetStretchTexture(true)
+			
+			-- Upgrade kit info
+			if v2.tool and ini_sys:section_exist(v2.tool) then
+				self:SetkitInfo(v2.tool, t.txt, t.itm, t.itm_temp)
+			end
+			
+			self:Register(t.btn,"check_upgrade")
+			
+			self.inst_upgr_xml[k1][k2] = false
+			self.upgr_xml[k1][k2] = t
+		end
+		
+		self.scroll_upgr:AddWindow(_st, true)
+	end
+end
+
+function UIWorkshopUpgrade:EvaluateUpgrades()
+
+	-- First we process the newely installed upgrade
+	for row,w in pairs(self.upgr) do
+		for col,v in pairs(w) do
+			if self.upgr_xml[row][col].btn:GetCheck()
+			and (not self.inst_upgr[v.section])
+			then
+				self:DischargeKit(self.upgr_toolkit)
+				self:DischargeKit(v.tool)
+				self.inst_upgr[v.section] = true
+				
+				utils_obj.play_sound("interface\\inv_slot")
+			
+				SetTip("upgrade_tip_3", nil, nil, nil, true, self.info_text)
+				
+				self.btn_upgrade:Enable(true)
+			end
+		end
+	end
+	
+	-- Lock/Unlock upgrades according to requirements
+	for row,w in pairs(self.upgr) do
+		for col,v in pairs(w) do
+			self:EvaluateUpgrade(row, col, v)
+		end
+	end
+	
+	-- Workshop toolkit update
+	self:SetkitInfo(self.upgr_toolkit, self.itm_num_rq, self.itm_ico_rq, self.itm_ico_temp_rq)
+	
+	local main_tool = self.upgr_toolkit
+	if main_tool and self.upgr_tools[main_tool] and is_not_empty(self.upgr_tools[main_tool]) then
+		SetTip("upgrade_tip_1", "upgrade_warning_2", "upgrade_solution_2", nil, false, self.info_text)
+	else
+		SetTip("upgrade_tip_1", "upgrade_warning_1", "upgrade_solution_1", self.upgr_toolkit, false, self.info_text)
+	end
+end
+
+function UIWorkshopUpgrade:EvaluateUpgrade(row, col, info)
+	local flags = {}
+	local section = info.section
+	local st = self.upgr_xml[row][col]
+	
+	-- Don't process installed upgrades
+	if self.inst_upgr[section] then
+		st.btn:SetCheck(true)
+		
+		
+	-- Process the rest
+	else
+		
+		-- Flag 1: is workshop toolkit available
+		local main_tool = self.upgr_toolkit
+		flags[1] = main_tool and self.upgr_tools[main_tool] and is_not_empty(self.upgr_tools[main_tool]) and true or false
+		
+		-- Flag 2: is upgrade kit available
+		local tool = info.tool
+		flags[2] = tool and self.upgr_tools[tool] and is_not_empty(self.upgr_tools[tool]) and true or false
+		
+		-- Flag 3: is main toolkit available
+		flags[3] = self.toolkits_state[ math.ceil(col/2) ] and true or false
+		
+		-- Flag 4: check if another upgrade in the same group is not installed
+		if (not info.solo) then
+			local col_g = odd(col) and col+1 or col-1
+			local section_g = self.upgr[row][col_g].section
+			flags[4] = (not (section_g and self.inst_upgr[section_g])) and true or false
+		else
+			flags[4] = true 
+		end
+		
+		-- Flag 5: check if previous group has installed upgrade
+		local prev_installed = col <= 2 and true or false
+		if (not prev_installed) then
+			flags[5] = false
+			for c,v in pairs(self.upgr[row]) do
+				if v.effect and v.effect[section] and self.inst_upgr[v.section] then
+					flags[5] = true 
+					break
+				end
+			end
+		else
+			flags[5] = true 
+		end
+	end
+	
+	-- Result
+	local pass = true
+	for i,res in pairs(flags) do
+		pass = pass and res
+		--printf("flags [%s] %s: %s", section, i, res)
+	end
+	
+	-- Cache and Set
+	if (not pass) then
+		st.btn:SetCheck(false)
+	end
+	
+	st.btn:Enable(pass)
+	
+	if (not self.upgr_flags[row]) then
+		self.upgr_flags[row] = {}
+	end
+	self.upgr_flags[row][col] = flags
+	
+	-- Toolkit status
+	self:SetkitInfo(info.tool, st.txt, st.itm, st.itm_temp)
+end
+
+function UIWorkshopUpgrade:GetWorkshopkit(obj)
+	local sec = obj:section()
+	local repair_type = ini_sys:r_string_ex(sec,"repair_type") or sec
+	for k,v in pairs(GetItemList("workshop")) do
+		if v[repair_type] then
+			return k
+		end
+	end
+end
+
+function UIWorkshopUpgrade:CollectUpgradekits(sec_add)
+	
+	local t = {}
+	
+	-- Debug mode -> infinte tools
+	if self.owner.dbg then
+		t[sec_add] = { [0] = 999 }
+		for sec,_ in pairs(GetItemList("upgrade")) do
+			t[sec] = { [0] = 999 }
+		end
+		return t
+	end
+	
+	-- Collect upgrade toolkits in inventory
+	db.actor:iterate_inventory( function(tmp, obj)
+		local sec = obj:section()
+		if IsItem("upgrade",sec) or (sec == sec_add) then
+			if (not t[sec]) then t[sec] = {} end
+			
+			local uses = utils_item.get_item_remaining_uses(obj) or 1
+			t[sec][obj:id()] = uses
+			--printf("UIWorkshopUpgrade:CollectUpgradekits | tools[%s][%s] = %s", sec, obj:id(), uses)
+		end
+	end)
+	return t
+end
+
+function UIWorkshopUpgrade:SetkitInfo(sec, XML_txt, XML_ico, XML_ico_tmp)
+	local cnt = 0
+	if self.upgr_tools[sec] then
+		for id, num in pairs(self.upgr_tools[sec]) do
+			cnt = cnt + num
+		end
+	end
+	
+	if sec and ini_sys:section_exist(sec) then
+		utils_xml.set_icon(sec, (cnt == 0), XML_ico_tmp, XML_ico)
+	end
+	XML_txt:SetText( (cnt == 0 and clr_list["r"] or clr_list["g"]) .. tostring(cnt) )
+end
+
+function UIWorkshopUpgrade:DischargeKit(sec)
+	if self.owner.dbg then
+		print_ws("~Workshop upgrade UI: DEBUG mode - no discharged items")
+		return
+	end
+			
+	local tbl = self.upgr_tools[sec]
+	if tbl then
+		local id = random_key_table(tbl)
+		local uses = tbl[id]
+		if uses and uses > 0 then
+			uses = uses - 1
+			
+			local size_t = #self.upgr_tools_pick + 1
+			self.upgr_tools_pick[size_t] = id
+			
+			if uses == 0 then
+				self.upgr_tools[sec][id] = nil
+			else
+				self.upgr_tools[sec][id] = uses
+			end
+		end
+	end
+end
+
+
+function UIWorkshopUpgrade:Close()
+	self.owner:Close()
+end
+
+function UIWorkshopUpgrade:Upgrade()
+	local obj = self.CC:GetCell_Selected(true)
+	if (not obj) then
+		return
+	end
+	
+	-- For weapons, unload mag and clear ammo cache in case of ammo type upgrades
+	if IsWeapon(obj) and (not IsItem("fake_ammo_wpn",obj:section())) then
+		obj:force_unload_magazine(true)
+		item_weapon.clear_cache(obj)
+	end
+	
+	-- Sort upgrades
+	k2t_table(self.inst_upgr)
+	local sort_tbl = {}
+	for i=1,#self.upgr_order do
+		for ii=1,#self.inst_upgr do
+			if string.find(self.inst_upgr[ii],self.upgr_order[i]) then
+				sort_tbl[#sort_tbl+1] = self.inst_upgr[ii]
+				break
+			end
+		end
+	end
+	
+	-- Install upgrades
+	inventory_upgrades.force_upgrade = true
+	for i=1,#sort_tbl do
+		--printf("installing: %s - for [%s]", sort_tbl[i], obj:name())
+		obj:install_upgrade(sort_tbl[i])
+	end
+	inventory_upgrades.force_upgrade = false
+
+	-- Discharge tools
+	for i=1,#self.upgr_tools_pick do
+		local t_obj = level.object_by_id(self.upgr_tools_pick[i])
+		if t_obj then
+			utils_item.discharge(t_obj)
+		end
+	end
+		
+	-- Effect
+	if self.owner.dbg then
+	
+	else
+		actor_effects.play_item_fx("craft_dummy")
+	end
+
+	self:Close()
+end
+
+function UIWorkshopUpgrade:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (res == false) then
+		self.CC:OnKeyboard(dik, keyboard_action)
+		
+		local bind = dik_to_bind(dik)
+		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+			if dik == DIK_keys.DIK_ESCAPE then
+				self:Close()
+			end
+		end
+	end
+	return res
+end
+
+
+
+--######################################################################################################################
+--#															4. CRAFT													#
+--######################################################################################################################
+
+class "UIWorkshopCraft" (CUIScriptWnd)
+
+function UIWorkshopCraft:__init(xml, owner, x, y) super(xml, owner, x, y)
+	self.owner = owner
+	self.xml = xml
+	
+	self.last_index = nil -- little trick to get clicked item from inv
+	self.last_type = nil
+	self.selected_index = nil
+	
+	-- Table of all craft recipes
+	self.recipes = {}
+	self.recipes_items = {
+		["recipe_basic_0"]    = true,
+		["recipe_advanced_0"] = true,
+		["recipe_expert_0"]   = true,
+		["recipe_drug_0"]     = true,
+		["recipe_ammo_0"]     = true,
+		["recipe_artefacts_0"]   = true,
+	}
+	self.recipes_type = {}
+	-- self.recipes_type[indx] = title
+	-- self.recipes[indx][num]["section"] = x_morphine
+	-- self.recipes[indx][num]["recipe"] = recipe_drug_3
+	-- self.recipes[indx][num][1] = {salicidic_acid,1}
+	-- self.recipes[indx][num][2] = {drug_booster,4}
+	-- self.recipes[indx][num][3] = {e_syringe,2}
+
+	-- Craft objects
+	self.craft_item = {}
+	self.craft_item_remain = {}
+	self.craft_allow = {}
+	self.craft_item_r = nil
+	self.craft_allow_r = nil
+
+	self:InitControls(x, y)
+	self:InitCallBacks()
+	
+	self:LoadRecipes()
+	SetTip("craft_intro", nil, nil, nil, true, self.info_text)
+end
+
+function UIWorkshopCraft:__finalize()
+end
+
+function UIWorkshopCraft:InitControls(x, y)
+	local xml = self.xml	
+	
+	self:SetWndPos(vector2():set(x,y))
+	--self:SetAutoDelete(true)
+
+	-- Base
+	xml:InitStatic("workshop:craft:cap_menu", self)
+	xml:InitStatic("workshop:craft:cap_list", self)
+	xml:InitStatic("workshop:craft:cap_recipes", self)
+	xml:InitStatic("workshop:craft:pic_menu_b", self)
+	xml:InitStatic("workshop:craft:pic_recipe_b", self)
+	xml:InitStatic("workshop:craft:pic_inv_b", self)
+	
+	self.btn_back = xml:Init3tButton("workshop:craft:btn_back", self)
+	self:Register(self.btn_back, "button_cancel")
+	
+	self.btn_craft = xml:Init3tButton("workshop:craft:btn_craft", self)
+	self:Register(self.btn_craft, "button_craft")
+	
+	self.info_text = xml:InitTextWnd("workshop:text_info" , self)
+	
+	-- Components
+	self.cap_components = xml:InitStatic("workshop:craft:cap_components", self)
+	self.itm_line = {}
+	self.itm_line_c = {}
+	self.itm_b = {}
+	self.itm_name = {}
+	self.itm_num = {}
+	self.itm_ico = {}
+	self.itm_ico_temp = {}
+	for i=1,4 do
+		self.itm_line[i] = xml:InitStatic("workshop:craft:pic_c_line_" .. tostring(i) , self)
+		self.itm_b[i] = xml:InitStatic("workshop:craft:pic_item_" .. tostring(i) .. "_b" , self)
+		self.itm_name[i] = xml:InitTextWnd("workshop:craft:text_item_" .. tostring(i) .. "_name" , self)
+		self.itm_num[i] = xml:InitTextWnd("workshop:craft:text_item_" .. tostring(i) .. "_num" , self)
+		self.itm_ico[i] = xml:InitStatic("workshop:craft:pic_item_" .. tostring(i) , self)
+		self.itm_ico_temp[i] = xml:InitStatic("workshop:craft:pic_item_" .. tostring(i) , self)
+		if i > 1 then
+			self.itm_line_c[i] = xml:InitStatic("workshop:craft:pic_c_line_" .. tostring(i-1) .. "_" .. tostring(i) , self)
+		end
+	end
+	
+	-- Result
+	self.itm_line_r1 = xml:InitStatic("workshop:craft:pic_c_line_r1" , self)
+	--self.itm_line_r2 = xml:InitStatic("workshop:craft:pic_c_line_r2" , self)
+	self.itm_line_r3 = xml:InitStatic("workshop:craft:pic_c_line_r3" , self)
+	
+	self.itm_b_r = xml:InitStatic("workshop:craft:pic_item_r_b" , self)
+	self.itm_name_r = xml:InitTextWnd("workshop:craft:text_item_r_name" , self)
+	self.itm_num_r = xml:InitTextWnd("workshop:craft:text_item_r_num" , self)
+	self.itm_ico_r = xml:InitStatic("workshop:craft:pic_item_r" , self)
+	self.itm_ico_temp_r = xml:InitStatic("workshop:craft:pic_item_r" , self)
+	self.cap_r = xml:InitStatic("workshop:craft:cap_result", self)
+	
+	self.itm_name_t = xml:InitTextWnd("workshop:craft:text_item_t_name" , self)
+	self.itm_b_t = xml:InitStatic("workshop:craft:pic_item_t_b" , self)
+	self.itm_ico_t = xml:InitStatic("workshop:craft:pic_item_t" , self)
+	self.itm_ico_temp_t = xml:InitStatic("workshop:craft:pic_item_t" , self)
+	
+	
+	-- List
+	self.list_menu = xml:InitListBox("workshop:craft:list_menu",self)
+	self.list_menu:ShowSelectedItem(true)
+	self.list_menu:Show(true)
+	self:Register(self.list_menu, "list_menu")
+	
+	-- Scrolls
+	self.CC = {
+		["list"] = utils_ui.UICellContainer("list", self, nil, "workshop:craft:cont_list", self),
+		["recipe"] = utils_ui.UICellContainer("recipe", self, nil, "workshop:craft:cont_recipe", self),
+	}
+	self.CC["list"].can_select	 = true
+	
+	for name,cc in pairs(self.CC) do
+		cc.showcase  = true
+		cc.disable_drag  = true
+		cc.disable_stack = true -- important, to sync indexes with meals table
+		cc:SetGridSpecs(35, 2)
+	end
+end
+
+function UIWorkshopCraft:InitCallBacks()
+	self:AddCallback("button_cancel",		ui_events.BUTTON_CLICKED,         self.Close,			self)
+	self:AddCallback("button_craft",		ui_events.BUTTON_CLICKED,         self.Craft,			self)
+	self:AddCallback("list_menu", 			ui_events.LIST_ITEM_CLICKED, 	  self.ListItems, 			self)
+end
+
+
+function UIWorkshopCraft:Reset()
+	self.toolkits_state = dup_table(self.owner.toolkits_state or {})
+	self.toolkits_workshop = dup_table(self.owner.toolkits_workshop or {})
+	
+	-- Elements
+	self.btn_craft:Enable(false)
+	self.btn_back:Show(false)
+	self:ShowComponents(false)
+
+	-- Show/Hide recipes
+	self:ListRecipes()
+	
+	-- Hide listed items
+	self.CC["list"]:Reset()
+end
+
+function UIWorkshopCraft:Update()
+	CUIScriptWnd.Update(self)
+
+	local info_box = self.owner.item_info
+	
+	-- Item of active recipe
+	for i=1,4 do 
+		if self.itm_ico[i] and self.itm_ico[i]:IsCursorOverWindow() then
+			local item = self.last_type and self.last_index and self.recipes[self.last_type] and self.recipes[self.last_type][self.selected_index]
+			if item and item[i] then
+				info_box:Update(nil,item[i][1])
+				return
+			end
+		end
+	end
+		
+	-- Item cells
+	local found_cell = false
+	for name,cc in pairs(self.CC) do
+		found_cell = cc:Update(info_box) or found_cell
+	end
+	if found_cell then
+		return
+	end
+
+	info_box:Update()
+end 
+
+
+function UIWorkshopCraft:LoadRecipes()
+	-- Less parts on achievement
+	local ach = 0
+	if (game_achievements.has_achievement("artificer_eagerness")) then
+		ach = 1
+	end
+
+	local ind = 1
+	local ini = itms_manager.ini_craft
+	while ini:section_exist(tostring(ind)) do
+		local ind_str = tostring(ind)
+		local n = ini:line_count(ind_str) or 0
+		self.recipes[ind] = {}
+		for i=0, n-1 do
+			local result, id, value = ini:r_line(ind_str , i , "", "")
+			if (id == "title") then
+				self.recipes_type[ind] = value
+			end
+			id = string.sub(id,3)
+			if ini_sys:section_exist(id) then
+				local t = str_explode(value,",")
+				if (#t == 6) or (#t == 8) or (#t == 10) then
+					local x = #self.recipes[ind] + 1
+					self.recipes[ind][x] = {}
+					self.recipes[ind][x].sec = id
+					self.recipes[ind][x].tool = tonumber(t[1]) or 1
+					self.recipes[ind][x].rsp = t[2]
+					if t[3] and t[4] then -- support item 1
+						if ini_sys:section_exist(tostring(t[3])) then
+							local amt = tonumber(t[4])
+							self.recipes[ind][x][1] = {tostring(t[3]), (amt > 4) and (amt - ach) or amt}
+						else
+							printe("! Workshop UI craft | componenet section [%s] not found for [%s] recipe!", tostring(t[3]), id)
+						end
+					end
+					if t[5] and t[6] then -- support item 2
+						if ini_sys:section_exist(tostring(t[5])) then
+							local amt = tonumber(t[6])
+							self.recipes[ind][x][2] = {tostring(t[5]), (amt > 4) and (amt - ach) or amt}
+						else
+							printe("! UIWorkshopCraft:LoadRecipes() | componenet section [%s] not found for [%s] recipe!", tostring(t[5]), id)
+						end
+					end
+					if t[7] and t[8] then -- support item 3
+						if ini_sys:section_exist(tostring(t[7])) then
+							local amt = tonumber(t[8])
+							self.recipes[ind][x][3] = {tostring(t[7]), (amt > 4) and (amt - ach) or amt}
+						else
+							printe("! UIWorkshopCraft:LoadRecipes() | componenet section [%s] not found for [%s] recipe!", tostring(t[7]), id)
+						end
+					end
+					if t[9] and t[10] then -- support item 4
+						if ini_sys:section_exist(tostring(t[9])) then
+							local amt = tonumber(t[10])
+							self.recipes[ind][x][4] = {tostring(t[9]), (amt > 4) and (amt - ach) or amt}
+						else
+							printe("! UIWorkshopCraft:LoadRecipes() | componenet section [%s] not found for [%s] recipe!", tostring(t[9]), id)
+						end
+					end
+				end
+			elseif (id ~= "tle") then
+				printe("! UIWorkshopCraft:LoadRecipes() | section [%s] not found!",id)
+			end
+		end
+		
+		ind = ind + 1
+	end
+	
+	--utils_data.print_table(self.recipes)
+	--utils_data.print_table(self.recipes_type)
+	
+	for i=1,#self.recipes_type do
+		local _itm = list_element(i, self.recipes_type[i])
+		self.list_menu:AddExistingItem(_itm)
+	end
+end
+
+function UIWorkshopCraft:ListRecipes()
+	
+	-- Recipes showcase
+	if is_empty(self.CC["recipe"].cell) then
+		local inv, size_t = {}, 0
+		for recipe,_ in pairs(GetItemList("recipe")) do
+			size_t = size_t + 1
+			inv[size_t] = recipe
+		end
+		self.CC["recipe"]:Reinit(inv)
+	end
+	
+	-- Show/hide unlocked/locked recipes items
+	for recipe,_ in pairs(GetItemList("recipe")) do
+		local state = false
+		if ui_pda_encyclopedia_tab.is_unlocked_note("encyclopedia__notes_" .. recipe) then
+			state = true
+		end
+		self.recipes_items[recipe] = state
+	end
+	
+	for idx,ci in pairs(self.CC["recipe"].cell) do
+		if ci:IsShown() then
+			if self.recipes_items[ci.section] then
+				ci:Colorize("def")
+			else
+				ci:Colorize("hide")
+			end
+		end
+	end
+end
+
+function UIWorkshopCraft:ListItems()
+	local xml = self.xml
+	
+	self.btn_craft:Enable(false)
+	
+	utils_obj.play_sound("interface\\inv_page")
+	
+	local menu = self.list_menu:GetSelectedItem()
+	if (not menu) then return end
+	self.last_type = menu.idx
+	
+	local r = self.recipes[self.last_type]
+	local inv, ind, size_t = {},{}, 0
+	for i,v in pairs(r) do
+		size_t = size_t + 1
+		inv[size_t] = v.sec
+		ind[size_t] = i
+	end
+	self.CC["list"]:Reinit(inv, ind)
+	
+	for i,ci in pairs(self.CC["list"].cell) do
+		if ci:IsShown() then
+			local ii = ci.flags.info
+			local sec = r[ii].rsp
+			if self.recipes_items[sec] then
+				ci:Colorize("def")
+			else
+				ci:Colorize("hide")
+			end
+		end
+	end
+	
+	SetTip("craft_tip_1", nil, nil, nil, true, self.info_text)
+end
+
+function UIWorkshopCraft:On_CC_Mouse1(cont, idx)
+	if cont ~= "list" then
+		return
+	end
+	
+	local ci = self.CC["list"].cell[idx]
+	if (not ci) then
+		return
+	end
+	
+	self.last_index = ci.flags.info
+	if (not self.last_index) then
+		return
+	end
+	
+	local item = self.last_type and self.last_index and self.recipes[self.last_type] and self.recipes[self.last_type][self.last_index]
+	if (not item) then
+		return
+	end
+	
+	if (not self.recipes_items[item.rsp]) then
+		SetTip(nil, "craft_warning_2", "craft_solution_2", item.sec, false, self.info_text)
+		self:ShowComponents(false)
+		return
+	end
+	
+	utils_obj.play_sound("interface\\items\\inv_items_cloth_" .. tostring(math.random(2,3)))
+	
+	-- Reset
+	self.craft_item = {}
+	self.craft_item_remain = {}
+	self.craft_allow = {}
+	self.craft_item_r = nil
+	self.craft_allow_r = nil
+	self.selected_index = self.last_index
+
+	for i=1,4 do
+		local sh = false
+		if item[i] then
+			sh = true
+		end
+		self.itm_line[i]:Show(sh)
+		self.itm_b[i]:Show(sh)
+		self.itm_name[i]:Show(sh)
+		self.itm_num[i]:Show(sh)
+		self.itm_ico[i]:Show(sh)
+		if i > 1 then
+			self.itm_line_c[i]:Show(sh)
+		end
+		
+		if item[i] then
+			self:UpdateItem(i, item[i][1], item[i][2], false, nil, nil)
+		end
+	end
+	
+	self.cap_components:Show(true)
+	self.itm_line_r1:Show(true)
+	--self.itm_line_r2:Show(true)
+	self.itm_line_r3:Show(true)
+	
+	self.itm_b_r:Show(true)
+	self.itm_name_r:Show(true)
+	self.itm_num_r:Show(true)
+	self.itm_ico_r:Show(true)
+	self.cap_r:Show(true)
+	
+	self.itm_name_t:Show(true)
+	self.itm_b_t:Show(true)
+	self.itm_ico_t:Show(true)
+	self.itm_ico_temp_t:Show(true)
+	
+	self:UpdateItem(nil, item.sec, 1, true, item.tool, workshop_toolkits[item.tool])
+end
+
+function UIWorkshopCraft:UpdateItem (n, sec, amount, result, toolkit_idx, toolkit_sec)
+
+	-- Text (Amount)
+	local amt = amount
+	local box = 1
+	if IsItem("ammo",sec) then
+		box = IsItem("ammo",sec)
+		amt = box * amount
+	end
+	--self.itm_num[n]:SetText("x" .. tostring(amt))
+	
+	-- Text (Name)
+	local parts_id = {}
+	local counter = 0
+	local name = ui_item.get_sec_name(sec)
+	
+	if (not result) then
+		-- Reset
+		self.craft_item[n] = {}
+		self.craft_item_remain[n] = {}
+		self.craft_allow[n] = false
+		
+		self.itm_name[n]:SetText(name)
+		self.itm_num[n]:SetTextColor(GetARGB(250, 255, 50, 50)) --GetARGB(200, 255, 50, 20)
+	
+		-- Collect valid items
+		local function search(temp, item)
+			if (item:section() == sec) and (not parts_id[item:id()]) then
+				local cnt = IsItem("multiuse",nil,item) and item:get_remaining_uses() or 1
+				parts_id[item:id()] = cnt
+			end
+		end
+		db.actor:iterate_inventory(search,nil)
+	
+		
+
+		
+		-- Check and Allow/Prevent
+		local count = 0
+		local dischargeAmount = amount
+		
+		for _,cnt in pairs(parts_id) do
+			count = count + cnt
+		end
+		
+		-- Ammo boxes
+		if IsItem("ammo",sec) then -- ammo
+			local full_ammo = 0
+			local full_ammo_txt = 0
+			for id,_ in pairs(parts_id) do
+				local ammo = level.object_by_id(id)
+				if ammo then
+					local size = ammo:ammo_get_count()
+					local box_size = ammo:ammo_box_size()
+					full_ammo_txt = full_ammo_txt + size
+					if (size >= box_size) then
+						full_ammo = full_ammo + 1
+					else
+						parts_id[id] = nil
+					end
+					if (full_ammo >= amount) then
+						self.itm_num[n]:SetTextColor(GetARGB(200, 50, 255, 50))
+						self.craft_allow[n] = true
+					end
+				end
+			end
+			self.itm_num[n]:SetText(tostring(full_ammo_txt) .. "/" .. tostring(amt))
+			
+		-- Normal items
+		else
+			if (count >= amount) then
+				self.itm_num[n]:SetTextColor(GetARGB(200, 50, 255, 50))
+				self.craft_allow[n] = true
+			end
+			
+			if sec == "itm_artefactskit" then
+				if count - amount <= 0 then
+					self.itm_num[n]:SetTextColor(GetARGB(250, 255, 50, 50))
+					self.craft_allow[n] = false
+				end
+			end
+			
+			self.itm_num[n]:SetText(tostring(count) .. "/" .. tostring(amt))
+		end
+		
+		-- Store items id
+		count = 0
+		for id,cnt in pairs(parts_id) do
+			count = count + cnt
+			-- to delete
+			if (count <= amount) then
+				self.craft_item[n][#self.craft_item[n] + 1] = id
+				dischargeAmount = dischargeAmount - count
+			end
+			
+			if count == amount then
+				break
+			end
+			
+			-- to discharge
+			if count > amount then
+				self.craft_item_remain[n] = { id = id , cnt = (count - (count - dischargeAmount)) }
+				break
+			end
+		end
+		utils_xml.set_icon(sec, (not self.craft_allow[n]), self.itm_ico_temp[n], self.itm_ico[n])
+		
+	-- if its the result item
+	else
+		local stop = false
+		local toolkit_name = ui_item.get_sec_name(toolkit_sec)
+		
+		for i=1,4 do
+			if self.craft_allow[i] == false then
+				stop = true
+				SetTip(nil, "craft_warning_4", "craft_solution_4", nil, false, self.info_text)
+				break
+			end
+		end
+		if not (stop) then 
+			if (not self.toolkits_state[toolkit_idx]) then
+				stop = true
+				SetTip(nil, "craft_warning_3", "craft_solution_3", toolkit_sec, false, self.info_text)
+			end
+		end
+		
+		if (not stop) then
+			self.craft_allow_r = true
+			self.itm_num_r:SetTextColor(GetARGB(250, 50, 255, 50))
+			SetTip("craft_tip_5", nil, nil, sec, true, self.info_text)
+			self.btn_craft:Enable(true)
+		else
+			self.itm_num_r:SetTextColor(GetARGB(250, 255, 50, 50))
+			self.btn_craft:Enable(false)
+		end
+		
+		if IsItem("ammo",sec) then
+			amount = box
+		end
+		self.craft_item_r = {sec , amount}
+		
+		-- Repesent finale uses if its mulit-use item
+		local amount_txt = tostring(amount) or ""
+		if IsItem("multiuse",sec) then
+			local uses = ini_sys:r_float_ex(sec,"max_uses") or amount
+			amount_txt = tostring(uses) or ""
+		end
+		
+		self.itm_name_r:SetText(name)
+		self.itm_num_r:SetText(amount_txt)
+		utils_xml.set_icon(sec, (not self.craft_allow_r), self.itm_ico_temp_r, self.itm_ico_r)
+		
+		self.itm_name_t:SetText(toolkit_name)
+		utils_xml.set_icon(toolkit_sec, (not self.toolkits_state[toolkit_idx]), self.itm_ico_temp_t, self.itm_ico_t)
+	end
+end
+
+function UIWorkshopCraft:ShowComponents(sh)
+	for i=1,4 do
+		self.itm_line[i]:Show(sh)
+		self.itm_b[i]:Show(sh)
+		self.itm_name[i]:Show(sh)
+		self.itm_num[i]:Show(sh)
+		self.itm_ico[i]:Show(sh)
+		if i > 1 then
+			self.itm_line_c[i]:Show(sh)
+		end
+	end
+	
+	self.cap_components:Show(sh)
+	self.itm_line_r1:Show(sh)
+	--self.itm_line_r2:Show(sh)
+	self.itm_line_r3:Show(sh)
+	
+	self.itm_b_r:Show(sh)
+	self.itm_name_r:Show(sh)
+	self.itm_num_r:Show(sh)
+	self.itm_ico_r:Show(sh)
+	self.cap_r:Show(sh)
+	
+	self.itm_name_t:Show(sh)
+	self.itm_b_t:Show(sh)
+	self.itm_ico_t:Show(sh)
+	self.itm_ico_temp_t:Show(sh)
+end
+
+
+function UIWorkshopCraft:Close()
+	self.owner:Close()
+end
+
+function UIWorkshopCraft:Craft()
+	if (not self.craft_allow_r) then 
+		return 
+	end
+	
+	-- Remove supportive items
+	for i=1,#self.craft_item do
+		-- Release
+		if #self.craft_item[i] > 0 then
+			for j=1,#self.craft_item[i] do
+				alife_release_id(self.craft_item[i][j])
+			end
+		end
+		
+		-- Discharge
+		local id_r = self.craft_item_remain[i].id
+		if id_r then
+			local obj_itm = level.object_by_id(id_r)
+			local cnt = self.craft_item_remain[i].cnt
+			if obj_itm and cnt then
+				print_ws("- UIWorkshopCraft:Craft() | discharge item (%s) [%s] %s times", id_r, obj_itm:section(), cnt)
+				for k=1,cnt do
+					utils_item.discharge(obj_itm)
+				end
+			end
+		end
+	end
+	
+	-- Craft
+	if IsItem("ammo",self.craft_item_r[1]) then
+		alife_create_item(self.craft_item_r[1], db.actor, {ammo = self.craft_item_r[2]})
+	else
+		for i = 1, self.craft_item_r[2] do
+			alife_create_item(self.craft_item_r[1], db.actor)
+		end
+	end
+	
+	-- Increase Statistic
+	game_statistics.increment_statistic("items_crafted")
+	
+	-- Effect
+	actor_effects.play_item_fx("craft_dummy")
+	
+	self:Close()
+end
+
+function UIWorkshopCraft:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (res == false) then
+		for name,cc in pairs(self.CC) do
+			cc:OnKeyboard(dik, keyboard_action)
+		end
+		
+		local bind = dik_to_bind(dik)
+		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+			if dik == DIK_keys.DIK_ESCAPE then
+				self:Close()
+			end
+		end
+	end
+	return res
+end
+
+
+
+-------------------------------------------------------------------
+-- Utilities
+-------------------------------------------------------------------
+
+function SetTip(tip, warning, solution, sec, pass, XMLtxt)
+	local str = "" -- "� "
+	local name = sec and ui_item.get_sec_name(sec) or ""
+	if tip and pass then
+		local str_tip = game.translate_string("st_ui_workshop_info_" .. tip)
+		str = str .. clr_list["dark"] .. strformat(str_tip, name)
+	else
+		if warning then
+			local str_warning = game.translate_string("st_ui_workshop_info_" .. warning)
+			str = str .. clr_list["o"] .. strformat(str_warning, name)
+		end
+		if solution then
+			local str_solution = game.translate_string("st_ui_workshop_info_" .. solution)
+			str = str .. clr_list["dark"] .. " \\n" .. strformat(str_solution, name)
+		end
+	end
+	XMLtxt:SetText(str)
+end
+
+function AdjustCon(sec_part, con, num, is_outfit)
+	if (not is_outfit) then
+		return con
+	end
+	
+	local delta = 100/num
+	local x_min = 0.4
+	local x_max = (100 - delta * x_min)/(delta * (num-1))
+	if string.find(sec_part,"prt_o_fabrics_") then
+		return con * x_min
+	end
+	return con * x_max
+end
+
+function print_ws(fmt,...)
+	if enable_debug then printf(fmt,...) end
+end

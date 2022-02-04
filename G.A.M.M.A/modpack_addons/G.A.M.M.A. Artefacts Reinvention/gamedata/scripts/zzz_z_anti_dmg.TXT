@@ -1,0 +1,134 @@
+function on_game_start()
+    RegisterScriptCallback("actor_on_before_hit",actor_on_before_hit)
+	RegisterScriptCallback("actor_item_to_belt",item_belt)
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
+end
+local arti_timer = 0
+local arti_s_timer = 0.05
+local restore_step = 0.00025
+local restore_point = 0.9
+local arti_table = {}
+
+function item_belt()
+	arti_timer = arti_s_timer
+	CreateTimeEvent("AD_restor_arti", "AD_restor_arti", arti_timer, restore_arti)
+end
+
+local hit_to_section = {
+	[hit.light_burn] = "burn_immunity",
+	[hit.burn] = "burn_immunity",
+	[hit.strike] = "strike_immunity",
+	[hit.shock] = "shock_immunity",
+	[hit.wound] = "wound_immunity",
+	[hit.radiation] = "radiation_immunity",
+	[hit.telepatic] = "telepatic_immunity",
+	[hit.chemical_burn] = "chemical_burn_immunity",
+	[hit.explosion] = "explosion_immunity",
+	[hit.fire_wound] = "fire_wound_immunity",
+}
+
+
+local imm_mul = {					-- correction factors for hit events
+		["light_burn_immunity"] = 1.2,
+		["burn_immunity"] = 1.2,
+		["strike_immunity"] = 1.2,
+		["shock_immunity"] = 0.15,
+		["wound_immunity"] = 1.2,
+		["radiation_immunity"] = 1.2,
+		["telepatic_immunity"] = 1.2,
+		["chemical_burn_immunity"] = 1.2,
+		["explosion_immunity"] = 1.2,
+		["fire_wound_immunity"] = 1.2,
+}
+function actor_on_before_hit(s_hit)
+	local cond_loss = 0
+	local hit_absorbation_sect, imm_sect
+	imm_sect = hit_to_section[s_hit.type]
+	printf("XCVB FACE: %s",imm_sect)
+	db.actor:iterate_belt( function(owner, arte)
+		cond_loss = 0
+		hit_absorbation_sect = ini_sys:r_string_ex(arte:section(),"hit_absorbation_sect")
+			
+		if (hit_absorbation_sect) then
+			imm_sect = hit_to_section[s_hit.type]
+			cond_loss = imm_sect and ini_sys:r_float_ex(hit_absorbation_sect,imm_sect) or 0
+			
+			if (cond_loss > 0) then
+				cond_loss = (s_hit.power * imm_mul[imm_sect] * cond_loss)
+				local temp_cond = arte:condition() - (cond_loss*ini_sys:r_float_ex(arte:section(),"degrade_rate",1))
+				printf(cond_loss)
+				temp_cond = temp_cond > 0.01 and temp_cond or 0.01
+				arte:set_condition(temp_cond)
+				if (arte:condition() <= restore_point) and (arti_timer == 0) then
+					arti_timer = arti_s_timer
+					CreateTimeEvent("AD_restor_arti", "AD_restor_arti", arti_timer, restore_arti)
+				end
+			end
+		end
+	end)
+end
+
+function restore_arti_2()
+	CreateTimeEvent("AD_restor_arti", "AD_restor_arti", arti_timer, restore_arti)
+	return true
+end
+
+function restore_arti()
+	printf("restore triggered")
+	local hit_absorbation_sect, imm_sect
+	db.actor:iterate_belt( function(owner, arte)
+		hit_absorbation_sect = ini_sys:r_string_ex(arte:section(),"hit_absorbation_sect")
+			
+		if (hit_absorbation_sect) then
+			local temp_cond = arte:condition() + restore_step
+			if temp_cond < 1 then
+				arte:set_condition(temp_cond)
+			else
+				arte:set_condition(1)
+				arti_timer = 0
+			end
+			if (arte:condition() ~= 1) then
+				CreateTimeEvent("AD_restor_arti2", "AD_restor_arti2", arti_timer, restore_arti_2)
+			end
+		else 
+			arti_timer = 0
+		end
+	end)
+	return true
+end
+
+
+function item_artefact.artefact_binder:save(stpk)
+	object_binder.save(self,stpk)
+	local se_obj = alife_object(self.object:id())
+	printf("test save")
+	if (se_obj) then
+	printf("obj found")
+		local m_data = alife_storage_manager.get_se_obj_state(se_obj,true)
+		if (m_data) then 
+		printf("cond saved")
+			m_data.offline_condition = self.object:condition()															   
+		end
+	end
+end
+
+
+
+function item_artefact.artefact_binder:load(stpk)
+	local se_obj = alife_object(self.object:id())
+	printf("found arti")
+	if (se_obj) then
+		local m_data = alife_storage_manager.get_se_obj_state(se_obj)
+		if (m_data and m_data.offline_condition) then
+		printf("loaded condition "..m_data.offline_condition)
+		table.insert(arti_table, {self.object, m_data.offline_condition})
+		end
+	end	
+end
+
+function actor_on_first_update()
+	for k, v in pairs(arti_table) do
+		v[1]:set_condition(tonumber(v[2]) or 0.9999999)
+	end
+end
+	
