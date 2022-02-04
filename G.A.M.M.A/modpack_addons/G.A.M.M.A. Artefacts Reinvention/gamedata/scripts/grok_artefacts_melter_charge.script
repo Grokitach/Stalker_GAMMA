@@ -1,0 +1,53 @@
+local d_key       = "DIK_LMENU" -- Saftey key hold (Left Alt)
+local regen_val = 1
+
+function recharge(obj, num) --reduce use of multiuse item
+	if (not obj) then return end
+
+	num = num or 1
+	if IsItem("multiuse",nil,obj) then
+		local uses = obj:get_remaining_uses()
+		if uses then
+			obj:set_remaining_uses(uses + num)
+			--print_dbg("discharge | discharged item (%s) by %s", obj:section(), num)
+			return uses + num
+		elseif uses >= 10 then
+			uses = 10
+		end
+	end
+end
+
+local function on_item_drag_dropped(obj_1, obj_2, slot_from, slot_to)
+	-- Check capability
+	if not (slot_from == EDDListType.iActorBag and slot_to == EDDListType.iActorBag) then
+        return
+    end
+	
+	local sec_1 = obj_1:section()
+	local sec_2 = obj_2:section()
+	
+	if sec_1 == "itm_artefactskit" and IsArtefact(obj_2) then -- Disassemble
+		recharge( obj_1 , regen_val )
+		alife_release(obj_2)
+		level.add_cam_effector('camera_effects\\item_use_fast.anm', 9209, false,'')
+		xr_sound.set_sound_play(AC_ID,"inv_aam_open")
+	end
+end
+
+local function on_key_press(key)
+	if (key == DIK_keys[d_key]) then
+		d_flag = true
+	end
+end
+
+local function on_key_release(key)
+	if (key == DIK_keys[d_key]) then
+		d_flag = false
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_key_press",on_key_press)
+	RegisterScriptCallback("on_key_release",on_key_release)
+	RegisterScriptCallback("ActorMenu_on_item_drag_drop",on_item_drag_dropped)
+end
