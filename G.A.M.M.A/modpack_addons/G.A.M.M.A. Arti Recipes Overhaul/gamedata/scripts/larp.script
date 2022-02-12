@@ -1,0 +1,125 @@
+-- LAgrange inteRPolation library
+-- algorithm by peete-q
+-- Migrated to Anomaly by Asshall
+-- Modified and modularized by arti
+
+-- To calculate non linear probability I used a type of interpolation called "Lagrange interpolation". 
+-- The basic premise is that you input coordinates for x and y, for the exemple of loot x is the condition of the item to drop and y is the probability to drop such condition
+--       For exemple if I input :
+--             x  |   y
+--             2  |   0
+--             25 |   85
+-- The probability of getting an item between 2 and 25 % condition is distributed between 0% proba and 85%
+-- So in theory there is a 0 percent chance to get a 2% condition drop
+-- and a 85% chance to get a 25% condition item with the probalities smoothly distributed between those two
+-- This is an overly simplified explication because it's the best I can do, but the gist is that by interpolating n point in a curve you can get an approximation of the y value for all x
+-- In this case x represents the condition and y the number to beat to drop.
+
+-- Here is a table exemple
+-- [weapon_coords]
+-- novice              = 2, 25, 50         :       5,  85, 99
+-- trainee             = 2, 25, 50         :       10, 81 ,99 
+-- experienced         = 2, 25, 50         :       15, 76 ,98 
+-- professional        = 2, 25, 50, 65     :       20 ,71 ,97, 99
+-- veteran             = 2, 25, 50, 65     :       20 ,68 ,96, 99
+-- expert              = 2, 25, 50, 65     :       20 ,64 ,95, 99
+-- master              = 2, 25, 50, 65     :       20 ,62 ,95, 98
+-- legend              = 2, 25, 50, 65     :       20 ,57 ,94, 98
+
+
+-- I did not implement that, peete-q did : https://github.com/peete-q/assets/blob/master/lua-modules/lib/interpolate.lua All credits goes to them 
+function lagrange(data, xi)
+	local x = data["x"]
+	local y = data["y"]
+    xi = tonumber(xi)
+	local n = #x
+	-- Need the same number of points otherwise exit out
+	if n ~= #y then return end
+	
+    -- Brilliant optimisation by peete-q
+	local i = 1
+    while i <= n and x[i] < xi do
+		i = i + 1
+	end
+	local m = math.min(i + 3, n)
+    local k = math.max(i - 4, 1)
+	
+	local result = 0
+    for i=k, m do 
+        local term = y[i]
+        for j=k, m do
+            if j ~= i then
+                term = term*(   (xi - x[j]) / (x[i] - x[j])   )
+            end
+        end
+        result = result + term -- term used to be on at the start multiplied by y[i] on this line. Don't know if that makes a difference. It's more lisible for me and I'm a dumb ape
+    end
+    return clamp(result,math.min(unpack(y)),math.max(unpack(y))) -- Here I clamp the result cause largrange interp can do some weird sutff and go above maxy/bellow miny between two xs
+    -- This is suboptimal... Maybe i'm not using the right interp for some data sets or I shouldn't be using interp for those at all. It'll do for now.
+end
+
+-- Return min a max of data set of format {x,y} in order minx, maxx, miny, maxy
+function get_min_max(coords)
+    return math.min(unpack(coords["x"])), math.max(unpack(coords["x"])), math.min(unpack(coords["y"])), math.max(unpack(coords["y"]))
+end
+
+-- str_explode but they get parsed into numbers
+function str_explode_num(str, sep, plain)
+	if not (str and sep) then
+		printe("!ERROR str_explode | missing parameter str = %s, sep = %s",str,sep)
+		callstack()
+	end
+	if not (sep ~= "" and str:find(sep,1,plain)) then
+		return { tonumber(str) }
+	end
+	local t = {}
+	local size = 0
+	for s in str:gsplit(sep,plain) do 
+		size = size + 1
+		t[size] = tonumber(trim(s))
+	end
+	return t
+end
+
+-- input:
+-- coords is a table with x and y, each a list of integers
+-- iterations is how many times to run, pass nil to run until we get something
+-- returns a weighted value within the x range based on weights in y
+function pick(coords, max_iterations)
+    if is_empty(coords) then return 0 end
+    if #coords["x"] ~= #coords["y"] then
+        printe("Input for coord string %s produced inequal output, returning", str)
+        return 0
+    end
+    local minx, maxx, miny, maxy = get_min_max(coords)
+    local iter = 0
+    while true do
+        rnd_x = math.random(minx, maxx)
+        local y = lagrange(coords, rnd_x)
+        if math.random(miny, maxy) + math.random() > y then
+            return round(rnd_x)
+        end
+        iter = iter + 1
+        if max_iterations and iter >= max_iterations then
+            return rnd_x
+        end
+    end
+end
+
+-- input: str of format:
+-- X1, X2, X3...XN : Y1, Y2, Y3...Yn
+function str_to_coords(str)
+    coords = {
+        ["x"] = {},
+        ["y"] = {},
+    }
+    buffer = str_explode(str, ":")
+    
+    coords["x"] = str_explode_num(buffer[1], ",")
+    coords["y"] = str_explode_num(buffer[2], ",")
+    if #coords["x"] ~= #coords["y"] then
+        printe("Input for coord string %s produced inequal output, returning", str)
+        return nil
+    end
+    return coords
+end
