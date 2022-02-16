@@ -1,0 +1,381 @@
+--PPE SETTINGS------------------------------------------------------------
+local c_ppe_max_intensity = 0.5 --Max intensity of the sound shock PPE effect
+
+local c_id_ppe_blur = 5600
+local c_id_ppe_black_infinite = 5606
+local c_id_ppe_snd_shock = 5607
+local c_id_ppe_radiation = 5608
+local c_id_ppe_alcohol = 5609
+
+local c_stage_default = -1
+local c_stage_0 = 0
+local c_stage_1 = 1
+local c_stage_2 = 2
+local c_stage_3 = 3
+
+
+--PSY-HEALTH SETTINGS------------------------------------------------------------
+local c_psy_health_regen_per_seconds = 0.0005 --Psy health regeneration per in-game seconds
+local c_psy_health_regen_booster_divider = 25 --Psy health regeneration divider for medicines
+local c_psy_health_regen_artefacts_divider = 100 --Psy health regeneration divider for artefacts and attachments
+local fate_of_player_zombfication = false
+
+--TABLES-----------------------------------------------------------------------------------------
+local psy_table = {}
+
+--MISC---------------------------------------------------------------------------------------------------
+local arszi_previous_time = nil
+local arszi_wait_seconds_ingame = 0
+local c_in_game_seconds_multiplier = 6 --6 in game seconds are one real life second
+local c_controller_tube_damage_decrease_per_meters = 1 --With every meters, controller's tube attack will do X% less damage
+
+--SOUND---------------------------------------------------------------------------------------------------
+local sound_zombified = sound_object("arszi_psy\\pripyat_whispers_final")
+local sound_psy_death_scene = sound_object("arszi_psy\\zombie_die_3")
+local c_sound_zombified_volume = 20
+local c_sound_psy_death_scene_volume = 30
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_update", actor_on_update)
+    RegisterScriptCallback("actor_on_before_hit",actor_on_before_hit)
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
+    RegisterScriptCallback("on_game_load", on_game_load)
+    RegisterScriptCallback("actor_on_item_use",actor_on_item_use)
+    RegisterScriptCallback("actor_on_sleep",actor_on_sleep)
+    RegisterScriptCallback("on_enemy_eval", on_enemy_eval)
+end
+
+function on_game_load()
+    if (not psy_table.actor_psy_health) then
+        psy_table.actor_psy_health = 1
+    end
+
+    psy_table.current_stage = c_stage_default
+    arszi_wait_seconds_ingame = 0
+end
+
+function actor_on_item_use(obj)
+    if (obj and (obj:section() == "drug_anabiotic")) then
+        psy_table.actor_psy_health = 1
+    end
+end
+
+function actor_on_update()
+
+    local curr_time = game.get_game_time()
+    if (arszi_previous_time == nil) then arszi_previous_time = curr_time end
+  
+    if (curr_time:diffSec(arszi_previous_time) > 1) then
+        arszi_previous_time = curr_time
+
+        manage_psy_health()
+
+        manage_ppe_effects()
+
+        manage_sound_effects()
+
+        manage_zombification()
+
+        manage_psy_bar()
+
+        --Uncomment to see psy prot and psy health
+        --show_message("PSY PROT: "..get_telepatic_protection_total().." PSY HEALTH: "..psy_table.actor_psy_health.." REGEN: "..get_psy_health_regeneration())
+    end
+end
+
+function on_enemy_eval(obj, enemy, flags)
+    --Psy death scene
+    if (psy_table.psy_death_scene and enemy:id() == db.actor:id()) then
+        flags.override = true
+        flags.result = false
+        return
+	end
+end
+
+function actor_on_before_hit(s_hit)
+    trace_this("HIT POWER: "..s_hit.power.." HIT TYPE: "..s_hit.type)
+    if (s_hit.type ~= 4) then return end
+
+    if (is_actor_zombied()) then
+        s_hit.power = 0
+        return 
+    end
+
+    if (s_hit.draftsman and is_controller(s_hit.draftsman)) then
+        s_hit.power = get_controller_tube_damage(s_hit.draftsman:position(), s_hit.power)
+        --show_message_news("HIT POWER: "..s_hit.power.." DISTANCE: "..get_distance(db.actor:position(), s_hit.draftsman:position()))
+    end
+
+    local total_damage = s_hit.power - get_telepatic_protection_total()
+    if (total_damage < 0) then total_damage = 0 end
+    --show_message_news("PROTECTION: "..get_telepatic_protection_total().. " RECEIVED DAMAGE: "..total_damage)
+
+    psy_table.actor_psy_health = psy_table.actor_psy_health - total_damage
+    s_hit.power = 0
+end
+
+function save_state(m_data)
+    m_data.psy_table = psy_table
+end
+
+function load_state(m_data)
+    psy_table = m_data.psy_table or {}
+end
+
+function actor_on_sleep(hours)
+    --Regenerate Psy Health while sleeping
+    local psy_health_regen_while_slept = get_psy_health_regeneration() * 60 * 60 * hours
+    if ((psy_table.actor_psy_health + psy_health_regen_while_slept) > 1) then
+        psy_table.actor_psy_health = 1
+    else
+        psy_table.actor_psy_health = psy_table.actor_psy_health + psy_health_regen_while_slept
+    end
+end
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+------------PPE EFFECTS AND SOUND-----------------------------------------------------------------------------------------------------------------------------------------------------------
+function manage_ppe_effects()
+    if (psy_table.actor_psy_health >= 1) then
+        if (psy_table.current_stage ~= c_stage_0) then
+            --show_message_news("ENTER STAGE 0")
+            remove_all_psy_ppe_effects()
+            psy_table.current_stage = c_stage_0
+        end
+    elseif (psy_table.actor_psy_health < 1 and psy_table.actor_psy_health >= 0.9) then
+        if (psy_table.current_stage ~= c_stage_1) then
+            --show_message_news("ENTER STAGE 1")
+            remove_all_psy_ppe_effects()
+ --           level.add_pp_effector("blur.ppe", c_id_ppe_blur, true)
+            psy_table.current_stage = c_stage_1
+        end
+    else
+        if (psy_table.current_stage ~= c_stage_2) then
+            --show_message_news("ENTER STAGE 2")
+            remove_all_psy_ppe_effects()
+--            level.add_pp_effector("blur.ppe", c_id_ppe_blur, true)
+            level.add_pp_effector("snd_shock.ppe", c_id_ppe_snd_shock, true)
+            psy_table.current_stage = c_stage_2
+        end
+        level.set_pp_effector_factor(c_id_ppe_snd_shock, get_ppe_intensity())
+    end
+end
+
+function manage_zombification()
+    --Original community will be restored on load game always. Temp solution.
+    if (psy_table.actor_zombied and db.actor:character_community() ~= "actor_zombied") then
+        db.actor:set_character_community("actor_zombied", 0, 0)
+    end
+
+    --Add visual effects
+    if (psy_table.actor_zombied) then
+        --Todo why is alcohol not working!?
+        level.add_pp_effector("radiation.ppe", c_id_ppe_radiation, true)
+        level.add_pp_effector("alcohol.ppe", c_id_ppe_alcohol, true)
+    end
+
+    if (psy_table.actor_psy_health <= 0) then
+        --Death or Zombification
+        if (psy_table.current_stage ~= c_stage_3) then
+            --show_message_news("ENTER STAGE 6")
+            remove_all_psy_ppe_effects()
+            level.add_pp_effector("black_infinite.ppe", c_id_ppe_black_infinite, true)
+            psy_table.psy_death_scene = true
+            level.disable_input()
+            psy_table.current_stage = c_stage_3
+        end
+
+        arszi_wait_seconds_ingame = arszi_wait_seconds_ingame + 1
+        if (arszi_wait_seconds_ingame == 1) then
+            sound_psy_death_scene:play(db.actor, 0, sound_object.s2d)
+            sound_psy_death_scene.volume = c_sound_psy_death_scene_volume
+        end
+
+        if (arszi_wait_seconds_ingame == 25) then
+            if (fate_of_player_zombfication) then
+                psy_table.actor_psy_health = 1.0
+                --trace_this("GOODWILL BEFORE: "..relation_registry.community_goodwill("stalker", AC_ID))
+                db.actor:set_character_community("actor_zombied", 0, 0)
+                psy_table.actor_zombied = true
+                --game_relations.set_factions_community_num("actor_zombied", "stalker", -5000)
+                --trace_this("GOODWILL AFTER: "..relation_registry.community_goodwill("stalker", AC_ID))
+                
+                show_message(game.translate_string("st_psy_zombification_scene"))
+            else  
+				if (not level_environment.is_actor_immune()) then
+					db.actor:kill(db.actor)
+				end
+                remove_all_psy_ppe_effects()
+                show_message(game.translate_string("st_psy_death_scene"))
+            end
+
+            level.enable_input()
+            psy_table.psy_death_scene = nil
+        end
+    end
+end
+
+function manage_sound_effects()
+    if (psy_table.actor_zombied) then
+        if (not sound_zombified:playing()) then
+            sound_zombified:play(db.actor, 0, sound_object.s2d)
+            --show_message_news("STARTED")
+        end
+        sound_zombified.volume = c_sound_zombified_volume
+    end
+
+    if (psy_table.actor_psy_health < 0.9) then
+        if (not sound_zombified:playing()) then
+            sound_zombified:play(db.actor, 0, sound_object.s2d)
+            --show_message_news("STARTED")
+        end
+
+        sound_zombified.volume = (1 - psy_table.actor_psy_health) * c_sound_zombified_volume
+    end
+
+    if (not psy_table.actor_zombied and psy_table.actor_psy_health > 0.9) then
+        if (sound_zombified:playing()) then
+            sound_zombified:stop()
+            --show_message_news("STOPPED")
+        end
+    end
+end
+
+function manage_psy_bar()
+    local conditions = db.actor:cast_Actor():conditions()
+    conditions:SetPsyBar(psy_table.actor_psy_health or 0)
+end
+
+function remove_all_psy_ppe_effects()
+    level.remove_pp_effector(c_id_ppe_blur)
+    level.remove_pp_effector(c_id_ppe_black_infinite)
+    level.remove_pp_effector(c_id_ppe_snd_shock)
+end
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+------------PSI HEALTH------------------------------------------------------------------------------------------------------------------------------------------------------------
+function manage_psy_health()
+    local new_psy_health =  psy_table.actor_psy_health + get_psy_health_regeneration()
+
+    if (new_psy_health > 1) then
+        new_psy_health = 1
+    end
+
+    psy_table.actor_psy_health = new_psy_health
+end
+
+function get_psy_health_regeneration()
+    local bonus_psy_heal_booster = get_telepatic_protection_booster() / c_psy_health_regen_booster_divider
+    local bonus_psy_heal_artefacts = get_telepatic_protection_artefacts() / c_psy_health_regen_artefacts_divider
+    return c_psy_health_regen_per_seconds + bonus_psy_heal_booster + bonus_psy_heal_artefacts
+end
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+------------TELEPATIC PROTECTION------------------------------------------------------------------------------------------------------------------------------------------------------------
+function get_telepatic_protection_outfit()
+    local telepatic_protection = 0
+    local outfit = db.actor:item_in_slot(7)
+
+    if (outfit) then
+		local c_outfit = outfit:cast_CustomOutfit()
+		if (c_outfit) then    
+            telepatic_protection = c_outfit:GetDefHitTypeProtection(HitTypeID["Telepatic"]) or 0
+        end
+    end
+    
+    return telepatic_protection
+end
+
+function get_telepatic_protection_helmet()
+    local telepatic_protection = 0
+    local helm = db.actor:item_in_slot(12)
+
+	if (helm) then
+		local c_helm = helm:cast_Helmet()
+		if (c_helm) then        
+            telepatic_protection = c_helm:GetDefHitTypeProtection(HitTypeID["Telepatic"]) or 0
+        end
+    end
+    
+    return telepatic_protection
+end
+
+function get_telepatic_protection_artefacts()
+    local telepatic_protection = 0
+
+    db.actor:iterate_belt( function(owner, obj)
+		local cond = obj:condition()
+		local immunities_sec = SYS_GetParam(0,obj:section(),"hit_absorbation_sect")
+		
+		telepatic_protection = telepatic_protection + ( cond * SYS_GetParam(2, immunities_sec, "telepatic_immunity", 0) )
+    end)
+    
+    return telepatic_protection
+end
+
+function get_telepatic_protection_booster()
+    local telepatic_protection = 0
+    local booster_type_psi = 6
+
+    db.actor:cast_Actor():conditions():BoosterForEach( function(booster_type, booster_time, booster_value)
+        if (booster_type == booster_type_psi) then
+            telepatic_protection = booster_value
+        end
+    end)
+    
+    return telepatic_protection
+end
+
+function get_telepatic_protection_total()
+    local telepatic_protection_outfit = get_telepatic_protection_outfit()
+    local telepatic_protection_helmet = get_telepatic_protection_helmet()
+    local telepatic_protection_artefacts = get_telepatic_protection_artefacts()
+    local telepatic_protection_booster = get_telepatic_protection_booster()
+    return telepatic_protection_outfit + telepatic_protection_helmet + telepatic_protection_artefacts + telepatic_protection_booster
+end
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-----------UTILITY/MISC METHODS-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+function get_ppe_intensity()
+    local health_factor = 1 - (psy_table.actor_psy_health / 1)
+    return health_factor * c_ppe_max_intensity
+end
+
+function get_controller_tube_damage(obj_position, power)
+    local distance = get_distance(db.actor:position(), obj_position)
+    local damage = power - (distance * (c_controller_tube_damage_decrease_per_meters / 100))
+    if (damage < 0) then damage = 0 end
+    return damage
+end
+
+function is_actor_zombied()
+    return db.actor:character_community() == "actor_zombied"
+end
+
+function is_controller(obj)
+    return obj:clsid() == clsid.controller_s
+end
+
+function get_distance(position_1, position_2)
+    local x = math.abs(position_1.x - position_2.x)
+    local z = math.abs(position_1.z - position_2.z)
+    local distance = math.sqrt((x * x) + (z * z))
+    return distance
+end
+
+function set_psy_health(amount)
+    psy_table.actor_psy_health = amount
+end
+
+function show_message(msg)
+    actor_menu.set_msg(1, msg,4)
+end
+
+function show_message_news(message)
+	news_manager.send_tip(db.actor, message, nil, nil, 10000)	
+end
+
+function trace_this(to_trace)
+	--local log_file = io.open("log_arszi_psy.txt", "a")
+	--log_file:write(to_trace.."\n")
+	--log_file:close(log_file)
+end
