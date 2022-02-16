@@ -1,0 +1,138 @@
+
+local igi_linker = igi_linker
+local igi_macros = igi_macros
+local escape_pattern = igi_utils.escape_pattern
+local sfind = string.find
+local smatch = string.match
+local sgmatch = string.gmatch
+local pairs, type = pairs, type
+
+function has_link_or_macro(str)
+	return igi_linker.has_dependency(str) or igi_macros.has_macro(str)
+end
+
+function convert_strings_type(tbl)
+	for k,v in pairs(tbl) do
+		if type(v) == "string" then
+			if tonumber(v) then
+				tbl[k] = tonumber(v)
+			elseif v == "true" then
+				tbl[k] = true
+			elseif v == "false" then
+				tbl[k] = false
+			end
+		elseif type(v) == "table" then
+			convert_strings_type(v)
+		end
+	end
+end
+
+function resolve_unlinked_macros(tbl)
+	for k,v in pairs(tbl) do
+		if type(v) == 'table' then
+			tbl[k] = resolve_unlinked_macros(v)
+		elseif type(v) == 'string' and igi_macros.has_macro(v) 
+				and not igi_linker.has_dependency(v) then
+			tbl[k] = igi_macros.resolve_all_macros(v)
+		end
+	end
+	convert_strings_type(tbl)
+	return tbl
+end
+
+local function find_resolve_self_references(entity)
+	local tables_pool = {entity}
+    local changes_made = false
+	while #tables_pool > 0 do
+		local tbl = tables_pool[#tables_pool]
+		tables_pool[#tables_pool] = nil
+
+		for k,v in pairs(tbl) do
+			if type(v) == 'string' and not sfind(k, "link") then
+				local new_str = v
+				for dep in igi_linker.dependency_iterator(v) do
+					if not igi_macros.has_macro(dep) then
+						new_str = new_str:gsub(escape_pattern(dep), 
+							igi_linker.resolve_self_reference(dep, entity))
+						changes_made = true
+					end
+				end
+				tbl[k] = new_str
+			elseif type(v) == 'table' then 
+				tables_pool[#tables_pool+1] = v
+			end
+		end
+	end
+    return changes_made
+end
+
+function process_unlinked_entity(entity)
+	local changes
+    repeat
+        resolve_unlinked_macros(entity)
+        changes = find_resolve_self_references(entity)
+    until not changes
+end
+
+local function collect_dependencies(str, this_entity)
+	local deps = {}
+	local macros = {}
+	for macro in str:gmatch("%&(.*%(.*%))%&") do
+		macros[#macros+1] = macro
+		str = str:gsub(escape_pattern(macro), "c"..tostring(#macros))
+		for k,v in pairs(collect_dependencies(macro, this_entity)) do
+			deps[#deps+1] = v
+		end
+	end
+
+	for dep in str:gmatch("%b$$") do
+		for macro in dep:gmatch("c(%d)") do
+			dep = dep:gsub("c"..macro, macros[tonumber(macro)])
+		end
+		deps[#deps+1] = igi_linker.Dependency(dep, this_entity)
+	end
+
+	return deps
+end
+
+-- TODO: rework, too complicated
+local function resolve_free_dependencies(entity, entities)
+	local tbl_pool = {entity}
+	local has_unresolved = false
+	while #tbl_pool > 0 do
+		local tbl = tbl_pool[#tbl_pool]
+		tbl_pool[#tbl_pool] = nil
+		
+		for k,v in pairs(tbl) do
+			if type(v) == "string" then
+				local deps = collect_dependencies(v, entity)
+				for k2,dep in pairs(deps) do
+					local unwrapped = dep:unwrap(dep.original)
+					if sfind(unwrapped, "&") and not sfind(unwrapped, "%$") then
+						has_unresolved = true
+					elseif not sfind(unwrapped, "&") then
+						local resolved = dep:resolve(entities)
+						if resolved and not sfind(resolved, "&") then
+							tbl[k] = v:gsub(dep:get_original(true), resolved)
+							has_unresolved = true
+						end
+					end
+				end
+			elseif type(v) == "table" then
+				tbl_pool[#tbl_pool+1] = v
+			end
+		end
+	end
+	return has_unresolved
+end
+
+function resolve_unlinked_macros_and_link_virtual_variables(entities)
+	local has_unresolved
+	repeat
+		has_unresolved = false
+		for _, entity in pairs(entities) do
+			resolve_unlinked_macros(entity)
+			has_unresolved = resolve_free_dependencies(entity, entities) or has_unresolved
+		end
+	until not has_unresolved
+end
