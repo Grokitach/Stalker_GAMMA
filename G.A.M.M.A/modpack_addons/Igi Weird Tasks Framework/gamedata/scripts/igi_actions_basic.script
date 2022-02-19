@@ -1,0 +1,27 @@
+local trace_assert = igi_helper.trace_assert
+
+local function change_squad_faction(_, se_squad, faction)
+	if not se_squad or not se_squad.squad_members then return end
+	for npc in se_squad:squad_members() do
+		local member = npc and igi_helper.level_object(npc.id)
+		if member and not (character_community(member) == faction) then
+			member:set_character_community(faction, 0, 0)
+		end
+	end
+end
+
+local function repair_item(item_data)
+	local item = igi_helper.level_object(item_data.id)
+	local bounds = igi_db.get_value("misc.ltx", "repair", "condition")
+	if item then
+		item:set_condition(igi_random.rand(bounds[1], bounds[2])/100)
+	end
+end
+
+local action_handlers = {
+	change_faction = change_squad_faction,
+	repair = repair_item,
+}
+for k,v in pairs(action_handlers) do
+	igi_activities.action_handlers[k] = v
+end

@@ -1,0 +1,36 @@
+local function update_mark(obj_data, mark_type)
+	local has_spot = level.map_has_object_spot(obj_data.id, mark_type) == 1
+	local se_obj = igi_helper.get_subtask_se_obj(obj_data)
+	local object_in_world = igi_helper.object_in_world(se_obj)
+
+	if object_in_world and not has_spot then
+		level.map_add_object_spot(
+			obj_data.id,
+			mark_type,
+			game.translate_string(igi_db.TEXT_HEADER..mark_type)
+		)
+
+	elseif (not object_in_world) and has_spot then
+		level.map_remove_object_spot(obj_data.id, mark_type)
+	end
+end
+
+function update_marks(CACHE)
+    local entities = igi_target.get_entities(CACHE)
+	for _, entity in pairs(entities) do
+		local mark = entity.mark
+		if mark then
+			update_mark(entity, mark)
+		end
+	end
+end
+
+function unmark_all(CACHE)
+    local entities = igi_target.get_entities(CACHE)
+	for _, entity in pairs(entities) do
+		local mark = entity.mark
+		if mark then
+			level.map_remove_object_spot(entity.id, mark)
+		end
+	end
+end

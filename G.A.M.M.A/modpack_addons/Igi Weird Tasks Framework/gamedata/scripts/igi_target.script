@@ -1,0 +1,113 @@
+
+local trace_dbg = igi_helper.trace_dbg
+local trace_assert = igi_helper.trace_assert
+
+function get_entities(CACHE)
+	trace_assert(CACHE, "CACHE is nil")
+	return CACHE.target
+end
+
+function create_target_entry(se_obj, group_id, entity_id)
+	if not se_obj then return end
+	local entry = {
+		id = se_obj.id,
+		section_name = se_obj:section_name(),
+		group_id = group_id,
+		entity_id = entity_id
+	}
+	return entry
+end
+
+local function prepare_entry_table(entry, group_data)
+	for k,v in pairs(group_data or {}) do
+		entry[k] = entry[k] or v
+	end
+
+	entry.amount = nil
+end
+
+function add_entry(tbl, typ, group_id, entity_id, se_obj, group_data)
+	trace_assert(tbl and typ and group_id and entity_id and se_obj,
+		"Something went wrong while adding entry")
+
+	local entry = create_target_entry(se_obj, group_id, entity_id)
+	prepare_entry_table(entry, group_data)
+
+	local id = igi_linker.make_link(typ, group_id, entity_id)
+	tbl[id] = entry
+end
+
+function add_custom_entry(dest, typ, group_id, entity_id, obj_data, group_data)
+	trace_assert(dest and typ and group_id and entity_id and obj_data,
+		"Something went wrong while adding entry")
+
+	obj_data.group_id = group_id
+	obj_data.entity_id = entity_id
+	prepare_entry_table(obj_data, group_data)
+
+	local id = igi_linker.make_link(typ, group_id, entity_id)
+	dest[id] = obj_data
+end
+
+function add_entity(CACHE, entity, entity_id)
+	local typ = entity.entity_type
+	local group_counter = CACHE.group_counter
+
+	group_counter[typ] = (group_counter[typ] or 0) + 1
+	add_custom_entry(
+		get_entities(CACHE),
+		typ,
+		entity.group_id or group_counter[typ],
+		entity_id or 1,
+		entity
+	)
+end
+
+local function create_group_by_setup(entities_setup)
+	local target_tbl = igi_taskdata.get_target_table(entities_setup.target or "basic")
+	local handler = target_tbl["create_"..entities_setup.entity_type]
+    local group_data = handler(entities_setup)
+	trace_dbg("group_data", group_data)
+	return group_data
+end
+
+-- ? Needed?
+local function pass_group_values(entity, entity_setup)
+	entity.where_link = entity_setup.where_link
+	entity.target = entity_setup.target
+	entity.online_activities = entity_setup.online_activities
+end
+
+function create_target(CACHE)
+	local setup = igi_setup.get_setup_entities(CACHE)
+    local targets = {}
+    local created_keys = {}
+	
+	-- if it's not ready after #entities_setup tries, it won't be ready
+    for _ in pairs(setup) do
+        for k,entity_setup in pairs(setup) do
+            if not created_keys[k] and igi_linker.has_no_outer_links(entity_setup) then
+			    trace_dbg("entity_setup", entity_setup)
+				igi_text_processor.process_unlinked_entity(entity_setup)
+				trace_dbg("processed entity", entity_setup)
+
+                local group_data = create_group_by_setup(entity_setup)
+				created_keys[k] = true
+
+				for link, entity in pairs(group_data) do
+					pass_group_values(entity, entity_setup)
+					targets[link] = entity
+
+					igi_linker.broadcast_entity(entity, link, setup)
+					trace_dbg("After broadcasting "..link, setup)
+				end
+            end
+        end
+    end
+    if #created_keys < #setup then
+        trace_dbg("Linker probably fucked")
+    end
+
+    CACHE.target = targets
+	igi_callbacks.invoke_callbacks("on_after_target_creation", CACHE)
+end
