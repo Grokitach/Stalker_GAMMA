@@ -1,0 +1,201 @@
+TARGET_NAME = "fetch"
+PATTERN = "basic"
+
+local trace_assert = igi_helper.trace_assert
+local trace_dbg = igi_helper.trace_dbg
+local TASK_STATUSES = igi_subtask.TASK_STATUSES
+
+function ready_to_finish(obj_data)
+	local section = obj_data.section_name
+	local item = section and db.actor:object(section)
+	local actor = db.actor
+	if item then
+		return utils_item.get_amount(db.actor, section, 1) >= obj_data.how_much
+	elseif section and string.find(section, "af_") then
+		return actor:object(section .. "_af_aam")
+		or actor:object(section .. "_af_iam")
+		or actor:object(section .. "_af_aac")
+		or actor:object(section .. "_lead_box")
+	end
+	return false
+end
+
+function get_status(entity)
+	return ready_to_finish(entity) and TASK_STATUSES.READY_TO_FINISH or TASK_STATUSES.RUNNING
+end
+
+function entity_on_get_taskdata(entity)
+	-- change amount with "how_much" bcs amount is target creation flag
+	entity.how_much = entity.amount
+	entity.amount = 1
+
+	-- nothing to show on map obviously
+	entity.not_on_map = true
+end
+
+function quest_target(obj_data)
+	return -1
+end
+
+function setup_item(item_info)
+	local sec_name = item_info.section_name
+
+	trace_assert(ini_sys:section_exist(sec_name or "nil"))
+	local text_name = ini_sys:r_string_ex(sec_name, "inv_name")
+	local desc_target = game.translate_string(text_name)..", "..tostring(item_info.how_much)
+
+	local item_data = igi_models.create_ItemData(nil, sec_name, nil, item_info.how_much)
+	local desc = igi_models.create_DescriptionData(nil, desc_target)
+	return item_data, desc
+end
+
+function create_item(group_data)
+	local items = {}
+	local link = igi_linker.make_link("item", group_data.group_id, 1)
+	items[link] = group_data
+	return items
+end
+
+local function get_item_base_cost(section)
+	local max_uses = IsItem("multiuse",section) or 1
+	local cost = ini_sys:r_float_ex(section,"cost") * (1 / max_uses)
+	return cost
+end
+get_item_base_cost = igi_utils.memoize_one_variable(get_item_base_cost)
+
+local function is_scaled_by_condition(sec)
+	if IsItem("multiuse",sec) then return false end
+	if IsItem("device",sec) then return false end
+	if IsItem("battery", sec) then return false end
+	return true
+end
+
+local function get_item_cost(id)
+	local obj = igi_helper.level_object(id)
+	local sec = obj:section()
+	local cost = get_item_base_cost(sec)
+
+	if is_scaled_by_condition(sec) then
+		local condition = obj:condition()
+		cost = cost*(condition*condition)
+	end
+
+	if IsItem("multiuse",sec) then
+		local uses = obj:get_remaining_uses()
+		cost = cost*uses
+	end
+
+	return cost
+end
+
+function get_failed_goodwill(entity)
+	local cost_sum = get_item_base_cost(entity.section_name)*entity.how_much
+	return -75 + math.floor(cost_sum/800)
+end
+
+local function get_containers_to_unpack(sec, amount)
+	local containers = {}
+	local arti_in_container_section = sec.."_.*"
+	local function count_artefacts_and_collect_containers(_, item)
+		if amount == 0 then return true end
+		local item_sec = item:section()
+		if item_sec == sec then
+			amount = amount - 1
+		elseif string.find(item_sec, arti_in_container_section) then
+			containers[#containers+1] = item
+		end
+	end
+	db.actor:iterate_inventory(count_artefacts_and_collect_containers, nil)
+
+	for i=#containers,amount,-1 do
+		containers[i] = nil
+	end
+	return containers
+end
+
+local function unpack_containers(containers)
+	for _, obj in ipairs(containers) do
+		itms_manager.use_arty_container(obj)
+	end
+end
+
+local function unpack_arti_containers_if_needed(sec, amount)
+	local containers = get_containers_to_unpack(sec, amount)
+	unpack_containers(containers)
+end
+
+local function gather_normal_items(section, amount, dest) -- delay for 1 sec, to register alife changes
+	function gather(_, item)
+		if amount < 1 then return true end
+		if item:section() == section then
+			dest[#dest+1] = item:id()
+			amount = amount - 1
+		end
+	end
+	db.actor:iterate_inventory(gather, nil)
+end
+
+local function gather_multiuse_items(section, amount, dest)
+	function gather(_, item)
+		if amount < 1 then return true end
+		if item:section() == section then
+			dest[#dest+1] = item:id()
+			amount = amount - item:get_remaining_uses()
+		end
+	end
+	db.actor:iterate_inventory(gather, nil)
+	if amount < 0 then
+		alife_create_item(section, db.actor, {uses = -amount})
+	end
+end
+
+local function add_reward_for_item(entity, item_id)
+	local reward_tbl = entity.reward[igi_subtask.TASK_STATUSES.COMPLETED]
+	local cost = get_item_cost(item_id)
+	trace_dbg("item cost", cost)
+	reward_tbl.money = reward_tbl.money + cost
+end
+
+local function add_reward_for_artefacts(entity)
+	local reward_tbl = entity.reward[igi_subtask.TASK_STATUSES.COMPLETED]
+	local cost = get_item_base_cost(entity.section_name)*entity.how_much
+	trace_dbg("item cost", cost)
+	reward_tbl.money = reward_tbl.money + cost
+end
+
+local function add_reward_and_remove_items(entity, items)
+	for _, item_id in pairs(items) do
+		add_reward_for_item(entity, item_id)
+		alife_release_id(item_id)
+	end
+end
+
+function finish_generic_fetch(entity)
+	local sec, amount = entity.section_name, entity.how_much
+
+	local items_to_remove = {}
+	if IsItem("multiuse",sec) then
+		gather_multiuse_items(sec, amount, items_to_remove)
+	else
+		gather_normal_items(sec, amount, items_to_remove)
+	end
+
+	add_reward_and_remove_items(entity, items_to_remove)
+	return true
+end
+
+function on_completed(entity)
+	entity.reward[igi_subtask.TASK_STATUSES.COMPLETED].money = 0
+
+	if string.find(entity.section_name, "af_") then
+		add_reward_for_artefacts(entity)
+		unpack_arti_containers_if_needed(entity.section_name, entity.how_much)
+
+		-- 1 sec wait for alife to change; reward will be changed, but already too late :)
+		CreateTimeEvent("igi_tasks", "finish_fetch_artefact", 1, finish_generic_fetch, entity)
+	else
+		finish_generic_fetch(entity)
+	end
+
+	news_manager.relocate_item(db.actor, "out", entity.section_name, entity.how_much)
+end

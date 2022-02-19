@@ -1,0 +1,331 @@
+-- There are purely utility functions, not bound with tasks or STALKER
+
+local trace_assert = igi_helper.trace_assert
+
+Set = {}
+function Set.union(set1, set2)
+	local new_set = dup_table(set1)
+	for k in pairs(set2) do
+		new_set[k] = true
+	end
+	return new_set
+end
+
+function Set.intersection(set1, set2)
+	local new_set = {}
+	for k in pairs(set2) do
+		new_set[k] = set1[k]
+	end
+	return new_set
+end
+
+function Set.difference(set1, set2)
+	local new_set = dup_table(set1)
+	for k in pairs(set2) do
+		new_set[k] = nil
+	end
+	return new_set
+end
+
+function Set.from_list(list)
+	local new_set = {}
+	for _, v in pairs(list) do
+		new_set[v] = true
+	end
+	return new_set
+end
+
+function Set.to_list(set)
+	local tbl = {}
+	for k in pairs(set) do
+		tbl[#tbl + 1] = k
+	end
+	return tbl
+end
+
+function list_to_set(l)
+	if(l == nil) then return nil end
+	
+	local set = {}
+	for _, v in pairs(l) do
+		trace_assert(type(v) ~= "table", "list_to_set values mustn't be tables")
+		set[v] = true
+	end
+	return set
+end
+
+function set_to_list(s)
+	if(s == nil) then return nil end
+	
+	local list = {}
+	for v, _ in pairs(s) do
+		list[#list + 1] = v
+	end
+	return list
+end
+
+function random_table_element(tbl)
+	-- It's preffered to use lists with igi_random.rand rather
+	-- than this function bcs this function is slow
+	local keyset = {}
+	for k in pairs(tbl) do
+		table.insert(keyset, k)
+	end
+	-- now you can reliably return a random key
+	local random_key = keyset[igi_random.rand(#keyset)]
+	local random_elem = tbl[random_key]
+	return random_elem, random_key
+end
+
+function get_random_items(orig_list, amount)
+	if not orig_list or #orig_list < amount then
+		return nil, "Not enough items"
+	end
+
+	local set = {}
+	local list = {}
+	for i=1, amount do
+		local item
+		repeat
+			item = orig_list[igi_random.rand(#orig_list)]
+		until not set[item]
+		list[#list + 1] = item
+		set[item] = true
+	end
+	return list
+end
+
+function extend_list(orig, val)
+	-- add value to a list or add every value if val is a list
+	if type(val) == 'table' then
+		for _, v in pairs(val) do orig[#orig + 1] = v end
+	else orig[#orig + 1] = val end
+	return orig
+end
+
+function add_to_list_recursive(tbl, val, ...)
+	if not tbl then return end
+
+	local args = {...}
+	for k, v in pairs(args) do
+		if not tbl[v] then
+			tbl[v] = {}
+		end
+		tbl = tbl[v]
+		if k == #args then
+			table.insert(tbl, val)
+		end
+	end
+end
+
+function memoize_one_variable(f, id)
+    local cache = MemoizeCache.new(id)
+    return function (arg)
+		local key = arg ~= nil and arg or "!nil!"
+        if cache[key] then
+            return cache[key]
+        else
+            local y = f(arg)
+            cache[key] = y
+            return y
+        end
+    end
+end
+
+function one_timer_one_variable(f, id)
+	local cache = MemoizeCache.new(id)
+	return function (arg)
+		local key = arg ~= nil and arg or "!nil!"
+		if not cache[key] then
+			cache[key] = true
+			return f(arg)
+		end
+	end
+end
+
+function escape_pattern(text)
+    return text:gsub("([^%w])", "%%%1")
+end
+
+function partial(f, ...)
+	args = {...}
+	print(unpack(args))
+	local new_f = function(...)
+	    local new_args = {unpack(args)}
+	    for k,v in pairs({...}) do	-- lua, blyat...
+	        new_args[#new_args+1] = v
+	    end
+		return f(unpack(new_args))
+	end
+	return new_f
+end
+
+MemoizeCache = {
+	unnamed = {}
+}
+
+function MemoizeCache.new(id)
+	id = id or "unnamed"
+	if not MemoizeCache[id] then MemoizeCache[id] = {} end
+	local cache_by_id = MemoizeCache[id]
+
+	local tbl = {}
+	cache_by_id[#cache_by_id+1] = tbl
+	return tbl
+end
+
+function MemoizeCache._reset_id(id)
+	if type(MemoizeCache[id]) ~= 'table' then return end
+	for _, tbl in pairs(MemoizeCache[id]) do
+		for k2 in pairs(tbl) do
+			tbl[k2] = nil
+		end
+	end
+end
+
+function MemoizeCache.reset(id)
+	if id then
+		MemoizeCache._reset_id(id)
+		return
+	end
+	for k in pairs(MemoizeCache) do
+		MemoizeCache._reset_id(k)
+	end
+end
+
+function iterate_table(tbl, func)
+	for k,v in pairs(tbl) do
+		if type(v) == "table" then
+			iterate_table(v, func)
+		end
+		func(k, v, tbl)
+	end
+end
+
+function heap_new()
+	return {
+		priorities = {},
+		payloads = {},
+	}
+end
+
+function heap_swap(heap, index1, index2)
+	heap.priorities[index1], heap.priorities[index2] =
+		heap.priorities[index2], heap.priorities[index1]
+
+	heap.payloads[index1], heap.payloads[index2] =
+		heap.payloads[index2], heap.payloads[index1]
+end
+
+function heap_compare(heap, index1, index2)
+	trace_assert(heap.priorities[index1] and heap.priorities[index2], "No priorities?", heap)
+	return heap.priorities[index1] > heap.priorities[index2]
+end
+
+function heap_sift_up(heap, index)
+	if index == 1 then return end
+
+	local parent_index = math.floor(index/2)
+	if heap_compare(heap, parent_index, index) then
+		heap_swap(heap, index, parent_index)
+		heap_sift_up(heap, parent_index)
+	end
+end
+
+function heap_sift_down(heap, index)
+	local minIndex, leftChildIndex, rightChildIndex
+	leftChildIndex, rightChildIndex = index * 2, index * 2 + 1
+	local priorities = heap.priorities
+
+	if rightChildIndex > #priorities then
+		if leftChildIndex > #priorities then
+			return
+		else
+			minIndex = leftChildIndex
+		end
+	else
+		if heap_compare(heap, leftChildIndex, rightChildIndex) then
+			minIndex = rightChildIndex
+		else
+			minIndex = leftChildIndex
+		end
+	end
+
+	if heap_compare(heap, index, minIndex) then
+		heap_swap(heap, index, minIndex)
+		heap_sift_down(heap, minIndex)
+	end
+end
+
+function heap_push(heap, payload, priority)
+	trace_assert(priority and payload, "No priority or payload")
+	heap.priorities[#heap.priorities+1] = priority
+	heap.payloads[#heap.payloads+1] = payload
+	heap_sift_up(heap, #heap.priorities)
+end
+
+function heap_pop(heap)
+	if #heap.payloads == 0 then return end
+	local to_return = heap.payloads[1]
+
+	heap.priorities[1] = heap.priorities[#heap.priorities]
+	heap.payloads[1] = heap.payloads[#heap.payloads]
+
+	heap.priorities[#heap.priorities] = nil
+	heap.payloads[#heap.payloads] = nil
+	if #heap.priorities > 0 then
+		heap_sift_down(heap, 1)
+	end
+
+	return to_return
+end
+
+function heap_peek(heap)
+	return heap.payloads[1]
+end
+
+function heap_change_priority(heap, payload, priority)
+	for i, payload2 in ipairs(heap.payloads) do
+		if payload2 == payload then
+			local old_priority = heap.priorities[i]
+			heap.priorities[i] = priority
+
+			if priority < old_priority then
+				heap_sift_up(heap, i)
+			else
+				heap_sift_down(heap, i)
+			end
+		end
+	end
+end
+
+function heap_remove_by_index(heap, index)
+	heap.priorities[index] = heap.priorities[#heap.priorities]
+	heap.payloads[index] = heap.payloads[#heap.payloads]
+
+	heap.payloads[#heap.payloads] = nil
+	heap.priorities[#heap.priorities] = nil
+	heap_sift_down(heap, index)
+end
+
+function heap_remove_element(heap, payload)
+	for i=#heap.payloads, 1, -1 do
+		if heap.payloads[i] == payload then
+			heap_remove_by_index(heap, i)
+		end
+	end
+end
+
+function combine_tables(tbl1, tbl2)
+	for k in pairs(tbl2) do
+		igi_helper.trace_assert(
+			type(tbl1[k]) == type(tbl2[k]) or not tbl1[k],
+			"combine tables: can't combine", tbl1, tbl2)
+
+		if type(tbl1[k]) == "table" then
+			combine_tables(tbl1[k], tbl2[k])
+		else
+			tbl1[k] = tbl2[k]
+		end
+	end
+end

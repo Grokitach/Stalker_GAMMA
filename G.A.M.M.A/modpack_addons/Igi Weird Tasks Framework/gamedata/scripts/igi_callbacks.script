@@ -1,0 +1,82 @@
+local trace_assert = igi_helper.trace_assert
+local trace_dbg = igi_helper.trace_dbg
+
+local callbacks = {
+	on_get_taskdata = {},
+	entity_on_get_taskdata = {},
+
+	on_before_first_run = {},
+	entity_on_before_first_run = {},
+
+	on_first_run = {},
+	entity_on_first_run = {},
+
+	on_after_target_creation = {},
+	entity_on_after_target_creation = {},
+
+	on_task_update = {},
+	entity_on_task_update = {},
+
+	on_complete = {},
+	entity_on_complete = {},
+
+	on_subtask_status_change = {},
+	entity_on_subtask_status_change = {},
+
+	on_before_rewarding = {},
+	entity_on_before_rewarding = {},
+}
+
+function add_callback(name, func)
+	if callbacks[name] then callbacks[name][func] = true end
+end
+
+function remove_callback(name, func)
+	if callbacks[name] then callbacks[name][func] = nil end
+end
+
+local function send_target_callbacks(callback_name, CACHE, ...)
+	local entity_table = igi_target.get_entities(CACHE) or igi_setup.get_setup_entities(CACHE)
+	local target_set = {}
+	
+	for k, entity in pairs(entity_table) do
+		if entity.target then
+			local target_tbl = igi_taskdata.get_target_table(entity.target)
+			-- one-time callback
+			if target_tbl[callback_name] and not target_set[entity.target] then
+				target_set[entity.target] = true
+				target_tbl[callback_name](CACHE, ...)
+			end
+		end
+	end
+	
+	for k, entity in pairs(entity_table) do
+		if entity.target then
+			local target_tbl = igi_taskdata.get_target_table(entity.target)
+			-- callback for every entity with target
+			if target_tbl['entity_'..callback_name] then
+				target_tbl['entity_'..callback_name](entity, CACHE, ...)
+			end
+		end
+	end
+end
+
+
+local function send_custom_callbacks(callback_name, CACHE, ...)
+	local entity_table = igi_target.get_entities(CACHE) or igi_setup.get_setup_entities(CACHE)
+	for callback in pairs(callbacks[callback_name]) do
+		callback(CACHE, entity_table, ...)
+	end
+
+	for _, entity in pairs(entity_table) do
+		for callback in pairs(callbacks['entity_'..callback_name]) do
+			callback(entity, CACHE, entity_table, ...)
+		end
+	end
+end
+
+function invoke_callbacks(callback_name, CACHE, ...)
+	trace_dbg(callback_name, CACHE)
+	send_target_callbacks(callback_name, CACHE, ...)
+	send_custom_callbacks(callback_name, CACHE, ...)
+end
