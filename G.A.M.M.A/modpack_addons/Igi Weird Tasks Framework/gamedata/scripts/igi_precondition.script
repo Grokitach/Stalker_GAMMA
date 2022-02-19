@@ -1,0 +1,64 @@
+local trace_assert = igi_helper.trace_assert
+
+local function get_daytime_bounds(daytime)
+	local bounds = igi_db.SectionView("daytime.ltx", "daytime_bounds")
+	return bounds[daytime]
+end
+
+local function rank_precondition(tier)
+	local quest_tiers = igi_db.SectionView("tiers.ltx", "player_tiers")
+	trace_assert(quest_tiers[tier] or ranks.stalker_rank_intervals[tier],
+			"Invalid quest tier")
+
+	if quest_tiers[tier] then
+		lower_bound = quest_tiers[tier][1]
+		higher_bound = quest_tiers[tier][2]
+	elseif ranks.stalker_rank_intervals[tier] then
+		lower_bound = ranks.stalker_rank_intervals[tier][1]
+		higher_bound = ranks.stalker_rank_intervals[tier][2]
+	end
+	local player_rank = db.actor:character_rank()
+	return player_rank >= lower_bound and player_rank <= higher_bound
+end
+
+local function goodwill_precondition(arg)
+	local task_giver = mob_trade.GetTalkingNpc()
+	local community = character_community(task_giver)
+	return db.actor:community_goodwill(community) >= arg
+end
+
+local function daytime_precondition(arg)
+	lower_bound, higher_bound = unpack(get_daytime_bounds(arg))
+
+	local game_t = game.get_game_time()
+	local y, m, d, h = game_t:get()
+	local t = game.CTime()
+
+	t:set(y, m, d, lower_bound, 0, 0, 0)
+	if not (game_t > t) then
+		return false
+	end
+
+	local dt = game.CTime()			-- higher bound check
+	dt:setHMS((24-lower_bound+higher_bound)%24, 0, 0)	-- hassling with dt bcs higher bound can be at next day
+	return game_t < (t + dt)
+end
+
+function check(preconditions)
+	if not preconditions then return true end
+	if igi_mcm.get_options_value("debug") then return true end
+	local condition_handlers = {
+		["player_tier"] = rank_precondition,
+		["goodwill"] = goodwill_precondition,
+		["daytime"] = daytime_precondition,
+	}
+	-- printf(utils_data.print_table(preconditions, "precond", true))
+	for condition, handler in pairs(condition_handlers) do
+		-- not too good when there'll be more conditions but good enough now
+		if preconditions[condition] and not handler(preconditions[condition]) then
+			return false
+		end
+	end
+
+	return true
+end

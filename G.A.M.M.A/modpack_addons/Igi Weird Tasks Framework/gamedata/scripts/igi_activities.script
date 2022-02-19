@@ -1,0 +1,100 @@
+local trace_assert = igi_helper.trace_assert
+local WorldState = igi_world_state.WorldState
+
+condition_handlers = {}		-- These are filled in igi_handlers.script
+action_handlers = {}		-- So you can add your own handlers to it. Modularity, desu.
+
+function add_condition_handlers(tbl)
+	for k,v in pairs(tbl) do
+		condition_handlers[k] = v
+	end
+end
+
+function add_action_handlers(tbl)
+	for k,v in pairs(tbl) do
+		action_handlers[k] = v
+	end
+end
+
+local function is_stalker_online(se_obj)
+	-- idk if I can just make se_obj.online
+	if not se_obj then return end
+
+	for i,v in ipairs(db.OnlineStalkers) do 
+        if (v == se_obj.id) then 
+            return true
+        end
+    end
+end
+
+local function is_object_online(se_obj)
+	if not se_obj then return nil end
+
+	local npc
+	if se_obj.squad_members and se_obj:squad_members() then
+		npc = se_obj:squad_members()()	-- stateful iterator, returns function
+	end
+
+	return npc and is_stalker_online(npc) or se_obj.online
+end
+
+------------------------------------------
+local function do_activities(obj_data, condition, se_obj, CACHE)
+	
+	for action, args in pairs(obj_data.online_activities[condition]) do
+		if action_handlers[action] then
+			action_handlers[action](obj_data, se_obj, args, CACHE)
+		else
+			printf("WTF: unknown action: "..action.." with object: "..obj_data.section_name)
+		end
+	end
+end
+
+local function are_conditions_met(obj_data, condition, CACHE, se_obj)
+	se_obj = se_obj or WorldState.objects[obj_data.id]
+
+	if not is_object_online(se_obj) then return false end
+	return condition_handlers[condition](obj_data, se_obj, CACHE)
+end
+
+function get_activities(CACHE)
+	return CACHE.online_activities
+end
+
+function do_online_activities(CACHE)
+	local activities = get_activities(CACHE)
+	-- TODO: rework
+	if not activities then return CACHE, false end
+
+	for condition, links in pairs(activities) do
+		for k, obj_link in pairs(links) do
+			local obj_data = igi_linker.get_entity_from_link(obj_link, CACHE)
+			local se_obj = WorldState.objects[obj_data.id]
+			if are_conditions_met(obj_data, condition, CACHE, se_obj) then
+				do_activities(obj_data, condition, se_obj, CACHE)
+					
+				-- Delete object after activity is done
+				links[k] = nil
+			end
+		end
+		-- delete activities if there's no more objects
+		if not next(links) then activities[condition] = nil end
+	end
+end
+
+function sort_online_activities(CACHE)
+	-- Adds all objects with online activities to CACHE
+	-- CACHE.online_activities = {*condition* = {*list of obj_data*}}
+	local targets = igi_target.get_entities(CACHE)
+	local online_acts = {}
+	for k, entity in pairs(targets) do
+		if entity.online_activities then
+			for condition in pairs(entity.online_activities) do
+				if not online_acts[condition] then online_acts[condition] = {} end
+				online_acts[condition][#online_acts[condition] + 1] = k
+			end
+		end
+	end
+
+	CACHE.online_activities = online_acts
+end

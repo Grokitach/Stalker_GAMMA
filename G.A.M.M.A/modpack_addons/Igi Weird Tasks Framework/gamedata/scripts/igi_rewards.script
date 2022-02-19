@@ -1,0 +1,275 @@
+local trace_assert = igi_helper.trace_assert
+local trace_dbg = igi_helper.trace_dbg
+local WorldState = igi_world_state.WorldState
+
+local rewards_table_pattern = {
+	money = 0,
+	goodwill = {},
+}
+
+---------------------------< Setup >---------------------------
+
+local function get_tg_and_tg_squad(tg)
+	if tg:clsid() == clsid.online_offline_group_s then
+		return WorldState.objects[tg:commander_id()], tg
+	else
+		return tg, get_object_squad(tg)
+	end
+end
+
+local function get_tg_community_setup(se_tg, se_tg_squad)
+	local community = get_object_community(se_tg)
+	local setup = community
+	if string.find(community, "trader") then
+		setup = igi_db.get_value("misc.ltx", "trader_faction", se_tg:section_name())
+		setup = setup or {se_tg_squad:get_squad_community()}
+	end
+	if type(setup) ~= "table" then setup = {setup} end
+	return setup
+end
+
+function get_community_setup(task_giver_id)
+	local se_tg = WorldState.objects[task_giver_id]
+	return get_tg_community_setup(get_tg_and_tg_squad(se_tg))
+end
+
+---------------------------< Give >--------------------------
+
+local function populate_goodwill_table(tbl, factions, value)
+	trace_assert(factions and value, "reward: no factions or value")
+	-- Goodwill (1/gaussian_sum to last community, 2/sum to second last, ..., 1/2 to first)
+	local parts = (#factions)*(#factions+1)/2
+
+	for i=1,#factions do
+		local faction_value = math.floor((i*value)/parts)
+		local faction = factions[#factions+1-i]
+		tbl[faction] = (tbl[faction] or 0) + faction_value
+	end
+end
+
+local function is_denormalized_goodwill_table(goodwill_table)
+	return goodwill_table.value and goodwill_table.factions
+end
+
+local function normalize_goodwill_table(goodwill_tbl)
+	local factions, value = goodwill_tbl.factions, goodwill_tbl.value
+	if not is_denormalized_goodwill_table(goodwill_tbl) then return end
+
+	trace_dbg("REWARD: goodwill table before", goodwill_tbl)
+	empty_table(goodwill_tbl)
+	populate_goodwill_table(goodwill_tbl, factions, value)
+	trace_dbg("REWARD: goodwill table normalized", goodwill_tbl)
+end
+
+local function denormalize_goodwill_table(goodwill_tbl)
+	if is_denormalized_goodwill_table(goodwill_tbl) then return goodwill_tbl end
+	local value = 0
+	local factions = {}
+	for faction, faction_value in pairs(goodwill_tbl) do
+		factions[#factions+1] = faction
+		value = value + faction_value
+	end
+
+	empty_table(goodwill_tbl)
+	goodwill_tbl.value = value
+	goodwill_tbl.factions = factions
+end
+
+function rebalance_goodwill_table(tbl, src)
+	if (src.factions and src.value) or not (src.factions or src.value) then
+		empty_table(tbl)
+		copy_table(tbl, src)
+	else
+		denormalize_goodwill_table(tbl)
+		tbl.factions = src.factions or tbl.factions
+		tbl.value = src.value or tbl.value
+		normalize_goodwill_table(tbl)
+	end
+end
+
+local function add_money_reward(dest, reward_tbl)
+	if not reward_tbl.money then return end
+	dest.money = dest.money + reward_tbl.money
+end
+
+local function add_goodwill_reward(dest, reward_tbl)
+	if not reward_tbl.goodwill then return end
+	for faction, value in pairs(reward_tbl.goodwill) do
+		if not dest.goodwill[faction] then
+			dest.goodwill[faction] = 0
+		end
+		dest.goodwill[faction] = dest.goodwill[faction] + value
+	end
+end
+
+local function add_other_rewards(dest, reward_tbl)
+	for k,v in pairs(reward_tbl) do
+		if not dest[k] then dest[k] = v end
+	end
+end
+
+local function set_immutable_rewards(reward_tbl, immutable_rewards)
+	if immutable_rewards.money then
+		reward_tbl.money = immutable_rewards.money
+	end
+
+	if immutable_rewards.goodwill then
+		rebalance_goodwill_table(reward_tbl.goodwill, immutable_rewards.goodwill)
+	end
+
+	for k, v in pairs(immutable_rewards) do
+		if k ~= "money" and k ~= "goodwill" then
+			reward_tbl[k] = v
+		end
+	end
+end
+
+local function get_subtask_reward_tbl(subtask)
+	local status = subtask.status
+	local reward_tbl = subtask.reward and subtask.reward[status]
+	if not reward_tbl then return end
+
+	local immutable_rewards = subtask.immutable_rewards and subtask.immutable_rewards[status]
+	if not immutable_rewards then return reward_tbl end
+	set_immutable_rewards(reward_tbl, immutable_rewards)
+
+	return reward_tbl
+end
+
+function add_additional_money(reward_tbl)
+	reward_tbl.money = reward_tbl.money + reward_tbl.add_money
+end
+
+function add_additional_goodwill(reward_tbl)
+	if not reward_tbl.goodwill then return end
+	local to_add = reward_tbl.add_goodwill/size_table(reward_tbl.goodwill)
+	for k, val in pairs(reward_tbl.goodwill) do
+		reward_tbl.goodwill[k] = val + to_add
+	end
+end
+
+function multiply_money(reward_tbl)
+	reward_tbl.money = reward_tbl.money*reward_tbl.mult_money
+end
+
+function multiply_goodwill(reward_tbl)
+	if not reward_tbl.goodwill then return end
+	for k, val in pairs(reward_tbl.goodwill) do
+		reward_tbl.goodwill[k] = val*reward_tbl.mult_goodwill
+	end
+end
+
+multiply_modifiers = {
+	mult_money = multiply_money,
+	mult_goodwill = multiply_goodwill,
+}
+
+const_modifiers = {
+	add_money = add_additional_money,
+	add_goodwill = add_additional_goodwill,
+}
+
+local function apply_modifiers(reward_tbl)
+	for k, functor in pairs(multiply_modifiers) do
+		if reward_tbl[k] then functor(reward_tbl) end
+		reward_tbl[k] = nil
+	end
+
+	for k,functor in pairs(const_modifiers) do
+		if reward_tbl[k] then functor(reward_tbl) end
+		reward_tbl[k] = nil
+	end
+end
+
+local function add_subtask_reward(dest, subtask)
+	local reward_tbl = get_subtask_reward_tbl(subtask)
+	if not reward_tbl then return end
+
+	if reward_tbl.goodwill then
+		normalize_goodwill_table(reward_tbl.goodwill)
+	end
+
+	apply_modifiers(reward_tbl)
+	add_money_reward(dest, reward_tbl)
+	add_goodwill_reward(dest, reward_tbl)
+	add_other_rewards(dest, reward_tbl)
+end
+
+local function add_rewards_from_subtasks(dest, subtasks, CACHE)
+	for _, subtask in pairs(subtasks) do
+		add_subtask_reward(dest, subtask)
+	end
+end
+
+local function collect_rewards_from_subtasks(dest, CACHE)
+	local status = CACHE.status
+	local completed_subtasks = igi_subtask.get_completed_subtasks(CACHE)
+	local failed_subtasks = igi_subtask.get_failed_subtasks(CACHE)
+
+	-- Always add failed: if task is successful then these ones are failed optionals
+	add_rewards_from_subtasks(dest, failed_subtasks, CACHE)
+	if status == igi_subtask.TASK_STATUSES.COMPLETED then
+		add_rewards_from_subtasks(dest, completed_subtasks, CACHE)
+	end
+	trace_dbg("Rewards from subtasks: ", dest)
+end
+
+local function set_global_immutable_rewards(dest, CACHE)
+	if not CACHE.immutable_rewards then return end
+	local immutable_reward = CACHE.immutable_rewards[CACHE.status]
+	if not immutable_reward then return end
+
+	set_immutable_rewards(dest, immutable_reward)
+	trace_dbg("Rewards with immutables: ", dest)
+end
+
+local function collect_rewards(CACHE)
+	local reward_tbl = dup_table(rewards_table_pattern)
+	collect_rewards_from_subtasks(reward_tbl, CACHE)
+	set_global_immutable_rewards(reward_tbl, CACHE)
+	apply_modifiers(reward_tbl)
+	CACHE.reward = reward_tbl
+end
+
+local function give_money_reward(CACHE)
+	local money = CACHE.reward.money
+	money = money*igi_mcm.get_options_value("money_reward_coeff")
+	if money ~= 0 then
+		local min = money*igi_mcm.get_options_value("reward_spread_min")
+		local max = money*igi_mcm.get_options_value("reward_spread_max")
+		xr_effects.reward_random_money(nil, nil, {min, max})
+	end
+end
+
+local function give_goodwill_reward(CACHE)
+	local goodwill = CACHE.reward.goodwill
+	for faction, value in pairs(goodwill) do
+		if value ~= 0 then
+			xr_effects.complete_task_inc_goodwill(nil, nil, {value, faction})
+		end
+	end
+end
+
+local function give_rewards(CACHE)
+	give_money_reward(CACHE)
+	give_goodwill_reward(CACHE)
+end
+
+function collect_and_give_rewards(CACHE)
+	collect_rewards(CACHE)
+	igi_callbacks.invoke_callbacks("on_before_rewarding", CACHE)
+	give_rewards(CACHE)
+end
+
+function initialise_rewards(CACHE)
+	for _, entity in pairs(igi_target.get_entities(CACHE)) do
+		if entity.target then
+			local target_tbl = igi_taskdata.get_target_table(entity.target)
+			target_tbl.initialise_rewards(entity, CACHE)
+		end
+	end
+end
+
+function has_no_money_reward(CACHE)
+	return CACHE.reward and CACHE.reward.money == 0
+end

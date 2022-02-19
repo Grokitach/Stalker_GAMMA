@@ -1,0 +1,223 @@
+-- =============================================================
+--	Quest functions (igi_generic_task.script)
+--	Anomaly 1.5.5.0
+--	Igigog
+-- =============================================================
+TASKS_VERSION = "3.1test3"
+TASK_SETUP = {}
+TASKS_CACHE = {TASKS_VERSION = TASKS_VERSION}
+
+local trace_dbg = igi_helper.trace_dbg
+local trace_assert = igi_helper.trace_assert
+local WorldState = igi_world_state.WorldState
+
+function on_game_start()
+    RegisterScriptCallback("save_state",save_state)
+    RegisterScriptCallback("load_state",load_state)
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+
+	xr_conditions.validate_generic_task = validate_generic_task
+	xr_effects.igi_task_generic_setup = igi_task_generic_setup
+	task_status_functor.igi_task_generic_status = igi_task_generic_status
+	task_functor.igi_task_generic_target = igi_task_generic_target
+	task_functor.igi_task_generic_text = igi_task_generic_text
+	xr_effects.igi_task_generic_finish = igi_task_generic_finish
+
+	printf("Weird Tasks Framework "..TASKS_VERSION.." initialised")
+end
+
+function actor_on_first_update()
+	if TASKS_CACHE.TASKS_VERSION == TASKS_VERSION then
+		return
+	end
+
+	printf("Weird Tasks Framework: Updating "..(TASKS_CACHE.TASKS_VERSION or "nil")
+			.." -> "..TASKS_VERSION)
+	TASKS_CACHE.TASKS_VERSION = TASKS_VERSION
+	news_manager.send_tip(db.actor, "WTF: Update complete. Welcome to WTF "..TASKS_VERSION, nil, nil, 30000)
+end
+
+function save_state(m_data)
+	m_data.igi_tasks_cache = TASKS_CACHE
+end
+
+function load_state(m_data)
+	TASKS_CACHE = m_data.igi_tasks_cache or {TASKS_VERSION = TASKS_VERSION}
+
+	if TASKS_CACHE.TASKS_VERSION == TASKS_VERSION then
+		return
+	end
+
+	tm = task_manager.get_task_manager()
+	for task_id in pairs(TASKS_CACHE) do
+		m_data.task_info[task_id] = nil
+		TASKS_CACHE[task_id] = nil
+		if tm.task_info[task_id] then
+			-- idk if repeat timeout step is needed
+			tm.task_info[task_id].repeat_timeout = 1
+			tm.task_info[task_id] = nil
+		end
+	end
+end
+
+local function get_cache(task_id)
+	if not TASKS_CACHE[task_id] then
+		TASKS_CACHE[task_id] = TASK_SETUP[task_id]
+	end
+	return trace_assert(TASKS_CACHE[task_id], "task "..task_id.." : CACHE not initialised")
+end
+
+local function get_setup_cache(task_id)
+	return trace_assert(TASK_SETUP[task_id], "task "..task_id.." : SETUP not initialised")
+end
+---------------------------< Precondition >---------------------------
+function validate_generic_task(actor, npc, p)
+	trace_dbg("validate "..p[1])
+	trace_assert(p and p[1], "No task id given")
+	local task_id = p[1]
+
+	local task_data = trace_assert(igi_taskdata.get_task_data(task_id),
+		"WTF: validate_task: task_id invalid")
+	trace_dbg("task_data", task_data)
+
+	-- TASK LIMIT CHECK (not working)
+	if dialogs.has_tasks_by_npc(db.actor, npc) then return false end
+
+	if task_data.disabled then return false end
+	if not igi_precondition.check(task_data.preconditions) then return false end
+
+	TASK_SETUP[task_id] = igi_setup.setup_quest(task_id)
+	trace_dbg("setup", TASK_SETUP[task_id])
+	return TASK_SETUP[task_id] and true or false
+end
+
+--< Effect >--------------------------------------------------
+function igi_task_generic_setup(actor,npc,p)
+	--This function will be called on_job_descr
+	if not p and p[1] then return false end
+	local task_id = p[1]
+	--Setup
+	local CACHE = get_setup_cache(task_id)
+	--Give message
+	local description = igi_description.get_postpone_intel(CACHE)
+	--Print the message
+	CreateTimeEvent(0, "igi_task_"..CACHE.task_id.."_setup", 0, igi_description.postpone_function, description)
+end
+--< Status >--------------------------------------------------
+local function initialise_CACHE(CACHE, task_giver_id)
+	CACHE.task_giver_id = task_giver_id
+
+	igi_callbacks.invoke_callbacks("on_before_first_run", CACHE)
+	trace_dbg("before target creation", CACHE)
+
+	igi_target.create_target(CACHE)
+	igi_setup.remove_setup_entities(CACHE)	-- you don't need setup after object creation
+	igi_subtask.setup_subtasks(CACHE)
+	igi_activities.sort_online_activities(CACHE)
+	igi_rewards.initialise_rewards(CACHE)
+
+	igi_callbacks.invoke_callbacks("on_first_run", CACHE)
+	trace_dbg("after target creation", CACHE)
+end
+
+function igi_task_generic_status(tsk,task_id)
+	if not (db.actor and tsk) then return end
+	local CACHE = get_cache(task_id)
+	---------------------------<INIT>-------------------------
+	-- First run, create target
+	if not igi_target.get_entities(CACHE) then
+		initialise_CACHE(CACHE, tsk.task_giver_id)
+	end
+
+	-- Timer for less pressure (totally stolen from tasks_assault.script)
+	local tg = time_global()
+	if (tsk.__actions_time and tg < tsk.__actions_time) then
+		return
+	end
+	tsk.__actions_time = tg+3000
+	---------------------------<ACTIONS>---------------------
+	igi_callbacks.invoke_callbacks("on_task_update", CACHE)
+	igi_map_marks.update_marks(CACHE)
+	igi_activities.do_online_activities(CACHE)
+	igi_subtask.process_subtasks(CACHE)
+	if igi_subtask.is_task_failed(CACHE) then return "fail" end
+
+	---------------------------<STAGE>----------------------
+	local tasks_done = igi_subtask.is_task_completed(CACHE)
+
+	local must_return = igi_subtask.must_return_to_task_giver(CACHE)
+	local no_money_reward = igi_rewards.has_no_money_reward(CACHE)
+	local skip_return = no_money_reward and not must_return
+
+	if tasks_done and skip_return then return "complete" end
+
+	tsk.stage = tasks_done and 1 or 0
+
+	---------------------------<TARGET>----------------------
+	local is_last_stage = tsk.stage == 1
+	igi_subtask.set_current_map_target(CACHE, is_last_stage)
+end
+--< Target >--------------------------------------------------
+function igi_task_generic_target(task_id,field,p,tsk)
+	--This function point to a task target in PDA
+	local CACHE = get_cache(task_id)
+	if not CACHE then return end
+	local target_id = igi_subtask.get_current_target_id(CACHE)
+
+	-- trace target in debug mode
+	if igi_mcm.get_options_value("debug") then
+		if target_id and target_id > 0 then
+			local se_obj = WorldState.objects[target_id]
+			if se_obj then
+				local sec = se_obj and se_obj:section_name() or "nil"
+				trace_dbg("target "..tostring(target_id).." is "..sec)
+			end
+		end
+	end
+
+	return target_id
+end
+--< Text >--------------------------------------------------
+function igi_task_generic_text(task_id,field,p,tsk)
+	--This function return a text for title_functor and descr_functor
+	local CACHE = get_cache(task_id)
+
+	if field == "descr" and tsk.stage == 1 then
+		field = "done"
+	end
+
+	local text = igi_description.get_task_text(task_id, field)
+	local desc = field ~= "title" and ("\\n "..igi_description.get_description(CACHE)) or ""
+
+	return "[WTF] "..text..desc
+end
+--< Reward >--------------------------------------------------
+function igi_task_generic_finish(actor,npc,p)
+	if not (p and p[1] and p[2]) then return end
+	local task_id = p[1]
+	local CACHE = get_cache(task_id)
+	local TASK_STATUSES = igi_subtask.TASK_STATUSES
+
+	if p[2] == "true" then
+		CACHE.status = TASK_STATUSES.COMPLETED
+	else
+		CACHE.status = TASK_STATUSES.FAILED
+	end
+
+	igi_callbacks.invoke_callbacks("on_complete", CACHE)
+	igi_subtask.change_subtasks_status(CACHE, TASK_STATUSES.READY_TO_FINISH, CACHE.status)
+	--Release
+	igi_helper.release_targets_in_world(igi_target.get_entities(CACHE))	-- Needed? Works? Idk
+	igi_map_marks.unmark_all(CACHE)
+
+	if is_completed then xr_effects.inc_task_stage(nil, nil, {task_id}) end
+	--Reward
+	igi_rewards.collect_and_give_rewards(CACHE)
+
+	--Reset stored data
+	TASKS_CACHE[task_id] = nil
+	--Finish
+	--? Needed?
+	xr_effects.drx_sl_unregister_task_giver(nil, nil, {task_id})
+	xr_effects.drx_sl_reset_stored_task(nil, nil, {task_id})
+end

@@ -1,0 +1,71 @@
+
+local trace_dbg = igi_helper.trace_dbg
+local trace_assert = igi_helper.trace_assert
+
+function get_setup_entities(CACHE)
+	return CACHE.setup
+end
+
+function remove_setup_entities(CACHE)
+	CACHE.setup = nil
+end
+
+local function add_predefined_values(group_data, entity_preset)
+	for k,v in pairs(entity_preset) do
+		group_data[k] = group_data[k] or entity_preset[k]
+	end
+end
+
+------------------------------------------------
+local function setup_group(entity)
+	local target_tbl = igi_taskdata.get_target_table(entity.target or "basic")
+	local setup_func = target_tbl["setup_"..entity.entity_type]
+	local group_data, desc = setup_func(entity)
+	if not group_data then return end
+
+	add_predefined_values(group_data, entity)
+	return group_data, desc
+end
+
+local function setup_entities(CACHE, description)
+	local ok, task_data = pcall(igi_taskdata.get_finalized_task_setup, CACHE.task_id)
+	if not ok then
+		trace_dbg("Not ok", task_data)
+		return
+	end
+	trace_dbg("finalized CACHE", task_data)
+	
+	for _, group_preset in pairs(task_data) do
+		trace_dbg('setup group '..tostring(_), group_preset)
+		local group_data, desc = setup_group(group_preset)
+		trace_dbg('group_data, description', group_data, desc)
+		if not group_data then return nil end
+
+		description:add_entries(desc)
+		CACHE.setup[igi_linker.get_entity_link(group_preset)] = group_data
+	end
+	return true
+end
+
+function setup_quest(task_id)
+	trace_dbg("setup "..task_id)
+	local game_time = game.get_game_time()
+	local game_date = game_time:dateToString(game.CTime.DateToDay)
+	igi_random.set_seed(task_id..game_date)
+
+	local CACHE = igi_models.create_CACHE()
+	copy_table(CACHE, igi_taskdata.get_task_data(task_id))
+	CACHE.task_id = task_id
+
+	CACHE.setup = {}	-- setup will be filled in setup_entities
+	CACHE.disabled = nil	-- not needed anymore
+	CACHE.preconditions = nil	-- not needed
+
+	local description = igi_description.TaskDescription.new()
+	if not setup_entities(CACHE, description) then return end
+	CACHE.description = description:get_description(CACHE)
+	trace_dbg("CACHE after setup "..task_id, CACHE)
+	return CACHE
+end
+
+

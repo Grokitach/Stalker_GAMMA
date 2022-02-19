@@ -1,0 +1,55 @@
+TARGET_NAME = "return"
+PATTERN = "basic"
+
+local TASK_STATUSES = igi_subtask.TASK_STATUSES
+local trace_dbg = igi_helper.trace_dbg
+local WorldState = igi_world_state.WorldState
+
+function is_failed(se_obj, section_name)
+	if not se_obj then return true end
+	return se_obj:section_name() ~= section_name
+end
+
+function ready_to_finish(se_obj)
+	return se_obj.parent_id == 0
+end
+
+function get_status(entity)
+	local se_obj = WorldState.objects[entity.id]
+	if is_failed(se_obj, entity.section_name) then return TASK_STATUSES.FAILED end
+	if ready_to_finish(se_obj) then return TASK_STATUSES.READY_TO_FINISH end
+	return TASK_STATUSES.RUNNING
+end
+
+function on_completed(obj_data)
+	local obj = WorldState.objects[obj_data.id]
+	alife_release(obj)
+	news_manager.relocate_item(db.actor, "out", obj_data.section_name, 1)
+end
+
+function quest_target(obj_data)
+	local se_obj = WorldState.objects[obj_data.id]
+	if not se_obj then return end
+
+	return se_obj.parent_id == 65535 and obj_data.id or se_obj.parent_id
+end
+
+function get_item_cost(entity)
+	return tonumber(ini_sys:r_string_ex(entity.section_name, "cost"))
+end
+
+function get_item_weight(entity)
+	return tonumber(ini_sys:r_string_ex(entity.section_name, "inv_weight"))
+end
+
+function get_completed_money(entity)
+	return get_item_cost(entity)*get_item_weight(entity)/32
+end
+
+function get_completed_goodwill(entity)
+	return get_item_weight(entity)*10
+end
+
+function get_failed_goodwill(entity)
+	return get_item_cost(entity)/(-400)
+end
