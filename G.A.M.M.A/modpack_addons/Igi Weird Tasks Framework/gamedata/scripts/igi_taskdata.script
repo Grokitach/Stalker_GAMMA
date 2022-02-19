@@ -1,0 +1,172 @@
+local trace_dbg = igi_helper.trace_dbg
+local trace_assert_no_crash = igi_helper.trace_assert_no_crash
+local trace_assert = igi_helper.trace_assert
+
+local function count_entities(task_setup)
+	local counter = {
+		location = 0,
+		squad = 0,
+		item = 0,
+	}
+	for _, v in pairs(task_setup) do
+		counter[v.entity_type] = counter[v.entity_type] + 1
+	end
+	return counter
+end
+
+-------------------------------------------------
+-- JSON functions
+-------------------------------------------------
+local json = igi_json.get_json()
+
+local function get_game_path()
+	local info = debug.getinfo(1,'S');
+	local script_path = info.source:match[[^@?(.*[\/])[^\/]-$]]
+	local game_path = script_path:match("(.*)gamedata"):gsub("/", "\\")
+	return game_path
+end
+
+local default_tasks_path = get_game_path().."gamedata\\configs\\igi_tasks\\tasks\\"
+local configured_tasks_path = get_game_path().."igi_tasks\\tasks\\"
+
+local function get_task_path(task_name, prefix)
+	return prefix.."\\"..task_name..".json"
+end
+
+local function get_file_content(path)
+	file = trace_assert_no_crash(io.open(path, "rb"))
+	if not file then return end
+	local content = file:read "*a" -- *a or *all reads the whole file
+	file:close()
+	return content
+end
+
+local function get_raw_task_table(task_name, prefix)
+	local task_path = get_task_path(task_name, prefix)
+	local content = get_file_content(default_tasks_path..task_path)
+	if not content then return end
+
+	trace_dbg("raw task content: ", content)
+    return json.decode(content)
+end
+
+function get_task_table_config(task_name, prefix)
+	local task_path = get_task_path(task_name, prefix)
+	local content = get_file_content(configured_tasks_path..task_path)
+	if not content then return end
+
+	trace_dbg("raw task config: ", content)
+    return json.decode(content)
+end
+
+function get_task_table(task_name, prefix)
+	local task_table = trace_assert(
+		get_raw_task_table(task_name, prefix),
+		"task_json: no json file for task "..prefix.."_"..task_name
+	)
+
+	local task_config = get_task_table_config(task_name, prefix)
+	if task_config then
+		igi_utils.combine_tables(task_table, task_config)
+	end
+
+	return task_table
+end
+
+function create_path(prefix)
+	local tasks_path = get_game_path().."igi_tasks\\"
+	lfs.mkdir(tasks_path)
+	lfs.mkdir(tasks_path.."tasks\\")
+	lfs.mkdir(tasks_path.."tasks\\"..prefix)
+end
+
+local function save_file(path, content)
+	local file = trace_assert_no_crash(io.open(path, "w"))
+	file:write(content)
+	file:close()
+end
+
+local function save_task_config(task_name, prefix, table)
+	local task_path = prefix.."\\"..task_name..".json"
+	local path = configured_tasks_path..task_path
+	local content = json.encode(table)
+	--trace_dbg("save", path, content)
+	save_file(path, content)
+end
+
+function update_task_config_value(task_name, prefix, path, value)
+	local config = get_task_table_config(task_name, prefix)
+
+	local cur_tbl = config
+	for i=1,#path-1 do
+		cur_tbl[path[i]] = cur_tbl[path[i]] or {}
+		cur_tbl = cur_tbl[path[i]]
+	end
+
+	cur_tbl[path[#path]] = value
+	save_task_config(task_name, prefix, config)
+	igi_utils.MemoizeCache.reset("task_data")
+end
+
+function reset_all_custom_tables()
+	local meta_ltx = igi_db.LtxView("pack_meta\\base_meta.ltx")
+	for prefix in meta_ltx:iter() do
+		local files = getFS():file_list_open("$game_config$", 
+		"igi_tasks\\tasks\\"..prefix.."\\",
+		1+4+8)
+
+		for i=0,files:Size()-1 do
+			local task_name = files:GetAt(i)
+			save_task_config(task_name, prefix, {})
+		end
+	end
+end
+
+-------------------------------------------------
+-- global functions
+-------------------------------------------------
+function get_task_data(task_id)
+	local prefix, task_name = igi_helper.get_task_name(task_id)
+	trace_dbg("get_task_data: "..prefix.." "..task_name)
+	local task_tbl = get_task_table(task_name, prefix)
+	trace_assert(task_tbl, "No such task: "..tostring(task_id or "nil"))
+
+	task_tbl.group_counter = count_entities(task_tbl.setup)
+	igi_synsugar.desugarize(task_tbl)
+	trace_dbg("after desugaring", task_tbl)
+	igi_callbacks.invoke_callbacks("on_get_taskdata", task_tbl, task_tbl.setup)
+	return task_tbl
+end
+get_task_data = igi_utils.memoize_one_variable(get_task_data, "task_data")
+
+function get_task_setup(task_id)
+	return get_task_data(task_id).setup
+end
+
+function get_finalized_task_setup(task_id)
+	local tbl = get_task_data(task_id)
+	local task_setup = dup_table(tbl.setup)
+	local resolve_and_link = igi_text_processor.resolve_unlinked_macros_and_link_virtual_variables
+
+	igi_linker.assign_group_id(task_setup)
+	resolve_and_link(task_setup)
+
+	igi_generate.unfold_generation(task_setup)
+
+	igi_linker.assign_group_id(task_setup)
+	resolve_and_link(task_setup)	-- once more to link gen ids
+
+	return task_setup
+end
+
+function get_target_table(target)
+	if not target then return end
+	local target_tbl = _G["igi_target_"..target]
+	trace_assert(target_tbl, "No target tbl for target "..tostring(target or "nil"))
+
+	if target_tbl.PATTERN then
+		setmetatable(target_tbl, {__index = get_target_table(target_tbl.PATTERN)})
+	end
+	return target_tbl
+end
+get_target_table = igi_utils.memoize_one_variable(get_target_table, "target_table")

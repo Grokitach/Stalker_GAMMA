@@ -1,0 +1,116 @@
+-- Custom weight adder/multiplier with removal, written by demonized
+-- Based on Arti's speed.script
+
+local ceil = math.ceil
+
+local get_game_factor = game_difficulties.get_game_factor
+
+local weights = {
+    carry_weight = 0,
+    --max_walk_weight = 0
+}
+
+local weight_adders = {}
+local weight_multipliers = {}
+local not_first_update = true
+
+local function actor_on_first_update() 
+    weights.carry_weight = get_game_factor("weight") or 20
+    --weights.max_walk_weight = weights.carry_weight + (ceil(weights.carry_weight * 0.2) * 2)
+    not_first_update = false
+end
+
+local function update_weights()
+    if not_first_update then
+        actor_on_first_update()
+    end
+
+    local weight_multiply = 1
+    for k,v in pairs(weight_multipliers) do
+        weight_multiply = weight_multiply * v
+    end
+
+    local weight_add = 0
+    for k,v in pairs(weight_adders) do
+        weight_add = weight_add + v
+    end
+
+    local result_weight = weights.carry_weight * weight_multiply + weight_add
+    local max_walk_weight = result_weight + (ceil(result_weight * 0.2) * 2)
+    
+    -- printf("base speed: "..speeds[0])
+    local actor = db.actor
+    actor:set_actor_max_weight(result_weight)
+    actor:set_actor_max_walk_weight(max_walk_weight)
+end
+
+local function refresh_weights()
+    actor_on_first_update()
+    update_weights()
+end
+
+-- Usage: Add a weight.
+-- Once a weight is added, it will be recalculated and set.
+-- Params:
+-- key - Name of weight addition you want to add
+-- amount - Amount to add
+-- force - Boolean, will overwrite existing key.
+-- Returns true if added successfully, false if key already exists (and nothing happens as result)
+function add_weight(key, amount, force)
+    if force or not weight_adders[key] then
+        -- printf("sprint: " .. speed_key .. " " .. speed_mult)
+        weight_adders[key] = amount
+        update_weights()
+        return true
+    else
+        return false
+    end
+end
+
+-- Usage: Multiply initial weight by amount.
+-- Once a weight is multiplied, it will be recalculated and set.
+-- Params:
+-- key - Name of weight multiplier
+-- multiplier - Multiplier amount
+-- force - Boolean, will overwrite existing key.
+-- Returns true if added successfully, false if key already exists (and nothing happens as result)
+function multiply_weight(key, multiplier, force)
+    if force or not weight_multipliers[key] then
+        -- printf("sprint: " .. speed_key .. " " .. speed_mult)
+        weight_multipliers[key] = multiplier
+        update_weights()
+        return true
+    else
+        return false
+    end
+end
+
+-- Usage: Drop a weight. Once a weight addition is dropped, it will be recalculated and set. 
+-- Params
+-- key - Name to drop.
+function remove_weight(key)
+    weight_adders[key] = nil
+    weight_multipliers[key] = nil
+    update_weights()
+end
+
+-- function print()
+--     local run_coef = 1
+--     for k,v in pairs(run_modifiers) do
+--         printf("Run modifier %s, val %s", k, v)
+--         run_coef = run_coef * v
+--     end
+--     printf("final run: %s", run_coef)
+
+--     local spr_coef = 1
+--     for k,v in pairs(sprint_modifiers) do
+--         printf("Sprint modifier %s, val %s", k, v)
+--         spr_coef = spr_coef * v
+--     end
+--     printf("final sprint: %s", spr_coef)
+-- end
+
+function on_game_start()
+    RegisterScriptCallback("on_option_change", refresh_weights)
+    RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
+end
