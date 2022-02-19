@@ -1,0 +1,75 @@
+TARGET_NAME = "kill"
+PATTERN = "basic"
+
+local TASK_STATUSES = igi_subtask.TASK_STATUSES
+local WorldState = igi_world_state.WorldState
+
+function is_completed(obj_data)
+	local se_obj = WorldState.objects[obj_data.id]
+	if not se_obj then return true end
+	if se_obj:section_name() ~= obj_data.section_name then return true end
+end
+
+function get_status(entity)
+	if is_completed(entity) then return TASK_STATUSES.COMPLETED end
+	return TASK_STATUSES.RUNNING
+end
+
+local function get_monster_value(se_npc)
+	local npc_section = se_npc:section_name()
+	local factor = 1
+	for k, new_factor in pairs(igi_db.SectionView('tiers.ltx', 'monster_tier_factor'):as_table()) do
+		if string.find(npc_section, k) then
+			factor = new_factor
+			break
+		end
+	end
+
+	local value = 100
+	for k, new_value in pairs(igi_db.SectionView('misc.ltx', 'money_reward_mutants'):as_table()) do
+		if string.find(npc_section, k) then
+			value = new_value
+			break
+		end
+	end
+	return value*factor
+end
+
+local function get_npc_value(se_npc)
+	local value = 1000
+	local tier = string.sub(se_npc:section_name(), -1)
+	igi_helper.trace_dbg(se_npc:section_name())
+	local factors = igi_db.SectionView('tiers.ltx', 'npc_tier_factor')
+
+	return value*factors[tier]
+end
+
+function get_completed_money(entity)
+	local reward = 0
+	local se_squad = WorldState.objects[entity.id]
+	local faction = se_squad:get_squad_community()
+
+	if string.find(faction, "monster") then
+		for se_npc in se_squad:squad_members() do
+			se_npc = WorldState.objects[se_npc.id]
+			reward = reward + get_monster_value(se_npc)
+		end
+	else
+		for se_npc in se_squad:squad_members() do
+			se_npc = WorldState.objects[se_npc.id]
+			reward = reward + get_npc_value(se_npc)
+		end
+	end
+
+	return reward
+end
+
+function get_completed_goodwill(entity)
+	local npc_count = 0
+	local se_squad = WorldState.objects[entity.id]
+	for _ in se_squad:squad_members() do
+		npc_count = npc_count + 1
+	end
+
+	return 50 - (40/npc_count)
+end

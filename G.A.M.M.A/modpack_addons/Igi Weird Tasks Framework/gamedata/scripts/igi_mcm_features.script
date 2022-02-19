@@ -1,0 +1,57 @@
+local trace_assert = igi_helper.trace_assert
+
+function on_game_start()
+    autosave_on_game_start()
+    autocomplete_on_game_start()
+end
+
+function enabled_in_mcm(key)
+    return igi_mcm.get_options_value(key)
+end
+
+function add_mcm_options()
+    igi_mcm.add_mcm_option("autosave_before", false)
+    igi_mcm.add_mcm_option("autosave_after", false)
+    igi_mcm.add_mcm_option("autocomplete", false)
+    igi_mcm.add_mcm_option("ara", false, "realistic_assassinations")
+    igi_mcm.add_mcm_option("debug", false)
+end
+
+---------------- AUTOSAVE -------------------
+
+function autosave_on_first_run(CACHE)
+    if not enabled_in_mcm("autosave_before") then return end
+    local title = igi_description.get_task_text(CACHE.task_id, "title")
+    CreateTimeEvent("igi_mcm_features", "autosave_before", 0, function ()
+        exec_console_cmd("save ".."task "..title.." started")
+        return true
+    end)
+end
+
+function autosave_on_complete(CACHE)
+    if not enabled_in_mcm("autosave_after") then return end
+    local title = igi_description.get_task_text(CACHE.task_id, "title")
+    CreateTimeEvent("igi_mcm_features", "autosave_after", 0, function ()
+        exec_console_cmd("save ".."task "..title.." finished")
+        return true
+    end)
+end
+
+function autosave_on_game_start()
+    igi_callbacks.add_callback("on_first_run", autosave_on_first_run)
+    igi_callbacks.add_callback("on_complete", autosave_on_complete)
+end
+
+---------------- AUTOCOMPLETE -------------------
+
+function autocomplete(CACHE)
+    if not enabled_in_mcm("autocomplete") then return end
+    if #igi_subtask.get_ready_to_finish_subtasks(CACHE) == 0 and
+        #igi_subtask.get_running_subtasks(CACHE) == 0 then
+            task_manager.get_task_manager():set_task_completed(CACHE.task_id)
+    end
+end
+
+function autocomplete_on_game_start()
+    igi_callbacks.add_callback("on_task_update", autocomplete)
+end

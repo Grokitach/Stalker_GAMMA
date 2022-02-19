@@ -1,0 +1,247 @@
+local trace_assert = igi_helper.trace_assert
+local extend_list = igi_utils.extend_list
+
+function on_game_start()
+	assert(ui_mcm, "Weird Tasks Framework: MCM not installed. Fuck you.")
+end
+
+OPTION_IDS = {}
+OPTION_DEFAULTS = {}
+
+function add_mcm_option(key, default, name)
+    if not name then name = key end
+    if not OPTION_IDS[key] then OPTION_IDS[key] = name end
+	if default then OPTION_DEFAULTS[name] = default end
+end
+
+local function get_default_option(option_id)
+	return OPTION_DEFAULTS[option_id]
+end
+
+local function get_mcm_option(option_id)
+	return ui_mcm.get("igi_tasks/Options/"..option_id)
+end
+get_options_value = get_mcm_option
+
+local function task_table_value(task_name, prefix, path)
+	local tbl = igi_taskdata.get_task_table(task_name, prefix)
+
+	local cur_tbl = tbl
+	for i=1,#path-1 do
+		cur_tbl = cur_tbl[path[i]]
+		if not cur_tbl then return nil end
+	end
+
+	return cur_tbl[path[#path]]
+end
+
+local function task_table_value_safe(task_name, prefix, path)
+	local val = task_table_value(task_name, prefix, path)
+	if val == nil then return "" end
+	return val
+end
+
+local function set_config_value(task_name, prefix, path, value)
+	igi_taskdata.update_task_config_value(task_name, prefix, path, value)
+end
+
+local function set_config_value_typed(task_name, prefix, path, value)
+	if type(value) == "string" then
+		value = igi_db.parse_values(value)
+	end
+	set_config_value(task_name, prefix, path, value)
+end
+
+function reset_all_tasks(task, prefix)
+	for task_id in pairs(igi_generic_task.TASKS_CACHE) do
+		local task_prefix, task_name = igi_helper.get_task_name(task_id)
+		if task_prefix == prefix and task_name == task then
+			task_manager.get_task_manager():set_task_completed(task_id)
+		end
+	end
+end
+
+local function add_line(widgets)
+	widgets[#widgets+1] = {id = "line", type = "line"}
+end
+
+local function add_title(widgets, name)
+	widgets[#widgets+1] = {id = "ui_mcm_"..name.."_title", type = "title",
+		text = "ui_mcm_igi_tasks_"..name.."_title", align = "c"}
+end
+
+local function add_description(widgets, name)
+	widgets[#widgets+1] = {id = "ui_mcm_"..name.."_desc", type = "desc",
+		text = "ui_mcm_igi_tasks_"..name.."_desc"}
+end
+
+local function add_title_and_description(widgets, name)
+	add_title(widgets, name)
+	add_description(widgets, name)
+end
+
+local function create_disable_widgets(task, prefix)
+	return {
+		{id = "check_disabled", type = "check", hint="igi_tasks_disable_task", val = 1, 
+			curr = {task_table_value, task, prefix, {"disabled"}},
+			functor = {set_config_value, task, prefix, {"disabled"}}
+		}
+	}
+end
+
+local function create_cancel_widgets(task, prefix)
+	return {
+		{id = "cancel_all", type = "check", hint = "igi_tasks_cancel_all", val=1,
+			curr = {function () return false end},
+			functor = {reset_all_tasks, task, prefix}
+		}
+	}
+end
+
+local function create_rewards_modifiers_widgets(task, prefix)
+	local widgets = {}
+	add_title_and_description(widgets, "rewards_modifiers")
+	extend_list(widgets, {
+		{id = "add_money", type = "input", val = 0, hint = "igi_tasks_add_money",
+			curr = {task_table_value_safe, task, prefix, {"immutable_rewards", "completed", "add_money"}},
+			functor = {set_config_value_typed, task, prefix, {"immutable_rewards", "completed", "add_money"}}
+		},
+		{id = "add_goodwill", type = "input", val = 0, hint = "igi_tasks_add_goodwill",
+			curr = {task_table_value_safe, task, prefix, {"immutable_rewards", "completed", "add_goodwill"}},
+			functor = {set_config_value_typed, task, prefix, {"immutable_rewards", "completed", "add_goodwill"}}
+		},
+		{id = "mult_money", type = "input", val = 0, hint = "igi_tasks_mult_money",
+			curr = {task_table_value_safe, task, prefix, {"immutable_rewards", "completed", "mult_money"}},
+			functor = {set_config_value_typed, task, prefix, {"immutable_rewards", "completed", "mult_money"}}
+		},
+		{id = "mult_goodwill", type = "input", val = 0, hint = "igi_tasks_mult_goodwill",
+			curr = {task_table_value_safe, task, prefix, {"immutable_rewards", "completed", "mult_goodwill"}},
+			functor = {set_config_value_typed, task, prefix, {"immutable_rewards", "completed", "mult_goodwill"}}
+		}
+	})
+	return widgets
+end
+
+local function create_static_rewards_widgets(task, prefix)
+	local widgets = {}
+	add_title_and_description(widgets, "static_rewards")
+	extend_list(widgets, {
+		{id = "reward_money", type = "input", val = 0, hint = "igi_tasks_reward_money",
+			curr = {task_table_value_safe, task, prefix, {"immutable_rewards", "completed", "money"}},
+			functor = {set_config_value_typed, task, prefix, {"immutable_rewards", "completed", "money"}}
+		},
+		{id = "reward_goodwill", type = "input", val = 0, hint = "igi_tasks_reward_goodwill",
+			curr = {task_table_value_safe, task, prefix, {"immutable_rewards", "completed", "goodwill", "value"}},
+			functor = {set_config_value_typed, task, prefix, {"immutable_rewards", "completed", "goodwill", "value"}}
+		},
+	})
+	return widgets
+end
+
+local function create_rewards_widgets(task, prefix)
+	local widgets = {}
+	extend_list(widgets, create_static_rewards_widgets(task, prefix))
+	add_line(widgets)
+	extend_list(widgets, create_rewards_modifiers_widgets(task, prefix))
+	return widgets
+end
+
+local function build_task_entry(task, prefix)
+	local widgets = {}
+	add_title(widgets, "task_pack_general")
+	extend_list(widgets, create_disable_widgets(task, prefix))
+	extend_list(widgets, create_cancel_widgets(task, prefix))
+	add_line(widgets)
+	extend_list(widgets, create_rewards_widgets(task, prefix))
+
+	return {id=task, sh=true, text="igi_task_text_"..prefix.."_"..task.."_title", gr=widgets}
+end
+
+local function build_tasks_entries(prefix)
+	igi_taskdata.create_path(prefix)
+	local entries = {}
+	local files = getFS():file_list_open("$game_config$", 
+		"igi_tasks\\tasks\\"..prefix.."\\",
+		1+4+8)
+
+	for i=0,files:Size()-1 do
+		entries[#entries+1] = build_task_entry(files:GetAt(i), prefix)
+	end
+	return entries
+end
+
+local function build_task_pack_entry(meta_section, path)
+	local tbl = {
+		id=meta_section.name,
+		text=meta_section.name,
+		sh=false,
+		gr=build_tasks_entries(meta_section.prefix)
+	}
+	return tbl
+end
+
+local function build_task_packs_entries()
+	local entries = {}
+	local meta_ltx = igi_db.LtxView("pack_meta\\base_meta.ltx")
+
+	for k, meta_section in meta_ltx:iter() do
+		entries[#entries+1] = build_task_pack_entry(meta_section, "")
+	end
+	return entries
+end
+
+local function get_basic_reward_widgets()
+	return {
+		{id = "money_reward_coeff", type = "track", val = 2, min = 0, max = 4, step = 0.1, def = 1},
+		{id = "reward_spread_min", type = "track", val = 2, min = 0, max = 4, step = 0.1, def = 0.8},
+		{id = "reward_spread_max", type = "track", val = 2, min = 0, max = 4, step = 0.1, def = 1.1},
+	}
+end
+
+local function build_option_entries()
+	local entries = {}
+	for _, id in pairs(OPTION_IDS) do
+		entries[#entries+1] = {
+			id = id,
+			type = "check",
+			val = 1,
+			def = get_default_option(id)
+		}
+	end
+	entries[#entries+1] = {
+		id = "reset_all",
+		type = "check",
+		val = 1,
+		curr = {function () return false end},
+		functor = {igi_taskdata.reset_all_custom_tables}
+	}
+	extend_list(entries, get_basic_reward_widgets())
+	return entries
+end
+
+local function reset_tasks_on_new_framework()
+	local TASKS_VERSION = igi_generic_task.TASKS_VERSION
+	local old_version = axr_main.config:r_value("igi_tasks", "tasks_version", 0)
+	if old_version ~= TASKS_VERSION then
+		printf("Updating WTF: ", old_version, "=>", TASKS_VERSION)
+		axr_main.config:w_value("igi_tasks", "tasks_version", TASKS_VERSION)
+		axr_main.config:save()
+		if old_version then
+			igi_taskdata.reset_all_custom_tables()
+		end
+	end
+end
+
+function on_mcm_load()
+	reset_tasks_on_new_framework()
+	igi_mcm_features.add_mcm_options()
+	local op = {id= "igi_tasks", sh=false, gr={
+					{id="Options", sh=true, gr={
+						{id="title", type="slide", link="ui_options_slider_player", text="ui_mcm_igi_tasks_title", size={512,50}},
+					}}
+				}
+			}
+	extend_list(op.gr[1].gr, build_option_entries())
+    extend_list(op.gr, build_task_packs_entries())
+	return op
+end
