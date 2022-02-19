@@ -1,0 +1,322 @@
+-- There are functions that are used by other complex functions
+-- I HAVE NO FUCKING IDEA WHY
+-- but sometimes(!) you can access global functions only through filename.functionname()
+
+local WorldState = igi_world_state.WorldState
+
+function level_object(id)
+	id = tonumber(id)
+	if not id then
+		callstack()
+		trace_assert(nil, "Don't look at me, senpai >//////<\n")
+	end
+	return level.object_by_id(id)
+end
+
+function get_task_name(task_id)
+	return task_id:match(".*task_([^_]*)_(.*)")
+end
+
+function get_subtask_se_obj(entity)
+	local se_obj = WorldState.objects[entity.id]
+	if not se_obj then return end
+	return se_obj:section_name() == entity.section_name and se_obj or nil
+end
+
+function raise(errname, ...)
+	-- Just a small wrapper for error(), meaning this error will
+	-- probably be handled by pcall()
+	trace_dbg(errname, ...)
+	error(errname)
+end
+
+function scale_to_player(a, b)
+	-- will return integer from a to b (or from 1 to a) based
+	-- on player rank
+	local endgame_rank = 8000	-- TODO: move to settings
+	local rank = db.actor:character_rank()
+
+	local function s(section, total_sections)
+		if section == 1 then return 0 end
+		local koeff = (section/total_sections)^2
+		return endgame_rank*koeff
+	end
+
+	local total_sections = b and (b-a+1) or a
+	local offset = b and a-1 or 0
+	for section=total_sections,1,-1 do
+		if rank > s(section, total_sections) then
+			return section + offset
+		end
+	end
+	return b and a or 1
+end
+
+function scale_value(str)
+	local player_tier = igi_helper.get_player_tier()
+	return string.gsub(str, "scalable", player_tier)
+end
+
+function check_common_npc(id)
+	--Parameter is correct | not world map | not player |
+	local npc = id and (id ~= 65535) and (id ~= 0) and WorldState.objects[id]
+	--Exist | is stalker | alive |
+	if not (npc and IsStalker(nil,npc:clsid()) and npc:alive()) then return false end
+	--section_name has "sim_default", not "zombied"
+	if not (string.find(npc:section_name(),"sim_default") and (not string.find(npc:section_name(),"zombied"))) then return false end
+	--Not a special npc
+	if not ((get_object_story_id(id) == nil) and (npc.group_id ~= 65535) and (get_object_story_id(npc.group_id) == nil)) then return false end
+	--Squad
+	local squad = get_object_squad(npc)
+	if not (squad) then return false end
+	--Smart
+	local smart_id = squad.current_target_id
+	local smrt = smart_id and SIMBOARD.smarts[smart_id]
+	local smart = smrt and smrt.smrt
+	local smart_name = smart and smart:name()
+	--Fancy checking smart and squad
+	if (smart_name and simulation_objects.base_smarts[smart_name] == true) then return false end
+	if (squad:get_script_target()) then return false end
+
+	-- printf("GhenTuong: check_common_npc: %s | %s | %s",npc:name(),squad:name(), smart_name)
+	return true
+end
+
+function object_in_world(se_obj)
+	return se_obj and se_obj.parent_id == 65535
+end
+
+function object_in_npc_inventory(obj_id)
+	if not obj_id then return end
+	local obj = WorldState.objects[obj_id]
+	if not obj then return end
+	return igi_helper.check_common_npc(obj.parent_id)
+end
+
+function object_in_player_inventory(obj_data)
+	local obj = WorldState.objects[obj_data.id]
+	if not obj then return end
+	return obj.parent_id == 0
+end
+
+function get_object_level_id(se_obj)
+	if not se_obj then return nil end
+	
+	local lvl_info_obj
+	if object_in_world(se_obj) then
+		lvl_info_obj = se_obj
+	elseif igi_helper.check_common_npc(se_obj.parent_id) then
+		lvl_info_obj = WorldState.objects[se_obj.parent_id]
+	end
+	
+	if not lvl_info_obj then return end
+	local obj_level_id = game_graph():vertex(lvl_info_obj.m_game_vertex_id):level_id()
+	return obj_level_id
+end
+
+function get_object_level(obj)
+	return WorldState.sim:level_name(igi_helper.get_object_level_id(obj))
+end
+
+function get_player_level()
+	return level.name()
+end
+
+function change_goodwill(faction, task_id, task_successful)
+	if not faction then return nil, "gt_goodwill: no faction given" end
+	local task_info = igi_taskdata.get_task_data(task_id)
+	local value
+	if task_successful then 
+		value = task_info.reward and task_info.reward.goodwill or 50
+	else 
+		value = task_info.fail and task_info.fail.goodwill or -50
+	end
+
+	xr_effects.complete_task_inc_goodwill(nil, nil, {value, faction})
+end
+
+function get_faction_enemies(faction)
+	local excluded = {
+		monolith = true,
+		renegade = true,
+		greh = true,
+		isg = true,
+	}
+	local enemies_set = {}
+	local factions = game_relations.factions_table
+	
+	for _, enemy_faction in pairs(factions) do
+		if (game_relations.is_factions_enemies(faction, enemy_faction)) then
+			if not excluded[enemy_faction] then
+				enemies_set[enemy_faction] = true
+			end
+		end
+	end
+	return enemies_set
+end
+
+function release_squad(squad_data)
+	if not (squad_data.id) then printf("GhenTuong: no squad_data.id") return end
+	if not (squad_data.section_name) then printf("GhenTuong: no squad_data.section_name") return end
+	
+	local squad = WorldState.objects[squad_data.id]
+
+	if not (squad) then return end
+	if not (squad:clsid() == clsid.online_offline_group_s) then return end
+	if not (squad:section_name() == squad_data.section_name) then return end
+	
+	printf("GhenTuong: release %s", squad:name())
+	SIMBOARD:remove_squad(squad)
+end
+
+function release_package(pkg_data)
+	if not pkg_data then return end
+	
+	local pkg = WorldState.objects[pkg_data.id]
+	if (pkg and (pkg:section_name() == pkg_data.section_name)) then
+		printf("GhenTuong: release %s| parent_id = %s", pkg:name(), pkg.parent_id)
+		safe_release_manager.release(pkg)
+	end
+end
+
+function release_targets_in_world(target_cache)
+	local handlers = {
+		['package'] = release_package,
+		['squad'] = release_squad,
+	}
+	
+	for _, entity in pairs(target_cache) do
+		local handler = handlers[entity.entity_type]
+		if handler then
+			printf("WTF: Release from world: "..entity.section_name.." with id: "..entity.id)
+			handler(entity)
+		end
+	end
+end
+
+function is_npc_online(id)
+    for i,v in ipairs(db.OnlineStalkers) do 
+        if (v == id) then 
+            return true
+        end
+    end
+end
+
+function is_squad_member_online(se_squad)
+	for k in se_squad:squad_members() do
+		return is_npc_online(k.id)
+	end
+end
+
+function object_exist(obj_data)
+	local obj = WorldState.objects[obj_data.id]
+	return obj and obj:section_name() == obj_data.section_name
+end
+
+function object_not_exist(obj_data)
+	return not igi_helper.object_exist(obj_data)	-- Idk but it can't see object_exist or even gt_object_exist. Fuck lua.
+end
+
+function object_in_player_inv(obj_data)
+	local se_obj = WorldState.objects[obj_data.id]
+	return se_obj and se_obj.parent_id == 0
+end
+
+function get_object_smart(se_obj)
+	if se_obj.smart_id then
+		return SIMBOARD.smarts[se_obj.smart_id].smrt and SIMBOARD.smarts[se_obj.smart_id].smrt:name()
+	end
+
+	for smart_name, data in pairs(SIMBOARD.smarts_by_names) do
+		if se_obj.m_game_vertex_id == data.m_game_vertex_id and 
+				se_obj.m_level_vertex_id == data.m_level_vertex_id then
+			return smart_name
+		end
+	end
+end
+
+function object_hasnt_changed(id, section)
+	local se_obj = WorldState.objects[id]
+	return se_obj and se_obj:section_name() == section
+end
+
+function get_object_location_description(se_obj)
+	return dynamic_news_helper.GetPointDescription(se_obj)
+end
+
+function objects_fetched(obj_data)
+	for k,v in pairs(obj_data) do
+		printf(tostring(k)..": "..tostring(v))
+	end
+
+	local section = obj_data.section_name
+	local actor = db.actor
+	local item = section and actor:object(section)
+	if item then
+		return utils_item.get_amount(db.actor, section, 1) >= obj_data.how_much
+	elseif section and string.find(section, "af_") then
+		return actor:object(section .. "_af_aam")
+		or actor:object(section .. "_af_iam")
+		or actor:object(section .. "_af_aac")
+		or actor:object(section .. "_lead_box")
+	end
+	return false
+end
+
+function is_in_actor_squad(id)
+	if id == 0 then return true end
+	local actor_squad = axr_companions.list_actor_squad_by_id()
+
+	if actor_squad then
+		for i=1,#actor_squad do
+			if (id == actor_squad[i]) then
+				return true
+			end
+		end
+	end
+
+	return false
+end
+
+function do_for_every_target(CACHE, target_name, f, ...)
+	for k, v in pairs(igi_target.get_entities(CACHE)) do
+		if v.target == target_name then
+			if ... then
+				f(..., v, CACHE, k)
+			else
+				f(v, CACHE, k)
+			end
+		end
+	end
+end
+
+
+function trace_dbg(title, ...)
+	if igi_mcm.get_options_value("debug") then
+		printf("WTF DBG: "..title)
+		for k, v in pairs({...}) do
+			if type(v) == "table" then
+				printf(utils_data.print_table(v, k, true))
+			else
+				printf(v ~= nil and v or "nil")
+			end
+		end
+		printf("-------------------------")
+	end
+end
+
+function trace_assert_no_crash(val, err)
+	if not val then
+		local func_name = debug.getinfo(2, "n").name
+		trace_dbg("ASSERTION FAILED: "..func_name, err)
+	end
+	return val
+end
+
+function trace_assert(val, err)
+	if not val then
+		callstack()
+		assert(nil, "WTF: "..err)
+	end
+	return val
+end

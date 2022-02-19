@@ -1,0 +1,264 @@
+-- Object finder functions
+
+local WorldState = igi_world_state.WorldState
+local trace_assert = igi_helper.trace_assert
+local trace_dbg = igi_helper.trace_dbg
+
+function on_game_start()
+	blacklist = igi_db.SectionView("map_config.ltx", "blacklist"):as_set()
+	smart_blacklist = igi_db.SectionView("map_config.ltx", "smart_blacklist"):as_set()
+end
+
+local function is_smart_good(smart_name, smart_level)
+	local in_blacklist = smart_blacklist[smart_name] or
+		(smart_level ~= level.name() and blacklist[smart_level])
+	local is_base = simulation_objects.base_smarts[smart_name]
+
+	local smart_id = SIMBOARD.smarts_by_names[smart_name].id
+	local is_available = simulation_objects.available_by_id[smart_id]
+
+	return is_available and not (is_base or in_blacklist)
+end
+------------
+
+local function object_in_world(se_obj)
+	return se_obj.parent_id == 65535
+end
+
+local function object_in_npc_inventory(se_obj)
+	return igi_helper.check_common_npc(se_obj.parent_id)
+end
+
+local function get_object_level_id(se_obj)
+	local lvl_info_obj = se_obj
+	if not object_in_world(se_obj) then
+		lvl_info_obj = WorldState.objects[se_obj.parent_id]
+	end
+	return WorldState.gg:vertex(lvl_info_obj.m_game_vertex_id):level_id()
+end
+
+local function get_object_level(se_obj)
+	return WorldState.sim:level_name(get_object_level_id(se_obj))
+end
+
+local function get_distance_bounds(str)
+	if not str:find(",") then str = str..","..str end
+	local lower, higher = str:match("(%d+),%s?(%S+)")
+	if higher == "end" then higher = #WorldState.levels_by_distance end
+	return tonumber(lower), tonumber(higher)
+end
+
+local function check_location(se_obj, args)
+	local obj_level = get_object_level(se_obj)
+	if blacklist[obj_level] then return false end
+
+	local dist = WorldState.distance_by_level[obj_level]
+	local lower_bound, higher_bound = get_distance_bounds(args.search_distance)
+	return dist >= lower_bound and dist <= higher_bound
+end
+
+local function enemy_to_handler(se_obj, args)
+	if se_obj.parent_id == 65535 then return end
+	local my_faction = args.enemy_to or get_object_community(db.actor)
+	local npc_faction = get_object_community(WorldState.objects[se_obj.parent_id])
+	return game_relations.is_factions_enemies(my_faction, npc_faction)
+end
+
+local function is_rat(se_squad)
+	local section = se_squad and se_squad:section_name()
+	return string.find(section,"tushkano") or string.find(section,"rat")
+end
+
+local function check_squad_by_args(se_squad, smart, args, factions)
+	
+	if not simulation_objects.is_on_the_same_level(se_squad, smart) then
+		trace_dbg("not same lvl")
+		return false
+	end
+	
+	if se_squad.current_target_id ~= smart.id then
+		trace_dbg("target wrong")
+		return false
+	end
+	
+	if se_squad.current_action ~= 1 or not se_squad.stay_time then
+		trace_dbg("action or stay time")
+		return false
+	end
+	
+	if args.min_num and se_squad:npc_count() < args.min_num then
+		return false
+	end
+	
+	if is_rat(se_squad) or not factions[se_squad.player_id] then
+		trace_dbg("factions sucked")
+		return false
+	end
+	
+	if (not args.include_scripted) and se_squad:get_script_target() then
+		return false
+	end
+	
+	return true
+end
+
+local function add_squads_of_smart(smart_name, args, factions, squads_tbl)
+	local smart = SIMBOARD.smarts_by_names[smart_name]
+	local smart_data = SIMBOARD.smarts[smart.id]
+
+	for sq_id, _ in pairs(smart_data.squads) do
+		local se_squad = WorldState.objects[sq_id]
+		if check_squad_by_args(se_squad, smart_data.smrt, args, factions) then
+			squads_tbl[#squads_tbl + 1] = sq_id
+		end
+	end
+end
+
+function is_smart_location(val)
+	if type(val) ~= "string" then return false end
+	return tonumber(val) or val:find(",")
+end
+
+arg_handlers = {
+	only_enemies = enemy_to_handler,
+}
+local function check_object_by_args(se_obj, args)
+	if not check_location(se_obj, args) then
+		-- igi_helper.trace_dbg("location sucked")
+		return false
+	end
+
+	for k, v in pairs(arg_handlers) do
+		local handler = args[k] and v
+		if handler then
+			if not handler(se_obj, args) then
+				-- igi_helper.trace_dbg(k.." sucked")
+				return false
+			end
+		end
+	end
+	
+	return true
+end
+
+
+local function get_objects_filtered_by_args(objects, args)
+	local filtered = {}
+
+	for _, group in pairs(objects) do
+		for id in pairs(group) do
+			local se_obj = WorldState.objects[id]
+			if check_object_by_args(se_obj, args) then
+				filtered[#filtered+1] = se_obj
+			end
+		end
+	end
+
+	return filtered
+end
+
+function get_objects_by_args(typ, args)
+	local items_pool = get_items(typ, args.search_type)
+	return get_objects_filtered_by_args(items_pool, args)
+end
+
+local function get_items_equal(sections)
+	local items = {}
+	for _, section in pairs(sections) do
+		items[#items+1] = WorldState.objects_by_name[section]
+	end
+	return items
+end
+
+local function get_items_match(sections)
+	local items = {}
+	for o_section, objects in pairs(WorldState.objects_by_name) do
+		for _, section in pairs(sections) do
+			if o_section:match(section) then
+				items[#items+1] = objects
+				break
+			end
+		end
+	end
+	return items
+end
+
+local function get_items_find(sections)
+	local items = {}
+	for o_section, objects in pairs(WorldState.objects_by_name) do
+		for _, section in pairs(sections) do
+			if o_section:find(section) then
+				items[#items+1] = objects
+				break
+			end
+		end
+	end
+	return items
+end
+
+function get_items(sections, search_type)
+	if type(sections) == "string" then
+		sections = igi_db.ini_tables[sections]:as_table()
+	end
+
+	if search_type == 'match' then
+		return get_items_match(sections)
+	elseif search_type == 'find' then
+		return get_items_find(sections)
+	else
+		return get_items_equal(sections)
+	end
+end
+
+
+function get_smarts(where)
+	local smart_list = {}
+	local lower_bound, higher_bound = get_distance_bounds(where)
+
+	for i=lower_bound, higher_bound do
+		for level in pairs(WorldState.levels_by_distance[i]) do
+			for smart_name in pairs(WorldState.smarts_by_level[level]) do
+				if is_smart_good(smart_name, level) then
+					smart_list[#smart_list+1] = smart_name
+				end
+			end
+		end
+	end
+
+	return smart_list
+end
+
+function get_squads_by_args(args, factions)
+	local targets = {}
+	trace_dbg("finder: get squad by args", args, factions)
+
+	if args.smart then
+		add_squads_of_smart(args.smart, args, factions, targets)
+	else
+		for _, smart_name in pairs(get_smarts(args.where)) do
+			add_squads_of_smart(smart_name, args, factions, targets)
+		end
+	end
+
+	return targets
+end
+
+function is_stash_suitable(id, args)
+	local se_obj = WorldState.objects[id]
+	if not check_location(se_obj, args) then
+		return false
+	end
+
+	return true
+end
+
+function get_stashes_by_args(args)
+	local stashes = treasure_manager.stashes
+	local returned_stashes = {}
+	for id, is_not_available in pairs(stashes) do
+		if not is_not_available then
+			returned_stashes[id] = is_stash_suitable(id, args) or nil
+		end
+	end
+	return returned_stashes
+end

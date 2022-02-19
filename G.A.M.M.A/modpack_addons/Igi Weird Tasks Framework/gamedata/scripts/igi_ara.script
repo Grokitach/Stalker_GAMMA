@@ -1,0 +1,158 @@
+local trace_dbg = igi_helper.trace_dbg
+local WorldState = igi_world_state.WorldState
+
+killed_by_player = {}
+is_dead = {}
+ARA_TARGETS = {
+	kill = true,
+	assault = true,
+}
+
+function on_game_start()
+	RegisterScriptCallback("save_state",save_state)
+    RegisterScriptCallback("load_state",load_state)
+	RegisterScriptCallback("squad_on_npc_death", squad_on_npc_death)
+	RegisterScriptCallback("npc_on_hit_callback", npc_on_hit_callback)
+	RegisterScriptCallback("monster_on_hit_callback", npc_on_hit_callback)
+
+	local add_callback = igi_callbacks.add_callback
+	add_callback("entity_on_subtask_status_change", entity_on_subtask_status_change)
+	add_callback("entity_on_complete", entity_on_complete)
+	add_callback("entity_on_first_run", entity_on_first_run)
+	printf("WTF: Arszi Realistic Assassinations loaded.")
+end
+
+local function is_ara()
+	return igi_mcm.get_options_value(igi_mcm.OPTION_IDS.ara)
+end
+
+local function is_around(target_id, radius)
+	local position_of_target = WorldState.objects[target_id].position
+    local position_of_player = db.actor:position()
+	return distance_2d_sqr(position_of_target, position_of_player) < radius
+end
+
+
+function add_squad_to_tables(squad_id, object_data)
+	local squad = WorldState.objects[squad_id]
+	if not object_data.ara_to_kill then object_data.ara_to_kill = {} end
+
+	for member in squad:squad_members() do
+		local mem_id = member.id
+		killed_by_player[mem_id] = killed_by_player[mem_id] or false
+		is_dead[mem_id] = is_dead[mem_id] or false
+		object_data.ara_to_kill[mem_id] = true
+	end
+end
+
+
+function npc_on_hit_callback(npc,amount,local_direction,who,bone_index)
+	if (not npc or not who) then return end
+	if (not npc.id or not who.id) then return end
+
+	if killed_by_player[npc.id] ~= nil then
+		if igi_helper.is_in_actor_squad(who.id) then
+			killed_by_player[npc.id] = true
+		end
+	end
+end
+
+
+function squad_on_npc_death(squad,npc,killer)
+	if (not npc or not killer) then return end
+	if (not npc.id or not killer.id) then return end
+	
+	if killed_by_player[npc.id] ~= nil then
+		is_dead[npc.id] = true
+		if igi_helper.is_in_actor_squad(killer.id) then
+			killed_by_player[npc.id] = true
+		elseif alife_character_community(killer) == alife_character_community(npc) then
+			-- suicide or friendly fire case
+			killed_by_player[npc.id] = is_around(npc.id, 2500)
+		end
+	end
+end
+
+
+function save_state(m_data)
+	m_data.arszi_realistic_killed_by_player = killed_by_player
+	m_data.arszi_realistic_is_dead = is_dead
+end
+
+
+function load_state(m_data)
+	killed_by_player = m_data.arszi_realistic_killed_by_player or {}
+	is_dead = m_data.arszi_realistic_is_dead or {}
+end
+
+
+function is_updated(subtask_data)
+	-- workaround because is_complete may be called before squad_on_death
+	if subtask_data.ara_to_kill then
+		for id in pairs(subtask_data.ara_to_kill) do
+			if not is_dead[id] then return false end
+		end
+	end
+	return true
+end
+
+
+function is_not_killed_by_player(subtask_data)
+	if subtask_data.ara_to_kill then
+		-- false if at least one target from ara_to_kill was hit by player
+		for id in pairs(subtask_data.ara_to_kill) do
+			if killed_by_player[id] then return false end
+		end
+		return true
+	end
+
+	return false
+end
+
+
+local function remove_from_tables(id)
+	-- TimeEvent for every task to have time to update
+	killed_by_player[id] = nil
+	is_dead[id] = nil
+	return true
+end
+
+
+function clear_ara_table(object_data)
+	if object_data.ara_to_kill then
+		for id in pairs(object_data.ara_to_kill) do
+			CreateTimeEvent("ara_remove_from_table", id, 10, remove_from_tables, id)
+		end
+	end
+end
+
+function entity_on_subtask_status_change(entity)
+	if not is_ara() then return	end
+	if not ARA_TARGETS[entity.target] then return end
+	if entity.status ~= igi_subtask.TASK_STATUSES.COMPLETED then return end
+
+	if not is_updated(entity) then
+		entity.status = igi_subtask.TASK_STATUSES.RUNNING
+	end
+
+	if is_not_killed_by_player(entity) then
+		entity.status = igi_subtask.TASK_STATUSES.FAILED
+	end
+end
+
+function entity_on_complete(entity)
+	if not ARA_TARGETS[entity.target] then return end
+	clear_ara_table(entity)
+end
+
+function entity_on_first_run(entity)
+	if not ARA_TARGETS[entity.target] then return end
+
+	if entity.squads then
+		for _, squad_id in pairs(entity.squads) do
+			add_squad_to_tables(squad_id, entity)
+		end
+	else
+		add_squad_to_tables(entity.id, entity)
+	end
+end
