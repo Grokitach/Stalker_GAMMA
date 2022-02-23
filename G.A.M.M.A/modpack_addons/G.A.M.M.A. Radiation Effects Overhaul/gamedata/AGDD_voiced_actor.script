@@ -1,0 +1,441 @@
+--[[
+
+AYYKYU'S VOICED ACTOR FRAMEWORK V1.0
+Russian sound pack compiled and edited by DesmanMetzger
+edits and additonal soundtriggers (thirst/hunger/sleep) by Dhatri
+
+allows you to make your actor speak and react with the use of a simple function which does most of the audio work for you
+
+just place "ayykyu_voiced_actor.actor_speak(file,sound_volume,cooldown,chance,requires_squad,has_priority,ignore_conditionals,is_state)" in your code, provide a correct filename and flags - the function will run through all the rules to make sure the sound should be played and if it succeeds, a cooldown will be applied before the next sound is able to play, to provide natural pauses and to avoid too many sounds going off at the same time
+
+file should be in string format, example: "actor\\pain1"
+you can use math.random() to play randomised sounds, example: "actor\\pain" .. math.random(4)
+
+sound_volume controls how loud the sound should be
+1.0 is normal volume, 0.0 is silent
+
+cooldown value is the time that needs to pass before the next sound can be played
+4000 = 1 second
+
+chance is the probability of this instance of actor_speak() to play its sound, chance/100
+
+requires_squad checks if player has a squad and if they're close enough to "hear" each other
+
+has_priority allows this call to ignore the cooldown
+previously started and on-going voiceline will be stopped
+
+ignore_conditionals allows this call to play even if the actor is talking or is dead
+useful for reaction sounds, like death or pain
+you can add your own conditionals by adding them between the brackets in the line with the check, use "or" between the rules
+
+is_state indicates that this is going to be a state sound
+these sounds use a separate timer and don't interfere with the main sound stream, useful for something that can be interrupted by anything
+
+if you use this file's functions outside of it, don't forget to put "ayykyu_voiced_actor." in front of them, otherwise your engine instance WILL CRASH
+don't add "ayykyu_voiced_actor." if your code is executed here
+
+this file has various debug values and messages to help troubleshoot issues or inconsistencies, remove the "--DEBUG--" parts of lines to enable them
+"printf" logs things to the console, "SetHudMsg" displays them on the screen, you can only have one SetHudMsg active
+
+combat_inertia = 1 --is set later, helps the combat status last for a while after enemies stopped targeting the actor
+DEBUG--local actor_in_combat = "no" --debug value, "remembers" if actor is in combat for later use in HUD messages
+
+------------------------------------------------------------------------------------
+
+Dhatri and Grok's Edits
+
+Now actor will have voice lines related to thirstiness and hunger (associated with HUD icons appearing).
+
+An option, defined just below, will play muffled sounds. If such sounds are not available, replace 
+
+muffle = "m_"
+
+by
+
+muffle = ""
+
+--]]
+
+
+
+muffle = "" -- initiates muffling condition 
+
+function get_muffle_status() -- changes muffle condition of the sound
+    local helmet = (db.actor:item_in_slot(12) or db.actor:get_current_outfit())
+    if helmet then
+        muffle = ""
+    else
+        muffle = ""
+    end
+end
+
+function check_for_weapon(target) --this function checks if an npc has a weapon, prevents unarmed stalkers from counting as enemies, can be used externally
+
+	if IsStalker(target) then --checks if target is human
+		local target_item = target:active_item() --gets their active item
+		if target_item and IsWeapon(target_item) then --checks if the item exists and is a weapon
+			return true 
+		else 
+			return false
+		end
+	else --if an npc is not human, it is a mutant, which means it doesn't need a weapon to attack, so we return true here
+		return true 
+	end
+	
+end	
+
+function is_actor_in_combat() --combat checker, returns true if actor is being attacked by an npc (both stalkers and mutants count), false if not, can be used externally
+	if not combat_inertia then
+		combat_inertia = 1
+	end
+	for id,v in pairs(xr_combat_ignore.fighting_with_actor_npcs) do --gets internal info
+		local npc = db.storage[id] and db.storage[id].object --gets internal info
+		if npc and npc:alive() and check_for_weapon(npc) == true and npc:position():distance_to(db.actor:position())<=100 then --checks if there's an attacking npc, if it is alive, has a weapon (or is a mutant) and if it is close enough
+			--actor_in_combat = "yes, actively targeted" --actor is being targeted right now
+			combat_inertia = time_global() + 10000 --sets the delay of ten seconds to ensure that combat status doesn't drop in case enemies stop targeting the actor for a short time
+			return true --returns true if all conditions are met
+		end
+		if time_global() < combat_inertia then --main combat check failed, so now we check if "inertia" is still there
+			--actor_in_combat = "yes, not actively targeted" --nobody is targeting the actor, but inertia is true
+			return true
+		else --actor is not in combat and inertia has expired
+			--actor_in_combat = "no"
+			return false
+		end
+	end
+ 
+end
+
+function is_actor_in_squad() --squad checker function, can be used externally
+
+	local i,v = next(axr_companions.companion_squads,nil) --gets squad info
+	if ( not(v) or alife_object(v:commander_id()).position:distance_to(db.actor:position())>50 ) then --checks if there are squadmates and if they're in "hearing" distance
+--DEBUG--		printf("actor is not in squad") --there are no teammates or they're too far from the actor
+		return false 
+	else
+--DEBUG--	printf("actor is in squad") --teammates are close enough
+		return true 
+	end
+	
+end
+
+local speaking_cooldown = 0 --is set later
+local state_cooldown = 0 --is set later
+local file_to_say = nil --is set later
+
+function actor_speak(file,sound_volume,cooldown,chance,requires_squad,has_priority,ignore_conditionals,is_state) --player function, plays the sound if all conditions are met
+
+	if is_state == true then has_priority = false end --forces has_priority to be false if this is a state sound
+
+	if not db.actor then return end --this checks if actor exists
+	if is_state == true and time_global() < state_cooldown then return end --checks if this call is meant to play a state sound
+	if is_state == false and has_priority == false and time_global() < speaking_cooldown then return end --this checks for the cooldown, unless has_priority or is_state is true
+	if ignore_conditionals == false and ( db.actor:is_talking() or not db.actor:alive() ) then return end --checks if the actor is talking or is dead, unless ignore_conditionals is true
+	local max_chance = math.random(1,100) --sets the max_chance value to compare chance with
+	if chance < max_chance then return end --does the comparasion
+	if requires_squad == true and is_actor_in_squad() == false then return end 
+	
+	if file_to_say then --makes sure there's a sound to stop
+	file_to_say:stop() --stops whatever was called through this function before
+	end
+	
+--	printf("sound volume: " .. sound_volume) --prints out the volume of the sound to the console log, debug purposes
+	
+	file_to_say = sound_object( file ) --sets the file to play
+	file_to_say:play(db.actor,0,sound_object.s2d) --plays it
+	file_to_say.volume = sound_volume --sets how loud the sound should be
+	
+--	printf("actor sound played: " .. file) --prints out played files to the console log, debug purposes
+	
+	state_cooldown = time_global() + cooldown --applies the state cooldown, so that state sounds obey main cooldowns
+	if is_state == false then
+		speaking_cooldown = time_global() + cooldown --applies the main cooldown
+	end
+	
+end
+
+combat_intensity = 0 --main value that drives the combat status system
+combat_intensity_drain_cooldown = 0 --auxilary value, prevents combat progression from draining constantly, instead it only drains after nothing combat-related happens for some time
+combat_medium_threshold = 500 --the threshold at which combat status switches to it's second phase
+combat_high_threshold = 1500 --the threshold at which combat status switches to it's final third phase (combat_intensity value doesn't stop there and can progress even further, but that won't have any changes)
+
+--intensity dictates how much should we add to the combat status progression
+--intensity_add_limit sets the point after which this action won't add any intensity, uses combat_high_threshold as its "maximum"
+--cooldown tells how much time should we add to the pause before the actor will start "calming down", 100 = approx. one second, capped at ten seconds
+
+--you can also use negative values for intensity and cooldown to reduce them, don't do that with intensity_add_limit though
+
+function add_action_intensity(intensity,intensity_add_limit,cooldown) --universal function for progressing combat phases, can be used externally
+
+	if combat_intensity < ( combat_high_threshold * intensity_add_limit ) then --checks if we can add intensity according to intensity_add_limit
+		combat_intensity = combat_intensity + intensity --adds it
+	end
+	combat_intensity_drain_cooldown = combat_intensity_drain_cooldown + cooldown --adds the cooldown even if we didn't add intensity
+	
+end
+
+function monster_on_death_callback(victim,killer) --adds combat_intensity when a mutant is killed
+	if not combat_intensity then
+		combat_intensity = 1
+	end
+
+	if not db.actor:alive() then return end --don't do anything if actor is dead
+	if not killer then return end --abort the function if there's no killer
+	if killer:id() ~= db.actor:id() then return end --make sure that it's the actor who scored the kill
+	if is_actor_in_combat() == false then return end --auxialry rule, checks if actor is in combat before doing anything (remove the "--" at the start of the line to enable it)
+--	if (not db.actor:see(victim)) then return end --extra condition, makes sure that actor saw the npc die
+
+	if is_actor_in_combat() == true and combat_intensity > combat_high_threshold then --we're in the maxed out state of combat, play the according sound (something almost insane ideally)
+		actor_speak("characters_voice\\player\\" .. muffle .. "kill_confirm_l3_" .. math.random(4),1.0,3500,50,false,false,false,false)
+	elseif is_actor_in_combat() == true and combat_intensity > combat_medium_threshold then --second state, play the sound (cocky, dominant)
+		actor_speak("characters_voice\\player\\" .. muffle .. "kill_confirm_l2_" .. math.random(4),1.0,2000,25,false,false,false,false)
+	elseif is_actor_in_combat() == true then --first state (calm and informative, should also require the a squad)
+		actor_speak("characters_voice\\player\\" .. muffle .. "kill_confirm_l1_" .. math.random(7),1.0,1500,12.5,true,false,false,false)
+	end
+	
+	add_action_intensity(80,1.0,1000)
+	
+end
+
+function npc_on_death_callback(victim,killer) --adds combat_intensity when a human is killed, just go read the previous function for info, it's exactly the same, but for humans
+	if not combat_intensity then
+		combat_intensity = 1
+	end
+
+	if not db.actor:alive() then return end
+	if not killer then return end
+	if killer:id() ~= db.actor:id() then return end
+	if is_actor_in_combat() == false then return end
+--	if (not db.actor:see(victim)) then return end
+
+	if is_actor_in_combat() == true and combat_intensity > combat_high_threshold then
+		actor_speak("characters_voice\\player\\" .. muffle .. "kill_confirm_l3_" .. math.random(4),1.0,3500,75,false,false,false,false)
+	elseif is_actor_in_combat() == true and combat_intensity > combat_medium_threshold then
+		actor_speak("characters_voice\\player\\" .. muffle .. "kill_confirm_l2_" .. math.random(11),1.0,3000,50,false,false,false,false)
+	elseif is_actor_in_combat() == true then
+		actor_speak("characters_voice\\player\\" .. muffle .. "kill_confirm_l1_" .. math.random(7),1.0,1500,25,true,false,false,false)
+	end
+	
+	add_action_intensity(100,1.0,1000)
+	
+end
+
+function monster_on_hit_callback(npc,damage_amount,local_direction,attacker,bone_index) --adds intensity when a mutant is hit by the actor
+
+	if not db.actor:alive() then return end --we don't need this if actor is dead
+	if not attacker then return end --if there's no attacker, stop the function
+	if attacker:id() ~= db.actor:id() then return end --check if it's the actor who scored the hit
+--	if is_actor_in_combat() == false then return end --only add the values if actor is in combat
+	
+	add_action_intensity(25,1.0,100)
+	
+end
+
+function npc_on_hit_callback(npc,damage_amount,local_direction,attacker,bone_index) --adds intensity when a human is hit by the actor, same as the previous previous function
+
+	if not attacker then return end
+	if not db.actor:alive() then return end
+	if attacker:id() ~= db.actor:id() then return end
+--	if is_actor_in_combat() == false then return end
+	
+	add_action_intensity(25,1.0,100)
+	
+end
+
+local combat_check_time = 0 --is set later
+
+
+function actor_on_update(binder,delta) --thinker function, handles conditional sounds
+
+--DEBUG--	SetHudMsg("Combat Intensity: " .. combat_intensity .. ", Cooldown: " .. combat_intensity_drain_cooldown .. ", In Combat: " .. actor_in_combat) --draws current combat info
+
+	if not db.actor:alive() then return end --stops the thinker from thinking if actor is dead
+	
+	if time_global() > combat_check_time then --checks if actor is in combat every five seconds, is used for consistency with combat detection
+		is_actor_in_combat()
+		combat_check_time = time_global() + 5000 --adds five seconds of delay
+	end	
+	
+	if combat_intensity_drain_cooldown == 0 and combat_intensity > 0 then --drains combat intensity if there's no cooldown
+		combat_intensity = combat_intensity - 1
+	end
+	if combat_intensity_drain_cooldown > 0 then --constantly drains the cooldown value
+		combat_intensity_drain_cooldown = combat_intensity_drain_cooldown - 2
+	end
+	
+	combat_intensity = clamp(combat_intensity,0,combat_high_threshold * 2) --keeps combat intensity value in bounds, it shouldn't go into negatives nor overshoot the max cap
+	combat_intensity_drain_cooldown = clamp(combat_intensity_drain_cooldown,0,1000) --same thing but for the cooldown
+	
+	
+	local hurt_volume = ( 1 - db.actor.health - (db.actor.health * 0.5) ) --sets the volume of the next hurt sound, gets louder the less health the actor has
+	local hurt_pause = 10000 * db.actor.health --sets the pause before the next hurt sound, it gets shorter the less health the actor has
+	local sprint_volume = ( 1 - db.actor.power - (db.actor.power * 0.5) ) --sets the volume of the next exhaustion sound, gets louder the less stamina the actor has
+	local sprint_pause = 3500 * db.actor.power --sets the pause before the next exhaustion sound, it gets shorter the less stamina the actor has
+	local psy_volume = ( 1 - arszi_psy.get_psy_health() - (arszi_psy.get_psy_health() * 0.5) ) --sets the volume of the next psy sound, gets louder the less psy-health the actor has
+	local sanity_pause = ( 7000 * arszi_psy.get_psy_health() ) --sets the pause before the next psy sound, it gets shorter the less psy-health the actor has	
+	local fear_pause = ( 20000 * arszi_psy.get_psy_health() ) --sets the pause before the next psy sound, it gets shorter the less psy-health the actor has	
+	local thirst_volume = ( actor_status_thirst.get_water_deprivation(true)* 0.2 )
+	local thirst_pause = 30000 / (actor_status_thirst.get_water_deprivation(true)*0.5 )
+	local satiety_volume = ( 1 - db.actor:cast_Actor():conditions():GetSatiety() - (db.actor:cast_Actor():conditions():GetSatiety()* 0.5) )
+	local satiety_pause = 48000 * db.actor:cast_Actor():conditions():GetSatiety()
+	local sleep_volume = (actor_status_sleep.get_sleep_deprivation(true)*0.2 )
+	local sleep_pause = 40000 / (actor_status_sleep.get_sleep_deprivation(true)*0.5 )
+	hurt_pause = clamp(hurt_pause,10000,12000) -- limits the hurt_pause value so the pause between sounds isn't too short or too long
+	sprint_pause = clamp(sprint_pause,3500,4000) -- limits the sprint_pause value so the pause between sounds isn't too short or too long
+	sanity_pause = clamp(sanity_pause,7000,8000) 
+	fear_pause = clamp(fear_pause,20000,25000) -- limits the psy_pause value so the pause between sounds isn't too short or too long
+	thirst_pause = clamp(thirst_pause,30000,60000) -- new thirst clamp 
+	satiety_pause = clamp(satiety_pause,96000,108000) -- new satiety clamp, set to long rn, more testing and soundcarpet needed
+	sleep_pause = clamp(sleep_pause,40000,80000)
+	
+	--state sounds are played in their own priority order
+	--they are checked one by one and the next state sound will attempt to play only if conditions for the previous one weren't met
+	
+	if db.actor.health < 0.25 and hurt_volume > 0 then --critically hurt state sound has the highest priority and will always play over any other state sound
+		actor_speak("characters_voice\\player\\" .. muffle .. "hurt_bad_" .. math.random(20),hurt_volume * 0.66,hurt_pause,100,false,false,false,true) --plays the critically wounded sound
+	
+	elseif arszi_psy.get_psy_health() < 0.4 and psy_volume > 0 then --new citically psy-hurt sound 
+		actor_speak("characters_voice\\player\\" .. muffle .. "sanity_" .. math.random(9),psy_volume,sanity_pause,2000,false,false,false,true)	
+	
+	elseif arszi_psy.get_psy_health() < 1.0 and psy_volume > 0 then --new psy-hurt sound (weak psy)
+		actor_speak("characters_voice\\player\\" .. muffle .. "fear_" .. math.random(7),psy_volume,fear_pause,100,false,false,false,true) --plays the psy wounded sound
+	
+	elseif db.actor.power < 0.35 and sprint_volume > 0 and hurt_volume < sprint_volume and hurt_pause > sprint_pause then --exhaustion state will only play if it has both longer pause and higher volume than the hurt sound
+		actor_speak("characters_voice\\player\\" .. muffle .. "exhausted_" .. math.random(62),sprint_volume,sprint_pause,100,false,false,false,true) --plays the exhausted sound
+	
+	elseif db.actor.health < 0.75 and hurt_volume > 0 then --normal hurt state will play if everything else fails to meet the conditions
+		actor_speak("characters_voice\\player\\" .. muffle .. "hurt_" .. math.random(13),hurt_volume,hurt_pause,100,false,false,false,true) --plays the wounded sound
+	
+	elseif actor_status_thirst.get_water_deprivation(true) > 0 and thirst_volume > 0 then 
+		actor_speak("characters_voice\\player\\" .. muffle .. "thirst_" .. math.random(7),thirst_volume,thirst_pause,100,false,false,false,true)
+	
+	elseif db.actor:cast_Actor():conditions():GetSatiety() < 0.6 and satiety_volume > 0 then 
+		actor_speak("characters_voice\\player\\" .. muffle .. "hunger_" .. math.random(3),satiety_volume,satiety_pause,100,false,false,false,true) -- new satiety sound call, adjust filename and corresponding math factor
+	
+	elseif actor_status_sleep.get_sleep_deprivation(true) > 0 and sleep_volume > 0 then
+		actor_speak("characters_voice\\player\\" .. muffle .. "tired_" .. math.random(3),sleep_volume,sleep_pause,100,false,false,false,true)
+	
+	end
+
+end
+
+local hit_timer1 = 0 --this little fella will help us prevent pain sounds from playing non-stop in damaging areas
+local last_health = 1 --notes down the last health value between instances of area damage
+
+function actor_on_before_hit(hitinfo,bone_id,flags) --damage function, plays pain sounds (PLEASE DON'T PUT HIT SOUNDS HERE, CHARACTER PAIN ONLY)
+
+	if not db.actor:alive() then return end --don't play pain sounds if actor is already dead
+	
+	if not ( hitinfo and hitinfo.type and hitinfo.power ) then return end --filters out info-less hits
+	if ( hitinfo.type == hit.radiation or hitinfo.type == hit.telepatic ) then return end --filters out radiation and psi damage
+	
+	--all the code related to fixing area damage is pretty much spaghett, I'm honestly way too tired of this shit
+	
+	if time_global() > hit_timer1 then --prevents too many pain sounds from playing in a short succession
+		if last_health < db.actor.health then last_health = ( db.actor.health - 0.0001 ) end --if player's health value is higher than whatever we last noted down - reset it
+		local anims = {"hit_front","hit_front_left","hit_front_right"} --a table of camera animations for hit punch
+		if (hitinfo.type == hit.burn or hitinfo.type == hit.light_burn or hitinfo.type == hit.chemical_burn) and (last_health - db.actor.health) >= 0.1 then --this checks for a specific threshold for "area" damage types
+			if db.actor.health > 0.5 then --checks if the actor is over 50% of their full health
+				actor_speak("characters_voice\\player\\" .. muffle .. "pain_" .. math.random(13),1.0,1000,100,false,true,true,false)
+			else
+				actor_speak("characters_voice\\player\\" .. muffle .. "pain_bad_" .. math.random(13),1.0,1000,100,false,true,true,false)
+			end
+			level.add_cam_effector( "camera_effects\\" .. anims[math.random(#anims)] .. ".anm", math.random(447555, 447999), false, "" ) --if you use a generic camera punch effect, put it here
+			last_health = db.actor.health --saves player's health value for later use
+			hit_timer1 = time_global() + 1000 --sets the delay of one second before the next pain sound can be played if the damage type is usable as an area effect
+		elseif (hitinfo.type == hit.shock or hitinfo.type == hit.strike or hitinfo.type == hit.wound or hitinfo.type == hit.fire_wound or hitinfo.type == hit.explosion or hitinfo.type == hit.wound_2) then --this is for every other "non-area" damage type
+			if db.actor.health > 0.5 then 
+				actor_speak("characters_voice\\player\\" .. muffle .. "pain_" .. math.random(13),1.0,1000,100,false,true,true,false)
+			else
+				actor_speak("characters_voice\\player\\" .. muffle .. "pain_bad_" .. math.random(13),1.0,1000,100,false,true,true,false)
+			end
+--			level.add_cam_effector( "camera_effects\\" .. anims[math.random(#anims)] .. ".anm", math.random(447555, 447999), false, "" ) --if you use a generic camera punch effect, put it here
+			hit_timer1 = time_global() + 125 --sets the delay of 1/8th of a second before the next pain sound can be played if the damage type is only used in hits
+		end
+	end
+	
+--	level.add_pp_effector("amk_shoot.ppe",447554,false) --if you use a generic screen flash effect, put it here
+	
+	if is_actor_in_combat() and ( hitinfo.type == hit.fire_wound or hitinfo.type == hit.wound ) then --if actor is in combat and was hit by a human or by a mutant, add combat intensity
+		add_action_intensity(50,0.5,200)		
+	end
+	
+end
+
+function actor_on_before_death(whoID,flags) --death function, plays death sounds (DEATH SCREAMS AND WHELPS ONLY, NO BODY FALLING SOUNDS OR ANYTHING ELSE)
+
+	actor_speak("characters_voice\\player\\" .. muffle .. "death_" .. math.random(5),1.0,9999,100,false,true,true,false)
+	
+end
+
+local already_commented_this_jam = false --marker value, tells the code that this jam was already commented on
+
+function actor_on_weapon_jammed(wpn) --plays responses to weapon jams
+
+	if already_commented_this_jam == true then return end --don't attempt to play the sound if it has been processed already
+	
+	already_commented_this_jam = true --marks that we already tried to respond to this jam
+
+	if is_actor_in_squad() == true then --if actor is in a squad, call the speaker function with slightly different values
+		actor_speak("characters_voice\\player\\" .. muffle .. "gun_jam_" .. math.random(7),1.0,2000,100,true,false,false,false)
+		add_action_intensity(30,0.5,125)
+	else
+		actor_speak("characters_voice\\player\\" .. muffle .. "gun_jam_" .. math.random(6),1.0,2000,50,false,false,false,false)
+		add_action_intensity(35,0.5,150)
+	end
+	
+end
+
+function actor_on_weapon_reload(wpn,ammo_total) --calls out reloads
+
+	already_commented_this_jam = false --clear the marker, actor is fixing the jam
+
+	if is_actor_in_combat() == true then --only plays reload shouts if actor is in combat and has a squad
+		actor_speak("characters_voice\\player\\" .. muffle .. "reloading_" .. math.random(7),1.0,1500,75,true,false,false,false)
+		add_action_intensity(40,0.5,175)
+	end
+	
+end
+
+local actor_weapon = 0 --is set later
+local actor_weapon_name = "none" --is set later
+local actor_weapon_state = 0 --is set later
+local next_throw_callout = 0 --is set later
+
+function on_key_release(key) --grenade throw callout function
+
+	if time_global() < next_throw_callout then return end --checks for the grenade throw pause
+
+	if( ( key == DIK_keys["MOUSE_1"] ) or ( key == DIK_keys["MOUSE_2"] ) ) then --only runs if LMB (auto-throw) or RMB (regulated throw) is pressed
+		actor_weapon = db.actor:active_item() --gets whatever weapon actor is currently using
+		if not actor_weapon then return end --prevents the code from running if there's no weapon, it'll cause an engine crash otherwise
+		actor_weapon_name = actor_weapon:name() --gets the weapon name
+		actor_weapon_state = actor_weapon:get_state() --gets what the weapon is doing right now
+		if 
+		( actor_weapon_state == 5 or actor_weapon_state == 6 or actor_weapon_state == 7 or actor_weapon_state == 1 ) --the weapon is being: pin-pulled, thrown, "reloaded"
+		and	
+		( string.find( actor_weapon_name, "grenade_rgd" ) or string.find( actor_weapon_name, "grenade_f" ) or string.find( actor_weapon_name, "grenade_gd" ) ) --the list of valid nades for the callouts (I'd do a table but I don't really know how they work in this engine and I'm not feeling like spending time on that)
+		then
+			next_throw_callout = time_global() + 5000 --sets the pause of five seconds before the next callout
+			actor_speak("characters_voice\\player\\" .. muffle .. "grenade_throw_" .. math.random(9),1.0,1250,100,true,false,false,false)
+			add_action_intensity(75,0.5,500)
+		end	
+--DEBUG--		SetHudMsg("Weapon Name: " .. actor_weapon_name .. ", Weapon State: " .. actor_weapon:get_state()) --displays what weapon is the actor using and at what state when LMB or RMB is released
+	end
+
+end
+
+function on_game_start() --lets the engine know we want these function to run when certain things happen
+	RegisterScriptCallback( "actor_on_update", actor_on_update ) --runs every tick
+	RegisterScriptCallback( "actor_on_update", get_muffle_status)
+	RegisterScriptCallback( "actor_on_before_hit", actor_on_before_hit ) --runs right before the actor gets damaged
+	RegisterScriptCallback( "actor_on_before_death", actor_on_before_death ) --runs right before the actor dies
+	RegisterScriptCallback( "actor_on_weapon_jammed", actor_on_weapon_jammed ) --runs when actor's weapon jams
+	RegisterScriptCallback( "actor_on_weapon_reload", actor_on_weapon_reload ) --runs when actor reloads their weapon
+	RegisterScriptCallback( "on_key_release", on_key_release ) --runs when any key is released
+	RegisterScriptCallback( "npc_on_death_callback", npc_on_death_callback ) --runs when a human (NOT ACTOR) dies
+	RegisterScriptCallback( "monster_on_death_callback", monster_on_death_callback ) --runs when a mutant dies
+	RegisterScriptCallback( "npc_on_hit_callback", npc_on_hit_callback ) --runs when a human (NOT ACTOR) is hit
+	RegisterScriptCallback( "monster_on_hit_callback", monster_on_hit_callback ) --runs when a mutant is hit
+	
+end
