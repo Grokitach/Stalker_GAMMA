@@ -374,35 +374,46 @@ function on_game_start()
 end
 
 function get_stats_value(obj, sec, gr, stat)
-
-	prepare_stats_table()
-	
-	if type(gr) == "string" then
-		gr = stats_table[gr]
-	end
-	if (not gr) then
-		return
-	end
-	
-	local sect = gr.section and SYS_GetParam(0, sec, gr.section) or sec
-	
-	local value = gr.value_functor and get_stats_func_value(obj, sec, unpack(gr.value_functor))
-	if (not value) then
-		value = utils_item.get_param(sect, obj and obj:id(), stat, (gr.typ or "float"), true)
-	end
-	
-	if obj and value and gr.condition then
-        if full_value == 1 then
-		    value = value 
-            printf("value displayed should be max")
+    prepare_stats_table()
+    local group
+        if type(gr) == "string" then
+            group = gr
         else
-            value = value * obj:condition()
+            for k, v in pairs(stats_table) do
+                for k1, v1 in pairs(v) do
+                    if gr == v1 then
+                        group = k
+                        break
+                    end
+                end
+            end
         end
-	end
-	
-	return (value ~= 0) and value
+    
+    if type(gr) == "string" then
+        gr = stats_table[gr]
+    end
+    if (not gr) then
+        return
+    end
+    
+    local sect = gr.section and SYS_GetParam(0, sec, gr.section) or sec
+    
+    local value = gr.value_functor and get_stats_func_value(obj, sec, unpack(gr.value_functor))
+    if (not value) then
+        value = utils_item.get_param(sect, obj and obj:id(), stat, (gr.typ or "float"), true)
+    end
+    
+    if obj and value and gr.condition then
+          if full_value == 1 then
+            value = group == "outfit" and value / obj:condition() or value
+            printf("value displayed should be max")
+          else
+            value = group == "outfit" and value or value * obj:condition()
+          end
+    end
+    
+    return (value ~= 0) and value
 end
-
 
 
 
