@@ -29,6 +29,7 @@ All your base are belong to us! (⌐■_■)
 local ini_eff = {}
 enable_animations = true
 mutant_loot_mod = true
+local ea_debug = false
 ini_eff = ini_file("items\\items\\animations_settings.ltx")
 local active_slot,anim_exist_tm,wpn,item_usage_snd,monster_usage_snd,item,anim_use_time,obj_m,used_monster = nil
 used_item,ea_flag,fake_monster,det_active,anim_section = nil
@@ -140,6 +141,7 @@ function loadsettings()
 	if ui_mcm then -- here we test to make sure ui_mcm exists before trying to call it's get function.
 		enable_animations = ui_mcm.get("EA_settings/enable_animations")
 		mutant_loot_mod = ui_mcm.get("EA_settings/mutant_loot")
+		ea_debug = ui_mcm.get("EA_settings/ea_debug")
 		if enable_animations == false then
 			mutant_loot_mod = false
 			ui_mcm.set("EA_settings/mutant_loot", false)
@@ -243,9 +245,21 @@ function anim_manager_monster()
 	CreateTimeEvent("ea_anim_stoper", "stop_my_monster_anim", anim_exist_tm, stop_my_monster_anim)
 end
 
+local failure_timer = 0
+local fdda_error_snd = sound_object(ini_eff:r_string_ex("fdda_error_snd", "snd"))
 function actor_on_update()
-	if db.actor:active_slot() ~= 0 or db.actor:active_detector() then
+	failure_timer = failure_timer + (device().time_delta/17)
+	if ea_debug then printf("update = "..failure_timer) end
+	if (db.actor:active_slot() ~= 0 or db.actor:active_detector()) and (failure_timer < 100) then
 		return
+	elseif ea_debug and (failure_timer >= 100) then
+		fdda_error_snd:play(db.actor, 0, sound_object.s2d)
+		printf("hide weapons for anim failed")
+		printf(used_item  or (used_monster and used_monster:section())  or "anim find ERROR")
+		printf(anim_section or "NO ANIM SECTION FOUND")
+		level.enable_input()
+		game.only_allow_movekeys(false)
+		actor_menu.set_msg(1, "PLEASE EXIT THE GAME AND SEND LOG FILE TO FEEL_FRIED",5)
 	end
 	local anim_section_hud = nil
 	if used_monster then
@@ -253,8 +267,10 @@ function actor_on_update()
 		anim_section_hud = "item_ea_harv_" .. ( wpn or knife_model ) .. "_hud"
 		start_anim(anim_section_hud)
 		anim_manager_monster()
+		failure_timer = 0
 		return
 	end
+	failure_timer = 0
 	anim_section_hud = anim_section .. "_hud"
 	anim_section = nil
 	start_anim(anim_section_hud)
