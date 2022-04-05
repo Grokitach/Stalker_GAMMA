@@ -1,0 +1,429 @@
+--[[
+	scheme_type: generic
+	Author: Alundaio
+	Original concept: Chugai
+--]]
+
+----------------------------------------------------------------------------------------------------------------------
+--	—хема патруль дл€ reach_task_location.
+----------------------------------------------------------------------------------------------------------------------
+local formations = {
+										 { dir = vector ():set (0.7, 0, -.5), dist = 1.2 },
+										 { dir = vector ():set (-0.7, 0, -.5), dist = 1.2 },
+										 { dir = vector ():set (0.4, 0, -1), dist = 2.4 },
+										 { dir = vector ():set (-0.4, 0, -1), dist = 2.4 },
+										 { dir = vector ():set (0.7, 0, -1), dist = 3.6 },
+										 { dir = vector ():set (-0.7, 0, -1), dist = 3.6 },
+										 { dir = vector ():set (0.7, 0, -1), dist = 4.8 },
+										 { dir = vector ():set (-0.7, 0, -1), dist = 4.8 },
+										 { dir = vector ():set (0.7, 0, -1), dist = 6 },
+										 { dir = vector ():set (-0.7, 0, -1), dist = 6 },
+										 { dir = vector ():set (0.7, 0, -1), dist = 7.2 },
+										 { dir = vector ():set (-0.7, 0, -1), dist = 7.2 },
+										 { dir = vector ():set (0.7, 0, -1), dist = 8.4 },
+										 { dir = vector ():set (-0.7, 0, -1), dist = 8.4},
+										 { dir = vector ():set (0.7, 0, -1), dist = 9.6 },
+										 { dir = vector ():set (-0.7, 0, -1), dist = 9.6}
+										 }
+
+
+local function isempty(s)
+  	return s == nil or s == ''
+end
+
+local function get_npc_command(npc)
+	local squad = get_object_squad(npc)
+	if not (squad) then 
+		return npc:level_vertex_id(), npc:direction()
+	end 
+	local c_id = squad:commander_id()
+	local commander = db.storage[c_id] and db.storage[c_id].object
+	if not (commander) then 
+		return npc:level_vertex_id(), npc:direction()
+	end
+
+	local dir = commander:direction()
+	local pos = vector():set(0, 0, 0)
+	local vertex_id = commander:location_on_path(5, pos)
+	if level.vertex_position(vertex_id):distance_to(npc:position()) > 5 then
+		vertex_id = commander:level_vertex_id()
+	end	
+
+	dir.y = 0
+	dir:normalize()
+
+	local id = npc:id()
+	local _index = 1
+	for k in squad:squad_members() do
+		if (k.id == id) then 
+			break
+		elseif (k.id ~= c_id) then
+			_index = _index + 1
+		end
+	end
+	
+	if isempty(formations[_index]) then
+		return npc:level_vertex_id(), npc:direction()
+	else
+		local dir_s = formations[_index].dir
+		local dist_s = formations[_index].dist
+
+		local angle = yaw_degree(dir_s, vector():set(0, 0, 1))
+		local vvv = vector_cross(dir_s, vector():set(0, 0, 1))
+		if vvv.y < 0 then
+			angle = -angle
+		end
+	
+		dir_s = vector_rotate_y(dir, angle)
+
+		local d = 2
+		local vertex = level.vertex_in_direction(level.vertex_in_direction(vertex_id, dir_s, dist_s), dir, d)
+
+		return vertex, dir
+	end
+end 
+
+class "evaluator_reached_task_location" ( property_evaluator )
+function evaluator_reached_task_location:__init( name, storage ) super ( nil, name )
+	self.st = storage
+end
+
+function evaluator_reached_task_location:evaluate()
+	if not (self.object:alive()) then
+		return false 
+	end 
+
+	local sim = alife()
+	local se_obj = sim:object(self.object:id())
+	if not (se_obj) then 
+		return false 
+	end 
+	
+	local squad = se_obj.group_id and se_obj.group_id ~= 65535 and sim:object(se_obj.group_id)
+	if (squad) then 
+		local target = squad.assigned_target_id and sim:object(squad.assigned_target_id)
+		if not (target) then
+			return true
+		end  
+		return not target:am_i_reached(squad)
+	end
+	local smart = se_obj.m_smart_terrain_id and se_obj.m_smart_terrain_id ~= 65535 and sim:object(se_obj.m_smart_terrain_id)
+	if not (smart and smart:clsid() == clsid.smart_terrain) then 
+		return false 
+	end
+
+	return not smart_terrain.arrived_to_smart(se_obj, smart)
+end
+
+--------------------------------------------------------------------------------------------------------------
+class "action_reach_task_location" (action_base)
+function action_reach_task_location:__init(name,storage) super (nil,name)
+	self.st = storage
+end
+function action_reach_task_location:initialize()
+	action_base.initialize( self )
+
+	self.object:set_desired_direction()
+	self.object:inactualize_patrol_path()
+	self.object:set_body_state(move.standing)
+	self.object:set_detail_path_type(move.line)
+	self.object:set_mental_state(anim.free)
+	self.object:set_movement_selection_type(game_object.alifeMovementTypeMask)
+	self.object:set_movement_type(move.walk)
+	self.object:set_path_type(game_object.game_path)
+	self.object:set_sight(look.path_dir,nil,0)
+	
+	local best_weapon = self.object:best_weapon()
+	if (best_weapon) then
+		self.object:set_item(object.idle, best_weapon)
+	end
+end
+
+function action_reach_task_location:execute()
+	action_base.execute(self)
+	
+	local sim = alife()
+	local se_obj = sim:object(self.object:id())
+	if not (se_obj) then 
+		return 
+	end 
+	
+	local squad = se_obj.group_id and se_obj.group_id ~= 65535 and sim:object(se_obj.group_id)
+
+	if (squad) then
+		if (squad:commander_id() == self.object:id() or not (db.storage[squad:commander_id()] and db.storage[squad:commander_id()].object))then
+			self:commander_execute(squad)
+		else
+			self:soldier_execute(squad)
+		end
+	else 
+		self:single_execute(se_obj)
+	end
+end
+
+function action_reach_task_location:finalize()
+	self.object:set_movement_selection_type(game_object.alifeMovementTypeRandom)
+	action_base.finalize(self)
+end
+
+function action_reach_task_location:single_execute(se_obj)
+	local npc = self.object 
+	
+	npc:set_mental_state(anim.free)
+	npc:set_movement_type(move.walk)
+	
+	local smart = se_obj.m_smart_terrain_id and se_obj.m_smart_terrain_id ~= 65535 and alife_object(se_obj.m_smart_terrain_id)
+	if (smart == nil or npc:is_talking()) then
+		npc:set_movement_type(move.stand)
+		return 
+	end 
+	
+	npc:set_sight(look.path_dir,nil,0)
+	local pos, lv_id, gv_id = smart:get_location()
+	if (npc:game_vertex_id() ~= gv_id) then
+		npc:set_path_type(game_object.game_path)
+		npc:set_dest_game_vertex_id(gv_id)
+	else
+		npc:set_path_type(game_object.level_path)
+		utils_obj.send_to_nearest_accessible_vertex(npc,lv_id,"xr_reach_task:3")
+		npc:set_desired_position(pos)
+	end
+end
+
+function action_reach_task_location:fake_target(squad)
+	
+	if (self.st.timer and time_global() < self.st.timer) then 
+		return 
+	end
+	self.st.timer = nil 
+	
+	local npc = self.object
+	if (npc:path_type() ~= game_object.level_path) then 
+		npc:set_path_type(game_object.level_path)
+	end
+	
+	if not (self.st.lvid) then 
+		local new_vid = utils_obj.find_random_cover(npc,npc:position(),1,15)
+		if (new_vid) then 
+			npc:clear_animations()
+			npc:set_body_state(move.standing)
+			npc:set_detail_path_type( move.line )
+			npc:set_mental_state(anim.free)
+			npc:set_movement_type(move.walk)
+			npc:set_sight(look.path_dir,nil,0)
+			self.st.lvid = utils_obj.send_to_nearest_accessible_vertex(npc,new_vid)
+		end
+		return
+	elseif (npc:level_vertex_id() ~= self.st.lvid) then 
+		self.st.lvid = utils_obj.send_to_nearest_accessible_vertex(npc,self.st.lvid)
+		return
+	end
+	
+	local bw = npc:best_weapon()
+	if (bw and IsWeapon(bw)) then
+		npc:set_item(object.idle, bw)
+	end
+		
+	if (state_mgr_weapon.weapon_locked(npc)) then 
+		return 
+	end
+	
+	self.st.lvid = nil
+	
+	self.st.animation = self.st.animation or state_mgr_animation.animation(npc, { animstate = { states = {anim_marker = nil } } }, "state_mgr_animation_list")
+	
+	local anims = {"idle","hide","idle_chasovoy","caution"}
+	local state = anims[math.random(#anims)]
+	
+	self.st.animation:set_state(nil,true)
+	self.st.animation:set_control()	
+	self.st.animation:set_state(state)
+	self.st.animation:set_control()
+	
+	local dir = npc:direction()
+	npc:set_sight(look.direction,vector():set(-dir.x,-dir.y,-dir.z))
+	
+	self.st.timer = time_global()+math.random(10000,35000)
+end 
+
+function action_reach_task_location:commander_execute(squad)
+	local npc = self.object
+	
+	if (npc:is_talking()) then 
+		npc:set_movement_type(move.stand)
+		return
+	end 
+	
+	if not (squad.assigned_target_id) then 
+		return self:fake_target(squad) -- this is for squads who can't find open smart
+	end
+	
+	local squad_target = simulation_objects.get_server_entity(squad.assigned_target_id)
+	if squad_target == nil and squad:get_script_target() ~= nil then
+	 	squad_target = alife_object(squad.assigned_target_id)
+	end
+	
+	if (squad_target == nil) then 
+		npc:set_movement_type(move.stand)
+		return
+	end
+	
+	npc:set_sight(look.path_dir,nil,0)
+	
+	local pos, lv_id, gv_id = squad_target:get_location()
+	if npc:game_vertex_id() ~= gv_id then
+		npc:set_path_type(game_object.game_path)
+		npc:set_dest_game_vertex_id(gv_id)
+	else
+		npc:set_path_type(game_object.level_path)
+		utils_obj.send_to_nearest_accessible_vertex(npc,lv_id,"xr_reach_task:2")
+		npc:set_desired_position(pos)
+	end
+	
+	if (character_community(npc) ~= "zombied") then
+		if (xr_conditions.surge_started()) then
+			if not(db.storage[npc:id()].surge_timer) then
+				db.storage[npc:id()].surge_timer = time_global() + math.random(3000,10000)
+			end
+			if (db.storage[npc:id()].surge_timer and time_global() > db.storage[npc:id()].surge_timer) then
+				npc:set_mental_state(anim.panic)
+			else
+				npc:set_mental_state(anim.danger)
+			end
+			npc:set_movement_type(move.run)
+			return
+		else
+			db.storage[npc:id()].surge_timer = nil
+		end
+
+		local rush_to_target
+		if (squad_target:clsid() == clsid.online_offline_group_s) then
+			rush_to_target = true
+		elseif (squad_target:clsid() == clsid.smart_terrain and SIMBOARD.smarts[squad_target.id] and SIMBOARD.smarts[squad_target.id].population > 0) then
+			if (squad.player_id == "dolg" and squad_target.props and squad_target.props.freedom > 0)
+			or (squad.player_id == "freedom" and squad_target.props and squad_target.props.dolg > 0) then
+				rush_to_target = true
+			end
+		end
+	end
+
+	if squad.rush_to_target ~= nil then
+		rush_to_target = squad.rush_to_target
+	end
+
+	if (rush_to_target) then
+		npc:set_movement_type(move.run)
+		if (squad_target.position:distance_to_sqr(npc:position()) <= 10000) then
+			npc:set_mental_state(anim.danger)
+		else
+			npc:set_mental_state(anim.free)
+		end
+	else
+		npc:set_movement_type(move.walk)
+		npc:set_mental_state(anim.free)
+	end
+end
+
+function action_reach_task_location:soldier_execute(squad)
+
+	if not (squad.assigned_target_id) then 
+		return self:fake_target(squad) -- this is for squads who can't find open smart
+	end
+	
+	local npc = self.object
+	
+	local commander = db.storage[squad:commander_id()] and db.storage[squad:commander_id()].object or level.object_by_id(squad:commander_id())
+	if not (commander) then
+		npc:set_movement_type(move.stand)
+		return 
+	end
+	
+	if (commander:movement_type() == move.stand) then
+		npc:set_movement_type(move.stand)
+		return
+	end
+	
+	local squad_target = simulation_objects.get_server_entity(squad.assigned_target_id)
+	if squad_target == nil and squad:get_script_target() ~= nil then
+		squad_target = alife_object(squad.assigned_target_id)
+	end
+
+	local lvid,desired_direction = get_npc_command(npc)
+
+	if desired_direction and not utils_data.vector_cmp(desired_direction, VEC_ZERO) then
+		desired_direction:normalize()
+		npc:set_desired_direction(desired_direction)
+	end
+	
+	npc:set_path_type(game_object.level_path)
+
+	lvid = utils_obj.send_to_nearest_accessible_vertex(npc, lvid,"xr_reach_task")
+	
+	if (lvid and level.vertex_position(lvid):distance_to(npc:position()) > 5) then 
+		npc:set_movement_type(move.run)
+	else
+		npc:set_movement_type(commander:movement_type())
+		npc:set_mental_state(commander:mental_state())
+	end
+end
+
+function action_reach_task_location:death_callback(npc)
+
+end
+function action_reach_task_location:net_destroy(npc)
+
+end
+--------------------------------------------------------------------------------------------------------------
+function setup_generic_scheme(npc,ini,scheme,section,stype,temp)
+	local st = xr_logic.assign_storage_and_bind(npc,ini,"reach_task",section,temp)
+end
+
+function add_to_binder(npc,ini,scheme,section,st,temp)
+	if not npc then return end
+	local manager = npc:motivation_action_manager()
+	if not manager then return end
+	--printf("ACTION_ALIFE_ID(xr_reach_task.add_to_binder): " .. tostring(stalker_ids.action_alife_planner))
+	local alife_action = manager:action(stalker_ids.action_alife_planner)
+	local alife_action_planner = cast_planner(alife_action)
+	if not alife_action or not alife_action_planner then return end
+	st.action =	alife_action_planner:action(stalker_ids.action_smart_terrain_task)
+	xr_logic.subscribe_action_for_events(npc,st,st.action)
+end
+
+function add_reach_task_action(npc)
+	if not npc then return end
+	db.storage[npc:id()]["reach_task_location"] = {}
+	local st = db.storage[npc:id()]["reach_task_location"]
+
+	local manager = npc:motivation_action_manager()
+	if not manager then return end
+
+	--printf("ACTION_ALIFE_ID(xr_reach_task.add_reach_task_action): " .. tostring(stalker_ids.action_alife_planner))
+	local alife_action = manager:action(stalker_ids.action_alife_planner)
+
+	local alife_action_planner = cast_planner(alife_action)
+	if not alife_action or not alife_action_planner then return end
+
+	local evaluator = evaluator_reached_task_location( "reached_task_location", st)
+	local new_action = action_reach_task_location("reach_task_location", st)
+
+	if not evaluator or not new_action then return end
+
+	alife_action_planner:remove_evaluator(stalker_ids.property_smart_terrain_task)
+	alife_action_planner:remove_action(stalker_ids.action_smart_terrain_task)
+
+	alife_action_planner:add_evaluator(stalker_ids.property_smart_terrain_task, evaluator)
+
+	new_action:add_precondition(world_property(stalker_ids.property_alife,true))
+ 	new_action:add_precondition(world_property(stalker_ids.property_smart_terrain_task,true))
+	new_action:add_effect(world_property(stalker_ids.property_smart_terrain_task,false))
+	alife_action_planner:add_action(stalker_ids.action_smart_terrain_task, new_action)
+end
+
+
+
+
+
+
+
+

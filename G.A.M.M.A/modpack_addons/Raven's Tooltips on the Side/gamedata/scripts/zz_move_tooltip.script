@@ -1,0 +1,325 @@
+--[[
+Item Info Tooltip pin in corner.
+29/11/2020
+This work is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License
+Author: RavenAscendant
+--]]
+
+ -- x and y of upper corner
+wind_x = 10
+wind_y = 10
+move_to_bottom = true
+
+function sync_cursor(base, element, offset_x, offset_y)
+	curPos = GetCursorPosition()
+	
+	--local cpos = GetCursorPosition()
+	local cpos  = vector2():set(wind_x,wind_y)
+	local w = element and element:GetWidth() or base:GetWidth()
+	local h = element and element:GetHeight() or base:GetHeight()
+	
+	-- Default pos at cursor is top/left corner
+	if move_to_bottom and curPos.x <500 and curPos.y<380 then
+		cpos.y = 768 - wind_y 
+	end
+	
+	
+	
+	
+	
+	-- case: element pos to right is smaller than its width
+	if (1024 - cpos.x < w) then
+		cpos.x = cpos.x - w
+	end
+	
+	-- case: element pos to bottom is smaller than its height
+	if (768 - cpos.y < h) then
+		-- after switch: make sure element doesn't go above the view
+		local y = cpos.y - h
+		cpos.y = y < 0 and 0 or y
+	end
+	
+	base:SetWndPos(vector2():set( cpos.x + (offset_x or 0) , cpos.y + (offset_y or 0) ))
+end
+
+local clr_list = {
+	["def"]         = GetARGB(255, 255, 255, 255),
+	["red"]         = GetARGB(255, 255, 50, 50),
+	["green"]       = GetARGB(255, 100, 255, 150),
+	["blue"]        = GetARGB(255, 100, 150, 255),
+	["black"]       = GetARGB(255, 0, 0, 0),
+	
+	["drag"]        = GetARGB(150, 255, 255, 255),
+	["hide"]        = GetARGB(70, 255, 255, 255),
+	["shadow"]      = GetARGB(200, 20, 20, 20),
+	["hide_shadow"] = GetARGB(70, 20, 20, 20),
+	
+	["p1"]          = GetARGB(255, 170, 170, 170),
+	["n1"]          = GetARGB(255, 200, 50, 50),
+	["p2"]          = GetARGB(255, 51, 255, 102),
+	["n2"]          = GetARGB(255, 204, 0, 51),
+	
+	["info_def"]    = GetARGB(200, 255, 255, 255),
+	["info_p"]      = GetARGB(255, 56, 209, 115),
+	["info_n"]      = GetARGB(255, 238, 28, 36),
+	["info_p_txt"]  = GetARGB(200, 100, 255, 100),
+	["info_n_txt"]  = GetARGB(200, 255, 100, 100),
+}
+
+local clr_list_hl = {
+	["def"]         = GetARGB(25, 255, 255, 255),
+	["green"]       = GetARGB(30, 100, 255, 150),
+	["blue"]        = GetARGB(40, 100, 200, 255),
+}
+
+-- Progress bar profiles based on "condition_bar" parameter in item section
+local bar_list = {
+	["condition_progess_bar"] = { min= {255,196,18,18,0}, mid= {255,255,255,118,0.5}, max= {255,107,207,119,1}, background= true},
+	["power_progess_bar"]     = { def= GetARGB(255,86,196,209), background= true },
+	["uses_progess_bar"]      = { def= GetARGB(255,255,255,255), background= false },
+}
+
+
+
+
+
+function utils_ui.UIInfoItem:Update(obj, sec, flags)
+	if not self:Pass(obj, sec) then
+		self:Show(false)
+		return
+	end
+
+	-- item info box is shown at cursor
+	sync_cursor(self.dialog, self.frame, 0, 0)
+	
+	-- no need to process if it's same item
+	if obj then
+		if obj:id() == self.id then
+			self:Show(true)
+			return
+		end
+	elseif sec then
+		if sec == self.section then
+			self:Show(true)
+			return
+		end
+	end
+	
+	-- gather basic info
+	sec = obj and obj:section() or sec
+	local typ = self:GetType(sec)
+	--printf("-updating | section [%s] - type: %s", sec, typ)
+	
+	self.id = obj and obj:id() or nil
+	self.section = sec
+		
+	-- Name
+	local name = obj and ui_item.get_obj_name(obj) or ui_item.get_sec_name(sec)
+	self.name:SetText( name )
+	
+	-- Weight
+	local weight = obj and obj:weight() or ini_sys:r_float_ex(sec,"inv_weight")
+	self.weight:SetText( round_100(weight) .. " " .. game.translate_string("st_kg") )
+	
+	-- Cost
+	if flags and flags.value_str and (not flags.note_str) then
+		self.value:SetText( flags.value_str )
+		self.value:Show(true)
+	else
+		self.value:Show(false)
+	end
+	
+	-- Note
+	if flags and flags.note_str then
+		self.note:SetText( flags.note_str )
+		self.note:Show(true)
+	else
+		self.note:Show(false)
+	end
+	
+	-- Description
+	local desc = obj and ui_item.get_obj_desc(obj) or ui_item.get_sec_desc(sec)
+	self.desc:SetText( desc )
+	self.desc:AdjustHeightToText()
+	
+	-- Stop here?
+	if self:Sync_Finale( (not utils_ui.stats_table[typ]), nil, self.desc, self.frame, 10 ) then
+		self.stats_dialog:Show(false)
+		self.ammo:Show(false)
+		return
+	end
+	
+	-- Stats
+	for i=1,#self.stats do
+		self.stats[i].base:Show(false)
+	end
+	
+	-- Comparison
+	local obj_b
+	if self.can_compare and obj then
+		local cls = obj:clsid()
+		local slot = SYS_GetParam(2,sec,"slot",-1) + 1
+		obj_b = slot > 0 and db.actor:item_in_slot(slot)
+	end
+	
+	local v = utils_ui.stats_table[typ]
+	local cnt, y = 0, 0
+	local cnt_last
+	for stat,gr in spairs(v,sort_by_index) do
+		
+		-- get stat value
+		local val_a = utils_ui.get_stats_value(obj, sec, gr, stat)
+		if val_a then
+			if gr.show_always or ((not gr.show_always ) and val_a ~= 0) then
+				cnt = cnt + 1
+				local ele = self.stats[cnt]
+				
+				-- Set up icon
+				local icon_p = gr.icon_p
+				local icon_n = (gr.icon_n ~= "") and gr.icon_n or icon_p
+				local icon = val_a < 0 and icon_n or icon_p
+				if gr.sign_inverse then
+					icon = val_a < 0 and icon_p or icon_n
+				end
+				ele.icon:InitTexture( icon )
+				
+				-- Set up name
+				ele.cap:SetText( game.translate_string(gr.name) )
+				
+				-- Reset
+				ele.bar2:Show(false)
+				ele.bar1:Show(false)
+				ele.txt:Show(false)
+				ele.comp:Show(false)
+				
+				-- Progress bar
+				if gr.track then
+					local valbar_a = clamp((math.abs(val_a) * gr.magnitude), 0, 1)
+					
+					-- Comparison item
+					local val_b = obj_b and utils_ui.get_stats_value(obj_b, obj_b:section(), gr, stat)
+					local valbar_b = val_b and clamp((math.abs(val_b) * gr.magnitude), 0, 1)
+					if valbar_b and (valbar_a ~= valbar_b) then
+					
+						-- If focued item's value is bigger than slot item's value -> focued item's bar: green + 2nd layer
+						if valbar_a > valbar_b then
+							ele.bar1:SetProgressPos( valbar_b )
+							ele.bar1:SetColor( clr_list["info_def"] )
+							
+							ele.bar2:SetProgressPos( valbar_a )
+							ele.bar2:SetColor( clr_list["info_p"] )
+							
+							ele.comp:SetTextColor( clr_list["info_p_txt"] )
+							
+						-- If focued item's value is smaller than slot item's value -> focued item's bar: red + 1nd layer
+						else
+							ele.bar1:SetProgressPos( valbar_a )
+							ele.bar1:SetColor( clr_list["info_def"] )
+							
+							ele.bar2:SetProgressPos( valbar_b )
+							ele.bar2:SetColor( clr_list["info_n"] )
+							
+							ele.comp:SetTextColor( clr_list["info_n_txt"] )
+						end
+						
+						local diff_val = math.ceil( (valbar_a - valbar_b) * 100 )
+						ele.comp:SetText( (diff_val > 0 and "+" or "") .. diff_val .. "%" )
+						ele.comp:Show(true)
+						ele.bar1:Show(true)
+						ele.bar2:Show(true)
+						ele.bar1:ShowBackground(false)
+						
+					-- No comparison
+					else
+						ele.bar1:SetProgressPos( valbar_a )
+						ele.bar1:SetColor( clr_list["info_def"] )
+						ele.bar1:Show(true)
+						ele.bar1:ShowBackground(true)
+					end
+					
+				-- Text
+				elseif ele.txt then
+					local valbar_a = val_a * gr.magnitude
+					local unit = gr.unit and gr.unit ~= "" and game.translate_string(gr.unit) or ""
+					local clr = valbar_a >= 0 and clr_list["p1"] or clr_list["n1"]
+					valbar_a = math.ceil(valbar_a)
+					
+					if gr.sign_inverse then
+						clr = valbar_a < 0 and clr_list["p1"] or clr_list["n1"]
+						--valbar_a = -1 * valbar_a -- invert sign again if needed
+					end
+					local sign = gr.sign and valbar_a > 0 and "+" or ""
+
+					-- Comparison item
+					local val_b = obj_b and utils_ui.get_stats_value(obj_b, obj_b:section(), gr, stat)
+					local valbar_b = val_b and val_b * gr.magnitude
+					if valbar_b and (valbar_a ~= valbar_b) then
+						local diff_val = math.ceil(valbar_a - valbar_b)
+						ele.comp:SetText( "(" .. (diff_val > 0 and "+" or "") .. diff_val .. ")" )
+						ele.comp:Show(true)
+						clr = (valbar_a > valbar_b) and clr_list["info_p_txt"] or clr_list["info_n_txt"]
+					end
+					
+					if gr.sign_inverse_txt then
+						if valbar_a > 0 then
+							sign = "-"
+						elseif valbar_a < 0 then
+							valbar_a = -1 * valbar_a
+							sign = "+"
+						end
+					end
+					
+					ele.txt:SetText( sign .. valbar_a .. " " .. unit )
+					ele.txt:SetTextColor( clr )
+					ele.txt:Show(true)
+				end
+				
+				
+				y = y + ele.base:GetHeight()
+				--printf("stat ele [%s] [%s] | cnt: %s - y: %s - value: %s", sec, stat, cnt, y, val_a)
+				
+				local ele_prev = cnt_last and self.stats[cnt_last]
+				self:Sync_Y(ele_prev and ele_prev.base, ele.base, 0)
+				cnt_last = cnt
+
+				ele.base:Show(true)
+			end
+		end
+	end
+
+	self.stats_dialog:SetWndSize(vector2():set( self.stats_dialog:GetWidth() , y + 10 ))
+	self.stats_dialog:Show(true)
+	
+	-- Stop here?
+	if self:Sync_Finale( (typ ~= "weapon"), self.desc, self.stats_dialog, self.frame, 10 ) then
+		self.ammo:Show(false)
+		return
+	end
+	
+	-- Ammo type
+	if (typ == "weapon") then
+		local ammo_list = utils_item.get_ammo(sec, self.id, nil)
+		local ammo_name = ini_sys:r_string_ex(ammo_list[1], "inv_name_short") or ""
+		self.ammo_txt:SetText( game.translate_string(ammo_name) )
+		for i=1,12 do
+			if self.ammo_ico[i] then
+				if ammo_list[i] and (ammo_list[i] ~= "ammo_12x70_buck_self") then
+					utils_xml.set_icon(ammo_list[i], nil, self.ammo_ico[i], self.ammo_ico_temp[i])
+					self.ammo_ico[i]:Show(true)
+					self.ammo_ico_temp[i]:Show(true)
+				else
+					self.ammo_ico[i]:Show(false)
+					self.ammo_ico_temp[i]:Show(false)
+				end
+			end
+		end
+		
+		self.ammo:Show(true)
+	else
+		self.ammo:Show(false)
+	end
+
+	-- Finale
+	self:Sync_Finale( true, self.stats_dialog, self.ammo, self.frame, 10 )
+	return
+end

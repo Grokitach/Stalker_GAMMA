@@ -1,0 +1,59 @@
+function actor_on_before_hit(shit)
+    if (shit.type ~= 3) then
+        return
+    end
+
+    local actor_rad = math.floor(db.actor.radiation * 10000 * 0.387) / 1000
+end
+
+step = 1000
+
+function actor_on_update()
+
+    if db.actor.radiation > 0 then
+        local actor_rad = math.floor(db.actor.radiation * 10000 * 0.387) / 1000
+        local conditions = db.actor:cast_Actor():conditions()
+        local max_power = conditions and conditions:GetMaxPower()
+        local power_dif = 1 - actor_rad * 0.4
+        local max_power = max_power * power_dif 
+        if db.actor.power > max_power then
+            db.actor.power = max_power
+        end
+    end
+
+    if not tg then
+        tg = time_global()
+    end
+
+    if tg then
+        if time_global() > tg+step then
+	    local actor_rad = math.floor(db.actor.radiation * 10000 * 0.387) / 1000
+            tg = nil
+            if actor_rad > 0 then
+                local base_damage_value = 0.0004
+                local actor_health = db.actor.health
+                local life_remove = actor_health - (base_damage_value + base_damage_value * actor_rad/2)
+                db.actor:set_health_ex(life_remove)
+            end
+
+            if actor_rad > 0 then
+                probability = math.ceil(20 / actor_rad)
+                chance = math.random(1,probability)
+                if chance == 1 or chance == 2 then
+                    local actor_health = db.actor.health
+                    db.actor:set_health_ex(actor_health - math.random(35,50)/1000)
+                    sound = sound_object("grok\\cough" .. math.random(1,7))
+                    sound:play(db.actor, 0, sound_object.s2d) 
+                    sound.volume = 1.6
+                    level.add_pp_effector("blur2.ppe", math.random(645808, 645820), false)
+                end
+            end
+        end
+    end
+end
+
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_before_hit",actor_on_before_hit)
+    RegisterScriptCallback("actor_on_update",actor_on_update)
+end
