@@ -1,0 +1,465 @@
+
+--[[
+		Grok's Artefacts Fusion
+--]]
+
+local degrade_factor = 0.10
+
+----------------------------------------------------------------------
+-- UI Item Property
+----------------------------------------------------------------------
+function menu_tool(obj) -- return "use" name
+	if obj:section() ~= "itm_artefactskit" then return end
+
+	local p = obj:parent()
+	if not (p and p:id() == AC_ID) then return end
+	
+	local uses = obj:get_remaining_uses()
+	if uses <= 1 then return end
+
+	if IsItem("repair",obj:section()) then
+		return game.translate_string("st_item_use_empower")
+	end
+	
+	return nil
+end
+
+function func_tool(obj)
+	local p = obj:parent()
+	if not (p and p:id() == AC_ID) then
+		return
+	end
+	
+	local sec = obj:section()
+	if sec == "itm_artefactskit" then
+		start(obj, sec)
+	end
+end
+
+
+----------------------------------------------------------------------
+-- Callbacks
+----------------------------------------------------------------------
+local function actor_on_item_use(obj)
+	local sec = obj:section()
+	if sec == "itm_artefactskit" then
+		local uses = obj:get_remaining_uses()
+		if uses <= 1 then return end
+		start(obj, sec)
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_item_use",actor_on_item_use)
+end
+
+
+----------------------------------------------------------------------
+GUI = nil -- instance, don't touch
+function start(obj, sec)
+	tool_obj = obj
+	tool_sec = sec
+
+	if (not obj) then
+		printf("!ERROR item_repair | no game object passed!")
+		return
+	end
+	
+	if (not sec) then
+		sec = obj:section()
+	end
+	
+	local hud = get_hud()
+	if (hud) then
+--		hide_hud_inventory()
+	end
+	
+	if (not GUI) then
+		GUI = UIRepair()
+	end
+	
+	if (GUI) and (not GUI:IsShown()) then
+		GUI:Reset(obj, sec)
+		GUI:ShowDialog(true)
+		Register_UI("UIRepair","item_repair")
+	end
+end
+
+----------------------------------------------------------------------
+-- UI
+----------------------------------------------------------------------
+class "UIRepair" (CUIScriptWnd)
+
+function UIRepair:__init(obj,section) super()
+	self.section = section
+	self.obj = obj
+	
+	-- Reload settings
+	self.clr_b = utils_xml.get_color("pda_blue")
+
+	self:InitControls()
+	self:InitCallBacks()
+end
+
+function UIRepair:__finalize()
+end
+
+function UIRepair:InitControls()
+	self:SetWndRect			(Frect():set(0,0,1024,768))
+	self:SetAutoDelete(true)
+	
+	self.xml				= CScriptXmlInit()
+	local xml = self.xml
+	xml:ParseFile			("ui_items_grok_artefacts.xml")
+
+	self.dialog					= xml:InitStatic("repair", self)
+	xml:InitStatic("repair:background", self.dialog)
+	self.cap_menu 					= xml:InitTextWnd("repair:cap_tab" , self.dialog)
+	
+	self.cap           = {}
+	self.b_inv         = {}
+	self.b_item        = {}
+	self.list          = {} -- List of items
+	self.cell_item      = {} -- Item's Icon
+	self.text_item     = {} -- Item's Name
+	self.con_txt       = {}
+	self.CC            = {}
+	for i=1,2 do
+		self.cap[i]               = xml:InitStatic("repair:cap_repair_" .. tostring(i),self.dialog)
+		self.b_inv[i]             = xml:InitStatic("repair:back_inv_" .. tostring(i) , self.dialog)
+		self.b_item[i]            = xml:InitStatic("repair:back_item_" .. tostring(i) , self.dialog)
+		self.text_item[i]         = xml:InitTextWnd("repair:text_item_" .. tostring(i) , self.dialog)
+		self.con_txt[i]           = xml:InitTextWnd("repair:con_item_" .. tostring(i) , self.dialog)
+
+		self.cell_item[i]         = utils_ui.UICellItem( {path="container" , xml=xml} , { path="repair:box_item_" .. tostring(i) , base= self.dialog } )
+		self.cell_item[i].disable_bar = true
+
+		self.CC[i]                = utils_ui.UICellContainer(i, self, nil, "repair:cont_inv_" .. tostring(i), self.dialog)
+		self.CC[i].can_select	  = true
+		self.CC[i].disable_drag   = true
+		self.CC[i]:SetGridSpecs(35, 2)
+	end
+	self.CC[2].disable_bar = true
+	self.con_txt_base = xml:InitTextWnd("repair:con_item_base" , self.dialog)
+	self.con_txt_new = xml:InitTextWnd("repair:con_item_1_new" , self.dialog)
+	
+	self.item_info = utils_ui.UIInfoItem(self, 1000)
+	
+	-- Main icon
+	self.box_item_main = xml:InitStatic("repair:pic_item_main" , self.dialog)
+	self.box_item_main_temp = xml:InitStatic("repair:pic_item_main" , self.dialog)
+	
+	-- Main Buttons
+	self.btn_repair = xml:Init3tButton("repair:btn_repair", self.dialog)
+	self:Register(self.btn_repair,"btn_repair")
+	
+	self.btn_cancel = xml:Init3tButton("repair:btn_back", self.dialog)
+	self:Register(self.btn_cancel,"btn_cancel")
+end
+
+function UIRepair:InitCallBacks()
+	self:AddCallback("btn_repair", ui_events.BUTTON_CLICKED, self.OnRepair, self)
+	self:AddCallback("btn_cancel", ui_events.BUTTON_CLICKED, self.OnCancel, self)
+end
+
+function UIRepair:Reset(obj,section)
+	self.section = section
+	self.obj = obj
+	
+	-- Settings
+	self.repair_frame      = ini_sys:r_string_ex(section,"repair_ui") or "ui_itm_repair_1"
+	self.use_condition     = ini_sys:r_bool_ex(section,"use_condition") or false
+	self.min_condition     = ini_sys:r_float_ex(section,"repair_min_condition") or 0
+	self.max_condition     = ini_sys:r_float_ex(section,"repair_max_condition") or 0
+	self.add_condition     = ini_sys:r_float_ex(section,"repair_add_condition") or 0
+	self.part_bonus        = ini_sys:r_float_ex(section,"repair_part_bonus") or 0
+	self.use_parts         = ini_sys:r_bool_ex(section,"repair_use_parts") or false
+	self.repair_type       = ini_sys:r_string_ex(section,"repair_type") or "all" 
+	self.repair_only       = parse_list(ini_sys,section,"repair_only",true)
+	self.parts_multi       = ini_sys:r_float_ex(section,"repair_parts_multi") or 1
+	self.parts_sections    = parse_list(ini_sys,section,"repair_parts_sections",true)
+	self.parts_match       = ini_sys:r_bool_ex(section,"repair_parts_match",false)
+	self.use_actor_effects = ini_sys:r_bool_ex(section,"repair_use_actor_effects",false)
+	self.con_val           = {}
+	
+	-- Elements
+	self.CC[2]:Reset()
+	self.con_txt[1]:SetText("")
+	self.con_txt[2]:SetText("")
+	self.text_item[1]:SetText("")
+	self.text_item[2]:SetText("")
+	self.cell_item[1]:Reset()
+	self.cell_item[2]:Reset()
+	self.con_txt_base:SetText("")
+	self.con_txt_new:SetText("")
+	self.btn_repair:Enable(false)
+	
+	local to_show = self.use_parts and true or false
+	self.cap[2]:Show(to_show)
+	self.b_inv[2]:Show(to_show)
+	self.b_item[2]:Show(to_show)
+	self.text_item[2]:Show(to_show)
+	self.con_txt[2]:Show(to_show)
+	self.CC[2]:Show(to_show)
+	
+	-- Set Repair kit icon
+	utils_xml.set_upgr_icon(self.obj, self.section, self.box_item_main, self.box_item_main_temp)
+	
+	-- Set Repair kit name
+	self.cap_menu:SetText(ui_item.get_sec_name(self.section))
+	
+	-- Show damaged items
+	self:InitInventory(1)
+
+	-- Hide active item
+	actor_effects.toggle_active_slot(0) 
+	
+	-- Play sound
+	--utils_obj.play_sound("interface\\inv_aam_close")
+end
+
+function UIRepair:InitInventory(n)
+	local inv = {}
+	local size_t = 0
+	
+	-- Compatible weapons list to repair
+	if n == 1 then
+		db.actor:iterate_inventory( function(owner, obj)
+            artefact_to_repair = obj:section()
+			local sec = obj:section()
+			local main_section = ini_sys:r_string_ex(sec,"repair_type") or sec
+			if (self.repair_only and self.repair_only[main_section]) then
+				local con = math.ceil(obj:condition() * 100)
+				if (con and con >= (self.min_condition * 100) and con <= self.max_condition * 100) then
+					size_t = size_t + 1
+					inv[size_t] = obj
+				end
+			end
+		end)
+		
+		self.CC[1]:Reinit(inv)
+
+	-- Compatible part list to use
+	elseif n == 2 then
+		local obj_s = self.CC[1]:GetCell_Selected(true)
+		if (not obj_s) then
+			return
+		end
+		
+		local inf = {}
+		local ItemListSec_2 = {} -- to show only one copy of bonus items
+		db.actor:iterate_inventory( function(owner, obj)
+			local sec = obj:section()
+			obj_s_kind = SYS_GetParam(0, obj_s:section(), "kind")
+			obj_kind = SYS_GetParam(0, obj:section(), "kind")
+
+			if (obj_s:section() == obj:section() or obj_s_kind == "i_arty_junk" and obj_kind == "i_arty_junk") then
+
+				if (obj_s:section() == obj:section()) then
+					strengthen = "strong"
+				else
+					strengthen = "weak"
+				end
+
+				if (not ItemListSec_2[sec]) and (obj) and (obj:id() ~= obj_s:id()) and (obj:id() ~= self.obj:id()) then
+					ItemListSec_2[sec] = true
+				
+					if (self.parts_match and sec == obj_s:section()) then
+						size_t = size_t + 1
+						inv[size_t] = obj
+						if strengthen == "strong" then
+							inf[size_t] = math.floor(obj:condition()*100, 0, 98)
+						else
+							inf[size_t] = math.floor(obj:condition()*100 / 3, 0, 98)
+						end
+				
+					elseif (self.parts_sections and self.parts_sections[sec]) then
+						size_t = size_t + 1
+						inv[size_t] = obj
+						if strengthen == "strong" then
+							inf[size_t] = math.floor(obj:condition()*100, 0, 98)
+						else
+							inf[size_t] = math.floor(obj:condition()*100 / 3, 0, 98)
+						end
+					end
+				end
+			end
+		end)
+		
+		self.CC[2]:Reinit(inv,inf)
+		
+		local fnt = GetFontSmall()
+		local clr_b = utils_xml.get_color("pda_blue",true)
+		for idx,ci in pairs(self.CC[2].cell) do
+			if ci:IsShown() then
+				local con100 = ci.flags.info
+				local con = ci.flags.info / 100
+				ci:Add_CustomText(("+"..con100), nil, nil, clr_b, fnt)
+			end
+		end
+	end
+end
+
+function UIRepair:Update()
+	CUIScriptWnd.Update(self)
+	
+	-- Warning messages timer 
+	if (self.msg_wnd_timer and time_global() > self.msg_wnd_timer) then 
+		self.msg_wnd_timer = nil
+		self.msg_wnd:Show(false)
+	end
+	
+	for i=1,#self.cell_item do 
+		if (self.cell_item[i] and self.cell_item[i]:IsCursorOverWindow()) then
+			local obj = self.CC[i]:GetCell_Selected(true)
+			if (obj) then
+				self.item_info:Update(obj, obj:section())
+				return
+			end
+			
+			self.item_info:Update()
+			return
+		end
+	end
+	
+	-- Updating item info box and item cell containers
+	local found_cell = false
+	for name,cc in pairs(self.CC) do
+		found_cell = cc:Update(self.item_info) or found_cell
+	end
+	if (not found_cell) then
+		self.item_info:Update()
+	end
+end 
+
+-- Callbacks
+function UIRepair:On_CC_Mouse1(cont, idx)
+	local ci = self.CC[cont].cell[idx]
+	if ci then
+		self:OnItemSelect(cont)
+		if self.use_parts and cont == 1 then
+			self:InitInventory(2)
+		end
+	end
+end
+
+function UIRepair:OnItemSelect(n)
+	local obj_1 = self.CC[1]:GetCell_Selected(true)
+	local obj_n = self.CC[n]:GetCell_Selected(true)
+	if not (obj_1 and obj_n) then
+		return
+	end
+
+	local sec = obj_n:section()
+	local id = obj_n:id()
+	local con = 0
+	if n == 2 then
+		local is_part_match = (self.parts_match and sec == obj_1:section())
+		con = obj_n:condition()
+		con = (game_achievements.has_achievement("mechanized_warfare")) and (con + 0.02) or con
+		con = clamp(math.floor(con*100), 0 , 98)
+	end
+	
+	-- Text (Name)
+	local name = ui_item.get_sec_name(sec)
+	self.text_item[n]:SetText(name)
+	
+	-- Text (Condition)
+	self.con_val[1] = math.ceil((obj_1:condition())*100)
+	self.con_val[2] = clamp(math.floor(con, 0, 98), 0, 98)
+
+	if (SYS_GetParam(0, obj_n:section(), "kind") == "i_arty_junk" and SYS_GetParam(0, obj_1:section(), "kind") == "i_arty_junk" and obj_1:section() ~= obj_n:section()) then
+		self.con_val[2] =  clamp(math.floor(con / 3, 0, 98), 0, 98)
+	end
+
+	self.con_val[3] = math.floor((self.add_condition)*100)
+	self.con_val[4] = clamp(self.con_val[1] + self.con_val[2], 0, 98)
+ 	if IsItem("part",nil,obj_1) then
+ 		self.con_val[4] = utils_item.get_cond_static(self.con_val[4])
+ 	end
+
+	
+	self.con_txt[1]:SetText(utils_xml.get_color_con(self.con_val[1]) .. game.translate_string("st_ui_oldcon") .. ": +" .. self.con_val[1] .. "%")
+	self.con_txt[2]:SetText(self.clr_b .. game.translate_string("st_ui_bonus") .. ": +" .. self.con_val[2] .. "%")
+--	self.con_txt_base:SetText(game.translate_string("st_ui_repair") .. ": +" .. self.con_val[3] .. "%")
+	self.con_txt_new:SetText(utils_xml.get_color_con(self.con_val[4]) .. game.translate_string("st_ui_total") .. ": +" .. self.con_val[4] .. "%")
+	
+	-- Icon
+	self.cell_item[n]:Set(obj_n)
+
+	-- Reset supportive item when you choose main item
+	if (n == 1) and self.use_parts then
+		self.cell_item[2]:Reset()
+		self.text_item[2]:SetText("")
+		--self.con_txt[1]:SetText("")
+		--self.con_txt[2]:SetText("")
+		--self.con_txt_base:SetText("")
+	end
+	
+	self.btn_repair:Enable(true)
+end
+
+local tg = time_global()
+
+function UIRepair:OnRepair()
+	local uses = self.obj:get_remaining_uses()
+	if uses <= 1 then 	
+		self:HideDialog()
+		Unregister_UI("UIRepair")
+		return 
+	end
+
+	local obj_1 = self.CC[1]:GetCell_Selected(true)
+	local obj_2 = self.CC[2]:GetCell_Selected(true)
+	
+	if not (obj_1 and self.con_val[4]) then return end
+
+	obj_1:set_condition(self.con_val[4] / 100) -- Repair main item
+ 	if obj_2 then
+ 		utils_item.discharge(obj_2) -- Remove 1 use of the support item
+ 	end
+	
+	-- Remove 1 use of the repair kit
+	if IsItem("multiuse",nil,self.obj) then
+		utils_item.discharge(self.obj) 
+	else
+		utils_item.degrade(self.obj, degrade_factor)
+	end
+	
+	-- Effect
+	if (self.use_actor_effects and actor_effects) then
+		actor_effects.play_item_fx("artefacts_melter_dummy")
+	end
+	
+	-- Increase Statistic
+	game_statistics.increment_statistic("self_repairs")
+	
+	-- Hide dialog
+	GUI:Reset(tool_obj, tool_sec)
+end
+
+function UIRepair:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (res == false) then
+		for i=1,#self.CC do
+			if self.CC[i]:IsShown() then
+				self.CC[i]:OnKeyboard(dik, keyboard_action)
+			end
+		end
+		
+		local bind = dik_to_bind(dik)
+		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+			if dik == DIK_keys.DIK_ESCAPE then
+				self:OnCancel()
+			end
+		end
+	end
+	return res
+end
+
+function UIRepair:OnCancel()	
+	self:HideDialog()
+	Unregister_UI("UIRepair")
+end
+
+
