@@ -1,0 +1,511 @@
+--[[
+	Tronex
+	2020/3/10
+	Artefact binder
+	
+	Inventory radiation:
+		Non-contained radioactive artefacts in ruck will irrediate the actor by half of their rad speed value
+		This is a Misery feature, reworked and moved to this script
+		
+	Belt HUD:
+		Show icons of belt artefacts on main HUD
+		This is a CoC feature, reworked and moved to this script
+--]]
+
+
+local enable_debug = false
+
+local rad_factor = 0.5 -- multiplier to artefact rad effect in ruck
+local rad_tg_step = 300 --[ms]
+
+local enable_arty_degr = false
+local dgr_tg_step = 2000 --[ms]
+
+local in_actor_ruck = utils_item.in_actor_ruck
+
+function print_dbg(txt, ...)
+	if enable_debug then
+		printf("item_artefact | %s | " .. txt, time_global(), ...)
+	end
+end
+
+
+--------------------------------------------------------------------------------
+-- Artefact degradation
+--------------------------------------------------------------------------------
+local hit_to_section = {
+	[hit.light_burn]    = "light_burn_immunity",
+	[hit.burn]          = "burn_immunity",
+	[hit.strike]        = "strike_immunity",
+	[hit.shock]         = "shock_immunity",
+	[hit.wound]         = "wound_immunity",
+	[hit.radiation]     = "radiation_immunity",
+	[hit.telepatic]     = "telepatic_immunity",
+	[hit.chemical_burn] = "chemical_burn_immunity",
+	[hit.explosion]     = "explosion_immunity",
+	[hit.fire_wound]    = "fire_wound_immunity",
+}
+
+local equipement_damaging = {
+	["light_burn_immunity"]    = true,
+	["burn_immunity"]          = true,
+	["strike_immunity"]        = true,
+	["wound_immunity"]         = true,
+	["chemical_burn_immunity"] = true,
+	["explosion_immunity"]     = true,
+	["fire_wound_immunity"]    = true,
+}
+
+local imm_mul = {					-- correction factors for hit events
+		["light_burn_immunity"] = 1.2,
+		["burn_immunity"] = 1.2,
+		["strike_immunity"] = 1.2,
+		["shock_immunity"] = 1.2,
+		["wound_immunity"] = 1.2,
+		["radiation_immunity"] = 1.2,
+		["telepatic_immunity"] = 1.2,
+		["chemical_burn_immunity"] = 1.2,
+		["explosion_immunity"] = 1.2,
+		["fire_wound_immunity"] = 1.2,
+}
+
+local mul = {						-- correction factors for timed checks
+	["health"]		= 0.2,		-- updated often while slotted so don't set too high
+	["radiation"] 	= 0.2,
+	["satiety"] 	= 0.2,
+	["power"] 		= 0.2,		-- updated often while slotted so don't set too high
+	["bleeding"] 	= 0.2,
+	["psy_health"] 	= 0.2,
+	["weight"]		= 0.0001, 	-- updated often while slotted so don't set too high
+}
+
+function toggle_feature_arty_degradation(val)
+	if val and (not enable_arty_degr) then
+		enable_arty_degr = true
+		RegisterScriptCallback("actor_on_before_hit",actor_on_before_hit)
+		
+	elseif (not val) and enable_arty_degr then
+		enable_arty_degr = false
+		UnregisterScriptCallback("actor_on_before_hit",actor_on_before_hit)
+	end
+end
+
+function actor_on_before_hit(s_hit)
+	if (s_hit.power <= 0) then 
+		return 
+	end
+
+	local cond_loss = 0
+	local hit_absorbation_sect, imm_sect
+	
+	-- Damage active artefacts according to damage type and their immunities
+	if game_difficulties.get_eco_factor("arty_degradation") then
+		db.actor:iterate_belt( function(owner, arte)
+			cond_loss = 0
+			hit_absorbation_sect = ini_sys:r_string_ex(arte:section(),"hit_absorbation_sect")
+			
+			if (hit_absorbation_sect) then
+				imm_sect = hit_to_section[s_hit.type]
+				cond_loss = imm_sect and ini_sys:r_float_ex(hit_absorbation_sect,imm_sect) or 0
+				printf(" %s %s ", imm_sect, cond_loss)
+				if (cond_loss > 0) then
+					cond_loss = (s_hit.power * imm_mul[imm_sect] * cond_loss)
+
+					print_dbg("Artefact degradation |  artefact: %s - hit_power: %s - cond_loss: %s", arte:name(), s_hit.power, cond_loss)
+					local temp_cond = arte:condition() - (cond_loss*ini_sys:r_float_ex(arte:section(),"degrade_rate",1))
+					temp_cond = temp_cond > 0.01 and temp_cond or 0.01
+					arte:set_condition(temp_cond)
+				end
+			end
+		end)
+	end
+	
+	-- Damage backpack
+	local backpack = db.actor:item_in_slot(13)
+	if (backpack) and game_difficulties.get_eco_factor("bkpk_degradation") then
+		cond_loss = 0
+		hit_absorbation_sect = ini_sys:r_string_ex("stalker_outfit","immunities_sect")
+		if (hit_absorbation_sect) and (equipement_damaging[hit_to_section[s_hit.type]]) then
+			imm_sect = hit_to_section[s_hit.type]
+			cond_loss = imm_sect and ini_sys:r_float_ex(hit_absorbation_sect,imm_sect)*0.5 or 0
+			cond_loss = cond_loss * s_hit.power
+			if (cond_loss > 0) then
+
+				print_dbg("Backpack degradation |  artefact: %s - hit_power: %s - cond_loss: %s", backpack:name(), s_hit.power, cond_loss)
+				local temp_cond = backpack:condition() - (cond_loss*ini_sys:r_float_ex(backpack:section(),"degrade_rate",1))
+				temp_cond = temp_cond > 0.01 and temp_cond or 0.01
+				backpack:set_condition(temp_cond)
+			end
+		end
+	end
+end
+
+
+--------------------------------------------------------------------------------
+-- Belt HUD
+--------------------------------------------------------------------------------
+HUD = nil
+
+function activate_hud()
+	RegisterScriptCallback("actor_item_to_belt",actor_on_item_change)
+	RegisterScriptCallback("actor_item_to_ruck",actor_on_item_change)
+	RegisterScriptCallback("actor_on_item_drop",actor_on_item_change)
+	RegisterScriptCallback("on_console_execute",on_console_execute)
+	RegisterScriptCallback("actor_on_net_destroy",actor_on_net_destroy)
+	RegisterScriptCallback("GUI_on_show",update_hud)
+	RegisterScriptCallback("GUI_on_hide",update_hud)
+	
+	if HUD == nil then
+		HUD = UIBelt()
+		get_hud():AddDialogToRender(HUD)
+	end
+	HUD:Refresh()
+end
+
+function deactivate_hud()
+	if HUD ~= nil then
+		get_hud():RemoveDialogToRender(HUD)
+		HUD = nil
+	end
+	
+	UnregisterScriptCallback("actor_item_to_belt",actor_on_item_change)
+	UnregisterScriptCallback("actor_item_to_ruck", actor_on_item_change)
+	UnregisterScriptCallback("actor_on_item_drop",actor_on_item_change)
+	UnregisterScriptCallback("on_console_execute",on_console_execute)
+	UnregisterScriptCallback("actor_on_net_destroy",actor_on_net_destroy)
+	UnregisterScriptCallback("GUI_on_show",update_hud)
+	UnregisterScriptCallback("GUI_on_hide",update_hud)
+end
+
+function update_hud()
+	if HUD ~= nil then
+		HUD:Refresh()
+	end
+end
+
+function actor_on_net_destroy()
+	if HUD ~= nil then
+		get_hud():RemoveDialogToRender(HUD)
+		HUD = nil
+	end
+end
+
+function actor_on_item_change(item)
+	if HUD and IsArtefact(item) then
+		HUD:Refresh()
+	end
+end
+
+function on_option_change()
+	local state = ui_options.get("video/hud/show_slots")
+	if state and (not HUD) then
+		activate_hud()
+	elseif (not state) and HUD then
+		deactivate_hud()
+	end
+end
+
+function on_console_execute(name)
+	if name == "hud_draw" and HUD then
+		HUD:Refresh()
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_option_change",on_option_change)
+	
+	if (ui_options.get("video/hud/show_slots") == false) then
+		return
+	end
+	
+	local function actor_on_first_update()
+		activate_hud()
+		RegisterScriptCallback("on_console_execute",on_console_execute)
+	end
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
+end
+
+
+----------------------------------------------------
+class "UIBelt" (CUIScriptWnd)
+
+function UIBelt:__init() super()
+	self.slot = {}
+	
+	self.mirrored = true
+	self.W      = 25
+	self.offset = 10
+
+	self._tmr = time_global()
+	self:InitControls()
+end
+
+function UIBelt:__finalize()
+end
+
+function UIBelt:InitControls()
+	local xml = utils_xml.get_hud_xml()
+	
+	self.dialog = xml:InitStatic("belt", self)
+	--utils_xml.correct_ratio(self.dialog)
+	self.dialog:Show(false)
+	
+	for i=1, 5 do
+		local x = (i-1)*(self.W + self.offset)
+		if self.mirrored then
+			x = (1-i)*(self.W + self.offset)
+		end
+		
+		self.slot[i] = {}
+		self.slot[i].ico = xml:InitStatic("belt:slot", self.dialog)
+		self.slot[i].layer = xml:InitStatic("belt:slot", self.dialog)
+		
+		for k, ele in pairs(self.slot[i]) do
+			ele:SetWndPos( vector2():set( x , 0 ) )
+			utils_xml.correct_ratio(ele)
+		end
+	end
+end
+
+function UIBelt:Clear()
+	for i=1,5 do
+		self.slot[i].ico:Show(false)
+		self.slot[i].layer:Show(false)
+	end
+end
+
+function UIBelt:Refresh()
+	local cnt = 0
+	
+	self:Clear()
+	
+	if not main_hud_shown() then
+		return
+	end
+	
+	db.actor:iterate_belt( function(owner, obj)
+		local sec = obj:section()
+		cnt = cnt + 1
+		self.slot[cnt].ico:InitTexture( utils_xml.get_icons_texture(sec) )
+		self.slot[cnt].ico:SetTextureRect(Frect():set( utils_xml.get_item_axis(sec, nil, true) ))
+		self.slot[cnt].ico:Show(true)
+		
+		-- Set up indicator icon if found
+		local ico_layer = ini_sys:r_string_ex(sec,"1icon_layer")
+		if ico_layer then
+			local ico_layer_x = ini_sys:r_float_ex(sec,"1icon_layer_x")
+			local ico_layer_y = ini_sys:r_float_ex(sec,"1icon_layer_y")
+			local ico_layer_scale = ini_sys:r_float_ex(sec,"1icon_layer_scale")
+
+			local pos = self.slot[cnt].ico:GetWndPos()
+			local w = self.slot[cnt].ico:GetWidth()
+			local h = self.slot[cnt].ico:GetHeight()
+			local ratio = w/50
+			--print_dbg("UIBelt: icon [%s](%s) | x = %s / y = %s / w = %s / h = %s", sec, cnt, pos.x , pos.y , w , h )
+			
+			local x_i = pos.x + math.ceil(ico_layer_x * ico_layer_scale * ratio)
+			local y_i = pos.y + math.ceil(ico_layer_y * ico_layer_scale * ratio)
+			local w_i = math.ceil(w * ico_layer_scale)
+			local h_i = math.ceil(h * ico_layer_scale)
+			self.slot[cnt].layer:InitTexture( utils_xml.get_icons_texture(ico_layer) )
+			self.slot[cnt].layer:SetWndPos(vector2():set( x_i , y_i ))
+			self.slot[cnt].layer:SetWndSize(vector2():set( w_i , h_i ))
+			--print_dbg("UIBelt: indicator [%s](%s) | scale: %s / x = %s / y = %s / w = %s / h = %s", sec, cnt, ico_layer_scale, x_i , y_i , w_i , h_i )
+			
+			self.slot[cnt].layer:SetTextureRect(Frect():set( utils_xml.get_item_axis(ico_layer, nil, true) ))
+			self.slot[cnt].layer:Show(true)
+		end
+	end)
+
+	self.dialog:Show(cnt > 0)
+end
+
+function UIBelt:Update()
+	
+	local tg = time_global()
+	if self._tmr >= tg then
+		return
+	else
+		self._tmr = tg + 10000
+	end
+	
+	self:Refresh()
+	CUIScriptWnd.Update(self)
+end
+
+
+--------------------------------------------------------------------------------
+-- Class "artefact_binder"
+--------------------------------------------------------------------------------
+local artifact_cond = {}
+
+function bind(obj)
+	obj:bind_object(artefact_binder(obj))
+end
+
+class "artefact_binder" (object_binder)
+
+function artefact_binder:__init(obj) super(obj)
+	db.storage[self.object:id()] = {}
+end
+
+function artefact_binder:update(delta)
+	object_binder.update(self, delta)
+	--print_dbg("pl:art [%s] pos %s", self.object:name(), vec_to_str(self.object:position()))
+	
+    if self.first_call == true then
+    	local ini = self.object:spawn_ini()
+		if ini and ini:section_exist("fixed_bone") then
+			local ph_shell = self.object:get_physics_shell()
+			if ph_shell then
+				local bone_name = ini:r_string_ex("fixed_bone", "name")
+				local ph_element = ph_shell:get_element_by_bone_name(bone_name)
+	
+				if (not ph_element:is_fixed()) then
+					ph_element:fix()
+					print_dbg("Fixed arty: %s", self.object:name())
+				end
+				self.first_call = false
+			end
+		end
+        local id = self.object:id()
+        if artifact_cond[id] then
+            self.object:set_condition(artifact_cond[id])
+        end
+		--self.first_call = false
+    end
+	
+	local obj = self.object
+	local cobj = obj:cast_Artefact()
+	if (not cobj) then
+		return
+	end
+	local tg = time_global()
+	
+	-- Process artefacts in belt (Artefact active degradation)
+	if enable_arty_degr and (tg > self._tmr_dgr) and db.actor:is_on_belt(obj) then
+		self._tmr_dgr = tg + dgr_tg_step
+		
+		local cond_loss, val = 0, 0
+        if (db.actor.health < 1.0) then
+            val = cobj.m_fHealthRestoreSpeed or 0
+            if (val > 0) then
+                cond_loss = cond_loss + (val * mul["health"])
+            end
+        end
+        if (db.actor.radiation > 0) then
+            val = cobj.m_fRadiationRestoreSpeed or 0
+            if (val < 0) then
+                cond_loss = cond_loss + (math.abs(val) * mul["radiation"])
+            end    
+        end
+        if (db.actor.satiety < 1.0) then
+            val = cobj.m_fSatietyRestoreSpeed or 0
+            if (val > 0) then
+                cond_loss = cond_loss + (val * mul["satiety"])
+            end    
+        end
+        if (db.actor.power < 1.0) then
+            val = cobj.m_fPowerRestoreSpeed or 0
+            if (val > 0) then
+                cond_loss = cond_loss + (val * mul["power"])
+            end
+        end
+        if (db.actor.bleeding > 0) then
+            val = cobj.m_fBleedingRestoreSpeed or 0
+            if (val > 0) then
+                cond_loss = cond_loss + (val * mul["bleeding"])
+            end
+        end
+        if (db.actor.psy_health < 1.0) then
+            val = ini_sys:r_float_ex(obj:section(),"psy_health_restore_speed") or 0
+            if (val > 0) then
+                cond_loss = cond_loss + (val * mul["psy_health"])
+            end
+        end
+        
+        val = cobj:AdditionalInventoryWeight() or 0
+        if (val > 0) then
+            local suit = db.actor:item_in_slot(7)
+            local diff = db.actor:get_total_weight() - db.actor:get_actor_max_walk_weight() - (suit and suit:get_additional_max_weight() or 0)
+            if diff > 0 then
+                cond_loss = cond_loss + ((diff * mul["weight"])/val)
+            end
+        end
+        
+        if (cond_loss > 0) then
+			print_dbg("Artefact degradation |  artefact: %s - cond_loss: %s", obj:name(), cond_loss)
+            local degrade_rate = (cond_loss*ini_sys:r_float_ex(obj:section(),"degrade_rate",1))
+            if (obj:condition() - degrade_rate >= 0.01) then
+                obj:set_condition(obj:condition() - degrade_rate)
+            else
+                obj:set_condition(0.01)
+            end
+        end
+		
+	-- Process artefacts in ruck (Inventory Radiation)
+	elseif (tg > self._tmr_rad) and (not self.no_rad) and in_actor_ruck(obj) then
+		self._tmr_rad = tg + rad_tg_step
+	
+		-- Get radiation restore speed
+		local rad_val = cobj.m_fRadiationRestoreSpeed or 0
+		
+		-- No process for artefacts with no / healing rad effect
+		if (self.no_rad == nil) then
+			self.no_rad = (rad_val <= 0)
+			if self.no_rad then
+				print_dbg("Inventory radiation | artefact [%s] is not harmful -> exclude!", obj:name())
+				return
+			end
+		end
+
+		-- Apply radiation on actor
+		local rad_delta = rad_val * rad_factor
+		db.actor:change_radiation(rad_delta)
+		
+		print_dbg("Inventory radiation | artefact: %s - radiation effect: %s", obj:name(), rad_delta)
+
+        artifact_cond[obj:id()] = obj:condition()
+	end
+end
+
+function artefact_binder:net_spawn(se_abstract)
+	if not object_binder.net_spawn(self, se_abstract) then
+		return false
+	end
+	db.add_obj(self.object)
+	local artefact = self.object:get_artefact()
+	local id = self.object:id()
+	if bind_anomaly_zone.artefact_ways_by_id[id] ~= nil then
+		local anomal_zone = bind_anomaly_zone.parent_zones_by_artefact_id[id]
+		local force_xz	= anomal_zone.applying_force_xz
+		local force_y	= anomal_zone.applying_force_y
+		artefact:FollowByPath(bind_anomaly_zone.artefact_ways_by_id[id],bind_anomaly_zone.artefact_points_by_id[id],vector():set(force_xz,force_y,force_xz))
+--		artefact:FollowByPath(bind_anomaly_zone.artefact_ways_by_id[id],0,vector():set(force_xz,force_y,force_xz))
+	end
+
+	self.first_call = true 
+	
+	local tg = time_global()
+	self._tmr_rad = tg
+	self._tmr_dgr = tg
+	return true
+end
+
+function artefact_binder:net_destroy(se_abstract)
+	db.del_obj(self.object)
+	object_binder.net_destroy(self)
+end
+
+function save_state(mdata)
+	mdata.artifact_cond = artifact_cond
+end
+
+function load_state(mdata)
+	artifact_cond = mdata.artifact_cond or {}
+end
+
+function on_game_start()
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+end
