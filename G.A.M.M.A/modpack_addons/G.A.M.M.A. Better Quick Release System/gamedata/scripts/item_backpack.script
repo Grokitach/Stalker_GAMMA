@@ -1,0 +1,255 @@
+-- Alundaio
+-- Modified by Tronex: 2020/3/18
+-- TODO: add the ability to save condition and installed upgrades of deployed backpacks
+
+local keep_items = nil
+function on_game_start()
+	RegisterScriptCallback("actor_on_item_take_from_box",actor_on_item_take_from_box)
+	RegisterScriptCallback("actor_on_item_use",actor_on_item_use)
+	
+	local ini_stash = ini_file("items\\settings\\backpack_stash.ltx")
+	keep_items = utils_data.collect_section(ini_stash,"actor_backpack_keep_items",true)
+end
+
+function actor_on_item_use(obj)
+	if obj and (obj:section() == "itm_actor_backpack") then 
+		local backpack = db.actor:item_in_slot(13)
+		
+		if backpack then
+			local actor = db.actor
+			local se_obj = alife_create("inv_backpack",actor:position(),actor:level_vertex_id(),actor:game_vertex_id())
+			if (se_obj) then
+				local txt = strformat(game.translate_string("st_itm_stash_of_character"), db.actor:character_name())
+				level.map_add_object_spot_ser(se_obj.id, "treasure", txt)
+				actor_menu.set_msg(1, game.translate_string("st_stash_created"),4)
+				
+				local m_data = alife_storage_manager.get_state()
+				if not (m_data.player_created_stashes) then 
+					m_data.player_created_stashes = {}
+				end
+				
+				m_data.player_created_stashes[se_obj.id] = backpack:section()
+				
+				local b_id = backpack:id()
+				alife_release(backpack)
+				
+				local function transfer_items(id)
+					local obj = level.object_by_id(id)
+					if (obj) then 
+						local function itr_inv(temp,item)
+							if (item and item:id() ~= b_id and keep_items[item:section()] == nil) then 
+								if (IsAmmo(item) ~= true) or (is_ammo_for_wpn(item:section()) ~= true) then 
+									if not (ini_sys:r_string_ex(item:section(),"kind") == "i_medical") then
+										if (ini_sys:r_bool_ex(item:section(),"quest_item",false) == false) then
+											if (db.actor:is_on_belt(item) == false and is_in_slot(item) == false) then 
+												db.actor:transfer_item(item,obj)
+											end
+										end
+									end
+								end						
+							end
+						end
+	
+						db.actor:iterate_inventory(itr_inv)
+						return true
+					end			
+					return false
+				end
+				CreateTimeEvent(0,"actor_backpack",0,transfer_items,se_obj.id)
+			end
+		else
+			actor_menu.set_msg(1, game.translate_string("st_stash_no_backpack_found"),4)
+		end
+	end
+end
+
+function actor_on_item_take_from_box(box,obj)
+	if (box:section() == "inv_backpack") then
+		if (box:is_inv_box_empty()) then
+			hide_hud_inventory()
+			
+			local data = {
+				stash_id = box:id(),
+				cancel = false,
+			}
+			SendScriptCallback("actor_on_stash_remove",data)
+			if data.cancel then
+				return
+			end
+			
+			local id = box:id()
+
+			level.map_remove_object_spot(id, "treasure")
+			local se_obj = alife_object(id)
+			if se_obj then
+				alife_release(se_obj)
+			end
+			
+			local m_data = alife_storage_manager.get_state()
+			if (m_data.player_created_stashes and m_data.player_created_stashes[id]) then 
+				local section = m_data.player_created_stashes[id]
+				alife_create_item(section, db.actor)
+				m_data.player_created_stashes[id] = nil
+			end
+		end
+	end
+end
+
+-----------------
+function is_ammo_for_wpn(sec)
+	for i=1,3 do
+		local wpn = db.actor:item_in_slot(i)
+		if (wpn) then
+			local ammos = utils_item.get_ammo(wpn:section(), wpn:id(), true)
+			if (ammos[sec]) then 
+				return true 
+			end
+		end
+	end
+	return false
+end
+
+function is_in_slot(obj)
+	for k,_ in pairs(SCANNED_SLOTS) do
+		local item = db.actor:item_in_slot(k)
+		if (item and item:id() == obj:id()) then 
+			return true
+		end
+	end
+	return false
+end
+
+
+----------------------------------------------------------------------
+-- UI Item Property
+----------------------------------------------------------------------
+function menu_stash(obj) -- return "use" name
+	local p = obj:parent()
+	if not (p and p:id() == AC_ID) then return end
+	
+	if (obj:clsid() == clsid.equ_backpack) then 
+		return game.translate_string("ui_st_create_stash")
+	end
+end
+
+function func_stash(obj)
+	start(obj)
+end
+
+
+-------------------------------------------------------------------
+GUI = nil -- instance, don't touch
+function start(obj)
+	if (not obj) then
+		return
+	end
+	
+	hide_hud_inventory()
+	
+	if (not GUI) then
+		GUI = UICreateStash()
+	end
+	
+	if (GUI) and (not GUI:IsShown()) then
+		GUI:ShowDialog(true)
+		GUI:Reset(obj)
+		
+		Register_UI("UICreateStash","item_backpack")
+	end
+end
+
+-------------------------------------------------------------------
+-- UI
+-------------------------------------------------------------------
+class "UICreateStash" (CUIScriptWnd)
+
+function UICreateStash:__init() super()
+	self:InitControls()
+	self:InitCallBacks()
+end
+
+function UICreateStash:__finalize()
+end
+
+function UICreateStash:InitControls()
+	self:SetWndRect(Frect():set(0,0,1024,768))
+	self:SetAutoDelete(true)
+	--self:Enable(true)
+
+	local xml					= CScriptXmlInit()
+	xml:ParseFile				("ui_items_backpack.xml")
+
+	self.dialog					= xml:InitStatic("backpack", self)
+	xml:InitStatic("backpack:background", self.dialog)
+
+	self.input = xml:InitEditBox("backpack:input",self.dialog)
+	self:Register(self.input,"fld_input")
+
+	local btn = xml:Init3tButton("backpack:btn_cancel", self.dialog)
+	self:Register(btn,"btn_cancel")
+
+	btn = xml:Init3tButton("backpack:btn_ok", self.dialog)
+	self:Register(btn,"btn_ok")
+end
+
+function UICreateStash:InitCallBacks()
+	self:AddCallback("btn_ok", ui_events.BUTTON_CLICKED, self.OnAccept, self)
+	self:AddCallback("btn_cancel", ui_events.BUTTON_CLICKED, self.Close, self)
+end
+
+function UICreateStash:Reset(obj)
+	self.id = obj:id()
+	self.section = obj:section()
+	
+	self.input:SetText("")
+end
+
+function UICreateStash:Update()
+	CUIScriptWnd.Update(self)
+end
+
+function UICreateStash:OnAccept()
+	local se_obj = alife_create("inv_backpack",db.actor:position(),db.actor:level_vertex_id(),db.actor:game_vertex_id())
+	if (se_obj) then
+		local txt = self.input:GetText()
+		txt = txt ~= "" and txt or strformat(game.translate_string("st_itm_stash_of_character"), db.actor:character_name())
+		level.map_add_object_spot_ser(se_obj.id, "treasure", txt)
+		actor_menu.set_msg(1, game.translate_string("st_stash_created"),4)
+		
+		local m_data = alife_storage_manager.get_state()
+		if not (m_data.player_created_stashes) then 
+			m_data.player_created_stashes = {}
+		end
+		
+		m_data.player_created_stashes[se_obj.id] = self.section
+
+		alife_release_id(self.id)
+		
+		local data = {
+			stash_id = se_obj.id,
+			stash_name = txt,
+			stash_section = self.section,
+		}
+		SendScriptCallback("actor_on_stash_create",data)
+	end
+	self:Close()
+end
+
+function UICreateStash:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (res == false) then
+		local bind = dik_to_bind(dik)
+		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+			if dik == DIK_keys.DIK_ESCAPE then
+				self:Close()
+			end
+		end
+	end
+	return res
+end
+
+function UICreateStash:Close()
+	self:HideDialog()
+	
+	Unregister_UI("UICreateStash")
+end
