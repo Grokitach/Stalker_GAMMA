@@ -1,0 +1,47 @@
+local tg = 0
+local hit_time = 0
+
+local hit_interval = 7000 -- Every interval apply hit, in ms
+local hit_type = hit.telepatic --hit.burn, change if needed
+
+local valid_fields = { -- Valid fields to trigger hit
+	zone_field_psychic_weak = true,
+	zone_field_psychic_average = true,
+	zone_field_psychic_strong = true,
+}
+
+-- Damage values of the hit
+local damage_values = {
+	zone_field_psychic_weak = 0.076,
+	zone_field_psychic_average = 0.124,
+	zone_field_psychic_strong = 0.132,
+}
+
+local function hit_callback(s_hit, bone_id, flags)
+	tg = time_global()
+	if tg < hit_time then return end
+	hit_time = tg + hit_interval
+
+	local field = s_hit.draftsman
+	printf("current hitter %s", field:section())
+	if not valid_fields[field:section()] then
+		printf("not valid field %s", field:section())
+		return
+	end
+
+	-- New unaffected hit
+	-- db.actor:change_health(-damage_values[field:section()])
+
+	-- Old hit
+	local field_hit = hit(s_hit)
+	field_hit.power = damage_values[field:section()]
+	field_hit.type = hit_type
+
+	db.actor:hit(field_hit)
+end
+
+function on_game_start()
+	printf("Registering")
+	--RegisterScriptCallback("actor_on_hit_callback", hit_callback)
+	RegisterScriptCallback("actor_on_before_hit", hit_callback)
+end
