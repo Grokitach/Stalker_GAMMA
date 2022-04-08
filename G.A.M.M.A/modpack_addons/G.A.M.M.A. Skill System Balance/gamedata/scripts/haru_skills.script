@@ -13,6 +13,13 @@ local parse_keys = utils_data.parse_string_keys
 local str_explode = str_explode
 local is_empty = is_empty
 local random_key = random_key_table
+local inv_active = false
+
+local function print_dbg(msg, ...)
+    if options["debug"] then
+        printf("<HARU> | %s | " .. msg, time_global(), ...)
+    end
+end
 
 function get_max_weight_coef()
     local actor = db.actor
@@ -56,12 +63,14 @@ function creature_on_before_hit(npc, shit, bone_id, flags)
     local wpn = db.actor:active_item()
     if not wpn then return end
     if IsWeapon(wpn) and (IsItem("fake_ammo_wpn",wpn:section())) then
+        print_dbg("Hit NPC with melee [%s]", npc:section())
         increase_skill("strength", shit.power * (npc:alive() and 30 or 5))
         shit.power = shit.power * skills_stats["strength"].melee_damage
     end
 end
 
 local allowed_hit_types = {
+    [5] = true,
     [6] = true,
     [7] = true,
     [8] = true
@@ -69,6 +78,7 @@ local allowed_hit_types = {
 
 function actor_on_before_hit(shit)
     if shit.power < 0 or not (allowed_hit_types[shit.type]) then return end
+    print_dbg("Actor got hit | power = [%s] | type = [%s]", shit.power, shit.type)
     increase_skill("survival", shit.power * 200)
     local survival_resistance = skills_stats["survival"].resistance
 	shit.power = shit.power * survival_resistance
@@ -77,8 +87,7 @@ end
 
 function update_endurance()
     local pwb = skills_stats["endurance"].power_loss
-    exec_console_cmd("power_loss_bias " .. tostring(pwb))
-    
+    exec_console_cmd("power_loss_bias " .. tostring(pwb)) 
     local speed_modifier = skills_stats["endurance"].speed_modifier
     speed.add_speed("haruka_endurance_modifier_walk", speed_modifier, false, true)
 end
@@ -94,68 +103,64 @@ function update_survival()
     db.actor.bleeding = skills_stats["survival"].bleed_restore
 end
 
-local rank_table = {
-	["novice"]       = 30,
-    ["trainee"]      = 36,
-    ["experienced"]  = 42,
-    ["professional"] = 48,
-    ["veteran"]      = 54,
-    ["expert"]       = 60,
-    ["master"]       = 90,
-    ["legend"]       = 120
-}
-
-function npc_on_death_callback(victim, who)
-    if who and who:id() ~= AC_ID then 
-        return 
-    end
-    local rank = ranks.get_obj_rank_name(victim)
-    if rank and rank_table[rank] then
-        increase_skill("scavenging", rank_table[rank])
-    end
-end
-
-function monster_on_death_callback(victim, who)
-    if who and who:id() ~= AC_ID then 
-        return 
-    end
-    local health = ini_sys:r_string_ex(victim:section(), "Health") or 100
-    increase_skill("survival", health * 0.1)
-end
-
-
 function monster_on_loot_init(victim, loot_table)
-    if is_empty(loot_table) then return end
+    if victim then
+        print_dbg("Actor is looting [%s]", victim:section())
+        local health = ini_sys:r_float_ex(victim:section(), "Health") or 100
+        increase_skill("survival", health * 0.1)
+    end
+    if is_empty(loot_table) then 
+        return 
+    end
     local hunting_skill = skills_stats["survival"].hunting_skill
     local part = random_key(loot_table)
     if hunting_skill > 0 then
         if hunting_skill > math_random(100) then
+            print_dbg("Spawning extra [%s]", part)
             loot_table[part].count = loot_table[part].count + 1
         end
     else
         if -hunting_skill > math_random(100) then
+            print_dbg("Removing [%s]", part)
             loot_table[part].count = loot_table[part].count - 1
         end
     end
 end
 
-SpawnCosmetics = death_manager.spawn_cosmetics
+local rank_table = {
+	["novice"]       = 25,
+    ["trainee"]      = 30,
+    ["experienced"]  = 34,
+    ["professional"] = 40,
+    ["veteran"]      = 45,
+    ["expert"]       = 50,
+    ["master"]       = 65,
+    ["legend"]       = 100
+}
 
-function death_manager.spawn_cosmetics(npc, npc_id, npc_comm, npc_rank, visual, rand_condition)
-    SpawnCosmetics(npc, npc_id, npc_comm, npc_rank, visual, rand_condition)
-    CreateTimeEvent("haruka_scavenger", "haruka_scavanger", 0.01, function()
+CreateReleaseItem = death_manager.create_release_item
+function death_manager.create_release_item(npc)
+    CreateReleaseItem(npc)
+    CreateTimeEvent("haruka_scavenger", "haruka_scavanger", 0.1, function()
         scavanger_effect(npc)
         return true
     end)
 end
 
 function scavanger_effect(npc)
+    local rank = ranks.get_obj_rank_name(npc)
+    local inventory = ui_inventory.GUI
+    if inventory and inventory.mode == "loot" and inventory.npc_id == npc:id() then
+        print_dbg("Actor is looting [%s]", npc:section())
+        increase_skill("scavenging", rank_table[rank] or 25)
+    end
     local scavenging_skill = skills_stats["scavenging"].scavenging_skill
     local itr = scavenging_skill > 0 and function(npc, item)
         local sec = item and item:section() or false
         if not sec then return end
         if scavenging_skill > math_random(100) and not always_keep_item[sec] then
             if not (IsWeapon(item) or IsOutfit(item) or IsHeadgear(item)) then
+                print_dbg("Spawning extra [%s]", item:section())
                 alife_create_item(sec, npc, {["uses"] = 1, ["cond_r"] = {0.05, 0.2}})
             end
         end
@@ -164,6 +169,7 @@ function scavanger_effect(npc)
         local sec = item and item:section() or false
         if not sec then return end
         if -scavenging_skill > math_random(100) and not always_keep_item[sec] then
+            print_dbg("Releasing [%s]", item:section())
             alife_release(item)
         end
     end 
@@ -173,6 +179,7 @@ end
 function increase_skill(skill, amount)
     if amount < 0 then return end
 	local key = "exp_multiplier_" .. skill
+    print_dbg("[%s] increased: [%s]", skill, amount)
     skills_levels[skill].experience = skills_levels[skill].experience + (amount  * options[key])
 end
 
@@ -186,6 +193,7 @@ local colors = {
 }
 
 function level_up_skill(name)
+    print_dbg("Leveled up [%s]", name)
     skills_levels[name].current_level = skills_levels[name].current_level + 1 
     local skill = skills_levels[name]
     local req = skill.requirement
@@ -251,6 +259,7 @@ function on_option_change()
     options["exp_multiplier_endurance"] = get_config("exp_multiplier_endurance")
     options["exp_multiplier_scavenging"] = get_config("exp_multiplier_scavenging")
     options["exp_multiplier_survival"] = get_config("exp_multiplier_survival")
+    options["debug"] = get_config("debug")
 end
 
 function on_game_load()
@@ -322,8 +331,6 @@ function on_game_start()
     RegisterScriptCallback("save_state", save_state)
     RegisterScriptCallback("load_state", load_state)
     RegisterScriptCallback("actor_on_update", update_stats)
-    RegisterScriptCallback("npc_on_death_callback", npc_on_death_callback)
-    RegisterScriptCallback("monster_on_death_callback", monster_on_death_callback)
     RegisterScriptCallback("monster_on_loot_init", monster_on_loot_init)
     RegisterScriptCallback("on_game_load", on_game_load)
     RegisterScriptCallback("on_option_change", on_option_change)
