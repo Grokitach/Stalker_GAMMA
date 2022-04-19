@@ -1,0 +1,246 @@
+--Protected function call to prevent crashes to desktop
+--Prints error in console if occured, otherwise proceed normally
+--Use for test only, slower than usual
+local try = try or function(func, ...)
+	local status, error_or_result = pcall(func, ...)
+	if not status then
+		printf(error_or_result)
+		return false, status, error_or_result
+	else
+		return error_or_result, status
+	end
+end
+
+
+local XMLP = CScriptXmlInit()
+XMLP:ParseFile("utils.xml")
+
+ -- x and y of upper corner
+wind_x = 10
+wind_y = 10
+move_to_bottom = true
+
+function sync_cursor(base, element, offset_x, offset_y)
+	curPos = GetCursorPosition()
+	
+	--local cpos = GetCursorPosition()
+	local cpos  = vector2():set(wind_x,wind_y)
+	local w = element and element:GetWidth() or base:GetWidth()
+	local h = element and element:GetHeight() or base:GetHeight()
+	
+	-- Default pos at cursor is top/left corner
+	if move_to_bottom and curPos.x <500 and curPos.y<380 then
+		cpos.y = 768 - wind_y 
+	end
+	
+	
+	
+	
+	
+	-- case: element pos to right is smaller than its width
+	if (1024 - cpos.x < w) then
+		cpos.x = cpos.x - w
+	end
+	
+	-- case: element pos to bottom is smaller than its height
+	if (768 - cpos.y < h) then
+		-- after switch: make sure element doesn't go above the view
+		local y = cpos.y - h
+		cpos.y = y < 0 and 0 or y
+	end
+	
+	base:SetWndPos(vector2():set( cpos.x + (offset_x or 0) , cpos.y + (offset_y or 0) ))
+end
+
+og_info_item_init = utils_ui.UIInfoItem.__init
+utils_ui.UIInfoItem.__init = function(self, owner, delay)
+	og_info_item_init(self, owner, delay)
+	self.xml = XMLP
+	
+	self.first_update = true
+	self.CC = {}
+	
+	--Parts
+	self.parts          = XMLP:InitStatic("item_info:ammo_type", self.dialog)
+	self.parts_txt      = XMLP:InitTextWnd("item_info:ammo_type:cap_ammo_used_type", self.dialog)
+	self.parts_txt_size = {x = self.parts_txt:GetWidth(), y = self.parts_txt:GetHeight()}
+end
+
+utils_ui.UIInfoItem.AddPartsContainer = function(self, offset, tbl, info)
+	local xml = self.xml
+	self.parts = xml:InitStatic("item_info:ammo_type", self.dialog)
+
+	local size = {
+		x = self.frame:GetWidth(),
+		y = self.frame:GetHeight(),
+	}
+	local pos = self.parts:GetWndPos()
+	local size_parts = {
+		x = self.parts:GetWidth(),
+		y = self.parts:GetHeight(),
+	}
+
+	local new_size = {
+		x = size.x - pos.x * 2,
+		y = size_parts.y
+	}
+
+	self.parts:SetWndSize(vector2():set(new_size.x, new_size.y))
+
+	self.CC["part"] = utils_ui.UICellContainer("item_info_parts_container", self, nil, "item_info:ammo_type:static_ammo_type1", self.parts)
+	self.CC["part"].showcase      		= true
+	self.CC["part"].can_select	   		= false
+	self.CC["part"].disable_bar         = true
+	self.CC["part"].disable_drag  		= true
+	self.CC["part"].disable_highlight   = true
+	self.CC["part"].disable_info        = true
+	self.CC["part"].disable_scroll      = true
+	self.CC["part"].disable_scroll_dragdrop = true
+	self.CC["part"].disable_stack	     = true
+	self.CC["part"]:EnableScrolling(false)
+
+	self.CC["part"].prof:SetWndSize(vector2():set(new_size.x, new_size.y))
+	utils_xml.sync_size(self.CC["part"].prof, self.parts, 0, offset)
+	utils_xml.sync_size(self.CC["part"].prof , self.CC["part"].scroll)
+	self.CC["part"]:SetGridSpecs(35, 5)
+
+	self.CC["part"]:Reinit(tbl, info)
+	self.CC["part"]:AdjustHeightToCell()	
+
+	utils_xml.sync_size(self.CC["part"].prof, self.parts, 0, offset)
+	self.parts:SetAutoDelete(true)
+	self:SyncPartsText()	
+end
+
+utils_ui.UIInfoItem.MovePartsRightVertical = function(self, offset, tbl, info)
+	local frame_size = {x = self.frame:GetWidth(), y = self.frame:GetHeight()}
+	local parts_pos = self.parts:GetWndPos()
+	local parts_size = {x = self.parts:GetWidth(), y = self.parts:GetHeight()}
+	local stats_dialog_pos = self.stats_dialog:GetWndPos()
+	
+	local new_pos = {
+		x = frame_size.x - stats_dialog_pos.x - 125,
+		y = stats_dialog_pos.y
+	}
+
+	local new_size = {
+		x = 100,
+		y = frame_size.y
+	}
+
+	self.parts:SetWndPos(vector2():set(new_pos.x, new_pos.y))
+	self.parts:SetWndSize(vector2():set(new_size.x, new_size.y))
+	self.CC["part"].prof:SetWndSize(vector2():set(new_size.x, new_size.y))
+	utils_xml.sync_size(self.CC["part"].prof, self.parts, 0, offset)
+	utils_xml.sync_size(self.CC["part"].prof , self.CC["part"].scroll)
+	self.CC["part"]:SetGridSpecs(35, 5)
+
+	self.CC["part"]:Reinit(tbl, info)
+	self.CC["part"]:AdjustHeightToCell()	
+	self.CC["part"]:AdjustWidthToCell()	
+
+	utils_xml.sync_size(self.parts , self.CC["part"].scroll)
+
+	-- local fnt = GetFontSmall()
+	-- for idx, ci in pairs(self.CC["part"].cell) do
+	-- 	if ci:IsShown() then
+	-- 		local con = utils_item.get_cond_static(ci.flags.info)
+	-- 		local clr = utils_xml.get_color_con(ci.flags.info, true)
+	-- 		ci:Add_CustomText( con, nil, nil, clr, fnt)
+	-- 	end
+	-- end
+
+	self:SyncPartsText(true)
+end
+
+utils_ui.UIInfoItem.SyncPartsText = function(self, vertical)
+	local pos = self.parts:GetWndPos()
+	self.parts_txt:SetText(game.translate_string("st_ui_awr_parts_list"))
+	self.parts_txt:Show(true)
+	if vertical then
+		local parts_txt_pos = self.stats_dialog:GetWndPos()
+		self.parts_txt:SetWndPos(vector2():set(pos.x, parts_txt_pos.y))
+		self.parts_txt:SetWndSize(vector2():set(self.frame:GetWidth() - pos.x - 16, self.ammo_cap:GetHeight()))
+		self.parts_txt:SetTextAlignment(2)
+	else
+		local parts_txt_pos = self.ammo_cap:GetWndPos()
+		self.parts_txt:SetWndSize(vector2():set(self.ammo_cap:GetWidth(), self.ammo_cap:GetHeight()))
+		self.parts_txt:SetWndPos(vector2():set(parts_txt_pos.x, pos.y))
+		self.parts_txt:SetTextAlignment(0)
+	end
+end
+
+utils_ui.UIInfoItem.RemovePartsContainer = function(self)
+	self.parts:Show(false)
+	self.CC["part"] = nil
+	self.parts_txt:Show(false)
+end
+
+og_info_item_update = utils_ui.UIInfoItem.Update
+utils_ui.UIInfoItem.Update = function(self, obj, sec, flags)
+	og_info_item_update(self, obj, sec, flags)
+
+	if not self:Pass(obj, sec) then
+		self:Show(false)
+		self.first_update = true
+		return
+	end
+
+	-- item info box is shown at cursor
+	sync_cursor(self.dialog, self.frame, 0, 0)
+	
+	-- no need to process if it's same item
+	if not self.first_update then 
+		if obj then
+			if obj:id() == self.id then
+				self:Show(true)
+				return
+			end
+		elseif sec then
+			if sec == self.section then
+				self:Show(true)
+				return
+			end
+		end
+	end
+
+	-- Parts
+	try(function()
+		self:RemovePartsContainer()
+		local parts = item_parts.get_parts_con(obj, nil, true)
+		if parts then
+			local t, t_con = {}, {}
+			local parent_section = SYS_GetParam(0, sec, "parent_section", sec)
+			for k, v in pairs(parts) do
+				if k ~= sec and k ~= parent_section then
+					t[#t+1] = k
+					t_con[#t_con+1] = v
+				end
+			end
+			self:AddPartsContainer(40, t, t_con)
+			local fnt = GetFontSmall()
+			for idx, ci in pairs(self.CC["part"].cell) do
+				if ci:IsShown() then
+					local con = utils_item.get_cond_static(ci.flags.info)
+					local clr = utils_xml.get_color_con(ci.flags.info, true)
+					ci:Add_CustomText( con, nil, nil, clr, fnt)
+				end
+			end
+			self:Sync_Finale( true, self.ammo:IsShown() and self.ammo or self.stats_dialog, self.parts, self.frame, 10 )
+			self:SyncPartsText()
+
+			-- Move parts to the right of stats if frame is too big to fit screen
+			if self.frame:GetHeight() > (device().height - 32) then
+				self:MovePartsRightVertical(0, t, t_con)
+				if self.ammo:IsShown() then
+					self:Sync_Finale( true, self.stats_dialog, self.ammo, self.frame, 10 )
+				else
+					self:Sync_Finale(true, self.desc, self.stats_dialog, self.frame, 10 )
+				end
+			end
+		else
+			self:Show(true)
+		end
+	end)
+	self.first_update = false
+end
