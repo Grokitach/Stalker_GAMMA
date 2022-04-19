@@ -1,0 +1,541 @@
+class "UIFactionIDHUD" (CUIScriptWnd)
+
+local xml
+function UIFactionIDHUD:__init() super()
+	self.ratio  = utils_xml.screen_ratio()
+	
+	xml  = CScriptXmlInit()
+	xml:ParseFile("ui_patches.xml")
+	
+	self.factions = {}
+	self.factions["stalker"] 	= xml:InitStatic("patch_stalker", self)
+	self.factions["bandit"] 	= xml:InitStatic("patch_bandit", self)
+	self.factions["csky"] 		= xml:InitStatic("patch_csky", self)
+	self.factions["army"] 		= xml:InitStatic("patch_army", self)
+	self.factions["freedom"] 	= xml:InitStatic("patch_freedom", self)
+	self.factions["dolg"] 		= xml:InitStatic("patch_dolg", self)
+	self.factions["ecolog"] 	= xml:InitStatic("patch_ecolog", self)
+	self.factions["killer"] 	= xml:InitStatic("patch_killer", self)
+	self.factions["monolith"] 	= xml:InitStatic("patch_monolith", self)
+	self.factions["greh"] 		= xml:InitStatic("patch_greh", self)
+	self.factions["renegade"]	= xml:InitStatic("patch_renegade", self)
+	self.factions["isg"] 		= xml:InitStatic("patch_isg", self)
+	self.factions["unknown"] 	= xml:InitStatic("patch_unknown", self)
+	
+	self.factions["stalker_dead"] 	= xml:InitStatic("patch_dead_stalker", self)
+	self.factions["bandit_dead"] 	= xml:InitStatic("patch_dead_bandit", self)
+	self.factions["csky_dead"] 		= xml:InitStatic("patch_dead_csky", self)
+	self.factions["army_dead"] 		= xml:InitStatic("patch_dead_army", self)
+	self.factions["freedom_dead"] 	= xml:InitStatic("patch_dead_freedom", self)
+	self.factions["dolg_dead"] 		= xml:InitStatic("patch_dead_dolg", self)
+	self.factions["ecolog_dead"] 	= xml:InitStatic("patch_dead_ecolog", self)
+	self.factions["killer_dead"] 	= xml:InitStatic("patch_dead_killer", self)
+	self.factions["monolith_dead"] 	= xml:InitStatic("patch_dead_monolith", self)
+	self.factions["greh_dead"] 		= xml:InitStatic("patch_dead_greh", self)
+	self.factions["renegade_dead"]	= xml:InitStatic("patch_dead_renegade", self)
+	self.factions["isg_dead"] 		= xml:InitStatic("patch_dead_isg", self)
+	
+	self.name = xml:InitStatic("name", self)
+	self.rank = xml:InitStatic("rank", self)
+	self.name_r = xml:InitStatic("name_r", self)
+	self.rank_r = xml:InitStatic("rank_r", self)
+	
+	
+	self.factions["stalker"]:Show(false)
+	self.factions["bandit"]:Show(false)
+	self.factions["csky"]:Show(false)
+	self.factions["army"]:Show(false)
+	self.factions["freedom"]:Show(false)
+	self.factions["dolg"]:Show(false)
+	self.factions["ecolog"]:Show(false)
+	self.factions["killer"]:Show(false)
+	self.factions["monolith"]:Show(false)
+	self.factions["greh"]:Show(false)
+	self.factions["renegade"]:Show(false)
+	self.factions["isg"]:Show(false)
+	self.factions["unknown"]:Show(false)
+	
+	self.factions["stalker_dead"]:Show(false)
+	self.factions["bandit_dead"]:Show(false)
+	self.factions["csky_dead"]:Show(false)
+	self.factions["army_dead"]:Show(false)
+	self.factions["freedom_dead"]:Show(false)
+	self.factions["dolg_dead"]:Show(false)
+	self.factions["ecolog_dead"]:Show(false)
+	self.factions["killer_dead"]:Show(false)
+	self.factions["monolith_dead"]:Show(false)
+	self.factions["greh_dead"]:Show(false)
+	self.factions["renegade_dead"]:Show(false)
+	self.factions["isg_dead"]:Show(false)
+	
+	self.name:TextControl():SetText("")
+	self.rank:TextControl():SetText("")
+	self.name_r:TextControl():SetText("")
+	self.rank_r:TextControl():SetText("")
+end
+
+function UIFactionIDHUD:__finalize()
+end
+
+function UIFactionIDHUD:Reset()
+	self.factions["stalker"]:Show(false)
+	self.factions["bandit"]:Show(false)
+	self.factions["csky"]:Show(false)
+	self.factions["army"]:Show(false)
+	self.factions["freedom"]:Show(false)
+	self.factions["dolg"]:Show(false)
+	self.factions["ecolog"]:Show(false)
+	self.factions["killer"]:Show(false)
+	self.factions["monolith"]:Show(false)
+	self.factions["greh"]:Show(false)
+	self.factions["renegade"]:Show(false)
+	self.factions["isg"]:Show(false)
+	self.factions["unknown"]:Show(false)
+	
+	self.factions["stalker_dead"]:Show(false)
+	self.factions["bandit_dead"]:Show(false)
+	self.factions["csky_dead"]:Show(false)
+	self.factions["army_dead"]:Show(false)
+	self.factions["freedom_dead"]:Show(false)
+	self.factions["dolg_dead"]:Show(false)
+	self.factions["ecolog_dead"]:Show(false)
+	self.factions["killer_dead"]:Show(false)
+	self.factions["monolith_dead"]:Show(false)
+	self.factions["greh_dead"]:Show(false)
+	self.factions["renegade_dead"]:Show(false)
+	self.factions["isg_dead"]:Show(false)
+	
+	self.name:TextControl():SetText("")
+	self.rank:TextControl():SetText("")
+	self.name_r:TextControl():SetText("")
+	self.rank_r:TextControl():SetText("")
+end
+
+local tickSpeed = 200
+
+function dot_eye(position)
+	local toPoint = vector():set(position):sub(device().cam_pos):normalize()
+	local toEye = device().cam_dir
+	local dot = toPoint:dotproduct(toEye)
+	
+	return dot
+end
+
+HUD = nil
+
+function activate_hud()
+	RegisterScriptCallback("actor_on_net_destroy",actor_on_net_destroy)
+	
+	if HUD == nil then
+		HUD = UIFactionIDHUD()
+		get_hud():AddDialogToRender(HUD)
+	end
+	-- HUD:Update(true)
+end
+
+function deactivate_hud()
+	if HUD ~= nil then
+		get_hud():RemoveDialogToRender(HUD)
+		HUD = nil
+	end
+	
+	UnregisterScriptCallback("actor_on_net_destroy",actor_on_net_destroy)
+end
+
+function on_screen_resolution_changed()
+	deactivate_hud()
+	activate_hud()
+end
+
+function actor_on_net_destroy()
+	if HUD ~= nil then
+		get_hud():RemoveDialogToRender(HUD)
+		HUD = nil
+	end
+end
+
+function actor_on_first_update()
+	activate_hud()
+end
+
+local deadID = true
+local nameID = true
+local timeID = true
+local rankID = true
+local talkName = false
+local speedID = 0.2
+local targetLenience = 0.984
+
+local xo = 108
+local yo = 665
+
+local xp = 0
+local yp = 0
+
+local xn = 16
+local yn = -14
+
+local xr = 16
+local yr = 3
+
+local r = 200
+local g = 200
+local b = 200
+
+local rr = 150
+local rg = 150
+local rb = 150
+
+local flipAlign = false
+
+function loadsettings()
+	if ui_mcm then -- here we test to make sure ui_mcm exists before trying to call it's get function.
+		deadID = ui_mcm.get("targetID/deadID")
+		nameID = ui_mcm.get("targetID/nameID")
+		timeID = ui_mcm.get("targetID/timeID")
+		rankID = ui_mcm.get("targetID/rankID")
+		speedID = ui_mcm.get("targetID/speedID")
+		
+		targetLenience = ui_mcm.get("targetID/targL")
+		
+		xo = ui_mcm.get("targetID/xo")
+		yo = ui_mcm.get("targetID/yo")
+		xp = ui_mcm.get("targetID/xp")
+		xn = ui_mcm.get("targetID/xn")
+		xr = ui_mcm.get("targetID/xr")
+		yp = ui_mcm.get("targetID/yp")
+		yn = ui_mcm.get("targetID/yn")
+		yr = ui_mcm.get("targetID/yr")
+		
+		r = ui_mcm.get("targetID/colorR")
+		g = ui_mcm.get("targetID/colorG")
+		b = ui_mcm.get("targetID/colorB")
+		rr = ui_mcm.get("targetID/RcolorR")
+		rg = ui_mcm.get("targetID/RcolorG")
+		rb = ui_mcm.get("targetID/RcolorB")
+		
+		flipAlign = ui_mcm.get("targetID/flipAlign")
+	end
+end
+
+function on_mcm_load()
+	op ={	id= "targetID" , sh = true , gr = 
+			{
+				{type = "title", text = "Basic"},
+				{id = "deadID"	, type = "check", val = 1, def = true},
+				{id = "nameID"	, type = "check", val = 1, def = true},
+				{id = "timeID"	, type = "check", val = 1, def = true},
+				{id = "rankID"	, type = "check", val = 1, def = true},
+				{id = "speedID"	, type = "track", val = 2, def = 0.2, min = 0.0, max = 10.0, step = 0.1},
+				{id = "targL"	, type = "track", val = 2, def = 0.984, min = 0.8, max = 1.0, step = 0.001},
+				{type = "line"},
+				
+				{type = "title", text = "Position"},
+				{id = "xo"	, type = "track", val = 2, def = 108.0, 	min = 0.0, max = 1024.0, step = 0.5},
+				{id = "yo"	, type = "track", val = 2, def = 665.0, min = 0.0, max = 768.0, step = 0.5},
+				{type = "title", text = ""},
+				{id = "xp"	, type = "track", val = 2, def = 0.0, 	min = -300.0, max = 300.0, 	step = 0.5},
+				{id = "yp"	, type = "track", val = 2, def = 0.0, 	min = -300.0, max = 300.0, 	step = 0.5},
+				{type = "title", text = ""},
+				{id = "xn"	, type = "track", val = 2, def = 16.0, 	min = -300.0, max = 300.0, 	step = 0.5},
+				{id = "yn"	, type = "track", val = 2, def = -14.0, min = -300.0, max = 300.0, 	step = 0.5},
+				{type = "title", text = ""},
+				{id = "xr"	, type = "track", val = 2, def = 16.0, 	min = -300.0, max = 300.0, 	step = 0.5},
+				{id = "yr"	, type = "track", val = 2, def = 3.0, 	min = -300.0, max = 300.0, 	step = 0.5},
+				{type = "line"},
+				
+				{type = "title", text = "Text"},
+				{id = "flipAlign" , type = "check", val = 1, def = false},
+				{id = "colorR"	, type = "track", val = 2, def = 200.0, 	min = 0.0, max = 255.0, step = 0.5},
+				{id = "colorG"	, type = "track", val = 2, def = 200.0, 	min = 0.0, max = 255.0, step = 0.5},
+				{id = "colorB"	, type = "track", val = 2, def = 200.0, 	min = 0.0, max = 255.0, step = 0.5},
+				{type = "title", text = ""},
+				{id = "RcolorR"	, type = "track", val = 2, def = 150.0, 	min = 0.0, max = 255.0, step = 0.5},
+				{id = "RcolorG"	, type = "track", val = 2, def = 150.0, 	min = 0.0, max = 255.0, step = 0.5},
+				{id = "RcolorB"	, type = "track", val = 2, def = 150.0, 	min = 0.0, max = 255.0, step = 0.5},
+				
+			}
+		}
+		
+	return op
+end
+
+local idtable = {}
+local nametable = {}
+local name_unknown = game.translate_string("ui_mcm_targetID_unknown")
+
+function identify(obj)
+	if not timeID then 
+		idtable[obj:character_name()] = 1
+		return true 
+	end
+	
+	if not idtable[obj:character_name()] then idtable[obj:character_name()] = 0 end
+	
+	if idtable[obj:character_name()] >= 1 then
+		return true
+	end
+
+	local distance = db.actor:position():distance_to_sqr(obj:position())
+	
+	if distance < 2500 then
+		idtable[obj:character_name()] = 1
+		return true
+	end
+	
+	local power = (100 / ((distance - 2500) * 0.1) / device().fov) * (tickSpeed * 0.1)
+	
+	--printf(distance .. " " .. power)
+	
+	idtable[obj:character_name()] = idtable[obj:character_name()] + (power * speedID)
+	if idtable[obj:character_name()] >= 1 then
+		return true
+	end
+	
+	return false
+end
+
+
+function displayFaction(obj)
+	if not obj then return end
+	
+	local fact = obj:character_community()
+	local name = obj:character_name()
+--	local rank = ranks.get_obj_rank_name(obj)
+--	rank = rank:sub(1,1):upper()..rank:sub(2)
+	rank = game.translate_string("st_rank_" .. ranks.get_obj_rank_name(obj)) or ""
+
+	if not rankID then rank = nil end
+	if not nameID then name = nil end
+	
+	if nameID and talkName and not nametable[name] then 
+		name = name_unknown
+		rank = nil
+	end
+
+	if deadID and obj.health <= 0 then
+		fact = fact .. "_dead"
+	end
+
+	display(fact, name, rank)
+end
+
+function display(faction, name, rank)
+	--printf("Display")
+	
+	if HUD and HUD.factions[faction] then
+	
+		local nameHud = (flipAlign and HUD.name_r or HUD.name)
+		local rankHud = (flipAlign and HUD.rank_r or HUD.rank)
+		
+		nameHud:TextControl():SetTextColor(GetARGB(255, r, g, b))
+		rankHud:TextControl():SetTextColor(GetARGB(255, rr, rg, rb))
+	
+		rankHud:SetWndPos(vector2():set( xo + xr , yo + yr ))
+		HUD.factions[faction]:SetWndPos(vector2():set( xo + xp , yo + yp ))
+	
+		HUD.factions[faction]:Show(true)
+		
+		if name then
+			nameHud:TextControl():SetText(name)
+		
+			if rank then
+				rankHud:TextControl():SetText(rank)
+				nameHud:SetWndPos(vector2():set( xo + xn , yo + yn ))
+			else
+				nameHud:SetWndPos(vector2():set( xo + xn , yo + yn + 6.5 ))
+			end
+		end
+	end
+end
+
+function clear()
+	if HUD then
+		HUD:Reset()
+	end
+end
+
+function target_enter(obj)
+	if not obj then return end
+	
+	if identify(obj) then
+		displayFaction(obj)
+	else
+		display("unknown", name_unknown, nil)
+	end
+	
+end
+
+function target_exit(obj)
+	if not obj then return end
+	clear()
+end
+
+local lastTick = 0
+function target_tick(obj)
+	if not obj then return end
+	if (time_global() - lastTick) < tickSpeed then return end
+	lastTick = time_global()
+	
+	if not idtable[obj:character_name()] then 
+		printf("ERROR: faction ID nil in tick")
+		return 
+	end
+
+	
+	if idtable[obj:character_name()] < 1 then
+		if identify(obj) then
+			clear()
+			displayFaction(obj)
+		end
+	end
+
+end
+
+local LastHitObject = nil
+local lastCheckTime = 0
+
+-- function getDotPower(x)
+	-- return clamp( -(1 / ((x * 0.05) + 1)) + 1 , 0.8, 0.997)
+-- end
+
+trigger = 0
+delay = 100
+
+function actor_on_update()
+
+	tg = time_global()
+	
+	if trigger == 0 then
+       		grok_delay = tg + delay
+		trigger = 1
+	end
+	
+	if (trigger == 1 and tg > grok_delay) then
+		trigger = 0
+
+		local obj = level.get_target_obj()
+	
+		if HUD and obj and IsStalker(obj) and obj:id() ~= 0 and (obj.health > 0 or deadID) and obj:character_community() and HUD.factions[obj:character_community()] then
+		
+			if LastHitObject then
+				if obj:id() ~= LastHitObject:id() then
+					target_exit(LastHitObject)
+					target_enter(obj)
+				else
+					target_tick(obj)
+				end
+			else
+				target_enter(obj)
+			end
+	
+			LastHitObject = obj
+			return
+		else
+			if LastHitObject then
+				if targetLenience >= 1.0 then
+					target_exit(LastHitObject)
+					LastHitObject = nil
+					return
+				end
+		
+				if (time_global() - lastCheckTime) > 100 then
+				lastCheckTime = time_global()
+		
+					local pos = utils_obj.safe_bone_pos(LastHitObject, "bip01_spine")
+					if pos then
+						local dot = dot_eye(pos)
+						--0.984
+						--getDotPower(device().cam_pos:distance_to_sqr(pos))
+						if dot < targetLenience then
+					
+							target_exit(LastHitObject)
+					
+							LastHitObject = nil
+							return
+						end
+					end
+			
+				end
+			
+			end
+		end
+	
+		if LastHitObject then
+			target_tick(LastHitObject)
+		end
+
+	end
+end
+
+
+function npc_on_death_callback(npc, who)
+	if not LastHitObject then return end
+	if npc:id() == LastHitObject:id() then
+
+		if deadID then
+			clear()
+			displayFaction(npc)
+		else
+			target_exit(LastHitObject)
+			LastHitObject = nil
+		end
+		
+	end
+end
+
+function npc_on_net_destroy(npc)
+	if not LastHitObject then return end
+	if npc:id() == LastHitObject:id() then
+		target_exit(LastHitObject)
+		LastHitObject = nil
+	end
+	
+	clear()
+end
+
+
+function GUI_on_show(gui, str2)
+
+	--printf(ui_inventory.mode)
+
+	if gui == "Dialog" then
+		--local obj = level.get_target_obj()
+		local obj = mob_trade.GetTalkingNpc()
+		
+		if obj and LastHitObject and LastHitObject:id() == obj:id() then
+			nametable[obj:character_name()] = true
+			clear()
+			displayFaction(obj)
+		end
+		
+	end
+	
+	if gui == "UIInventory" then
+		local obj = level.get_target_obj()
+		if obj and obj.health <= 0 and LastHitObject and LastHitObject:id() == obj:id() then
+		
+			local mid = utils_obj.safe_bone_pos(LastHitObject, "bip01_spine")
+			local pos = device().cam_pos
+			
+			if mid and pos and pos:distance_to_sqr(mid) < 4.9 then
+				nametable[obj:character_name()] = true
+				clear()
+				displayFaction(obj)
+			end
+		end
+	end
+end
+
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("on_screen_resolution_changed", on_screen_resolution_changed)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("npc_on_death_callback", npc_on_death_callback)
+	RegisterScriptCallback("npc_on_net_destroy", npc_on_net_destroy)
+	RegisterScriptCallback("GUI_on_show", GUI_on_show)
+	RegisterScriptCallback("GUI_on_show", GUI_on_show)
+	RegisterScriptCallback("on_option_change", loadsettings)  --MCM sends the same callback as ui_options 
+	loadsettings()
+end
