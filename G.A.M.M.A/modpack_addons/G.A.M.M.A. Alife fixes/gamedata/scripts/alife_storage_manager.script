@@ -1,0 +1,312 @@
+--[[
+	This script handles the serialization of data using the marshal library and the saving of this data to disk depending
+	on save game name. What this means is that you can save entire tables to disk instead of saving to object packet.
+	This script was created to alleviate issues with using packets to save dynamic data (pstor) which lead to save corruption.
+	Also it removes some restrictions on what you can save.
+	
+	*only store valid lua types such as numbers, strings, boolean, functions or tables that contain these valid types. Userdata needs to have a special
+	__persist function defined in it's metatable. See how it is done for CTime in _G.script
+	
+	*Supposedly you can save userdata if you write a proper __persist method for the metatable but I have failed to achieve proper results with serializing CTime.
+	
+	*You must register for 'save_state' and 'load_state' and add your own table to m_data for it to be encoded then stored in *.scoc
+	*Although marshal is pretty fast, keep in mind that encoding/decoding a ton of data, saves will start to noticeablely take longer to save/load.
+	*For testing/debugging you can uncomment the print_table calls in save_state and load_state. It will save the before and after tables to print_table.txt in your main directory.
+		
+	
+	by: Alundaio
+--]]
+local m_data = {}
+
+-- store stuff that you want to persist even offline
+m_data.se_object = {}
+
+-- store stuff only for online objects. When object goes offline this table is purged.
+m_data.game_object = {}
+
+-- PDA known contacts
+m_data.actor_contacts = {}
+
+local function on_pstor_load_all(obj,packet)
+	local id = obj:id()
+	local state = get_game_object_state(obj)
+	if (state and db.storage[id]) then
+		if (state.pstor_all) then
+			db.storage[id].pstor = state.pstor_all
+			state.pstor_all = nil
+		end 
+
+		if (state.pstor_ctime) then
+			db.storage[id].pstor_ctime = state.pstor_ctime
+			state.pstor_ctime = nil
+		end
+	end
+end
+
+local function server_entity_on_unregister(se_obj, typ)
+	local id = se_obj.id
+	if (m_data.se_object[id]) then
+		m_data.se_object[id] = nil
+		--printf("$ alife_storage | cleaning server object [%s](%s) mdata", se_obj:name(), id)
+	end
+	if (m_data.game_object[id]) then
+		m_data.game_object[id] = nil
+		--printf("$ alife_storage | cleaning game object [%s](%s) mdata", se_obj:name(), id)
+	end
+end
+
+local function actor_on_first_update()
+	alife_first_update() -- _G
+	on_after_load_state()
+end
+
+function on_game_start()
+	if not (USE_MARSHAL) then 
+		return 
+	end
+	RegisterScriptCallback("on_pstor_load_all",on_pstor_load_all)
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
+	--RegisterScriptCallback("server_entity_on_unregister",server_entity_on_unregister) -- NOTE: axr_main already handles this at last
+end
+
+-- Use these to perform changes on stored data between updates, the first is called
+function on_before_load_state() -- before loading
+	local prev_version = m_data.GAME_VERSION
+	local new_version = GAME_VERSION
+	
+	if prev_version and (prev_version ~= new_version) then
+		printf("~ Marshal Library | Old save detected, switching data from (%s) to (%s) - BEFORE load", prev_version, new_version)
+		
+		if m_data.comp_mule and m_data.comp_mule.assigned_items then
+			m_data.companion_assigned_items = dup_table(m_data.comp_mule.assigned_items)
+			m_data.comp_mule = nil
+			printf("~ Marshal Library | companion_assigned_items is adjusted")
+		end
+	end
+end
+
+function on_after_load_state() -- after first actor update
+	local prev_version = m_data.GAME_VERSION
+	local new_version = GAME_VERSION
+	
+	if prev_version and (prev_version ~= new_version) then
+		printf("~ Marshal Library | Old save detected, switching data from (%s) to (%s) - AFTER load", prev_version, new_version)
+		if m_data.npc_pda then
+			for id, info in pairs(m_data.npc_pda) do
+				local se_pda = alife_object(id)
+				if se_pda and info then
+					local sec = se_pda:section_name()
+					local p_id = se_pda.parent_id
+					alife_release(se_pda)
+					if p_id then
+						local se_parent = p_id == AC_ID and db.actor or alife_object(p_id)
+						if se_parent then
+							local se_pda_new = alife_create_item(sec, se_parent)
+							if se_pda_new then
+								se_save_var( se_pda_new.id, se_pda_new:name(), "info", dup_table(info) )
+								printf("~ Marshal Library | NPC PDA [%s] is shifted to new object [%s]", id, se_pda_new.id)
+							end
+						end
+					end
+				end
+			end
+			m_data.npc_pda = nil
+		end
+		
+		if m_data.item_parts_state then
+			for id, data in pairs(m_data.item_parts_state) do
+				local se_item = alife_object(id)
+				if se_item and data then
+					se_save_var( se_item.id, se_item:name(), "parts", dup_table(data) )
+					printf("~ Marshal Library | Item [%s] has parts", se_item:name())
+				end
+			end
+			m_data.item_parts_state = nil
+		end
+		
+		if m_data.disguise_unpatched_outfit then
+			for id, state in pairs(m_data.disguise_unpatched_outfit) do
+				local se_item = alife_object(id)
+				if se_item and state then
+					se_save_var( se_item.id, se_item:name(), "unpatched", true )
+					printf("~ Marshal Library | Outfit [%s] has no patch", se_item:name())
+				end
+			end
+			m_data.disguise_unpatched_outfit = nil
+		end
+		
+		local to_replace = {
+			["detector_anomaly"] = true,
+			["detector_radio"] = true,
+			["detector_geiger"] = true,
+		}
+		local sim = alife()
+		for i=1,65534 do
+			local se_obj = sim:object(i)
+			local sec = se_obj and se_obj:section_name()
+			if sec and to_replace[sec] then
+				local p_id = se_obj.parent_id
+				alife_release(se_obj)
+				if p_id then
+					local se_parent = p_id == AC_ID and db.actor or alife_object(p_id)
+					alife_create_item(sec, se_parent)
+					printf("~ Marshal Library | Created [%s] for [%s]", sec, se_parent:name())
+				end
+			end
+		end
+	end
+end
+
+-- called from engine!
+function CALifeStorageManager_before_save(fname)
+	if not (USE_MARSHAL) then 
+		return 
+	end
+
+	--printf("CALifeStorageManager_before_save BEFORE callback")
+	
+	m_data.GAME_VERSION = GAME_VERSION
+	
+	SendScriptCallback("save_state",m_data)
+	
+	--printf("CALifeStorageManager_before_save AFTER callback")
+	
+	-- save pstor
+	for id,t in pairs(db.storage) do
+		if (m_data.game_object[id]) then
+			if (t.pstor and not is_empty(t.pstor)) then
+				m_data.game_object[id].pstor_all = t.pstor
+			end
+			
+			-- serialization with game.CTime.__persist
+			if (t.pstor_ctime and not is_empty(t.pstor_ctime)) then 
+				m_data.game_object[id].pstor_ctime = t.pstor_ctime
+			end
+		end
+	end
+	
+	--ProcessEventQueueState(m_data,true)
+	
+	--[[ clean out se_object table of empty sub tables
+	for k,v in pairs(m_data.se_object) do 
+		if (type(v) == "table" and is_empty(v)) then 
+			v = nil
+		end
+	end
+	
+	-- clean out game_object table of empty sub tables
+	for k,v in pairs(m_data.game_object) do 
+		if (type(v) == "table" and is_empty(v)) then 
+			v = nil 
+		end
+	end
+	--]]
+	
+	-- clean out game_object table of empty sub tables
+	for id,tbl in pairs(m_data.game_object) do 
+		for k,v in pairs(tbl) do
+			if (type(v) == "table" and is_empty(v)) then 
+				m_data.game_object[id][k] = nil
+			end
+		end
+	end
+	
+	local data = marshal.encode(m_data)
+	if not (data) then 
+		return 
+	end
+		
+	local path = getFS():update_path('$game_saves$', '')
+	
+	lfs.mkdir(path) -- incase savegame folder doesn't exist yet
+	
+	path = path .. fname:sub(0,-6):lower() .. ".scoc"
+	
+	local savegame = io.open(path,"wb")
+	if not (io.type(savegame) == "file") then
+		printe("!Error: Unable to write to %s",path)
+		return 
+	end
+	
+	--printf("axr_main: saving custom data %s",path)
+	savegame:write(data)
+	savegame:close()
+	
+	--printf("CALifeStorageManager_before_save FINISHED")
+end 
+
+-- called from engine!
+function CALifeStorageManager_save(fname)
+	--printf("CALifeStorageManager_save START FINISHED")
+end 
+
+-- called from engine
+function CALifeStorageManager_load(fname)
+	if not (USE_MARSHAL) then 
+		return 
+	end 
+
+	local path = fname:sub(0,-6) .. ".scoc"
+	
+	--utils_data.debug_write(strformat("CALifeStorageManager_load %s",path))
+	
+	local savegame = io.open(path,"rb")
+	if not (io.type(savegame) == "file") then
+		return
+	end
+
+	local data = savegame:read("*all")
+	savegame:close()
+
+	if not (data and data ~= "") then
+		printe("!Error: Failed to read %s",path)
+		return
+	end
+
+	m_data = marshal.decode(data)
+	
+	--ProcessEventQueueState(m_data,false)
+	
+	-- For debugging save state
+	--utils_data.print_table(m_data,"m_data_on_load ("..path..")")
+
+	on_before_load_state()
+
+	SendScriptCallback("load_state",m_data)
+	
+	--utils_data.debug_write(strformat("CALifeStorageManager_load END"))
+end
+
+function get_state()
+	return m_data
+end
+
+function decode(t)
+	return marshal.decode(t)
+end
+
+-- storage based on ID but verified by object name
+function get_game_object_state(obj,create_if_dont_exist)
+	local id = obj:id()
+	if not id then return end
+	if not (m_data.game_object[id]) then
+		if not (create_if_dont_exist) then
+			return 
+		end
+		m_data.game_object[id] = {}
+		m_data.game_object[id].name = obj:name()
+	end
+	return m_data.game_object[id]
+end	
+
+function get_se_obj_state(se_obj,create_if_dont_exist)
+	local id = se_obj.id
+	if not (m_data.se_object[id]) then
+		if not (create_if_dont_exist) then
+			return 
+		end
+		m_data.se_object[id] = {}
+		m_data.se_object[id].name = se_obj:name()
+	end
+	return m_data.se_object[id]
+end
