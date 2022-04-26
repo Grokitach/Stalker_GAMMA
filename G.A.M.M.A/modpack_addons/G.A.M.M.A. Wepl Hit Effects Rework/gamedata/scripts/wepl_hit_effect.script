@@ -1,0 +1,147 @@
+
+-- created by wepl
+-- contact (discord): wepl#1549
+
+local cam_power = 0.5
+local ltxOutfits = ini_file( "plugins\\wepl_hit_effect_outfits.ltx" )
+local ltxVisuals = ini_file( "plugins\\wepl_hit_effect_visuals.ltx" )
+
+local headBones = {
+	[15] = true,
+	[16] = true,
+	[17] = true,
+	[18] = true,
+	[19] = true
+}
+
+
+
+
+function on_game_start()
+	RegisterScriptCallback( "actor_on_before_hit", actor_on_before_hit )
+	RegisterScriptCallback( "npc_on_hit_callback", npc_on_hit_callback )
+end
+
+
+function actor_on_before_hit( hit, boneId, flags )
+	if not ( hit and hit.type and hit.power and boneId ) then return end
+	
+	if hit.power == 0 then return end
+	if not ( hit.type == 5 or hit.type == 6 or hit.type == 7 or hit.type == 8 ) then return end
+	
+	local ply = db.actor
+	if not ( ply and ply:alive() ) then return end
+	
+	
+	local armorType = "none"
+	local helmetType = "none"
+	
+	if ltxVisuals then
+		local plyVisual = ply:get_visual_name()
+		
+		if plyVisual then
+			plyVisual = string.lower( plyVisual )
+			local plyVisualExt = string.find( plyVisual, ".ogf" )
+			
+			if plyVisualExt then
+				plyVisual = string.sub( plyVisual, 1, plyVisualExt - 1 )
+			end
+			
+			if ltxVisuals:section_exist( plyVisual ) then
+				armorType = ltxVisuals:line_exist( plyVisual, "armorType" ) and ltxVisuals:r_string_ex( plyVisual, "armorType" ) or armorType
+				helmetType = ltxVisuals:line_exist( plyVisual, "helmetType" ) and ltxVisuals:r_string_ex( plyVisual, "helmetType" ) or helmetType
+			end
+		end
+	end
+	
+	if ltxOutfits then
+		local plyOutfit = ply:item_in_slot( 7 )
+		plyOutfit = plyOutfit and plyOutfit:section()
+		
+		if plyOutfit and ltxOutfits:section_exist( plyOutfit ) then
+			armorType = ltxOutfits:line_exist( plyOutfit, "armorType" ) and ltxOutfits:r_string_ex( plyOutfit, "armorType" ) or armorType
+			helmetType = ltxOutfits:line_exist( plyOutfit, "helmetType" ) and ltxOutfits:r_string_ex( plyOutfit, "helmetType" ) or helmetType
+		end
+		
+		local plyHelmet = ply:item_in_slot( 12 )
+		plyHelmet = plyHelmet and plyHelmet:section()
+		
+		if plyHelmet and ltxOutfits:section_exist( plyHelmet ) then
+			helmetType = ltxOutfits:line_exist( plyHelmet, "helmetType" ) and ltxOutfits:r_string_ex( plyHelmet, "helmetType" ) or helmetType
+		end
+	end
+	
+	
+	local hitType = headBones[boneId] and "head" or "body"
+	local hitEffect = hitType == "head" and helmetType or armorType
+	
+	local hitSound = xr_sound.get_safe_sound_object( "wepl\\hit_effect\\" .. hitType .. "\\hit_" .. hitEffect .. "_" .. math.random(20) )
+	if hitSound then
+		hitSound:play_no_feedback( ply, sound_object.s2d, 0, VEC_ZERO, 1 )
+	end
+	
+	level.add_cam_effector( "camera_effects\\wepl\\hit_effect\\" .. hitType .. "\\hit_" .. hitEffect .. "_" .. math.random(5) .. ".anm", math.random(444555, 444999), false, "", 0, true, cam_power )
+end
+
+
+function npc_on_hit_callback( npc, damage, dir, attacker, boneId )
+	if not ( npc and damage and attacker and boneId ) then return end
+	if damage == 0 or damage == 1 then return end
+	
+	local ply = db.actor
+	if not ( ply and ply:alive() ) then return end
+	if attacker:id() ~= ply:id() then return end
+	
+	
+	local armorType = "none"
+	local helmetType = "none"
+	
+	if ltxVisuals then
+		local npcVisual = npc:get_visual_name()
+		
+		if npcVisual then
+			npcVisual = string.lower( npcVisual )
+			local npcVisualExt = string.find( npcVisual, ".ogf" )
+			
+			if npcVisualExt then
+				npcVisual = string.sub( npcVisual, 1, npcVisualExt - 1 )
+			end
+			
+			if ltxVisuals:section_exist( npcVisual ) then
+				armorType = ltxVisuals:line_exist( npcVisual, "armorType" ) and ltxVisuals:r_string_ex( npcVisual, "armorType" ) or armorType
+				helmetType = ltxVisuals:line_exist( npcVisual, "helmetType" ) and ltxVisuals:r_string_ex( npcVisual, "helmetType" ) or helmetType
+			end
+		end
+	end
+	
+
+	local hitType = headBones[boneId] and "head" or "body"
+	local hitEffect = hitType == "head" and helmetType or armorType
+	
+	local hitSound = xr_sound.get_safe_sound_object( "wepl\\hit_effect\\" .. hitType .. "\\hit_" .. hitEffect .. "_" .. math.random(20) )
+	if hitSound then
+		hitSound:play_at_pos( ply, npc:position() )
+	end
+end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
