@@ -1,0 +1,136 @@
+/*
+				/////////////////
+		Screen-Space Directional Occlusion.
+		Based on Tobias Ritschel tech paper.
+		Implemented by K.D. (OGSE team)
+			
+		Tweaked and modified by LVutner
+				/////////////////	
+				Credits: KD, Xerxes1138		
+				/////////////////
+
+
+				/////////////////
+				Anomaly Team 2020
+				/////////////////
+	////////////////////////////////////////////////
+	Do not copy or redistribute without permission.
+	////////////////////////////////////////////////
+*/
+
+#include "common.h"
+
+#ifndef SSAO_QUALITY
+float calc_ssdo (float3 P, float3 N, float2 tc, float4 pos2d, uint iSample)
+{
+	return 1.0;
+}
+
+#else // SSAO_QUALITY
+
+//Quality tokens
+#if SSAO_QUALITY == 3
+	#define SSDO_SAMPLE 32
+#elif SSAO_QUALITY == 2
+	#define SSDO_SAMPLE 16
+#elif SSAO_QUALITY == 1
+	#define SSDO_SAMPLE 8
+#endif
+
+
+static const float3 hemisphere[32] =
+{
+	float3(-0.134, 0.044, -0.825),	float3(0.045, -0.431, -0.529),	float3(-0.537, 0.195, -0.371),
+	float3(0.525, -0.397, 0.713),	float3(0.895, 0.302, 0.139),	float3(-0.613, -0.408, -0.141),
+	float3(0.307, 0.822, 0.169),	float3(-0.819, 0.037, -0.388),	float3(0.376, 0.009, 0.193),
+	float3(-0.006, -0.103, -0.035),	float3(0.098, 0.393, 0.019),	float3(0.542, -0.218, -0.593),
+	float3(0.526, -0.183, 0.424),	float3(-0.529, -0.178, 0.684),	float3(0.066, -0.657, -0.570),
+	float3(-0.214, 0.288, 0.188),	float3(-0.689, -0.222, -0.192),	float3(-0.008, -0.212, -0.721),
+	float3(0.053, -0.863, 0.054),	float3(0.639, -0.558, 0.289),	float3(-0.255, 0.958, 0.099),
+	float3(-0.488, 0.473, -0.381),	float3(-0.592, -0.332, 0.137),	float3(0.080, 0.756, -0.494),
+	float3(-0.638, 0.319, 0.686),	float3(-0.663, 0.230, -0.634),	float3(0.235, -0.547, 0.664),
+	float3(0.164, -0.710, 0.086),	float3(-0.009, 0.493, -0.038),	float3(-0.322, 0.147, -0.105),
+	float3(-0.554, -0.725, 0.289),	float3(0.534, 0.157, -0.250),
+};
+
+static const float SSDO_RADIUS_MIN 	= 0.09f; 	// AO min radius ( More detail close to the camera. Detailed AO for weapons )
+static const float SSDO_RADIUS_MAX 	= 0.55f; 	// AO max radius ( Less detail but better coverage away from the camera )
+static const float SSDO_RENDER_DIST = 125.0f; 	// Rendering distance
+	
+static const float SSDO_POWER 	= 5.0f; 	// AO strength
+static const float SSDO_SMOOTH 	= 1.3f; 	// AO softer ( Prevents extremely strong AO at the cost of a less noticeable effect )
+static const float SSDO_NOISE 	= 0.25f; 	// Noise strength
+static const float SSDO_GAMMA 	= 1.0f; 	// Gamma
+
+
+float calc_ssdo (float3 P, float3 N, float2 tc, float4 pos2d, uint iSample)
+{	
+	//Return 1.0 to prevent rendering this uhh after certain distance...
+	if(P.z >= SSDO_RENDER_DIST)
+		return 1;
+	
+	// Radius based on depth/2
+	float radius = clamp(SSDO_RADIUS_MIN * (P.z * 0.5f), 0, SSDO_RADIUS_MAX);
+
+	//Sample jitter texture
+	float3 noise = jitter0.Sample(smp_jitter, tc * 32).xyz * SSDO_NOISE;
+	
+	//Accumulate our lovely AO.
+	float occ = 0.0;
+	
+	[unroll (SSDO_SAMPLE)]
+	for (int i = 0; i < SSDO_SAMPLE; i++)
+	{
+		//Get reflection sample from hemisphere points and noise, later put normals for moar details
+		float3 reflection_sample = reflect(hemisphere[i], noise) + N.xyz;
+		
+		float3 occ_pos_view = P.xyz + reflection_sample * radius;
+		float4 occ_pos_screen = proj_to_screen(mul(m_P, float4(occ_pos_view, 1)));
+		occ_pos_screen.xy /= occ_pos_screen.w;
+		
+		//Sample depth buffer
+		#ifndef SSAO_OPT_DATA
+			#ifndef USE_MSAA
+				float screen_occ = s_position.Sample(smp_nofilter, occ_pos_screen.xy).z;	
+			#else
+				float screen_occ = s_position.Load(int3(occ_pos_screen.xy * screen_res.xy, 0), iSample).z;
+			#endif
+		#else
+			float screen_occ = s_half_depth.SampleLevel(smp_nofilter, occ_pos_screen.xy, 0).x;
+		#endif
+		
+		// Sky is null
+		screen_occ = lerp(screen_occ, occ_pos_view.z, is_sky(screen_occ));
+		
+		// Depth distance
+		float Dist = occ_pos_view.z - screen_occ;
+		
+		// Calc occlusion 
+		float3 dirVec = float3(occ_pos_screen.x-tc.x, tc.y-occ_pos_screen.y, Dist);
+		dirVec.xy *= P.z;
+		float3 dirVecN = normalize(dirVec);
+		
+		float visibility = step(0.1f, dot(dirVecN, P.xyz)); // Visibility check
+		visibility *= sign(max(0.0, abs(length(Dist / saturate(occ_pos_view.z))) - 0.1f)); // Normal bias
+		
+		occ += 1 - visibility;
+		
+		// Smooth depth attenuation to avoid the halo artifact
+		occ	+= clamp(Dist, 0, 1.5f) / 1.5f;
+	}
+	
+	occ /= SSDO_SAMPLE;
+
+	// AO softer
+	occ = lerp(occ, sqrt(occ), SSDO_SMOOTH);
+	
+	// AO strength and gamma
+	occ = pow(occ, SSDO_POWER) * SSDO_GAMMA;
+		
+	// Fade using SSDO_RENDER_DIST
+	occ += smoothstep(SSDO_RENDER_DIST * 0.8f, SSDO_RENDER_DIST, P.z);
+	
+	return saturate(occ);
+}
+
+#endif // SSAO_QUALITY

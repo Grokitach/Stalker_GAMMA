@@ -1,0 +1,560 @@
+-------------------------------------------
+--Arszi's Mutant Bleeding 2.0
+--
+--Last modified 2021.05.15.
+--By Arszi
+-------------------------------------------
+
+local WOUNDED_ANIMATION_HEALTH_THRESHOLD = 0.1 --Lying animation will be forced on mutants in "animation_table" if their health is below x
+local DEFAULT_BONE_WOUND_SCALE = 1 --Bone wound scale multiplies the bleeding vector
+local DEFAULT_BLEEDING_V = 0.0016 --Bleeding vector, the speed of bleeding
+local DEFAULT_WOUND_INCARNATION_V = 0.0002 --Wounds heal this much per second
+local DEFAULT_MIN_WOUND_SIZE = 0.0064   --If wound size is equal or smaller, the wound heals and won't bleed anymore
+local DEFAULT_BLEED_SPEED_K = 1 --Bleeding speed constant. Used by the engine to regulate bleeding speed. Available for NPCs only properly, for everything else it is 1/3.
+
+--Bleeding and bone settings for monsters
+local monsters_settings = {}
+
+--Stores the wounded monsters
+local wounded_monsters = {}
+
+--Stores tissue damage multipliers for ammounition
+local ammo_tissue_damage_settings = {}
+
+--Not every mutants have lying animation
+local animation_table = {
+    [clsid.bloodsucker_s] = "lie_sleep_0",
+    [clsid.boar_s] ="lie_sleep_0",
+    [clsid.dog_s] = "lie_sleep_0",
+    [clsid.flesh_s] = "lie_idle_0",
+    [clsid.pseudodog_s] = "lie_sleep_0",
+    [clsid.cat_s] = "lie_idle_0",
+    [clsid.psy_dog_s] = "lie_sleep_0"
+}
+
+function on_game_start()
+    RegisterScriptCallback("save_state",save_state)
+    RegisterScriptCallback("load_state",load_state)
+    RegisterScriptCallback("actor_on_update", actor_on_update)
+    RegisterScriptCallback("monster_on_hit_callback", monster_on_hit_callback)
+    RegisterScriptCallback("monster_on_before_hit", monster_on_before_hit)
+    RegisterScriptCallback("squad_on_npc_death", squad_on_npc_death)
+    RegisterScriptCallback("on_game_load", on_game_load)
+end
+
+function on_game_load()
+    initialize_ammo_settings()
+    initialize_monster_bleeding_settings()
+    initialize_monster_bone_settings()
+end
+
+function squad_on_npc_death(squad,monster,killer)
+    trace_this("***squad_on_npc_death")
+	if (not monster) then return end
+    
+    local monster_id = monster.id
+    if (wounded_monsters[monster_id]) then
+        wounded_monsters[monster_id] = nil
+
+        if (killer) then
+            trace_this("Died: "..monster_id.." Killer: "..killer.id.." "..killer:name())
+        else
+            trace_this("ERROR - NO KILLER FOR: "..monster_id)
+        end
+    end
+end
+
+function actor_on_update()
+    --Update delta time
+    update_condition_time()
+
+    --Remove monster if dead or offline
+    manage_wounded_table()
+    
+    --Update monster bleeding
+    update_monster_bleeding()
+
+    --Paint blood drops
+    paint_blood_drops()
+
+    --Force mutants into lying animation upon critically wounded
+    force_mutant_lying_animation()
+end
+
+--Stores ammo type miltiplier between events
+local monster_hit_cache = {}
+
+function monster_on_before_hit(monster, shit, bone_index)
+    --Return if draftsman is the monster itself
+    if (shit and shit.draftsman) then
+        if (shit.draftsman:id() == monster:id()) then
+            trace_this("Draftsman is monster, return: "..monster:name())
+            return
+        end
+    end
+
+    --Skip if monster is dead
+    if (monster and monster.alive and monster:alive()) then
+        local ammo_section = get_ammo_section(shit.weapon_id) or 1
+
+        if (ammo_section) then
+            monster_hit_cache[monster:id()] = ammo_tissue_damage_settings[ammo_section] or 1
+
+            trace_this("Monster: "..monster:name().." was hit by ammo type: "..ammo_section.." multiplier: "..monster_hit_cache[monster:id()])
+        end
+    end
+end
+
+function monster_on_hit_callback(monster,amount,local_direction,who,bone_index)
+    --Return if draftsman is the monster itself
+    if (who) then
+        if (who:id() == monster:id()) then
+            trace_this("Draftsman is monster, return: "..monster:name())
+            return
+        end
+    end
+
+    --Skip if monster is dead
+    if (monster and monster.alive and monster:alive()) then
+        --Only monsters with bleeding settings should bleed
+        if (not monsters_settings[monster:clsid()]) then return end
+
+        local monster_id = monster:id()
+
+        local ammo_type_multiplier = monster_hit_cache[monster:id()] or 1
+        trace_this("Original damage: "..amount.." ammo_type_multiplier: "..ammo_type_multiplier.." new damage: "..amount * ammo_type_multiplier)
+
+        --Recalculate damage and remove from monster_hit_cache
+        amount = amount * ammo_type_multiplier
+        monster_hit_cache[monster:id()] = nil
+
+        trace_this("Monster "..monster_id.." Current health: "..monster.health)
+        trace_this("Add wound: "..monster_id.." Base amount "..amount.." Bone index: "..bone_index)
+
+        add_wound(monster_id, monster:clsid(), amount, bone_index)
+    end
+end
+
+function get_ammo_section(weapon_id)
+    trace_this("***get_ammo_section")
+
+    if (weapon_id) then
+        local weapon = level.object_by_id(weapon_id)
+
+	if IsGrenade(weapon) then
+		return nil
+	end
+
+	if not IsWeapon(weapon) or IsMelee(weapon) then
+		return nil
+	end
+
+        local weapon_section = weapon:section()
+	sec = weapon_section 
+
+	if sec == "explosive_barrel" or sec == "explosive_barrel_low" or sec == "explosive_tank" or sec == "explosive_grenade" or sec == "explosive_hide" or sec == "explosive_particle" or sec == "explosive_fuelcan" 
+	or sec == "explosive_mobiltank" or sec == "explosive_dinamit" then
+		return nil
+	end
+
+        local ammo_type_number = weapon:get_ammo_type()
+        trace_this("Weapon: "..weapon_section)
+
+        local ammo_list = utils_item.get_ammo(weapon_section, weapon_id)
+        local ammo_section = ammo_list[ammo_type_number+1]
+
+        --Hack for old ammo
+        if (not ammo_section) then return nil end
+        ammo_section = string.gsub(ammo_section, "_bad", "")
+
+        return ammo_section
+    end
+
+    return nil
+end
+
+function save_state(m_data)
+	m_data.wounded_monsters = wounded_monsters
+end
+
+function load_state(m_data)
+	wounded_monsters = m_data.wounded_monsters or {}
+end
+
+--IMPLEMENTATION------------------------------------------------------------------------------------
+local delta_time = nil
+local last_time_called = nil
+function update_condition_time()
+    if (not last_time_called) then 
+        last_time_called = game.get_game_time()
+    end
+
+    local game_time_current = game.get_game_time()
+
+    if (game_time_current > last_time_called) then
+        delta_time = game_time_current:diffSec(last_time_called)
+        last_time_called = game_time_current
+    else
+        delta_time = 0.0
+    end
+end
+
+--Add wound on monster
+function add_wound(monster_id, clsid, hit_power, bone_id)
+    if (wounded_monsters[monster_id]) then
+        trace_this("Monster is in the table already:"..monster_id)
+        add_hit(bone_id, clsid, hit_power, wounded_monsters[monster_id].bones)
+    else
+        trace_this("Add monster to table: "..monster_id)
+        wounded_monsters[monster_id] = {
+            bones = {}
+        }
+        add_hit(bone_id, clsid, hit_power, wounded_monsters[monster_id].bones)
+    end
+end
+
+--Add hit to a bone
+function add_hit(bone_id, clsid, hit_power, bones) --TODO implement bone multiplier
+    trace_this("Original hit power: "..hit_power)
+    
+    local bone_multiplier = monsters_settings[clsid].bones[bone_id] or 1
+    trace_this("Bone id: "..bone_id.." multiplier: "..bone_multiplier)
+
+    local random_factor = math.random(5, 15) / 10
+    trace_this("Hit random factor: "..random_factor)
+
+    local final_hit_power = hit_power * bone_multiplier * random_factor
+    trace_this("Final hit power: "..final_hit_power)
+
+    local total_hit = bones[bone_id] or 0
+
+    trace_this("Hit added to bone: "..bone_id.." Original amount: "..total_hit.." Additional: "..final_hit_power.." New amount: "..(total_hit + final_hit_power))
+    bones[bone_id] = total_hit + final_hit_power
+end
+
+--Updates monster health
+function update_health(monster)
+    local monster_id = monster:id()
+    local bleedings_settings = get_monster_bleeding_settings(monster:clsid())
+
+    local bleeding_v = bleedings_settings.bleeding_v --Bleeding vector, velocity of bleeding
+    local wound_incarnation_v = bleedings_settings.wound_incarnation_v --Wound healing velocity
+    local min_wound_size = bleedings_settings.min_wound_size --Minimal wound size, below this size wounds stop to bleed
+
+    local bleeding_speed = get_bleeding_speed(monster_id) * delta_time * bleeding_v
+    --trace_this("Bleeding speed for monster: "..monster_id.." Total: "..bleeding_speed)
+    --trace_this("bleeding_v: "..bleeding_v.." wound_incarnation_v: "..wound_incarnation_v.." min_wound_size: "..min_wound_size)
+    --show_message("MONSTER: "..monster_id.." HEALTH :"..monster.health)
+
+    --Kill if new healt qeuals or less than zero
+    if (monster.health - bleeding_speed <= 0) then
+        trace_this("KILL: "..monster:name())
+        local h = hit()
+		h.impulse = 0
+		h.direction = VEC_Z
+		h.draftsman = monster
+		h.type = hit.wound
+		h.power = 1
+		monster:hit(h)
+        return
+    end
+
+    monster:set_health_ex(monster.health - bleeding_speed)
+
+    change_bleeding(monster_id, wound_incarnation_v * delta_time, min_wound_size)
+end
+
+--Gets bleeding speed
+function get_bleeding_speed(monster_id)
+    local bleeding_speed = 0
+
+    for bone_id, amount in pairs(wounded_monsters[monster_id].bones) do
+        bleeding_speed = bleeding_speed + amount
+    end
+
+    bleeding_speed = bleeding_speed * DEFAULT_BLEED_SPEED_K
+
+    --Clamp bleeding_speed
+    if (bleeding_speed < 0) then bleeding_speed = 0 end
+    if (bleeding_speed > 10) then bleeding_speed = 10 end
+
+    return bleeding_speed
+end
+
+--Change bleeding speed
+function change_bleeding(monster_id, percent, min_wound_size)
+    for bone_id, amount in pairs(wounded_monsters[monster_id].bones) do
+        incarnate_wound(amount, percent, min_wound_size, monster_id, bone_id)
+    end
+end
+
+--Heal wound
+function incarnate_wound(amount, percent, min_wound_size, monster_id, bone_id)
+    --trace_this("OLD wound for Bone: "..bone_id.." AMOUNT: "..amount.." PERCENT: "..percent)
+    local new_amount = amount - percent
+    --trace_this("NEW AMOUNT: "..new_amount)
+
+    if (new_amount < min_wound_size) then
+        trace_this("Remove wound from Bone: "..bone_id)
+        wounded_monsters[monster_id].bones[bone_id] = nil
+    else
+        wounded_monsters[monster_id].bones[bone_id] = new_amount
+    end
+end
+
+--Get monster bleeding settings
+function get_monster_bleeding_settings(clsid)
+    return monsters_settings[clsid]
+end
+
+--Removes invalid entries from the wounded table
+function manage_wounded_table()
+    for monster_id, _ in pairs(wounded_monsters) do
+        local monster = level.object_by_id(monster_id)
+
+        if (monster) then
+            if (monster.alive and (not monster:alive())) then
+                trace_this("Monster is dead, remove: "..monster_id)
+                wounded_monsters[monster_id] = nil
+            end
+        else
+            trace_this("Monster is offline, remove: "..monster_id)
+            wounded_monsters[monster_id] = nil
+        end
+    end
+end
+
+--Updates bleeding on monsters
+function update_monster_bleeding()
+    for monster_id, _ in pairs(wounded_monsters) do
+        local monster = level.object_by_id(monster_id)
+        --Update health
+        if (monster) then update_health(monster) end
+
+        --Remove if it does not have wounds anymore
+        local wound_count = 0
+        for k, v in pairs(_.bones) do wound_count = wound_count + 1 end
+        if (wound_count == 0) then 
+            trace_this("All wounds have healed, remove monster: "..monster_id)
+            wounded_monsters[monster_id] = nil 
+        end
+    end
+end
+
+local tg = nil
+--Paints blood marks on the ground for wounded monsters
+function paint_blood_drops()
+    if (tg == nil) then tg = game.get_game_time() end
+    local time = game.get_game_time()
+
+    if (time:diffSec(tg) > 1) then
+        tg = time
+
+        for k_monster, _ in pairs(wounded_monsters) do
+
+            local monster = level.object_by_id(k_monster)
+            if (monster) then
+
+                for k_bone, bleeding_intensity in pairs(_.bones) do
+
+                    local random = math.random(1, 4)
+                    if (random == 4) then
+
+                        local dir = vector():set(0, -1, 0)
+                        local pos = monster:position()
+                        local size = bleeding_intensity
+
+                        --Clamp blood drops size
+                        if (size < 0.1) then size = 0.1 end
+                        if (size > 0.3) then size = 0.3 end
+
+                        wallmarks_manager():place(dir, pos, 1, size, "bloody_marks", monster, 30)
+                    end                    
+                end
+            end
+        end
+    end
+end
+
+--INITIALIZE----------------------------------------------------------------------------------------
+--Initializes monster settings from the custom plugin monster ltx file
+function initialize_monster_bleeding_settings()
+    trace_this("initialize_monster_bleeding_settings")
+
+    --Humanoid
+    read_bleeding_params_custom(clsid.bloodsucker_s, "bloodsucker_bleeding_settings")
+    read_bleeding_params_custom(clsid.burer_s, "burer_bleeding_settings")
+    read_bleeding_params_custom(clsid.controller_s, "controller_bleeding_settings")
+    read_bleeding_params_custom(clsid.fracture_s, "fracture_bleeding_settings")
+    read_bleeding_params_custom(clsid.snork_s, "snork_bleeding_settings")
+
+    --Big
+    read_bleeding_params_custom(clsid.chimera_s, "chimera_bleeding_settings")
+    read_bleeding_params_custom(clsid.gigant_s, "gigant_bleeding_settings")
+
+    --Boar/Flesh
+    read_bleeding_params_custom(clsid.boar_s, "boar_bleeding_settings")
+    read_bleeding_params_custom(clsid.flesh_s, "flesh_bleeding_settings")
+
+    --Dogs/Cat
+    read_bleeding_params_custom(clsid.dog_s, "dog_bleeding_settings")
+    read_bleeding_params_custom(clsid.pseudodog_s, "pseudodog_bleeding_settings")
+    read_bleeding_params_custom(clsid.psy_dog_s, "psy_dog_bleeding_settings")
+    read_bleeding_params_custom(clsid.cat_s, "cat_bleeding_settings")
+
+    --Small critters
+    read_bleeding_params_custom(clsid.rat_s, "rat_bleeding_settings")
+    read_bleeding_params_custom(clsid.tushkano_s, "tushkano_bleeding_settings")
+end
+
+--Reads monster bleeding params from the custom plugin monster ltx files
+function read_bleeding_params_custom(clsid, section)
+    trace_this("***read_bleeding_params_custom: "..clsid.." "..section)
+
+    local bleeding_settings = ini_file("plugins\\arszi_mutant_bleeding.ltx")
+
+    if (bleeding_settings) then
+        monsters_settings[clsid] = {
+            bleeding_v = bleeding_settings:r_float_ex(section,"bleeding_v") or DEFAULT_BLEEDING_V,
+            wound_incarnation_v = bleeding_settings:r_float_ex(section,"wound_incarnation_v") or DEFAULT_WOUND_INCARNATION_V,
+            min_wound_size = bleeding_settings:r_float_ex(section,"min_wound_size") or DEFAULT_MIN_WOUND_SIZE
+        }
+    else
+        monsters_settings[clsid] = {
+            bleeding_v = DEFAULT_BLEEDING_V,
+            wound_incarnation_v = DEFAULT_WOUND_INCARNATION_V,
+            min_wound_size = DEFAULT_MIN_WOUND_SIZE
+        }
+    end
+
+    trace_this("bleeding_v: "..monsters_settings[clsid].bleeding_v)
+    trace_this("wound_incarnation_v: "..monsters_settings[clsid].wound_incarnation_v)
+    trace_this("min_wound_size: "..monsters_settings[clsid].min_wound_size)
+end
+
+--Reads monster bone params from the custom plugin monster ltx files
+function initialize_monster_bone_settings()
+    trace_this("initialize_monster_bone_settings")
+
+    --Humanoid
+    read_bone_params_custom(clsid.bloodsucker_s, "bloodsucker_bone_settings")
+    read_bone_params_custom(clsid.burer_s, "burer_bone_settings")
+    read_bone_params_custom(clsid.controller_s, "controller_bone_settings")
+    read_bone_params_custom(clsid.fracture_s, "fracture_bone_settings")
+    read_bone_params_custom(clsid.snork_s, "snork_bone_settings")
+
+    --Big
+    read_bone_params_custom(clsid.chimera_s, "chimera_bone_settings")
+    read_bone_params_custom(clsid.gigant_s, "gigant_bone_settings")
+
+    --Boar/Flesh
+    read_bone_params_custom(clsid.boar_s, "boar_bone_settings")
+    read_bone_params_custom(clsid.flesh_s, "flesh_bone_settings")
+
+    --Dogs/Cat
+    read_bone_params_custom(clsid.dog_s, "dog_bone_settings")
+    read_bone_params_custom(clsid.pseudodog_s, "pseudodog_bone_settings")
+    read_bone_params_custom(clsid.psy_dog_s, "psy_dog_bone_settings")
+    read_bone_params_custom(clsid.cat_s, "cat_bone_settings")
+
+    --Small critters
+    read_bone_params_custom(clsid.rat_s, "rat_bone_settings")
+    read_bone_params_custom(clsid.tushkano_s, "tushkano_bone_settings")
+end
+
+--Reads monster bone params from the custom plugin monster ltx files
+function read_bone_params_custom(clsid, section)
+    trace_this("***read_bone_params_custom: "..clsid.." "..section)
+
+    local bleeding_settings = ini_file("plugins\\arszi_mutant_bleeding.ltx")
+    monsters_settings[clsid].bones = {}
+
+    local n = 0 
+    n = bleeding_settings:line_count(section)
+
+    for i=0,n-1 do
+        local result, bone_id, bone_value = bleeding_settings:r_line_ex(section,i,"","")
+        local id = tonumber(bone_id)
+        local value = tonumber(bone_value) or 1
+
+        monsters_settings[clsid].bones[id] = value
+        trace_this("bone_id: "..bone_id.." value: "..monsters_settings[clsid].bones[id])
+    end
+end
+
+--Initializes ammounition settings
+function initialize_ammo_settings()
+    local tissue_damage_classes = read_tissue_damage_classes_settings()
+    read_ammo_tissue_damage_settings(tissue_damage_classes)
+end
+
+--Read tissue damage class settings from plugin ltx file
+function read_tissue_damage_classes_settings()
+    trace_this("***read_tissue_damage_class_settings")
+   
+    local tissue_damage_classes = {}
+    local settings = ini_file("plugins\\arszi_mutant_bleeding_ammo.ltx")
+
+    local n = 0      
+    n = settings:line_count("ammo_tissue_damage_classes")
+
+    for i=0,n-1 do
+        local result, id, value_class = settings:r_line_ex("ammo_tissue_damage_classes",i,"","")
+        local value = tonumber(value_class) or 1
+        tissue_damage_classes[id] = tonumber(value)
+
+        trace_this("tissue damage class: "..id.." value: "..value)
+    end
+
+    return tissue_damage_classes
+end
+
+--Read ammo tissue damage settings from plugin ltx file
+function read_ammo_tissue_damage_settings(tissue_damage_classes)
+    trace_this("***read_ammo_tissue_damage_settings")
+
+    local settings = ini_file("plugins\\arszi_mutant_bleeding_ammo.ltx")
+
+    local n = 0      
+    n = settings:line_count("ammo_tissue_damage_settings")
+
+    for i=0,n-1 do
+        local result, id, value = settings:r_line_ex("ammo_tissue_damage_settings",i,"","")
+        ammo_tissue_damage_settings[id] = tissue_damage_classes[value]
+
+        trace_this("tissue damage multiplier for ammo: "..id.." class: "..value.." value: "..ammo_tissue_damage_settings[id])
+    end
+end
+
+--Forces lying animation on mutants
+function force_mutant_lying_animation()
+    for k, _ in pairs(wounded_monsters) do
+        local monster = level.object_by_id(k)
+        if (monster and animation_table[monster:clsid()]) then
+
+            local animation = animation_table[monster:clsid()]
+            if (not animation) then return end
+
+            if (monster.health < WOUNDED_ANIMATION_HEALTH_THRESHOLD) then
+                monster:set_override_animation(animation)
+            end
+        end
+    end
+end
+
+--UTILITY------------------------------------------------------------------------------------------------------------------
+function show_message(msg,time)
+	local hud = get_hud()
+	hud:AddCustomStatic("can_use_weapon_now", true)
+	hud:GetCustomStatic("can_use_weapon_now"):wnd():TextControl():SetTextST(msg)
+	ShowMessage = true
+	ShowMessageInit = game.get_game_time()
+	ShowMessageTime = time
+end
+
+--Tracing, comment out method body for release
+function trace_this(to_trace)
+	--local log_file = io.open("log_arszi_monster.txt", "a")
+    --log_file:write(to_trace.."\n")
+	--log_file:close(log_file)
+end
