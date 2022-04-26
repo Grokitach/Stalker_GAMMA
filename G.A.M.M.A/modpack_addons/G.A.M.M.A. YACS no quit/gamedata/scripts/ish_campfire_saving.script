@@ -1,0 +1,255 @@
+-- Yet Another Campfire Saving
+-- Last modified: 2021.10.20
+-- https://github.com/Ishmaeel/YetAnotherCampfireSaving
+local campfire_saving = true
+local campfire_radius = 18
+local base_radius = 50
+local token_granted = time_infinite
+local token_downtime = 1000 * 60 * 4 -- three minutes
+local token_redeemed = false
+local notifications = false
+local not_mommy = false
+local neutral_bases = false
+local enable_friendly_bosses = false
+local enable_neutral_bosses = false
+
+local getstr = game.translate_string
+local silent = true
+
+bonus_bases = {}
+bonus_bases.pri_monolith = {monolith = true}
+bonus_bases.pri_a18_smart_terrain = {killer = true}
+
+the_bawses = {zat_b18_noah = true, m_trader = true, m_lesnik = true}
+
+function on_game_start()
+    bind_campfire.check_no_nearby_campfire = check_no_nearby_campfire
+
+    RegisterScriptCallback("on_before_save_input", on_before_save_input)
+    RegisterScriptCallback("on_option_change", on_option_change)
+    RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+    RegisterScriptCallback("on_console_execute", on_console_execute)
+    RegisterScriptCallback("on_key_release", on_key_release)
+
+    on_option_change()
+end
+
+function on_before_save_input(flags, typ_, text)
+    if campfire_saving and level_weathers.valid_levels[level.name()] then
+        token_redeemed = false
+        local error_message = nil
+
+        local nearby_campfire = bind_campfire.get_nearby_campfire(campfire_radius, true)
+
+        if not nearby_campfire then
+            error_message = strformat(getstr("st_ui_no_save_campfire_base"), text)
+        elseif not nearby_campfire:is_on() then
+            error_message = strformat(getstr("st_ui_no_save_campfire_unlit"), text)
+        end
+
+        local within_safe_space = is_within_friendly_base()
+
+        if not within_safe_space then
+            within_safe_space = is_with_friendly_boss()
+        end
+
+        if error_message and not within_safe_space then
+            token_redeemed = redeem_token()
+
+            -- always prevent saving.
+            exec_console_cmd("main_menu off")
+            flags.ret = true
+
+            -- only show message if token is not redeemed.
+            if not token_redeemed then
+                actor_menu.set_msg(1, error_message, 4)
+            end
+        end
+    end
+end
+
+function is_within_friendly_base()
+    local friendly_bases = get_friendly_bases()
+
+    for _, smart in pairs(friendly_bases) do
+        if smart.dist_to_actor < base_radius and surge_manager.actor_in_cover() then
+            return true
+        end
+    end
+
+    return false
+end
+
+function get_friendly_bases()
+    local friendly_bases = {}
+    local community = gameplay_disguise.get_default_comm()
+
+    for _, smart in pairs(SIMBOARD.smarts_by_names) do
+        if ish_campfire_debug then
+            ish_campfire_debug.draw_map_dot(smart)
+        end
+
+        if smart.is_on_actor_level and smart.props.base > 0 then
+            -- Base is considered friendly if it's marked for player's faction or "all"
+            local is_safe = smart.props[community] > 0 or smart.props.all > 0
+
+            -- Some bases are not properly marked for factions in vanilla configs, so we have an override table.
+            is_safe = is_safe or (bonus_bases[smart:name()] and bonus_bases[smart:name()][community])
+
+            -- Optional: Other factions may let you use their bases if you have good relations.
+            is_safe = is_safe or neutral_bases and is_base_neutral(smart, community)
+
+            if is_safe then
+                table.insert(friendly_bases, smart)
+            end
+        end
+    end
+
+    return friendly_bases
+end
+
+function is_base_neutral(smart, community)
+    for _, faction in pairs(game_relations.factions_table) do
+        local influence = smart.props[faction]
+        if influence > 0 then
+            local relation = relation_registry.community_relation(faction, community)
+            local goodwill = relation_registry.community_goodwill(faction, db.actor:id())
+            if relation + goodwill >= 0 then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function is_with_friendly_boss()
+    if not enable_friendly_bosses or not surge_manager.actor_in_cover() then
+        return false
+    end
+
+    local boss_found = false
+
+    local function iterate_func(obj)
+        if obj:id() > 0 then
+            local section = obj:section()
+            if the_bawses[section] then
+                local boss_alive = obj:alive()
+                local boss_relation = game_relations.get_npcs_relation(obj, db.actor)
+
+                if d and d.news then
+                    local relationship = game_relations.game_relations_by_num[boss_relation]
+                    d.news("Boss found: %s - %s, %s", section, relationship, boss_alive and "alive" or "dead")
+                end
+
+                if not boss_alive then
+                    return true
+                end
+
+                if boss_relation == game_object.friend or (enable_neutral_bosses and boss_relation == game_object.neutral) then
+                    boss_found = true
+                end
+
+                return true
+            end
+        end
+    end
+
+    level.iterate_nearest(db.actor:position(), base_radius, iterate_func)
+
+    return boss_found
+end
+
+function check_no_nearby_campfire()
+    return false -- Prevent vanilla campfire checking function from interfering.
+end
+
+function on_option_change()
+    if ui_mcm then
+        campfire_saving = ui_mcm.get("yasc/enableCampfireSaving")
+        notifications = ui_mcm.get("yasc/enableNotifications")
+        not_mommy = ui_mcm.get("yasc/isNotMommy")
+        neutral_bases = ui_mcm.get("yasc/allowNeutralBases")
+        enable_friendly_bosses = ui_mcm.get("yasc/allowSanctuaries") >= 1
+        enable_neutral_bosses = ui_mcm.get("yasc/allowSanctuaries") >= 2
+    end
+end
+
+function actor_on_first_update()
+    extend_token_downtime()
+end
+
+function on_console_execute(cmd)
+    if cmd ~= "save" then
+        return
+    end
+
+    if token_redeemed then
+        switch_to_rl_mode()
+    else
+        extend_token_downtime()
+    end
+end
+
+function on_key_release(key)
+    if key == DIK_keys.DIK_F5 then
+        token_redeemed = redeem_token(silent and campfire_saving)
+
+        if token_redeemed then
+            create_emergency_save()
+        end
+    end
+end
+
+function extend_token_downtime()
+    token_granted = time_global() + token_downtime
+end
+
+function redeem_token(suppress_notification)
+    local time_remaining = token_granted - time_global()
+    local has_token = time_remaining <= 0
+
+    if has_token and (key_state(DIK_keys.DIK_LSHIFT) ~= 0 or key_state(DIK_keys.DIK_RSHIFT) ~= 0) then
+        return true
+    end
+
+    if not suppress_notification then
+        send_notification(time_remaining)
+    end
+
+    return false
+end
+
+function create_emergency_save()
+    exec_console_cmd(string.format("save %s - %ssave", (user_name() or "player"), get_parent_type()))
+end
+
+function switch_to_rl_mode()
+    printf("///YACS Save")
+	token_redeemed = false
+	extend_token_downtime()
+end
+
+function send_notification(time_remaining)
+    if notifications then
+        local parent_type = get_parent_type()
+
+        if time_remaining > 0 then
+            news(getstr("token_pending"), parent_type, time_remaining / 1000)
+        else
+            news(getstr("token_granted"), parent_type)
+        end
+    end
+end
+
+function get_parent_type()
+    return getstr(string.format("mommy_%s", not not_mommy))
+end
+
+function news(message, ...)
+    message = string.format(message, ...)
+    if db.actor then
+        db.actor:give_game_news(getstr("ui_mcm_yacs_title"), message, "ui_inGame2_PD_storonnik_ravnovesiya", 0, 5000, 0)
+    else
+        printf(message)
+    end
+end

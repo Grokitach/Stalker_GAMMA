@@ -15,7 +15,7 @@ workshop_toolkits = {
 	"itm_expertkit",
 	"itm_drugkit",
 	"itm_ammokit",
-	"itm_artefactskit"
+	"itm_artefactskit",
 }
 
 
@@ -152,13 +152,22 @@ function UIWorkshop:Reset(owner, mechanic, toolkits_workshop, dbg)
 	self.mechanic = mechanic
 	self.toolkits_workshop = toolkits_workshop or {}
 	self.toolkits_state = {}
-	for i=1,#workshop_toolkits do
+	for i=1,6 do
 		if self.toolkits_workshop[i] or db.actor:object(workshop_toolkits[i]) then
 			self.toolkits_state[i] = true
 		else
 			self.toolkits_state[i] = false
 		end
 	end
+
+	if db.actor:object(workshop_toolkits[6]) then
+		if not db.actor:object(workshop_toolkits[1]) then
+			self.toolkits_state[6] = true
+			self.toolkits_state[1] = false
+			self.toolkits_workshop[1] = false
+		end
+	end
+	
 
 	-- Switch to state tab
 	self:OnButton_state()
@@ -259,7 +268,7 @@ function UIWorkshopState:InitControls(x, y)
 	self.toolkit_ico = {}
 	self.toolkit_ico_temp = {}
 	
-	for i=1,#workshop_toolkits do
+	for i=1,6 do
 		self.toolkit_b[i] = xml:InitStatic("workshop:state:pic_toolkit_" .. tostring(i) .. "_b", self)
 		self.toolkit_txt[i] = xml:InitTextWnd("workshop:state:txt_toolkit_" .. tostring(i), self)
 		self.toolkit_ico[i] = xml:InitStatic("workshop:state:pic_toolkit_" .. tostring(i), self)
@@ -279,10 +288,11 @@ function UIWorkshopState:Reset()
 	self.toolkits_workshop = dup_table(self.owner.toolkits_workshop or {})
 
 	-- Toolkits availability
-	for i=1,#workshop_toolkits do
+	for i=1,6 do
 		local toolkit_sec = workshop_toolkits[i]
 		local clr = clr_list["g"]
 		local avail
+
 		if self.toolkits_workshop[i] then
 			self.toolkit_ico[i]:InitTexture("ui_inGame2_btn_workshop_toolkit_" .. tostring(i) .. "_h")
 			avail = game.translate_string("st_itm_desc_state_avail_workshop")
@@ -294,6 +304,7 @@ function UIWorkshopState:Reset()
 			clr = clr_list["r"]
 			avail = game.translate_string("st_itm_desc_state_not_avail")
 		end
+			
 		--self.toolkit_ico[i]::SetStretchTexture(true)
 		local str = ui_item.get_sec_name(toolkit_sec) .. "\\n " .. clr .. avail
 		
