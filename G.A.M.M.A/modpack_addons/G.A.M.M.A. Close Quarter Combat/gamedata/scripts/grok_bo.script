@@ -362,6 +362,7 @@ function npc_on_before_hit(npc,shit,bone_id)
 	local k_ap = ini_sys:r_float_ex(ammo_section, "k_ap") or 0
 	local k_hit = ini_sys:r_float_ex(ammo_section, "k_hit") or 1
 	local air_res = ini_sys:r_float_ex(ammo_section, "k_air_resistance") or 0.05
+	local wm_size = ini_sys:r_float_ex(ammo_section, "wm_size") or 0.05
 	local npc_pos = npc:position()
 	local shooter_pos = shooter:position()
 	local dist = npc_pos:distance_to(shooter_pos)
@@ -550,8 +551,13 @@ function npc_on_before_hit(npc,shit,bone_id)
 		if k_ap > new_bone_armor then -- if bullet damaged armor enough and pen with reduced power
 			shit.power = shit.power * custom_bone_hitfraction
 		else
-			shit.power = 0.025 * shit.power * custom_bone_hitfraction -- residual concussion damage if bullet didn't damage armor enough
+			shit.power = 0.025 * shit.power * custom_bone_hitfraction * wm_size * 45 -- residual concussion damage if bullet didn't damage armor enough, the bigger the ammo the bigger the residual damages
 		end
+
+		fx = particles_object("hit_fx\\hit_metal_0" .. math.random(0,3))
+		pos = npc:bone_position(custom_bone_name)
+		pos.z = pos.z - 0.45
+		fx:play_at_pos(pos)
 	else
 		custom_bone_value[custom_bone_id] = custom_bone_armor
 	end
