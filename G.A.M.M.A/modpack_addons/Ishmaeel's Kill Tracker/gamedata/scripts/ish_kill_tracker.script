@@ -1,0 +1,45 @@
+-- PDA 3.1 dead body tracking addon by Ishmaeel. (https://www.moddb.com/mods/stalker-anomaly/addons/kiltrak)
+-- Based on the Body Dots Minimap addon by RavenAscendant (https://www.moddb.com/mods/stalker-anomaly/addons/bodydotsminimap-white-dots-but-blue)
+
+function on_game_start()
+    RegisterScriptCallback("npc_on_death_callback", add_dot)
+    RegisterScriptCallback("npc_on_use", remove_dot)
+    RegisterScriptCallback("monster_on_death_callback", add_dot)
+    RegisterScriptCallback("monster_on_actor_use_callback", remove_dot)
+end
+
+function add_dot(victim, killer)
+    if not (victim and killer) then
+        return
+    end
+
+    if db.actor and killer:name() == db.actor:name() and has_pda() then
+        level.map_add_object_spot_ser(victim:id(), "deadbody_location")
+    end
+end
+
+function remove_dot(victim)
+    local id = victim:id()
+    level.map_remove_object_spot(id, "deadbody_location")
+    level.map_remove_object_spot(id, "deadbody_location")
+end
+
+function has_pda()
+    local pda = db.actor:item_in_slot(8)
+
+    if pda and pda:section() == "device_pda_3" then
+        local battery = pda:condition()
+        if battery > 0.05 then
+		return true
+	end
+    end
+
+    if pda and pda:section() == "device_pda_2" then
+        local battery = pda:condition()
+        if battery > 0.05 then
+		return true
+	end
+    end
+
+    return false
+end
