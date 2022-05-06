@@ -1,0 +1,486 @@
+-- if level or rank aren't defined, then its gonna be same as vanilla i.e. 100% (for this rank and level)
+local ignore_best_target_chance = 5		-- chance to ignore target with highest priority and pick a random one (from top 5 highest targets)
+local minimum_chance = 5		-- if prior_t value is less than "minimum_chance" its gonna be "minimum_chance"
+local ALLOW_NPC_LEVEL_TRANSITION = true
+local debugx = false			-- displays info in console
+
+local factions_t = { 		-- viable factions
+	["stalker"] = true,
+	["dolg"] = true,
+	["freedom"] = true,
+	["csky"] = true,
+	["ecolog"] = true,
+	["killer"] = true,
+	["army"] = true,
+	["bandit"] = true,
+	["renegade"] = true,
+	["monolith"] = false,
+	["greh"] = false,
+	["isg"] = false,
+}
+
+local prior_t = {		-- in % of vanilla priority values
+	["l01_escape"] = {
+		["novice"] = 200,
+		["experienced"] = 25,
+		["veteran"] = 0,
+		["master"] = 0,
+	},
+
+	["k00_marsh"] = {
+		["novice"] = 150,
+		["experienced"] = 50,
+		["veteran"] = 0,
+		["master"] = 0,
+	},
+
+	["k01_darkscape"] = {
+		["novice"] = 150,
+		["experienced"] = 50,
+		["veteran"] = 0,
+		["master"] = 0,
+	},
+
+	["l02_garbage"] = {
+		["novice"] = 150,
+		["experienced"] = 100,
+		["veteran"] = 25,
+		["master"] = 0,
+	},
+
+	["l03_agroprom"] = {
+		["novice"] = 100,
+		["experienced"] = 150,
+		["veteran"] = 50,
+		["master"] = 0,
+	},
+
+	["l05_bar"] = {
+		["novice"] = 100,
+		["experienced"] = 200,
+		["veteran"] = 150,
+		["master"] = 50,
+	},
+
+	["l04_darkvalley"] = {
+		["novice"] = 100,
+		["experienced"] = 150,
+		["veteran"] = 100,
+		["master"] = 0,
+	},
+
+	["l06_rostok"] = {
+		["novice"] = 50,
+		["experienced"] = 150,
+		["veteran"] = 200,
+		["master"] = 25,
+	},
+
+	["l08_yantar"] = {
+		["novice"] = 25,
+		["experienced"] = 100,
+		["veteran"] = 200,
+		["master"] = 50,
+	},
+
+	["l07_military"] = {
+		["novice"] = 0,
+		["experienced"] = 100,
+		["veteran"] = 200,
+		["master"] = 100,
+	},
+
+	["k02_trucks_cemetery"] = {
+		["novice"] = 25,
+		["experienced"] = 100,
+		["veteran"] = 150,
+		["master"] = 25,
+	},
+
+	["l09_deadcity"] = {
+		["novice"] = 0,
+		["experienced"] = 50,
+		["veteran"] = 125,
+		["master"] = 100,
+	},
+
+	["l10_radar"] = {
+		["novice"] = 0,
+		["experienced"] = 0,
+		["veteran"] = 100,
+		["master"] = 200,
+	},
+
+	["l10_red_forest"] = {
+		["novice"] = 0,
+		["experienced"] = 50,
+		["veteran"] = 125,
+		["master"] = 200,
+	},
+
+	["l10_limansk"] = {
+		["novice"] = 0,
+		["experienced"] = 50,
+		["veteran"] = 125,
+		["master"] = 100,
+	},
+
+	["jupiter"] = {
+		["novice"] = 0,
+		["experienced"] = 50,
+		["veteran"] = 150,
+		["master"] = 200,
+	},
+
+	["zaton"] = {
+		["novice"] = 0,
+		["experienced"] = 25,
+		["veteran"] = 100,
+		["master"] = 150,
+	},
+
+	["l11_pripyat"] = {
+		["novice"] = 0,
+		["experienced"] = 0,
+		["veteran"] = 50,
+		["master"] = 100,
+	},
+
+	["pripyat"] = {
+		["novice"] = 0,
+		["experienced"] = 0,
+		["veteran"] = 75,
+		["master"] = 150,
+	},
+
+	["l12_stancia"] = {
+		["novice"] = 0,
+		["experienced"] = 0,
+		["veteran"] = 25,
+		["master"] = 100,
+	},
+
+}
+
+local default_squad_behaviour = {	
+	["actor"]			= 0,
+	["all"]				= 1,
+	["base"] 			= 1,
+	["lair"]			= 0,
+	["resource"] 		= 2,
+	["squad"] 			= 0,
+	["surge"]			= 3,
+	["territory"]		= 1
+}
+
+local default_monster_behaviour = {	
+	["actor"]			= 0,
+	["base"] 			= 0,
+	["lair"]			= 1,
+	["monster"]			= 1,
+	["resource"] 		= 0,
+	["squad"] 			= 0,
+	["surge"]			= 0,
+	["territory"]		= 1
+}
+
+local rank_to_mult = {
+	["novice"] = 1,
+	["trainee"] = 2,
+	["experienced"] = 3,
+	["professional"] = 4,
+	["veteran"] = 5,
+	["expert"] = 6,
+	["master"] = 7,
+	["legend"] = 8,
+}
+
+local shared_rank = {
+	["trainee"] = "novice",
+	["professional"] = "experienced",
+	["expert"] = "veteran",
+	["legend"] = "master",
+}
+
+function pr(...)
+	if not debugx then return end
+	printf(...)
+end
+
+function sim_dist_to(obj1 , obj2)
+	local pos1,lv1,gv1 = obj1:get_location()
+	local pos2,lv2,gv2 = obj2:get_location()
+	return utils_obj.graph_distance(gv1, gv2)
+end
+
+local function evaluate_prior_by_dist(target, squad)
+	local dist = sim_dist_to(target, squad)
+	if dist < 1 then
+		dist = 1
+	end
+	return 1 + 1/dist
+end
+
+function is_on_the_same_level(se_obj_1, se_obj_2)
+	if not (se_obj_1 and se_obj_2) then
+		return false
+	end
+	
+	local gg = game_graph()
+	return (gg:vertex(se_obj_1.m_game_vertex_id):level_id() == gg:vertex(se_obj_2.m_game_vertex_id):level_id())
+end
+
+function simulation_objects.evaluate_prior(target, squad)
+
+	local sim = alife()
+	local prior = 5
+
+	if (target:clsid() == clsid.script_actor) then
+		if not (is_on_the_same_level(target, squad)) then
+			return 0
+		end
+
+		if not (target:target_precondition(squad)) then
+			return 0
+		end
+
+	elseif (target:clsid() == clsid.online_offline_group_s) then
+
+		if (squad.id == target.id) then
+			return 0
+		end
+
+		if (not is_on_the_same_level(sim:actor(), squad)) then
+			return 0
+		end
+
+		-- If target squad is in safe zone, ignore them.
+		if (xr_combat_ignore.safe_zone_npcs[squad.id]) then
+			return 0
+		end
+
+		if (xr_combat_ignore.safe_zone_npcs[target.id]) then
+			return 0
+		end
+
+		-- Prevent cluster-fucks
+		local target_of_my_target = target.assigned_target_id and sim:object(target.assigned_target_id)
+		if (target_of_my_target and target_of_my_target:clsid() == clsid.online_offline_group_s) then
+			return 0
+		end
+
+		if not (target:target_precondition(squad)) then
+			return 0
+		end
+
+	elseif (target:clsid() == clsid.smart_terrain) then
+
+		if (target.disabled) then
+			return 0
+		end
+		
+		if (SIMBOARD.smarts[target.id] and SIMBOARD.smarts[target.id].population >= target.max_population) then
+			return 0
+		end
+
+		if (SIMBOARD.smarts[target.id] == nil or SIMBOARD.smarts[target.id].squads == nil) then
+			return 0
+		end
+
+		-- Level travel
+		if not (is_on_the_same_level(target, squad)) then
+			if (is_squad_monster[squad.player_id]) then 
+				return 0 
+			end
+			
+			if not (ALLOW_NPC_LEVEL_TRANSITION) then
+				return 0
+			end
+		end
+	end
+
+	-- priorize target based on target props
+	local target_koeff = target.props[squad.player_id]
+	--if (not target.props) then 
+		--callstack()
+	--end
+	if (target_koeff ~= nil) then 
+		prior = prior + (1*target_koeff)
+	end
+	
+	if (is_squad_monster[squad.player_id]) then 
+		for k,v in pairs (default_monster_behaviour) do
+			target_koeff = target.props[k] or 0
+			prior = prior + (v*target_koeff)
+		end
+	else 
+		for k,v in pairs (default_squad_behaviour) do
+			target_koeff = target.props[k] or 0
+			prior = prior + (v*target_koeff)
+		end
+	end
+
+
+	-- xcvb (rank multiplier for target priority)
+	local rank_prior = 100
+	local squad_rank
+
+	-- smarts only
+	if target:clsid() ~= clsid.smart_terrain then
+		return prior * evaluate_prior_by_dist(target, squad)
+	end
+
+	-- get target's level name
+	local sim = alife()
+	local target_level_id = game_graph():vertex(target.m_game_vertex_id):level_id()
+	local target_level_name = sim:level_name(target_level_id)
+
+	-- check if squad are stalkers
+	local squad_comm = squad:get_squad_community()
+	local squad_viable = squad_comm and factions_t[squad_comm]
+	if squad_viable then
+		local members = {}
+		local avg_sq_rank = 0
+		-- get squad members summary rank
+		if squad.squad_members then
+			for npc in squad:squad_members() do
+				members[#members + 1] = npc.id
+				local se_member = alife_object(npc.id)
+				if se_member and IsStalker(nil, se_member:clsid()) and se_member:alive() then
+					local rank = se_member and ranks.get_se_obj_rank_name(se_member)
+					avg_sq_rank = avg_sq_rank + rank_to_mult[rank]
+				end
+			end
+		end
+
+		-- get average squad rank
+		if #members > 0 then
+			avg_sq_rank = avg_sq_rank / (#members)
+			avg_sq_rank = math.floor(avg_sq_rank + 0.5)
+		end
+
+		if avg_sq_rank > 0 then
+			for rank_name, val in pairs(rank_to_mult) do
+				if avg_sq_rank == val then
+					squad_rank = rank_name
+					break
+				end
+			end
+		end
+
+	end
+
+	-- do only if rank found/exist
+	if not squad_rank then
+		return prior * evaluate_prior_by_dist(target, squad)
+	end
+
+	-- shared ranks
+	if shared_rank[squad_rank] then
+		squad_rank = shared_rank[squad_rank]
+	end
+
+	-- set rank priority multiplier for this target (backup with factions included, filling up table is very hard and result is subjective, but maybe later)
+	--[[
+	if prior_t[target_level_name] and prior_t[target_level_name][squad_comm] then
+		for rank_name, val in pairs(prior_t[target_level_name][squad_comm]) do
+			if squad_rank == rank_name then
+				rank_prior = val
+			end
+		end
+	end
+	--]]
+
+
+	-- set rank priority multiplier for this target
+	if prior_t[target_level_name] and prior_t[target_level_name][squad_rank] then
+		rank_prior = (prior_t[target_level_name][squad_rank])
+	end
+
+	if rank_prior < minimum_chance then
+		rank_prior = minimum_chance
+	end
+
+	rank_prior = rank_prior / 100
+
+	-- test
+	local squad_name = squad:name() or squad:section_name() or "<empty>"
+	local squad_level_name = alife():level_name(game_graph():vertex(squad.m_game_vertex_id):level_id())
+	local target_name = target:name() or target:section_name() or "<empty>"
+	local target_level_name = alife():level_name(game_graph():vertex(target.m_game_vertex_id):level_id())
+
+	pr("------------------- target_prior -------------------")
+	pr("squad: [ %s ] || rank: [ %s ] || cur_level: [ %s ]", squad_name, squad_rank, squad_level_name)
+	pr("target: [ %s ] || target_level: [ %s ]", target_name, target_level_name)
+	local old_tot = prior * evaluate_prior_by_dist(target, squad)
+	local new_tot = old_tot * rank_prior
+	pr("$ rank prior mult: [ %s ] || old_tot: [ %s ] || NEW_TOT: [ %s ]", round_idp(rank_prior, 3), round_idp(old_tot, 3), round_idp(new_tot, 3))
+	pr("---------------------------------------------------")
+	------
+
+	return prior * evaluate_prior_by_dist(target, squad) * rank_prior
+end
+
+local priority_tasks = {}
+function sim_board.simulation_board:get_squad_target(squad)
+	local size_t = 0
+	
+	local object_registry = simulation_objects.object_registry
+	local is_available = simulation_objects.available_by_id
+	for index=1,simulation_objects.object_registry_size do 
+		local se_target = object_registry[index]
+		if (not se_target.locked and se_target.id ~= squad.id and is_available[se_target.id]) then 
+			local curr_prior = se_target:evaluate_prior(squad)
+			if (curr_prior > 0 and se_target:target_precondition(squad)) then
+				-- Prioritize 5 potential targets
+				if (size_t < 5) then 
+					size_t = size_t + 1
+					priority_tasks[size_t] = {se_target,curr_prior}
+				elseif (curr_prior > priority_tasks[size_t][2]) then 
+					for i=1,size_t do 
+						if (curr_prior > priority_tasks[i][2]) then 
+							priority_tasks[i][2] = curr_prior
+							priority_tasks[i][1] = se_target
+							break
+						end
+					end
+				end
+			end
+		end
+	end 
+	
+	-- Tronex, get target with highest prior
+	local highest_prior = 0
+	local best_target
+	for i=1,size_t do
+		if highest_prior < priority_tasks[i][2] then
+			highest_prior = priority_tasks[i][2]
+			best_target = priority_tasks[i][1]
+		end
+	end
+
+	-- xcvb test
+	local squad_name = squad:name() or squad:section_name() or "<empty>"
+	pr("----------------------------------")
+	for i = 1, size_t do
+		pr("squad_name: [ %s ] || simboard_t_target: [ %s ] || simboard_t_prior: [ %s ]", squad_name, priority_tasks[i][1]:name() or priority_tasks[i][1]:section_name() or "<empty>", round_idp(priority_tasks[i][2], 3))
+	end
+
+	if best_target then
+		local best_target_name = best_target:name() or best_target:section_name() or "<empty>"
+		local best_target_level_name = alife():level_name(game_graph():vertex(best_target.m_game_vertex_id):level_id())
+		pr("squad_name: [ %s ] || highest prior: [ %s ] || best_target: [ %s ] || best_target_level: [ %s ]", squad_name, round_idp(highest_prior, 3), best_target_name, best_target_level_name)
+	end
+	pr("----------------------------------")
+	----------------
+
+	if (size_t > 0) then
+		--local target = priority_tasks[math.random(size_t)][1]
+		local target = (math.random(1,100) < ignore_best_target_chance) and priority_tasks[math.random(size_t)][1] or best_target -- Tronex
+		--printf("squad=%s size=%s target=%s",squad:name(),size_t,target:name())
+		pr("squad_name: [ %s ] || picked target: [ %s ] || picked_target_level: [ %s ]", squad_name, target:name(), alife():level_name(game_graph():vertex(target.m_game_vertex_id):level_id()))
+		pr("----------------------------------")
+		iempty_table(priority_tasks) -- It is better to reuse table to avoid GC
+		return target
+	end
+end
