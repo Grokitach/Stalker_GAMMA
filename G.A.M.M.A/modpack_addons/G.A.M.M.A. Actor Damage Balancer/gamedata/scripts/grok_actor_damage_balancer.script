@@ -76,12 +76,12 @@ local hitboxes={}
 	hitboxes[8]="rightleg"
 
 local hitbox_mult = {
-	["head"] = 1.0,
+	["head"] = 0.8,
 	["torso"] = 0.9,
-	["leftarm"] = 0.8,
-	["rightarm"] = 0.8,
-	["lefleg"] = 0.7,
-	["rightleg"] = 0.7,
+	["leftarm"] = 0.7,
+	["rightarm"] = 0.7,
+	["lefleg"] = 0.6,
+	["rightleg"] = 0.6,
 }
 
 local dtype = {
@@ -262,28 +262,31 @@ function get_protection(shit,bone_id,k_ap)
 
 	-- Total protection adjusted by damage source
 	printf('%s + %s + %s + %s', helmet_protection, armor_protection, artefacts_protection, booster_protection)
-	total_prot = (helmet_protection + armor_protection + artefacts_protection + booster_protection)
+
 
 	-- Special case if ammo do not penetrate armor
+	no_pen = 0 
 	if shit.type == hit.fire_wound then
 		if headshot == 1 then
 			printf('ammo pen = %s', k_ap)	
 			printf('armor class = %s', helmet_bone_value)
 			if k_ap < helmet_bone_value then
-				total_prot = total_prot * 1.5
+				helmet_protection = helmet_protection * 0.2 + helmet_bone_value
 				printf("ammo didn't penetrate armor, damage reduction applied")
+				no_pen = 1
 			end
 		else
 			printf('ammo pen = %s', k_ap)	
 			printf('armor class = %s', armor_bone_value)
 			if k_ap < armor_bone_value then
-				total_prot = total_prot * 1.5
+				armor_protection = armor_protection * 0.2 + armor_bone_value
 				printf("ammo didn't penetrate armor, damage reduction applied")
+				no_pen = 1
 			end
 		end
 	end
 	
-	
+	total_prot = (helmet_protection + armor_protection + artefacts_protection + booster_protection)
 	-- Max protection limiter to avoid immunity to damages		
 	if total_prot >= 1 then
 		if shit.type == hit.wound then
@@ -326,8 +329,8 @@ function shit_booster(shit, bone_id, k_ap)
 	
 	-- Body part damage multiplier (already applied by engine in shit.power)
 	local body_part = hitboxes[bone_id]
---	local body_part_mult = hitbox_mult[body_part] or 0.5
---	damage = damage * body_part_mult
+	local body_part_mult = hitbox_mult[body_part] or 0.5
+	damage = damage * body_part_mult
 	
 	-- Resolve mechanic, survive with few hp instead of dying from huge hits
 	if damage >= db.actor.health and db.actor.health >= 0.65 then
@@ -340,6 +343,9 @@ function shit_booster(shit, bone_id, k_ap)
 	printf('damage to actor = %s', damage)
 	shit.power = 0
 	db.actor:set_health_ex(db.actor.health - damage)
+	if no_pen == 0 then
+		db.actor:cast_Actor():conditions():AddWound(damage, hit_type, bone_id)
+	end
 end
 
 function actor_on_before_hit(shit,bone_id)
