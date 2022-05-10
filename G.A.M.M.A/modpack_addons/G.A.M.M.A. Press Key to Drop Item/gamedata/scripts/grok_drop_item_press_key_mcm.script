@@ -1,0 +1,93 @@
+KEY_DROP = DIK_keys.DIK_LSHIFT -- Thumb mouse button
+
+local mcm_keybinds = ui_mcm and ui_mcm.key_hold
+
+function on_mcm_load()
+    return {
+        id = "drop_item",
+        sh = true,
+        gr = {
+            -- LuaFormatter off
+            {id = "title", type = "slide", link = "ui_options_slider_player", text = "ui_mcm_menu_drop_item", size = {512, 50}, spacing = 20},
+            {id = "key_drop", type = "key_bind", val = 2, def = KEY_DROP}
+            -- LuaFormatter on
+        }
+    }
+end
+
+function on_option_change(mcm)
+    if mcm then
+        KEY_DROP = ui_mcm.get("drop_item/key_drop") or KEY_DROP
+    end
+end
+
+function ActorMenu_on_item_focus_receive(obj)
+	if register and ui_inventory.GUI then
+		local obj = (function()
+		local bag = ui_inventory.GUI.hover.bag
+		local idx = ui_inventory.GUI.hover.idx
+		if idx then
+			return ui_inventory.GUI.CC[bag]:GetObj(idx)
+		end
+		end)()
+		if obj then 
+			--printf("current sec %s", obj:section()) else printf("current obj is nil") 
+			obj_to_drop = obj
+		end
+	else
+		obj_to_drop = nil
+	end
+end
+
+function ActorMenu_on_item_focus_lost(obj)
+	obj_to_drop = nil
+end
+
+local function on_key_press(key)
+	if key == KEY_DROP then
+		if register and obj_to_drop then
+			db.actor:drop_item(obj_to_drop)
+		end
+	end
+end
+
+local function on_key_release(key)
+	if key == KEY_DROP then
+		if register and ui_inventory.GUI then
+			local obj = obj or (function()
+			local bag = ui_inventory.GUI.hover.bag
+			local idx = ui_inventory.GUI.hover.idx
+			if idx then
+				return ui_inventory.GUI.CC[bag]:GetObj(idx)
+			end
+			end)()
+			if obj then 
+				--printf("current sec %s", obj:section()) else printf("current obj is nil") 
+				obj_to_drop = obj
+			end
+		else
+			obj_to_drop = nil
+		end
+	end
+end
+
+local function ui_close()
+	obj_to_drop = nil
+	register = false
+end
+
+local function ui_open()
+	obj_to_drop = nil
+	register = true
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_option_change",on_option_change)
+	RegisterScriptCallback("on_key_press",on_key_press)
+	RegisterScriptCallback("on_key_release",on_key_release)
+	RegisterScriptCallback("ActorMenu_on_item_focus_receive", ActorMenu_on_item_focus_receive)
+	RegisterScriptCallback("ActorMenu_on_item_focus_lost", ActorMenu_on_item_focus_lost)
+	RegisterScriptCallback("GUI_on_hide", ui_close)
+	RegisterScriptCallback("GUI_on_show",ui_open)
+	on_option_change(mcm_keybinds)
+end
