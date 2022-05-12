@@ -16,6 +16,9 @@ function on_mcm_load()
 end
 
 function on_option_change(mcm)
+	fov_before = get_console_cmd(2, "fov")
+	hud_fov_before = get_console_cmd(2, "hud_fov")
+	mouse_sens_before = get_console_cmd(2, "mouse_sens")
     if mcm then
         KEY_TOGGLE_ZOOM = ui_mcm.get("free_zoom/key_bind_toggle") or KEY_TOGGLE_ZOOM
     end
@@ -26,14 +29,24 @@ local get_hud_fov = 0
 local get_mouse_sens= 0
 local custom_zoom = false
 
+
+function actor_on_first_update()
+	fov_before = get_console_cmd(2, "fov")
+	hud_fov_before = get_console_cmd(2, "hud_fov")
+	mouse_sens_before = get_console_cmd(2, "mouse_sens")
+end
+
 function on_key_press(key)
     if not (key == KEY_TOGGLE_ZOOM) then return end
-    get_fov = ui_options.get("video/basic/fov")
-    get_hud_fov = ui_options.get("video/basic/hud_fov")
-    get_mouse_sens = ui_options.get("control/general/mouse_sens")
-    get_console():execute("fov " .. get_fov * 0.61)
-    get_console():execute("hud_fov " .. get_hud_fov * 0.61)
-    get_console():execute("mouse_sens " .. get_mouse_sens * 0.61)
+--    get_fov = ui_options.get("video/basic/fov")
+--    get_hud_fov = ui_options.get("video/basic/hud_fov")
+--    get_mouse_sens = ui_options.get("control/general/mouse_sens")
+	exec_console_cmd("fov " .. fov_before * 0.61)
+	exec_console_cmd("hud_fov " .. hud_fov_before * 0.61)
+	exec_console_cmd("mouse_sens " .. mouse_sens_before * 0.61)
+--    get_console():execute("fov " .. get_fov * 0.61)
+--    get_console():execute("hud_fov " .. get_hud_fov * 0.61)
+--    get_console():execute("mouse_sens " .. get_mouse_sens * 0.61)
     custom_zoom = true
     local run_coef = 0.6
     local sprint_coef = 0.95
@@ -44,18 +57,37 @@ end
 function on_key_release(key)
     if not (key == KEY_TOGGLE_ZOOM) then return end
     if not (custom_zoom) then return end
-    get_console():execute("fov " .. get_fov)
-    get_console():execute("hud_fov " .. get_hud_fov)
-    get_console():execute("mouse_sens " .. get_mouse_sens)
+--    get_console():execute("fov " .. get_fov)
+--    get_console():execute("hud_fov " .. get_hud_fov)
+--    get_console():execute("mouse_sens " .. get_mouse_sens)
     custom_zoom = false
     local run_coef = 1
     local sprint_coef = 1
     speed.add_speed("freezoom_speed_run", run_coef, false, true)
     speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
+	
+	local function reset_fov_to_normal(fov_val)
+		exec_console_cmd("fov " .. fov_val)
+		return true
+	end
+	CreateTimeEvent(0, "reset_fov_to_normal", 0.075, reset_fov_to_normal, fov_before)
+	
+	local function reset_hud_fov_to_normal(fov_val)
+		exec_console_cmd("hud_fov " .. fov_val)
+		return true
+	end
+	CreateTimeEvent(0, "reset_hud_fov_to_normal", 0.075, reset_hud_fov_to_normal, hud_fov_before)
+	
+	local function reset_mouse_sens_to_normal(fov_val)
+		exec_console_cmd("mouse_sens " .. fov_val)
+		return true
+	end
+	CreateTimeEvent(0, "reset_mouse_sens_to_normal", 0.075, reset_mouse_sens_to_normal, mouse_sens_before)
 end
 
 function on_game_start()
     RegisterScriptCallback("on_option_change",on_option_change)
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
     RegisterScriptCallback("on_key_press",on_key_press)
     RegisterScriptCallback("on_key_release",on_key_release)
     on_option_change(mcm_keybinds)
