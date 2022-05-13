@@ -161,6 +161,31 @@ function get_game_factor(key)
 	return factors_game[key]
 end
 
+-- Returns displayed AP res on armor
+function get_outfit_ap_res(obj)
+	-- Object exists
+	if obj then
+		local outfit = IsOutfit(obj)
+		local helmet = IsHeadgear(obj)
+		local cobj = outfit and obj:cast_CustomOutfit() or helmet and obj:cast_Helmet()
+		if (not cobj) then
+			return 0
+		end
+			-- Outfit
+		if outfit then
+			armor_hit_frac = ini_sys:r_float_ex(obj:section(), "hit_fraction_actor") or 1
+			armor_bone_value = (1 - armor_hit_frac) * 0.75 or 0
+				
+			-- Helmet
+		elseif helmet then
+			helmet_hit_frac = ini_sys:r_float_ex(obj:section(), "hit_fraction_actor") or 1
+			armor_bone_value = (1 - helmet_hit_frac) or 0  
+		end
+		
+		return armor_bone_value * obj:condition()
+	end
+end
+
 -- Calculates player protection
 function get_protection(shit,bone_id,k_ap)
 
@@ -169,7 +194,7 @@ function get_protection(shit,bone_id,k_ap)
 		immunity = "fire_wound_immunity"
 		protection = "FireWound"
 		booster_type = 15
-		adjuster = 0.85
+		adjuster = 0.80
 		limiter = 0.95
 	end
 
@@ -326,7 +351,7 @@ function shit_booster(shit, bone_id, k_ap)
 	end
 
 	if shit.type == hit.wound then
-		shit.power = shit.power * 0.5 -- Now that there's no immunity, damages need to be scaled down. Chimeras do 1.54 damage and boars do 0.90 !
+		shit.power = shit.power * 0.6 -- Now that there's no immunity, damages need to be scaled down. Chimeras do 1.54 damage and boars do 0.90 !
 	end
 	
 	damage = shit.power * ( 1 - total_prot )
