@@ -1,0 +1,910 @@
+--[[
+==============================================
+-- Tronex
+-- 2019/5/29
+-- Anomaly Treasure manager
+-- Based on CoC treasure manager
+
+Overview
+--------
+-- This script spawns loot, randomly, inside all INVBOX class objects. Loot is determined on new game start and stored
+-- within the .scoc as a string. When the cache is opened, the loot is spawned.
+
+Operation
+---------
+-- A list of all possible item sections is picked from treasure_manager.ltx
+-- Items are divided by kinds and tiers in their sections
+-- Item kind acts as the group the item belongs to. While tier detemine the importance of the item among others in the same group
+--
+-- The script will pick items to stash based on their kind and tiers, all is configurable by treasure_manager.ltx
+-- Items will get picked randomly based on tier and kind until stash weight get "filled"
+-- Item's kind detemine item's chance to appear and it's impact on the remaining weight
+-- Item's tier acts as a multiplier for item's kind stats. So higher tiers will have rarer chances and higher impacts
+-- A stash get a random "weight" to allow a certain amount of items inside.
+-- Everytime an item is added to the stash, the remaining weight will decreased based on item's "impact"
+--==============================================
+--
+-- Grok's Stash Overhaul
+--
+-- Stash Tiering system by map. Edits of the treasure_manager.script functions 
+-- are displayed with the following comment "Grok's Stash Overhaul",
+-- per line or per block. The edits allow the stash content to be tied to the map
+-- the stash spawns to following a map tier table defined below. Moreover, items
+-- tier is redifined completely thanks to SteelHawk's work. This script also uses
+-- a new treasure_manager.ltx file that contains code to implement weapons and armors
+-- in the stashes loot pool, as well as new stashes content balance.
+
+-- Just below you can edit the map tiers, amount of ammo, weapons, armors, parts and 
+-- repair kits conditions to your liking.
+
+-- If a kind soul wants to monkey patch treasure_manager.script properly with the
+-- changes highlighted throughout the script, thank you.
+
+-- This script uses parts of SteelHawk's Stash Overhaul. Source:
+-- https://www.moddb.com/mods/stalker-anomaly/addons/anomaly-stash-overhaul
+
+-- Last edits: 03/01/2021 by Grok
+--==============================================
+--]]
+
+-- Grok's Stash Overhaul. Maps Tiers to control stashes content. 
+-- For a given stash on a given map, each item spawning in that stash 
+-- has a tier equal to one of the numbers available in the map vector.
+-- For instance, in Swamps, Tier 2 items will mostly spawn with a rare 
+-- chance to get Tier 3 items (1 out of 7). {4, 5} means that items have 
+-- a 50% chance to be Tier 4 or Tier 5.
+local map_tiers = {
+    ["k00_marsh"] = {1, 2},
+    ["l01_escape"] = {1, 2},
+    ["l05_bar"] = {1, 2},
+    ["l02_garbage"] = {1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3},
+    ["k01_darkscape"] = {1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3},
+    ["l04_darkvalley"] = {1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3},
+    ["k02_trucks_cemetery"] = {2, 2, 3, 3, 3},
+    ["l09_deadcity"] = {1, 2, 2, 2, 3, 3, 3},
+    ["l03_agroprom"] = {2, 2, 2, 2, 3, 3, 3, 3},
+    ["l06_rostok"] = {2, 2, 2, 2, 3, 3, 3, 3},
+    ["l07_military"] = {2, 3, 3, 3, 4, 4},
+    ["l08_yantar"] = {2, 2, 2, 2, 3, 3, 3, 3, 3},
+    ["jupiter"] = {3, 3, 3, 4},
+    ["l03u_agr_underground"] = {3, 4, 5},
+    ["l10_limansk"] = {2, 3, 4, 4},
+    ["l08u_brainlab"] = {3, 4, 5},
+    ["l10_red_forest"] = {3, 3, 4, 4, 4, 5},
+    ["labx8"] = {3, 4, 5},
+    ["l12_stancia"] = {3, 4, 4, 4, 4},
+    ["zaton"] = {3, 4, 4, 4, 4, 5},
+    ["l12_stancia_2"] = {4, 4, 4, 5, 5},
+    ["l11_hospital"] = {4, 5},
+    ["jupiter_underground"] = {4, 4, 4, 4, 5},
+    ["l10u_bunker"] = {4, 5},
+    ["l10_radar"] = {4, 5, 5, 5},
+    ["l04u_labx18"] = {4, 5},
+    ["l11_pripyat"] = {3, 4, 4, 5, 5, 5},
+    ["l12u_sarcofag"] = {4, 5, 5, 5, 5},
+    ["l12u_control_monolith"] = {4, 5, 5, 5, 5},
+    ["l13_generators"] = {4, 5, 5, 5, 5},
+    ["l13u_warlab"] = {4, 5, 5, 5, 5},
+    ["pripyat"] = {4, 5, 5, 5, 5},
+    ["y04_pole"] = {1,2},
+}
+
+local possible_map_tiers = {
+    ["k00_marsh"] = {1, 2},
+    ["l01_escape"] = {1, 2},
+    ["l05_bar"] = {1, 2},
+    ["l02_garbage"] = {1, 2, 3},
+    ["k01_darkscape"] = {1, 2, 3},
+    ["l04_darkvalley"] = {1, 2, 3},
+    ["k02_trucks_cemetery"] = {2, 3},
+    ["l09_deadcity"] = {1, 2, 3},
+    ["l03_agroprom"] = {2, 3},
+    ["l06_rostok"] = {2, 3},
+    ["l07_military"] = {2, 3, 4},
+    ["l08_yantar"] = {2, 3},
+    ["jupiter"] = {3, 4},
+    ["l03u_agr_underground"] = {3, 4, 5},
+    ["l10_limansk"] = {2, 3, 4},
+    ["l08u_brainlab"] = {3, 4, 5},
+    ["l10_red_forest"] = {3, 4, 5},
+    ["labx8"] = {3, 4, 5},
+    ["l12_stancia"] = {3, 4},
+    ["zaton"] = {3, 4, 5},
+    ["l12_stancia_2"] = {4, 5},
+    ["l11_hospital"] = {4, 5},
+    ["jupiter_underground"] = {4, 5},
+    ["l10u_bunker"] = {4, 5},
+    ["l10_radar"] = {4, 5},
+    ["l04u_labx18"] = {4, 5},
+    ["l11_pripyat"] = {3, 4, 5},
+    ["l12u_sarcofag"] = {4, 5},
+    ["l12u_control_monolith"] = {4, 5},
+    ["l13_generators"] = {4, 5},
+    ["l13u_warlab"] = {4, 5},
+    ["pripyat"] = {4, 5},
+    ["y04_pole"] = {1, 2},
+}
+
+-- Item properties, Grok's Stash Overhaul. Moved inside the for loops way below to improve items' quality and uses randomness. 
+-- Search item_prop , weapon_condition and armor_condition within this file to change them
+
+-- config
+ini_treasure = ini_file("items\\settings\\grok_treasure_manager.ltx")
+ini_treasure_vanilla = ini_file_ex("items\\settings\\treasure_manager.ltx",true)
+ini_tiers = ini_file("items\\settings\\grok_items_tier.ltx")
+local enable_debug = false
+
+-- Stash storage
+caches = {}
+local caches_count = 0
+local caches_blacklist = {}
+local caches_rare = {}
+
+
+-- Stats and Shuffle tables
+local stash_common = {
+	min_weight = 0,
+	max_weight = 0,
+	kind_val   = {},
+	tier_val   = {},
+	kind_list  = {},
+	tier_list  = {},
+}
+
+local stash_rare = {
+	min_weight = 0,
+	max_weight = 0,
+	kind_val   = {},
+	tier_val   = {},
+	kind_list  = {},
+	tier_list  = {},
+	
+	reward_bonus = {},
+	task_num = 7,
+	start_chance = 60,
+}
+
+stash_bonus = {}
+
+-- Item list
+local item_list = {} -- item_list[kind][tier] = {all suitable items}
+local dbg_items = {}
+
+local blacklisted_maps = { -- List of maps to skip for marked stashes
+	-- North
+	["l13_generators"]        = true,
+
+	-- Underground
+	["jupiter_underground"]   = true,
+	["labx8"]                 = true,
+	["l03u_agr_underground"]  = true,
+	["l04u_labx18"]           = true,
+	["l08u_brainlab"]         = true,
+	["l10u_bunker"]           = true,
+	["l12u_control_monolith"] = true,
+	["l12u_sarcofag"]         = true,
+	["l13u_warlab"]           = true,
+	
+	["fake_start"]            = true
+}
+
+------------------------------------------------------------------------------------------------------------------
+--							MAIN
+------------------------------------------------------------------------------------------------------------------
+function init_settings()
+	local n = 0
+	local junk, kind, value = "", "", ""
+	
+	-- Names of blacklisted stashes
+	n = ini_treasure:line_count("blacklist_stashes_names")
+	for i=0, n-1 do
+		junk, kind, value = ini_treasure:r_line("blacklist_stashes_names" , i , "", "")
+		caches_blacklist[kind] = true
+	end
+	
+	-- Names of rare stashes
+	n = ini_treasure:line_count("rare_stashes_names")
+	for i=0, n-1 do
+		junk, kind, value = ini_treasure:r_line("rare_stashes_names" , i , "", "")
+		caches_rare[kind] = true
+	end
+	
+	-- Common stashes settings
+	stash_common.min_weight = ini_treasure:r_float_ex("settings_common" , "min_weight")
+	stash_common.max_weight = ini_treasure:r_float_ex("settings_common" , "max_weight")
+	
+	local num_of_tiers = ini_treasure:r_float_ex("settings_common" , "num_of_tiers") or 5
+	for i=1,num_of_tiers do	stash_common.tier_list[#stash_common.tier_list + 1] = i end
+	
+	n = ini_treasure:line_count("kind_tier_effect_common")
+	junk, kind, value = "", "", ""
+	for i=0, n-1 do
+		junk, kind, value = ini_treasure:r_line("kind_tier_effect_common" , i , "", "")
+		if kind and value then
+			local str = str_explode(value,",")
+			if (#str >= (2 + num_of_tiers*2)) then
+				stash_common.kind_val[kind] = { chance = tonumber(str[1]) , weight = tonumber(str[2]) }
+				stash_common.tier_val[kind] = {}
+				stash_common.kind_list[#stash_common.kind_list + 1] = kind
+				for tier=1,num_of_tiers do
+					stash_common.tier_val[kind][tier] = { chance_multi = tonumber(str[(tier*2) + 1]) , weight_multi = tonumber(str[(tier*2) + 2]) }
+				end
+			end
+		end
+	end
+	
+	-- Rare stashes settings
+	stash_rare.min_weight = ini_treasure:r_float_ex("settings_rare" , "min_weight")
+	stash_rare.max_weight = ini_treasure:r_float_ex("settings_rare" , "max_weight")
+	stash_rare.reward_bonus = parse_list(ini_treasure,"settings_rare","reward_bonus")
+	stash_rare.task_num = ini_treasure:r_float_ex("settings_rare" , "completed_task_num")
+	stash_rare.start_chance = ini_treasure:r_float_ex("settings_rare" , "start_chance")
+	
+	num_of_tiers = ini_treasure:r_float_ex("settings_rare" , "num_of_tiers") or 5
+	for i=1,num_of_tiers do	stash_rare.tier_list[#stash_rare.tier_list + 1] = i end
+	
+	n = ini_treasure:line_count("kind_tier_effect_rare")
+	junk, kind, value = "", "", ""
+	for i=0, n-1 do
+		junk, kind, value = ini_treasure:r_line("kind_tier_effect_rare" , i , "", "")
+		if kind and value then
+			local str = str_explode(value,",")
+			if (#str >= (2 + num_of_tiers*2)) then
+				stash_rare.kind_val[kind] = { chance = tonumber(str[1]) , weight = tonumber(str[2]) }
+				stash_rare.tier_val[kind] = {}
+				stash_rare.kind_list[#stash_rare.kind_list + 1] = kind
+				for tier=1,num_of_tiers do
+					stash_rare.tier_val[kind][tier] = { chance_multi = tonumber(str[(tier*2) + 1]) , weight_multi = tonumber(str[(tier*2) + 2]) }
+				end
+			end
+		end
+	end
+	
+	-- Generate item list, based on possible economy type
+	local eco = 1
+	local config = axr_main.config
+	if (config:r_value("character_creation","new_game_economy_treasure",2)) then
+		eco = config:r_value("character_creation","new_game_economy_treasure",2)
+		config:w_value("character_creation","new_game_economy_treasure")
+	else
+		eco = alife_storage_manager.get_state().diff_eco and alife_storage_manager.get_state().diff_eco["type"] or eco
+	end
+
+	local sfind = string.find
+	n = ini_treasure:line_count("possible_items")
+	junk, section, value = "", "", ""
+	for i=0, n-1 do
+		junk, section, value = ini_treasure:r_line("possible_items" , i , "", "")
+		
+		local allowed = true
+		local no_eco = value and value ~= "" and str_explode(value,",") or {}
+		for j=1,#no_eco do
+			if (tonumber(no_eco[j]) == eco) then
+				allowed = false
+				break
+			end
+		end
+		
+		if allowed then
+			-- Check if its multi use
+			local sec, uses = utils_item.get_defined_uses(section)
+			local max_uses,cost = 1,0
+			local sec_p = section
+			if sec and uses and ini_sys:section_exist(sec) then
+				max_uses = ini_sys:r_float_ex(sec,"max_uses") or uses
+				sec_p = sec
+			end
+			
+			-- Get price, kind, tier
+			if (max_uses > 1) or ini_sys:section_exist(section) then
+				uses = uses or 1
+				local cost = (ini_sys:r_float_ex(sec_p,"cost") * (uses/max_uses) or 0)
+				local kind = ini_sys:r_string_ex(sec_p,"kind")
+                --local tier = ini_sys:r_float_ex(sec_p,"tier")
+                local alternative_tiers = ini_tiers -- Grok's Stash Craft Repair Overhaul Defines path and file used for tier reference and assignment
+                local tier = alternative_tiers:r_float_ex(sec_p, "tier") -- Grok's Stash Craft Repair Overhaul Tells the treasure manager to look for the tier code in the above config
+
+                -- Groks Stash Overhaul, handles item which tier fails to be determined
+                if not tier then
+                    tier = math.random(2, 4)
+                end
+
+				if (cost > 1) and kind and tier then
+					
+					-- Reduce tier of used items
+					local lost_uses = max_uses - uses
+					tier = math.ceil(tier - (lost_uses/2))
+					tier = clamp(tier,1,5)
+					
+					if (not item_list[kind]) then
+						item_list[kind] = {}
+					end
+					
+					if (not item_list[kind][tier]) then
+						item_list[kind][tier] = {}
+					end	
+					
+					local t = item_list[kind][tier]
+					t[#t+1] = section
+				else
+					printf("!WARNING treasure_manager.init_settings | item [%s] is missing info | kind: %s - tier: %s", section, kind, tier)
+				end
+			end
+		end
+	end
+
+	-- stash bonus
+	n = ini_treasure:line_count("stash_bonus")
+	junk, section, value = "", "", ""
+	for i=0, n-1 do
+		junk, section, value = ini_treasure:r_line("stash_bonus" , i , "", "")
+		
+		local allowed = true
+		local no_eco = value and value ~= "" and str_explode(value,",") or {}
+		for j=1,#no_eco do
+			if (tonumber(no_eco[j]) == eco) then
+				allowed = false
+				break
+			end
+		end
+		
+		if allowed then
+			stash_bonus[#stash_bonus + 1] = section
+		end
+	end
+end
+
+last_secret = nil
+local last_type
+function create_random_stash(no_spot, hint, bonus_items, spawn_local, inv_box)
+	-- Search for a suitable stash
+	local id, name, desc, hint = get_random_stash(no_spot, hint, spawn_local, inv_box)
+	
+	-- Generate hint
+	local str = name
+	if desc and hint then
+		str = "%c[255,255,160,0]" .. name .. "\\n%c[default]" .. desc .. "\\n%c[160,100,100,200]" .. (hint or "")
+	end
+	
+	-- Attach content
+	if id then
+		set_random_stash(no_spot, str, bonus_items, id)
+	else
+		printe("! ERROR create_random_stash | no server object for id (%s)", id)
+	end
+end
+
+function get_random_stash(no_spot, hint, spawn_local, inv_box)
+	--printf("[lrs]get_random_stash(%s,%s,%s,%s)",no_spot,hint,bonus_items,spawn_local)
+	last_secret = nil
+
+	if (caches_count <= 0) then
+		return
+	end
+
+	last_secret = true
+
+	-- Make sure settings are prepared
+	if is_empty(item_list) then
+		init_settings()
+	end
+	
+	-- Create a temporary table to use math.random
+	local t = {}
+	local size_t = 0
+	for id,v in pairs(caches) do
+		local suitable = true
+		
+		-- (inv_box = true) Only scan inventory boxes
+		if inv_box then
+			local se_box = alife_object(id)
+			if (not se_box) then
+				suitable = false
+			elseif (se_box:clsid() ~= clsid.inventory_box_s) or caches_blacklist[se_box:name()] then
+				suitable = false
+			end
+			
+		end
+		
+		if suitable and (v == false) and (no_spot or box_in_valid_map(id)) then -- false means box is available
+			if (spawn_local) then
+				if (box_in_same_map(id)) then
+					size_t = size_t + 1
+					t[size_t] = id
+				end
+			else
+				size_t = size_t + 1
+				t[size_t] = id
+			end
+		end
+	end
+
+	-- Return if no stashe is left
+	local index = size_t > 0 and math.random(size_t)
+	if not (index) then
+		return
+	end
+
+	-- Pick stash id
+	local id = t[index]
+	local se_stash = id and alife_object(id)
+	if not (se_stash) then
+		caches[id] = nil
+		caches_count = caches_count - 1
+		return
+	end
+	
+	local stash_name = tostring(se_stash:name())
+	local lvl = alife():level_name(game_graph():vertex(se_stash.m_game_vertex_id):level_id())
+	local str = string.find(stash_name,"level_prefix_inventory_box") and (lvl .. "_") or ""
+	local is_rare = caches_rare[str .. stash_name] and true or false
+	
+	local spot
+	if no_spot and (type(no_spot) == "string") then
+		spot = no_spot
+	else
+		spot =  is_rare and "treasure_searched" or "treasure"
+	end
+	
+	-- Create hint
+	if (no_spot ~= true and level.map_has_object_spot(id,spot) == 0) then
+		if string.find(stash_name,"level_prefix") ~= nil then
+			stash_name = string.gsub(stash_name,"level_prefix",lvl,1)
+		end
+	
+		local name = "st_" .. stash_name .. "_name"
+		local descr = "st_" .. stash_name .. "_descr"
+		local new_name = game.translate_string(name)
+		local new_descr = game.translate_string(descr)
+	
+		if (new_name == name) or (descr == new_descr) then
+			return id, hint
+		else
+			return id, new_name, new_descr, hint
+		end
+	end
+	
+	return id, hint
+end
+
+function set_random_stash(no_spot, hint, bonus_items, id, dbg)
+
+	-- Make sure settings are prepared
+	if is_empty(item_list) then
+		init_settings()
+	end
+	
+	-- Check if its rare stash
+	local is_rare = false
+	local se_obj = (not dbg) and alife_object(id)
+	if se_obj then
+		local name = se_obj:name()
+		local lvl = alife():level_name(game_graph():vertex(se_obj.m_game_vertex_id):level_id())
+		local str = string.find(name,"level_prefix_inventory_box") and (lvl .. "_") or ""
+		
+		--is_rare = caches_rare[str .. name] and true or false
+	end
+	
+	-- Rare stashes contain toolkits, they are rewarded if player completed a number of tasks
+	if db.actor and (no_spot ~= true) and (type(no_spot) ~= "string") then -- it has to be a marked non-ISG stash
+		local cnt = load_var(db.actor, "toolkit_reward_count") or 0
+		local factor = stash_rare.start_chance * (cnt / stash_rare.task_num)
+		if (cnt >= stash_rare.task_num) and (math.random(100) < factor) then
+		
+			-- Shift to next toolkit
+			local last_index = load_var(db.actor, "toolkit_reward_last")
+			local new_index = last_index and (last_index + 1) or 1
+			if (new_index > #stash_rare.reward_bonus) then
+				new_index = 1
+			end
+			
+			-- Reset toolkits vars
+			save_var(db.actor, "toolkit_reward_last",new_index)
+			save_var(db.actor, "toolkit_reward_count",0)
+			
+			-- Add to content
+			local toolkit = stash_rare.reward_bonus[new_index]
+			if bonus_items then
+				table.insert(bonus_items,toolkit)
+			else
+				bonus_items = {toolkit}
+			end
+
+			-- Mark as Rare stash
+			is_rare = true
+		end
+	end
+	
+	local min_weight = is_rare and stash_rare.min_weight or stash_common.min_weight
+	local max_weight = is_rare and stash_rare.max_weight or stash_common.max_weight
+	local kind_val   = is_rare and stash_rare.kind_val   or stash_common.kind_val  
+	local tier_val   = is_rare and stash_rare.tier_val   or stash_common.tier_val  
+	local kind_list  = is_rare and stash_rare.kind_list  or stash_common.kind_list 
+	local tier_list  = is_rare and stash_rare.tier_list  or stash_common.tier_list
+    local se_obj = alife_object(id) -- Grok's Stash Overhaul
+    local lvl = alife():level_name(game_graph():vertex(se_obj.m_game_vertex_id):level_id()) -- Grok's Stash Overhaul
+	
+	local stash_weight = math.random(min_weight,max_weight)
+	if (game_achievements.has_achievement("rag_and_bone")) then
+		stash_weight = stash_weight + 200
+	end
+	local content = bonus_items or {}
+	local inc = 0
+	
+	
+	
+	-- Randomized item generating
+	while (stash_weight) > 0 do
+		local skip
+		
+		-- Rotate through shuffled kinds
+		shuffle_table(kind_list)
+		for i=1,#kind_list do
+			local kind = kind_list[i]
+			
+			-- No multi toolkits if its a rare stash
+			if (kind == "i_kit") and is_rare then
+				kind = "na"
+			end
+			
+            -- Rotate through shuffled tiers
+            --shuffle_table(tier_list) -- Grok's Stash Overhaul, removes shuffle_table on tiers to keep the tiers from the map tier system
+            for j = 1, 10 do
+                map_tier_vector = map_tiers[lvl] -- Grok's Stash Overhaul
+                random_tier_from_vector = random_key_table(map_tier_vector) -- Grok's Stash Overhaul
+                lvl_tier = map_tier_vector[random_tier_from_vector] -- Grok's Stash Overhaul
+                --local tier = tier_list[j]
+                local tier = tier_list[lvl_tier] -- Grok's Stash Overhaul
+				
+				-- Get possible item by current kind and tier
+				--printf("rotation: kind = %s - tier = %s", kind, tier)
+				if item_list[kind] and item_list[kind][tier] and tier_val[kind] and tier_val[kind][tier] then
+					local chance = kind_val[kind].chance
+					local chance_multi = tier_val[kind][tier].chance_multi or 1
+					if (math.random(1,100) < (chance * chance_multi) + inc) then
+						local weight = kind_val[kind].weight
+						local weight_multi = tier_val[kind][tier].weight_multi or 1
+						
+						local t = item_list[kind][tier]
+						content[#content + 1] = t[math.random(#t)]
+						
+						stash_weight = stash_weight - ((weight * weight_multi) + (inc * 5))
+						skip = true
+						
+						--printf("calculations: chance = %s - impact = %s", ((chance * chance_multi) + inc), ((weight * weight_multi) + (inc * 5)) )
+					end
+				end
+				
+				if skip then break end
+			end	
+			
+			if skip then break end
+		end
+		
+		if (not skip) then
+			inc = inc + 10
+		else
+			inc = (inc >= 10) and inc - 10 or 0
+		end
+		
+		skip = false
+	end
+	
+	-- Debug simulation
+	if dbg then
+		local str = id .. " | "
+		for i=1,#content do
+			local itm = content[i]
+			str = str .. " - " .. itm
+			dbg_items[itm] = dbg_items[itm] and (dbg_items[itm] + 1) or 1
+		end
+		printf(str)
+		
+	-- Apply the content + Add map spot
+	else
+		if (#content > 0) then
+		
+			local spot
+			if no_spot and (type(no_spot) == "string") then
+				spot = no_spot
+			else
+				spot = is_rare and "treasure_searched" or "treasure"
+			end
+			
+			if (no_spot ~= true and level.map_has_object_spot(id,spot) == 0) then
+				level.map_add_object_spot_ser(id, spot, hint or "")
+				news_manager.send_treasure(0)
+			end
+			caches[id] = table.concat(content,",")
+			return id
+		else
+			caches[id] = false
+		end
+	end
+	
+	return
+end
+
+function try_spawn_treasure(box)
+	local id = box:id()
+
+	--printf("try_spawn_treasure [%s]",caches[id])
+
+	if not (caches[id]) then
+		return
+	end
+
+	if not (type(caches[id]) == "string") then
+		return
+	end
+
+	local spawned_item = str_explode(caches[id],",")
+	caches[id] = true
+
+	local section,flag,ammos,ct,ammo_type,ammo_section
+
+	for i=1,#spawned_item do
+		section = spawned_item[i]
+		
+		-- Weapons
+		if ini_sys:section_exist(section) and ini_sys:r_string_ex(section,"ammo_class") then
+			local se_obj = alife_create(section,box:position(),box:level_vertex_id(),box:game_vertex_id(),id,false)
+			if (se_obj) then
+				local cls = se_obj:clsid()
+				if (IsWeapon(nil,cls) and cls ~= clsid.wpn_knife_s) then
+					--printf("treasure_manager: item is fa")
+					local data = utils_stpk.get_weapon_data(se_obj)
+					if (data) then
+						-- Create random addon flag for weapon
+						local flag = 0
+
+						if (ini_sys:r_float_ex(section,"scope_status")) then
+							flag = flag + 1
+						end
+
+						if (ini_sys:r_float_ex(section,"grenade_launcher_status")) then
+							flag = flag + 2
+						end
+
+						if (ini_sys:r_float_ex(section,"silencer_status")) then
+							flag = flag + 4
+						end
+
+						flag = math.random(0,flag)
+
+						-- Create random ammo type
+						ammos = parse_list(ini_sys,section,"ammo_class")
+						ct = ammos and #ammos
+						ammo_type = ammos and ct and math.random(0,ct-1) or 0
+						ammo_section = ammo_type and ammos[ammo_type+1]
+
+						data.addon_flags = flag
+						data.ammo_type = ammo_type
+						data.condition = (math.random(20, 37) / 100) -- Grok's Stash Overhaul, weapon_condition
+						data.ammo_elapsed(0) -- Grok's Stash Overhaul, 0 ammo in guns
+						utils_stpk.set_weapon_data(data,se_obj)
+					end
+					--printf("treasure_manager: item is fa- end")
+				end
+				-- because we didn't register, we do it now, manually
+				alife():register(se_obj)
+			end
+			
+            -- Grok's Stash Overhaul Edit, Outfits and Helmets, burn protection is used to get all armored items
+        elseif ini_sys:section_exist(section) and ini_sys:r_string_ex(section, "burn_protection") then
+            local se_obj = alife_create(section, box:position(), box:level_vertex_id(), box:game_vertex_id(), id, false)
+
+            if (se_obj) then
+                if (IsOutfit(se_obj)) then
+                    local data = utils_stpk.get_item_data(se_obj)
+                    data.condition = (math.random(5, 35) / 100) -- Grok's Stash Overhaul, armor_condition
+                    utils_stpk.set_item_data(data, se_obj)
+                end
+
+                alife():register(se_obj)
+            end
+        else -- End of Grok's Stash Overhaul Edit -- Every other items are spawned following conditions defined in item_prop_table at the beginning of the script
+            local item_prop_table = {
+               cond_r = {30, 70}, 
+               cond_ct = "part", 
+               cond_cr = {0.5, 0.75, 1}, 
+               ammo = math.random(10, 40) }
+            alife_create_item(section, box, item_prop_table)
+        end
+    end
+end
+
+------------------------------------------------------------------------------------------------------------------
+--							UTILITIES
+------------------------------------------------------------------------------------------------------------------
+function box_in_same_map(id)
+	local obj1 = alife():actor()
+	local obj2 = alife_object(id)
+	--return simulation_objects.is_on_the_same_level(obj1, obj2) or simulation_objects.is_on_the_linked_level(obj1, obj2)
+	return simulation_objects.is_on_the_nearby_level(obj1, obj2)
+end
+
+function box_in_valid_map(id)
+	local se_stash = alife_object(id)
+	local lvl = se_stash and alife():level_name(game_graph():vertex(se_stash.m_game_vertex_id):level_id())
+	--printf("%s Stash (%s) is in level: %s", blacklisted_maps[lvl] and "!" or "-", id, lvl)
+	return (blacklisted_maps[lvl] ~= true)
+end
+
+function release_stash_by_id(id)
+	if id and caches[id] then
+		caches[id] = nil
+		caches_count = caches_count - 1
+	end
+end
+
+function simulate_stash_creation(num) -- debug
+	printf("--------- Create Stash: ")
+	for i=1,num do
+		printf("----------------------------------------------------------")
+		set_random_stash(nil, nil, nil, i, true)
+	end
+	
+	printf("--------- Items count: ")
+	for k,v in utils_data.pairsByKeys(dbg_items) do
+		printf(k .. " := " .. v)
+	end
+end
+
+
+------------------------------------------------------------------------------------------------------------------
+--							CALLBACKS
+------------------------------------------------------------------------------------------------------------------
+local function on_game_load()
+	if (caches_count > 0) then
+		return
+	end
+	
+	if is_empty(item_list) then
+		init_settings()
+	end
+
+	local sim = alife()
+	local gg = game_graph()
+	for i=1, 65534 do
+		local se_obj = sim:object(i)
+		if (se_obj) then
+			if (IsInvbox(nil,se_obj:clsid())) then
+				local name = se_obj:name()
+				if (not caches_blacklist[name]) then
+					caches[se_obj.id] = false
+					caches_count = caches_count + 1
+					
+					if enable_debug then
+						local lvl = sim:level_name(gg:vertex(se_obj.m_game_vertex_id):level_id())
+						local str = string.find(name,"level_prefix_inventory_box") and (lvl .. "_") or ""
+						local spot = caches_rare[str .. name] and "treasure_searched" or "treasure"
+						level.map_add_object_spot_ser(se_obj.id, spot, str .. name)
+					end
+				end
+			end
+		end
+	end
+
+	for i=1, math.floor(caches_count/100) do
+		--create_random_stash(true,"stash")
+	end
+end
+
+local function actor_on_item_take_from_box(box,itm)
+	local id = box:id()
+	if (caches[id] == true) then
+		caches[id] = false
+		--hide_hud_inventory()
+		
+		level.map_remove_object_spot(id, "treasure")
+		level.map_remove_object_spot(id, "treasure_searched")
+		level.map_remove_object_spot(id, "treasure_unique")
+		
+		game_statistics.increment_statistic("stashes_found")
+		news_manager.send_treasure(1)
+		
+		local sim = alife()
+		local se_stash = sim:object(id)
+		local lvl = sim:level_name(game_graph():vertex(se_stash.m_game_vertex_id):level_id())
+		item_radio.clear_stash(lvl, id)
+	end
+end
+
+local function save_state(data)
+	--utils_data.debug_write("treasure_manager.save_state")
+	if (caches_count <= 0) then
+		return
+	end
+
+	if not (data.treasure_manager) then
+		data.treasure_manager = {}
+	end
+
+	data.treasure_manager.caches_count = caches_count
+	data.treasure_manager.caches = caches
+end
+
+local function load_state(data)
+	if not (data.treasure_manager) then
+		return
+	end
+
+	caches_count = data.treasure_manager.caches_count or caches_count
+	caches = data.treasure_manager.caches or caches
+
+	data.treasure_manager.caches_count = nil
+	data.treasure_manager.caches = nil
+end
+
+local function physic_object_on_use_callback(box,who)
+	if (IsInvbox(box)) then
+		try_spawn_treasure(box)
+	end
+end
+
+local function map_spot_menu_add_property(ui,id,lvl)
+	local se_obj = alife_object(id)
+	if not (se_obj) then
+		return
+	end
+	
+	if (IsInvbox(nil,se_obj:clsid())) then
+		ui:AddItem("Save as Rare Stash")
+	end
+end
+
+local function map_spot_menu_property_clicked(property_ui,id,level_name,prop)
+	local se_obj = alife_object(id)
+	if not (se_obj) then
+		return
+	end
+	
+	if (prop == "Save as Rare Stash") then
+		local ltx = ini_treasure_vanilla
+		local name = se_obj:name()
+		local lvl = alife():level_name(game_graph():vertex(se_obj.m_game_vertex_id):level_id())
+		local str = string.find(name,"level_prefix_inventory_box") and (lvl .. "_") or ""
+		ltx:w_value("rare_stashes_names",(str .. name),"true")
+		ltx:save()
+		printf("- Treasure manager | name (%s) saved for rare stash", (str .. name))
+	end
+end
+
+function save(pk)
+	if (USE_MARSHAL) then
+		return
+	end
+	pk:w_u16(caches_count)
+	for id,v in pairs(caches) do
+		pk:w_u16(id)
+		pk:w_bool(v)
+	end
+end
+
+function load(pk)
+	if (USE_MARSHAL) then
+		return
+	end
+	caches_count = pk:r_u16()
+	for i=1,caches_count do
+		caches[pk:r_u16()] = pk:r_bool()
+	end
+end
+
+
+------------------------------------------------------------------------------------------------------------------
+--							ON GAME START
+------------------------------------------------------------------------------------------------------------------
+function on_game_start()
+	RegisterScriptCallback("on_game_load",on_game_load)
+	RegisterScriptCallback("actor_on_item_take_from_box",actor_on_item_take_from_box)
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+	RegisterScriptCallback("physic_object_on_use_callback",physic_object_on_use_callback)
+	
+	if enable_debug then
+		RegisterScriptCallback("map_spot_menu_add_property",map_spot_menu_add_property)
+		RegisterScriptCallback("map_spot_menu_property_clicked",map_spot_menu_property_clicked)
+	end
+end
