@@ -1,0 +1,44 @@
+--[[
+==============================================
+Stash location on PDA by looting corpses
+
+Indicates a stash position when checking dead bodies for the first time. 
+Made by strelloc. You can edit "chance" below to modify the probability of 
+stash indication to appear on the PDA when checking corpses. 0.10 = 10% chance.
+Source: https://www.moddb.com/mods/stalker-anomaly/addons/stash-on-corpse-looting
+==============================================
+--]]
+local SETTINGS = {
+    chance = 0.08,
+}
+
+local _used_corpses = {}
+
+function server_entity_on_unregister(se_npc, kind)
+    if kind == "se_stalker" and _used_corpses[se_npc.id] then
+        _used_corpses[se_npc.id] = nil
+    end
+end
+
+function npc_on_use(npc)
+    if npc:alive() then return end
+    if _used_corpses[npc:id()] then return end
+    _used_corpses[npc:id()] = true
+    if math.random() > SETTINGS.chance then return end
+    treasure_manager.create_random_stash(nil, nil, nil, math.random() > 0.5)
+end
+
+function save_state(m)
+    m.corpse_stashes = _used_corpses
+end
+
+function load_state(m)
+    _used_corpses = m.corpse_stashes or {}
+end
+
+function on_game_start()
+    RegisterScriptCallback("npc_on_use", npc_on_use)
+    RegisterScriptCallback("server_entity_on_unregister", server_entity_on_unregister)
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
+end
