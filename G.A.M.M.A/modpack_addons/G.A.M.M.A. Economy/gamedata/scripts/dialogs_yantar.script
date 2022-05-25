@@ -1,0 +1,117 @@
+-- ============================================================
+--
+-- Script Functions for Task Dialogs in Yantar (dialogs_yantar.script)
+--	CoC 1.4.14 - DoctorX Questlines 1.10
+--
+--	Modified by: DoctorX
+--	Last revised: November 01, 2016
+--
+-- ============================================================
+
+
+function give_player_bad_psi_helmet(a,b)
+	dialogs.relocate_money_from_actor(a,b,30000)
+	alife_create_item("bad_psy_helmet", db.actor)
+	news_manager.relocate_item(db.actor, "in", "bad_psy_helmet")
+	task_manager.get_task_manager():give_task("turn_off_brain_scorcher")
+end
+
+function upgrade_player_bad_psi_helmet(a,b)
+	local o = db.actor:object("bad_psy_helmet")
+	if (o) then
+		news_manager.relocate_item(db.actor, "out", "bad_psy_helmet")
+		alife_release_id(o:id())
+	end
+
+	if not (db.actor:has_info("yan_stalker_sakharov_offer_free_upgrade")) then
+		dialogs.relocate_money_from_actor(a,b,10000)
+	end
+
+	task_manager.get_task_manager():give_task("yan_stalker_sakharov_psi_helmet_upgrade")
+	save_ctime(db.actor,"yan_stalker_sakharov_psi_helmet_upgrade",game.get_game_time())
+end
+
+function take_money_good_psi_helmet(a,b)
+	if not (db.actor:has_info("yan_stalker_sakharov_offer_free_upgrade")) then
+		dialogs.relocate_money_from_actor(a,b,40000)
+	end
+	task_manager.get_task_manager():give_task("yan_stalker_sakharov_psi_helmet_upgrade")
+	save_ctime(db.actor,"yan_stalker_sakharov_psi_helmet_upgrade",game.get_game_time())
+end
+
+-- ////////////////////////////////////////////////////////////////////////////////////////////////
+--
+-- give_player_good_psi_helmet function
+--
+-- ------------------------------------------------------------------------------------------------
+--
+--	Description:
+--		- Gives actor good psi helmet
+--
+--	Usage:
+--		give_player_good_psi_helmet( )
+--
+--	Parameters:
+--		none
+--
+--	Return value (type: none):
+--		none
+--
+-- ------------------------------------------------------------------------------------------------
+--	Modified by DoctorX
+--	for DoctorX Questlines 1.10
+--	Last modified November 01, 2016
+-- ------------------------------------------------------------------------------------------------
+
+-- Give actor good psi helmet:
+function give_player_good_psi_helmet( a, b )
+
+	alife_create_item("good_psy_helmet", db.actor)
+	news_manager.relocate_item( db.actor, "in", "good_psy_helmet" )
+	local tm = task_manager.get_task_manager( )
+	local task_info = tm.task_info
+	if ( task_info and task_info["yan_stalker_sakharov_psi_helmet_upgrade"] ) then
+		task_manager.get_task_manager( ):set_task_completed( "yan_stalker_sakharov_psi_helmet_upgrade" )
+	end
+	task_manager.get_task_manager():give_task("turn_off_brain_machine")
+	task_manager.get_task_manager():give_task("turn_off_brain_scorcher")
+end
+
+-- \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+
+function actor_has_psi_helmet(a,b)
+	if (db.actor:object("bad_psy_helmet") ~= nil or db.actor:object("good_psy_helmet") ~= nil) then
+		return true
+	end
+	return false
+end
+
+function actor_dont_has_psi_helmet(a,b)
+	return not actor_has_psi_helmet(a,b)
+end
+
+function actor_has_bad_psi_helmet(a,b)
+	return db.actor:object("bad_psy_helmet") ~= nil
+end
+
+function actor_can_afford_bad_psi_helmet(a,b)
+	return db.actor:money() >= 30000
+end
+
+function actor_can_afford_good_psi_helmet(a,b)
+	return db.actor:money() >= 40000
+end
+
+function actor_can_afford_bad_to_good_psi_helmet(a,b)
+	return db.actor:has_info("yan_stalker_sakharov_offer_free_upgrade") or db.actor:money() >= 10000
+end
+
+function actor_has_good_psi_helmet_task_completed(a,b)
+	local tsk = task_manager.get_task_manager().task_info["yan_stalker_sakharov_psi_helmet_upgrade"]
+	return tsk and tsk.stage >= 2
+end
+
+function actor_dont_has_good_psi_helmet_task_completed(a,b)
+	return not actor_has_good_psi_helmet_task_completed(a,b)
+end
