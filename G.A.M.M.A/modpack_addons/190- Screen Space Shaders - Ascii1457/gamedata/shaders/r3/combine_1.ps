@@ -5,8 +5,12 @@
 #include "lmodel.h"
 #include "hmodel.h"
 
-// SSR
-#include "screenspace_reflections.h"
+// Check MODs
+#include "check_screenspace.h"
+
+#ifdef SSFX_SSR
+	#include "screenspace_reflections.h"
+#endif
 
 Texture2D s_half_depth;
 #include "ssao.ps"
@@ -106,7 +110,11 @@ _out main ( _input I, uint iSample : SV_SAMPLEINDEX )
 	int2	texCoord = I.pos2d;
 #endif
 	
+#ifdef SSFX_AO
+	float4 occ = float4(1.0,1.0,1.0,1.0);
+#else
 	float3 occ = float3(1.0,1.0,1.0);
+#endif
 
 #ifdef USE_HDAO
 #ifdef SM_5
@@ -126,15 +134,21 @@ _out main ( _input I, uint iSample : SV_SAMPLEINDEX )
 #ifdef USE_HBAO
 	 occ = calc_hbao( P.z, N, I.tc0, I.pos2d );
 #else // USE_HBAO
-	 occ = calc_ssdo(P, N, I.tc0, I.pos2d, ISAMPLE).xxx;
+	#ifdef SSFX_AO
+		occ = calc_ssdo(P, N, I.tc0, I.pos2d, ISAMPLE);
+	#else
+		occ = calc_ssdo(P, N, I.tc0, I.pos2d, ISAMPLE).xxx;
+	#endif
 #endif
 #endif // USE_HDAO
 
+#ifndef SSFX_AO
 #ifdef SSAO_QUALITY
 	occ = compute_colored_ao(occ.x, D.xyz);
 #endif
+#endif
 	
-	occ = SRGBToLinear(occ); 		//gamma correct
+	occ.rgb = SRGBToLinear(occ.rgb); 		//gamma correct
 	
 	L.rgb += L.a * SRGBToLinear(D.rgb); //illum in alpha
 	
@@ -143,14 +157,29 @@ _out main ( _input I, uint iSample : SV_SAMPLEINDEX )
 	float3 hdiffuse, hspecular;
 	hmodel	(hdiffuse, hspecular, mtl, N.w, D, P.xyz, N.xyz);
 
-	hdiffuse *= occ;
+	// AO implementation
+#ifdef SSFX_AO
+	#ifdef G_SSDO_COLORBLEEDING
+		float colorgray = dot(hdiffuse.rgb, LUMINANCE_VECTOR);
+		float blendfact = 1.0 - colorgray;
+		
+		occ.xyz = vibrance(occ.xyz, G_SSDO_COLORBLEEDING_VIBRANCE) * G_SSDO_COLORBLEEDING_POWER * 2.0f;
+		hdiffuse.rgb += occ.xyz * blendfact * colorgray * 2.0f;	
+	#endif
+		
+	hdiffuse *= SRGBToLinear(occ.www);
+#else
+	hdiffuse *= occ;	
+#endif
 	//hspecular *= occ;
 
 		float3       color     = L.rgb + hdiffuse.rgb;
 					 color = LinearTosRGB(color); 			//gamma correct
 
 	// SSR Implementation
-	SSFX_ScreenSpaceReflections(I.tc0, P, N, D.a, color, ISAMPLE);
+#ifdef SSFX_SSR
+	SSFX_ScreenSpaceReflections(I.tc0, P, N, D.a, color, ISAMPLE);	
+#endif
 
 //// SOME NVG SHIT ////
 		float lua_param_nvg_generation = floor(shader_param_8.x);             		// 1, 2, or 3

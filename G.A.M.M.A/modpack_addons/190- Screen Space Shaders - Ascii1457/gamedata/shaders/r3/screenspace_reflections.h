@@ -1,19 +1,8 @@
+// Screen Space Shaders - SSR
+// Update 6 [ 2022/05/24 ]
+
 #include "screenspace_common.h"
-
-// [ SETTINGS ]
-#define G_SSR_MAX_DISTANCE       		15.0f	// Max Ray distance. The reflection will reach far pixels. 
-												// Lower numbers will improve the reflection coherency, but will eliminate some nice reflections
-
-#define G_SSR_STEPS           			8		// Max ray steps. More steps = "better" quality / poor performance. ( 8 = low | 16 = medium | 32 = high )
-
-#define G_SSR_INTENSITY         		0.8f 	// Reflection intensity
-#define G_SSR_FLORA_INTENSITY 			0.04f	// Adjust grass and tree branches intensity
-
-#define G_SSR_WEAPON_INTENSITY  		0.3f 	// Weapon & arms reflection intensity. 1.0f = 100% ~ 0.0f = 0% ( % in relation to G_SSR_INTENSITY )
-#define G_SSR_WEAPON_MAX_LENGTH			1.1f	// Maximum distance to apply G_SSR_WEAPON_INTENSITY.
-
-#define G_SSR_GLOSS_THRESHOLD			0.15f	// Omit surfaces with less gloss than... 0 = Opaque ~ 1 = Full gloss?
-
+#include "settings_screenspace_SSR.h"
 
 float4 SSFX_ssr_fast_ray(float3 ray_start_vs, float3 ray_dir_vs, uint iSample : SV_SAMPLEINDEX)
 {
@@ -62,7 +51,7 @@ void SSFX_ScreenSpaceReflections(float2 tc, float4 P, float3 N, float gloss, ino
 	else
 		gloss *= 2.0f;
 #else
-	gloss *= 2.0f;
+	gloss *= 1.0f + rain_params.x;
 #endif
 
 	// Reflect intensity. Some limits to the gloss buffer and apply the edge fade
