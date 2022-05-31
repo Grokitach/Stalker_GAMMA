@@ -1,24 +1,11 @@
-/*
-				/////////////////
-		Screen-Space Directional Occlusion.
-		Based on Tobias Ritschel tech paper.
-		Implemented by K.D. (OGSE team)
-			
-		Tweaked and modified by LVutner
-				/////////////////	
-				Credits: KD, Xerxes1138		
-				/////////////////
+// Screen Space Shaders - SSDO File
+// Update 6 [ 2022/05/24 ]
 
+#ifndef SSFX_READY
+	#include "screenspace_common.h"
+#endif
 
-				/////////////////
-				Anomaly Team 2020
-				/////////////////
-	////////////////////////////////////////////////
-	Do not copy or redistribute without permission.
-	////////////////////////////////////////////////
-*/
-
-#include "common.h"
+#include "settings_screenspace_AO.h"
 
 #ifndef SSAO_QUALITY
 float calc_ssdo (float3 P, float3 N, float2 tc, float4 pos2d, uint iSample)
@@ -28,15 +15,21 @@ float calc_ssdo (float3 P, float3 N, float2 tc, float4 pos2d, uint iSample)
 
 #else // SSAO_QUALITY
 
-//Quality tokens
+// Internal values
 #if SSAO_QUALITY == 3
-	#define SSDO_SAMPLE 32
+	#define G_SSDO_SAMPLE 32
 #elif SSAO_QUALITY == 2
-	#define SSDO_SAMPLE 16
+	#define G_SSDO_SAMPLE 16
 #elif SSAO_QUALITY == 1
-	#define SSDO_SAMPLE 8
+	#define G_SSDO_SAMPLE 8
 #endif
 
+static const float r_factor[3] =
+{
+	float(1.0),
+	float(G_SSDO_SECOND_PASS_RADIUS),
+	float(G_SSDO_SECOND_PASS_RADIUS * 0.5f)
+};
 
 static const float3 hemisphere[32] =
 {
@@ -53,84 +46,118 @@ static const float3 hemisphere[32] =
 	float3(-0.554, -0.725, 0.289),	float3(0.534, 0.157, -0.250),
 };
 
-static const float SSDO_RADIUS_MIN 	= 0.09f; 	// AO min radius ( More detail close to the camera. Detailed AO for weapons )
-static const float SSDO_RADIUS_MAX 	= 0.55f; 	// AO max radius ( Less detail but better coverage away from the camera )
-static const float SSDO_RENDER_DIST = 125.0f; 	// Rendering distance
-	
-static const float SSDO_POWER 	= 5.0f; 	// AO strength
-static const float SSDO_SMOOTH 	= 1.3f; 	// AO softer ( Prevents extremely strong AO at the cost of a less noticeable effect )
-static const float SSDO_NOISE 	= 0.25f; 	// Noise strength
-static const float SSDO_GAMMA 	= 1.0f; 	// Gamma
 
-
-float calc_ssdo (float3 P, float3 N, float2 tc, float4 pos2d, uint iSample)
+float4 calc_ssdo (float3 P, float3 N, float2 tc, float4 pos2d, uint iSample)
 {	
-	//Return 1.0 to prevent rendering this uhh after certain distance...
-	if(P.z >= SSDO_RENDER_DIST)
-		return 1;
+	// Rendering AO till G_SSDO_RENDER_DIST
+	if(P.z >= G_SSDO_RENDER_DIST)
+		return float4(0, 0, 0, 1);
 	
-	// Radius based on depth/2
-	float radius = clamp(SSDO_RADIUS_MIN * (P.z * 0.5f), 0, SSDO_RADIUS_MAX);
-
-	//Sample jitter texture
-	float3 noise = jitter0.Sample(smp_jitter, tc * 32).xyz * SSDO_NOISE;
+	// A factor to adjust some values to only affect weapons ( closer objects )
+	float WeaponFactor = 1.0f - smoothstep(G_SSDO_WEAPON_LENGTH * 0.7f, G_SSDO_WEAPON_LENGTH, length(P.xyz));
 	
-	//Accumulate our lovely AO.
-	float occ = 0.0;
+	// AO Distance attenuation, Weapon ~ Scenary
+	float attenuation = lerp(G_SSDO_ATTENUATION, G_SSDO_WEAPON_ATTENUATION, WeaponFactor);
 	
-	[unroll (SSDO_SAMPLE)]
-	for (int i = 0; i < SSDO_SAMPLE; i++)
+	// Accumulate our lovely AO.
+	float4 occ[2]; occ[0] = 0; occ[1] = 0;
+	
+#ifdef G_SSDO_SECOND_PASS
+	[unroll (2)]
+	for (int layer = 0; layer < 2; layer++)
+#else
+	int layer = 0;
+#endif
 	{
-		//Get reflection sample from hemisphere points and noise, later put normals for moar details
-		float3 reflection_sample = reflect(hemisphere[i], noise) + N.xyz;
+		// AO Radius
+		float radius = G_SSDO_RADIUS * r_factor[layer];
 		
-		float3 occ_pos_view = P.xyz + reflection_sample * radius;
-		float4 occ_pos_screen = proj_to_screen(mul(m_P, float4(occ_pos_view, 1)));
-		occ_pos_screen.xy /= occ_pos_screen.w;
+		// Radius weapon adjustements
+		radius *= lerp(1.0f, G_SSDO_WEAPON_RADIUS * r_factor[2 * layer], WeaponFactor);
 		
-		//Sample depth buffer
-		#ifndef SSAO_OPT_DATA
-			#ifndef USE_MSAA
-				float screen_occ = s_position.Sample(smp_nofilter, occ_pos_screen.xy).z;	
-			#else
-				float screen_occ = s_position.Load(int3(occ_pos_screen.xy * screen_res.xy, 0), iSample).z;
-			#endif
-		#else
-			float screen_occ = s_half_depth.SampleLevel(smp_nofilter, occ_pos_screen.xy, 0).x;
-		#endif
+		[unroll (G_SSDO_SAMPLE)]
+		for (int i = 0; i < G_SSDO_SAMPLE; i++)
+		{
+			// Hemisphere points and normals for more detail
+			float3 sample_rays = hemisphere[i] + N.xyz;
+			
+			// Sample position
+			float3 occ_pos = P.xyz + sample_rays * radius;
+			
+			// Sample position to UV
+			float2 occ_pos_uv = SSFX_view_to_uv(occ_pos);
+			
+			// Sample depth buffer
+			float3 depth = SSFX_get_position(occ_pos_uv, iSample);
+			
+			// Calc occlusion
+			float AO = step(depth.z, occ_pos.z);
+						
+			// Ray direction, current pixel to sample
+			float3 dirVec = float3(occ_pos_uv.x - tc.x, tc.y - occ_pos_uv.y, P.z - depth.z) * float3(P.zz, 1.0f);
+						
+			// Distance attenuation
+			AO *= smoothstep(0.0f, attenuation, length(dirVec));
+
+			// Ray direction magnitude squared, used for discard and color bleeding
+			float dirSqr = dot(dirVec, dirVec);
+						
+			// Discard incorrect occlusion, sky and out of bounds.
+			float Discard = saturate(1.0f + -(1.0f * dirSqr)) * !is_sky(depth.z);
+			
+			// Accumulate final AO
+			occ[layer].w += AO * Discard;
+			
+#ifdef G_SSDO_COLORBLEEDING
+			[branch]
+			if (layer == 0)
+			{				
+				float4 sample_il = SSFX_get_fast_scenelighting(occ_pos_uv, iSample);
+				
+				// Discard bleeding from far geometry
+				sample_il.rgb *= Discard * lerp(0.3f, 1.0, saturate(P.z * 0.5f));
+				
+				// Use Normal and dirVec to adjust intensity
+				sample_il *= 0.5f + 0.5f * saturate(dot(gbuf_unpack_normal( depth.xy ), -dirVec * dirSqr));
+				
+				// Accumulate color bleeding
+				occ[layer].xyz += sample_il.rgb;
+			}
+#endif
+		}
 		
-		// Sky is null
-		screen_occ = lerp(screen_occ, occ_pos_view.z, is_sky(screen_occ));
-		
-		// Depth distance
-		float Dist = occ_pos_view.z - screen_occ;
-		
-		// Calc occlusion 
-		float3 dirVec = float3(occ_pos_screen.x-tc.x, tc.y-occ_pos_screen.y, Dist);
-		dirVec.xy *= P.z;
-		float3 dirVecN = normalize(dirVec);
-		
-		float visibility = step(0.1f, dot(dirVecN, P.xyz)); // Visibility check
-		visibility *= sign(max(0.0, abs(length(Dist / saturate(occ_pos_view.z))) - 0.1f)); // Normal bias
-		
-		occ += 1 - visibility;
-		
-		// Smooth depth attenuation to avoid the halo artifact
-		occ	+= clamp(Dist, 0, 1.5f) / 1.5f;
+		occ[layer].w /= G_SSDO_SAMPLE;
 	}
 	
-	occ /= SSDO_SAMPLE;
+	// Prepare the final occlusion value
+#ifdef G_SSDO_SECOND_PASS
+	float4 final_occ = float4(occ[0].xyz / G_SSDO_SAMPLE, max(occ[0].w, occ[1].w));
+#else
+	float4 final_occ = float4(occ[0].xyz / G_SSDO_SAMPLE, occ[0].w);
+#endif
 
+	// Invert AO, white <-> black
+	final_occ.w = 1.0f - final_occ.w;
+	
 	// AO softer
-	occ = lerp(occ, sqrt(occ), SSDO_SMOOTH);
+	final_occ.w = lerp(final_occ.w, sqrt(final_occ.w), G_SSDO_SMOOTH);
 	
-	// AO strength and gamma
-	occ = pow(occ, SSDO_POWER) * SSDO_GAMMA;
-		
-	// Fade using SSDO_RENDER_DIST
-	occ += smoothstep(SSDO_RENDER_DIST * 0.8f, SSDO_RENDER_DIST, P.z);
+	// AO intensity 
+	final_occ.w = pow(final_occ.w, G_SSDO_INTENSITY * (1.0f - (1.0f - G_SSDO_WEAPON_INTENSITY) * WeaponFactor));
+
+	// Limit AO maximum occlusion
+	final_occ.w = clamp(final_occ.w, G_SSDO_MAX_OCCLUSION, 1.0f);
+
+	// Fadeout using G_SSDO_RENDER_DIST
+#ifndef G_SSDO_COLORBLEEDING
+	final_occ.w += smoothstep(G_SSDO_RENDER_DIST * 0.8f, G_SSDO_RENDER_DIST, P.z);
+#else
+	float f_out = smoothstep(G_SSDO_RENDER_DIST * 0.8f, G_SSDO_RENDER_DIST, P.z);
+	final_occ.xyz *= 1.0f - f_out;
+	final_occ.w += f_out;
+#endif
 	
-	return saturate(occ);
+	return saturate(final_occ);
 }
 
 #endif // SSAO_QUALITY
