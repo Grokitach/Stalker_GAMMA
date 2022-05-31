@@ -1,7 +1,15 @@
+// Screen Space Shaders - MAIN File
+// Update 6 [ 2022/05/24 ]
+
+#define SSFX_READY
+
 #include "common.h"
 #include "hmodel.h"
 
-#include "ssfx_check_ES.h"
+#include "check_screenspace.h"
+
+static const float4 SSFX_ripples_timemul = float4(1.0f, 0.85f, 0.93f, 1.13f); 
+static const float4 SSFX_ripples_timeadd = float4(0.0f, 0.2f, 0.45f, 0.7f);
 
 struct RayTrace
 {
@@ -32,6 +40,16 @@ float SSFX_get_depth(float2 tc, uint iSample : SV_SAMPLEINDEX)
 	#endif
 }
 
+float3 SSFX_get_position(float2 tc, uint iSample : SV_SAMPLEINDEX)
+{
+	#ifndef USE_MSAA
+		return s_position.Sample(smp_nofilter, tc).xyz;
+	#else
+		return s_position.Load(int3(tc * screen_res.xy, 0), iSample).xyz;
+	#endif
+}
+
+
 RayTrace SSFX_ray_init(float3 ray_start_vs, float3 ray_dir_vs, float ray_max_dist, int ray_steps, float noise)
 {
 	RayTrace rt;
@@ -56,18 +74,46 @@ RayTrace SSFX_ray_init(float3 ray_start_vs, float3 ray_dir_vs, float ray_max_dis
 	return rt;
 }
 
-float SSFX_get_depth_from_ray(float2 ray_pos, float2 ray_start, float ray_length, float z_start, float z_end)
+
+float3 SSFX_ray_intersect(RayTrace Ray, uint iSample)
 {
-    float alpha = length(ray_pos - ray_start) / ray_length;
-    return (z_start * z_end) / lerp(z_end, z_start, alpha);
+	float len = length(Ray.r_pos - Ray.r_start);
+	float alpha = len / Ray.r_length;
+	float depth_ray = (Ray.z_start * Ray.z_end) / lerp(Ray.z_end, Ray.z_start, alpha);
+	float depth_scene = SSFX_get_depth(Ray.r_pos, iSample);
+	
+	return float3(depth_ray - depth_scene, depth_scene, len);
 }
 
-float2 SSFX_ray_intersect(RayTrace Ray, uint iSample)
+
+// Half-way scene lighting
+float4 SSFX_get_fast_scenelighting(float2 tc, uint iSample : SV_SAMPLEINDEX)
 {
-	float depth_ray   = SSFX_get_depth_from_ray(Ray.r_pos, Ray.r_start, Ray.r_length, Ray.z_start, Ray.z_end);
-	float depth_scene = SSFX_get_depth(Ray.r_pos, iSample);
-	return float2(depth_ray - depth_scene, depth_scene);
+	#ifndef USE_MSAA
+		float4 rL = s_accumulator.Sample(smp_nofilter, tc);
+		float4 C = s_diffuse.Sample( smp_nofilter, tc );
+	#else
+		float4 rL = s_accumulator.Load(int3(tc * screen_res.xy, 0), iSample);
+		float4 C = s_diffuse.Load( int3( tc * screen_res.xy, 0 ), iSample );
+	#endif
+	
+	#ifdef SSFX_ENHANCED_SHADERS // We have Enhanced Shaders installed
+		
+		float3 hdiffuse = C.rgb + L_ambient.rgb;
+		
+		rL.rgb += rL.a * SRGBToLinear(C.rgb);
+		
+		return float4( LinearTosRGB((rL.rgb + hdiffuse) * saturate(rL.rrr * 100)), C.w );
+		
+	#else
+		
+		float3 hdiffuse = C.rgb + L_ambient.rgb;
+
+		return float4( (rL.rgb + hdiffuse) * saturate(rL.rrr * 100), C.w );
+		
+	#endif
 }
+
 
 float3 SSFX_get_scenelighting(float2 tc, uint iSample : SV_SAMPLEINDEX)
 { 
@@ -182,10 +228,7 @@ float3 SSFX_computeripple(float4 Ripple, float CurrentTime, float Weight)
 
 float3 SSFX_ripples( Texture2D ripple_tex, float2 tc ) 
 {
-	float4 TimeMul = float4(1.0f, 0.85f, 0.93f, 1.13f); 
-	float4 TimeAdd = float4(0.0f, 0.2f, 0.45f, 0.7f);
-
-	float4 Times = (timers.x * TimeMul + TimeAdd) * 1.5f;
+	float4 Times = (timers.x * SSFX_ripples_timemul + SSFX_ripples_timeadd) * 1.5f;
 	Times = frac(Times);
 
 	float4 Weights = float4( 0, 1.0, 0.65, 0.25);
