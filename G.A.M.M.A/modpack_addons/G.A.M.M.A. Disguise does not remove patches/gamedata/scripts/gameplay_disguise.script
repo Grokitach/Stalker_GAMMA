@@ -1,0 +1,1223 @@
+--[[
+- Created by Tronex
+- Disguise system
+- 2018/10/1 - created
+- 2018/11/20 - fixed a potential bug related to saving dates (user_data)
+
+- Allows you to disguise by using outfits of other factions to hide your true identity. You can walk among enemies now.
+- The disguise system is tied to a suspicion-meter, and its calculated by many different factors (10 in total).
+- These factors are affected by your disguise, behaviour and other small details.
+- Once NPCs see you, they will examine you and build their own memory and suspicion based on mentioned factors
+- When the suspicion level of some NPC reach a breaking point, you will get exposed like a little bitch
+
+- Factors are controllable in-game, technical values are controllable via "configs\plugins\disguise.ltx"
+
+
+	Banjaji's Undercover communications
+	2022.03.27 v1:
+	* If player has pda v2.0 or v3.1 then the default faction is neutral even if the player is in disguise and looks like an enemy
+	* If you drop your pda currently your faction turns hostile if you look like an enemy even if you drop it in front of others.
+	2022.03.28 v1.1:
+	* Fixed a bug where in certain conditions game crashed on load. The problem was that I didn't think about callback run order on game load.
+
+--]]
+
+------------------------------------------------------------
+-- Control
+------------------------------------------------------------
+-- Technical
+local enable_debug = false
+
+local d_ini = ini_file("plugins\\disguise.ltx")
+local clamp = clamp
+local ctime_to = utils_data.CTime_to_table
+local ctime_from = utils_data.CTime_from_table
+local time_f = 6
+local start_record          = nil 				-- don't touch
+local pos_diff              = 0 				-- actor position difference every (update_step) seconds
+local default_comm								-- your true faction
+local is_disguised	        = false 			-- boolean: is actor disguised?
+local highest_suspicion     = {value = 0, id = false} 	-- suspicion meter, stores the highest suspicion level detected among NPCs
+local update_step           = 2000 				-- update actor every 2 secs
+local spike                 = 0		  			-- suspicion spike happens when actor do a sudden action
+
+-- Banjaji
+local previous_relation -- relation between default_comm and "actor_"..curr_comm
+local can_communicate = false -- Whether the player can communicate with their faction
+local comms_list = {"device_pda_2","device_pda_3"} -- What items need to be in the inventory to be able to communicate
+local actor_is_loaded = false -- Quick fix for actor_on_first_update being run after actor_on_item_take on load game
+
+-- Controls
+local usual_memory_limit 	= d_ini:r_float_ex("diguise_controls","usual_memory_limit") or 10 -- real seconds, memory limit of natural NPCs
+local enemy_memory_limit 	= d_ini:r_float_ex("diguise_controls","enemy_memory_limit") or 30 -- real seconds, memory limit of enemy NPCs
+local memory_multi 			= d_ini:r_float_ex("diguise_controls","memory_multi") or 10       -- when actor's disguise gets exposed, npcs memory will be multiplied by this number
+local break_point = d_ini:r_float_ex("diguise_controls","break_point") or 90	      -- suspicion limit. When the suspicion level goes above it, you will get exposed
+local inventory_specs = {} -- inventory parameters ( weight , num of big items , num of all items ), exceeding these limits will increase suspicion
+inventory_specs[1] = d_ini:r_float_ex("diguise_controls","inventory_limit_weight") or 25
+inventory_specs[2] = d_ini:r_float_ex("diguise_controls","inventory_limit_big") or 4
+inventory_specs[3] = d_ini:r_float_ex("diguise_controls","inventory_limit_num") or 40
+local npc_awareness = {		-- by NPC's visual
+	["v_0"] = d_ini:r_float_ex("npc_awareness","npc_awareness_type_0") or 1,
+	["v_1"] = d_ini:r_float_ex("npc_awareness","npc_awareness_type_1") or 1,
+	["v_2"] = d_ini:r_float_ex("npc_awareness","npc_awareness_type_2") or 1,
+	["v_3"] = d_ini:r_float_ex("npc_awareness","npc_awareness_type_3") or 1.1,
+	["v_4"] = d_ini:r_float_ex("npc_awareness","npc_awareness_type_4") or 1.2,
+	["v_5"] = d_ini:r_float_ex("npc_awareness","npc_awareness_type_5") or 1.3,
+	["special"] = d_ini:r_float_ex("npc_awareness","npc_awareness_special") or 1.4
+}
+local relation_hit 		= d_ini:r_float_ex("relation_impact","relation_hit") or -75 	-- Amount of relation hit by disguise fail (between your faction and npc's faction)
+local reputation_hit 	= d_ini:r_float_ex("relation_impact","reputation_hit") or -100	-- Amount of reputation hit by disguise fail
+local goodwill_hit 		= d_ini:r_float_ex("relation_impact","goodwill_hit") or -50 	-- Amount of goodwill hit by disguise fail (between your faction and npc's faction)
+
+-- Memories
+local disguise_equipment = {} -- stores current equipment
+local disguise_actor = {}     -- stores current examinations of actor's equipment by other NPCs
+local npcs_memory = {}        -- stores last time npcs have saw you
+
+
+------------------------------------------------------------
+-- Control (Options)
+------------------------------------------------------------
+local is_enabled = true				-- To enable/disable the feature
+local factor = {
+	["active_item"]        = true,
+	["active_item_factor"] = 1,
+	["weapon"]             = true,
+	["weapon_factor"]      = 1,
+	["outfit"]             = true,
+	["outfit_factor"]      = 1,
+	["helmet"]             = true,
+	["helmet_factor"]      = 1,
+	["backpack"]           = true,
+	["backpack_factor"]    = 1,
+	["inventory"]          = true,
+	["inventory_factor"]   = 1,
+	["speed"]              = true,
+	["speed_factor"]       = 1,
+	["distance"]           = true,
+	["distance_factor"]    = 5,		-- [meters] suspicion will raise when the distance between actor and npc goes below this value 
+	["stay_time"]          = true,
+	["stay_time_factor"]   = 20,	-- [real seconds] suspicion will raise after stay_time exceed this value
+}
+
+function update_feature_state(old_state, new_state)
+	if (not default_comm) or (not db.actor) then
+		return
+	end
+	
+	if old_state and (not new_state) then -- if the feature has been disabled
+		local curr_comm = character_community(db.actor):sub(7)
+		if (curr_comm ~= default_comm) then
+			set_msg("ui_st_disguse_disabled",default_comm)
+			set_comm(default_comm)
+		end
+	elseif (not old_state) and new_state then -- if the feature has been enabled
+
+	end
+end
+
+function toggle_feature(val)
+	local was_enabled = is_enabled
+	if val and (not is_enabled) then
+		is_enabled = true
+		update_feature_state(was_enabled, is_enabled)
+		
+	elseif (not val) and is_enabled then
+		is_enabled = false
+		update_feature_state(was_enabled, is_enabled)
+	end
+end
+
+function update_settings()
+	local was_enabled = is_enabled
+	is_enabled 				   = ui_options.get("gameplay/disguise/state")
+	update_feature_state(was_enabled, is_enabled)
+	
+	factor.active_item         = ui_options.get("gameplay/disguise/active_item")
+	factor.active_item_factor  = ui_options.get("gameplay/disguise/active_item_factor")
+	factor.weapon              = ui_options.get("gameplay/disguise/weapon")
+	factor.weapon_factor       = ui_options.get("gameplay/disguise/weapon_factor")
+	factor.outfit              = ui_options.get("gameplay/disguise/outfit")
+	factor.outfit_factor       = ui_options.get("gameplay/disguise/outfit_factor")
+	factor.helmet              = ui_options.get("gameplay/disguise/helmet")
+	factor.helmet_factor       = ui_options.get("gameplay/disguise/helmet_factor")
+	factor.backpack            = ui_options.get("gameplay/disguise/backpack")
+	factor.backpack_factor     = ui_options.get("gameplay/disguise/backpack_factor")
+	factor.inventory           = ui_options.get("gameplay/disguise/inventory")
+	factor.inventory_factor    = ui_options.get("gameplay/disguise/inventory_factor")
+	factor.speed               = ui_options.get("gameplay/disguise/speed")
+	factor.speed_factor        = ui_options.get("gameplay/disguise/speed_factor")
+	factor.distance            = ui_options.get("gameplay/disguise/distance")
+	factor.distance_factor     = ui_options.get("gameplay/disguise/distance_factor")
+	factor.stay_time           = ui_options.get("gameplay/disguise/stay_time")
+	factor.stay_time_factor    = ui_options.get("gameplay/disguise/stay_time_factor")
+end
+
+
+------------------------------------------------------------
+-- Utilities
+------------------------------------------------------------
+local blacklisted_factions = {
+	["monolith"] = true,
+	["greh"] = true,
+	["isg"] = true,
+	--["renegade"] = true,
+}
+
+local possible_factions = {
+	["army"] = true,
+	["bandit"] = true,
+	["csky"] = true,
+	["dolg"] = true,
+	["ecolog"] = true,
+	["freedom"] = true,
+	["killer"] = true,
+	["monolith"] = true,
+	["stalker"] = true,
+	["renegade"] = true,
+	["greh"] = true,
+	["isg"] = true,
+}
+function update_default(comm, now)
+	if not (comm and possible_factions[comm]) then
+		printe("! ERROR update default community | community (%s) doesn't exist", tostring(comm))
+		callstack()
+		return
+	end
+	default_comm = comm
+	alife_storage_manager.get_state().default_faction = comm
+	
+	if now or (not is_disguised) then
+		db.actor:set_character_community("actor_"..comm, 0, 0)
+	end
+end
+
+
+-- Checks whether a list contains the element
+function list_contains(list, element)
+  for _, value in ipairs(list) do
+    if value == element then
+      return true
+    end
+  end
+  return false
+end
+
+-- Scan inventory for pda v2.0 or v3.1
+function has_comms()
+	local could_communicate = can_communicate
+	can_communicate = false
+	db.actor:iterate_inventory( 
+		function(temp, obj)
+			if list_contains(comms_list, obj:section()) then
+				can_communicate = true
+			end
+		end 
+	)
+	
+	-- Change player actor_faction relation according to communication possibilities
+	local curr_comm = character_community(db.actor):sub(7)
+	if (not could_communicate) and can_communicate then -- Picked up comms equipment
+		game_relations.save_relation( default_comm , "actor_"..curr_comm, 300 ) -- You can notify your faction again
+	elseif (not can_communicate) and could_communicate then -- dropped comms equipment
+		game_relations.save_relation( "actor_"..curr_comm , default_comm, previous_relation ) -- You can't notify your faction anymore
+	end
+end
+
+function set_comm(new_comm)
+	if not (new_comm and possible_factions[new_comm]) then
+		printe("! ERROR update community | community (%s) doesn't exist", tostring(new_comm))
+		callstack()
+		return
+	end
+	--debug_memory()
+	
+	local curr_comm = character_community(db.actor):sub(7) -- current community
+	if default_comm and (new_comm ~= curr_comm) then -- if default_comm is initialized and you are changing disguise
+		
+		if curr_comm ~= default_comm then -- from one disguise into another disguise or remove disguise
+			game_relations.save_relation( "actor_"..curr_comm , default_comm, previous_relation ) -- Restores the old relation
+		end
+		
+		previous_relation = relation_registry.community_relation(default_comm, "actor_"..new_comm) -- Saves the original relation before putting on the disguise
+		
+		if can_communicate then
+			game_relations.save_relation( default_comm , "actor_"..new_comm, 300 ) -- You are neutral to your default faction, 300 is the default value
+		end
+	end
+	
+	--[[
+	printdbg("Banjaji, can communicate: "..tostring(can_communicate))
+	printdbg("Banjaji, previous relations: "..tostring(previous_relation))
+	printdbg("Banjaji, current: "..tostring(curr_comm))
+	printdbg("Banjaji, new: "..tostring(new_comm))
+	printdbg("Banjaji, relations: "..tostring(relation_registry.community_relation(default_comm, "actor_"..new_comm)))
+	printdbg("Banjaji, monolith - disguised duty: "..tostring(relation_registry.community_relation("monolith", "actor_dolg")))
+	--]]
+	
+	db.actor:set_character_community("actor_" .. new_comm, 0, 0)
+	is_disguised = default_comm and (new_comm ~= default_comm) and true or false
+end
+
+function get_default_comm()
+	local def = default_comm or alife_storage_manager.get_state().default_faction or character_community(db.actor):sub(7) or "stalker"
+	return def
+end
+
+function is_actor_disguised()
+	return is_disguised
+end
+
+local tg_susp1 		    = 2000 	-- [ms] timer for suspicion cooldown when undisguised
+local tg_susp1_step		= 20000	
+local tg_susp2 		    = 0		-- [ms] timer for suspicion cooldown when npc not seeing you
+local tg_susp2_step	    = 2000
+local susp_cool         = 5		-- suspicion cool-down step. visuals only
+function moniter_highest_suspicion(tg)
+	tg = tg or time_global()
+
+	-- if not disguised, reduce slowly
+	if (not is_disguised) and (tg > tg_susp1) then
+		tg_susp1 = tg + tg_susp1_step
+		highest_suspicion.value = highest_suspicion.value - susp_cool
+		
+	elseif highest_suspicion.id and (tg > tg_susp2) then
+		tg_susp2 = tg + tg_susp2_step
+		local id = highest_suspicion.id
+		local npc = db.storage[id] and db.storage[id].object or level.object_by_id(id)
+		
+		if npc and IsStalker(npc) and npc:alive() then
+			-- if npc doesn't see the player, reduce
+			if (not npc:see( db.actor )) then
+				highest_suspicion.value = highest_suspicion.value - susp_cool
+			end
+		else
+			-- in case NPC doesn't exist, not stalker or dead
+			highest_suspicion.id = false
+			highest_suspicion.value = 0
+		end
+	end
+	
+	-- Clear aware NPC if no suspicion happens
+	highest_suspicion.value = clamp(highest_suspicion.value, 0, 100)
+	if (highest_suspicion.value == 0) then
+		highest_suspicion.id = false
+	end
+	
+	if enable_debug then
+		printf("% Disguise highest_suspicion = %s", highest_suspicion.value)
+	end
+end
+
+local tg_memo 		= 60000 -- update relation list every 60 sec
+local tg_memo_step	= 60000	-- when disguise is not active, do a cool down every 20 sec
+function moniter_memories(tg)
+	tg = tg or timer_global()
+	if (tg < tg_memo) then
+		return
+	end
+	tg_memo = tg + tg_memo_step
+	
+	local curr_time = game.get_game_time()
+	local time_passed, hs_clean
+	for k,v in pairs(npcs_memory) do
+		if v and v.last_seen then
+			local last_seen = ctime_from(v.last_seen)
+			time_passed = curr_time:diffSec(last_seen)
+			if (time_passed > v.memo) then
+				npcs_memory[k] = nil
+				if (k == highest_suspicion.id) then
+					highest_suspicion.id    = false
+					highest_suspicion.value = 0
+				end
+			end
+		else
+			npcs_memory[k] = nil
+			if (k == highest_suspicion.id) then
+				highest_suspicion.id    = false
+				highest_suspicion.value = 0
+			end
+		end
+	end
+end
+
+function anybody_see(t)
+	local actor = db.actor
+	for i=1, #db.OnlineStalkers do
+		local st = db.storage[db.OnlineStalkers[i]]
+		local npc = st and st.object or level.object_by_id(db.OnlineStalkers[i])
+		if (npc and IsStalker(npc,npc:clsid()) and npc:alive()) then
+			if t then
+				if t[npc:community()] and (npc:see(actor)) then
+					return true
+				end
+			elseif (npc:see(actor)) then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+function anybody_remember()
+	local time_passed
+	for k,v in pairs(npcs_memory) do
+		if v and v.last_seen then
+			local last_seen = ctime_from(v.last_seen)
+			if last_seen then
+				time_passed = game.get_game_time():diffSec(last_seen)
+				if (time_passed < v.memo) then
+					return true
+				else
+					npcs_memory[k] = nil
+				end
+			end
+		else
+			npcs_memory[k] = nil
+		end
+	end
+	return false
+end
+
+local disguise_zones = { -- don't measure suspicion when player is inside these zones
+	"bar_arena_surge_hide_a1",
+	"bar_arena_ug_surge_hide_a1",
+}
+function inside_disguise_zone()
+	--if has_alife_info("bar_arena_fight") then
+		--return true
+	--end
+
+	for i=1,#disguise_zones do 
+		if (db.actor_inside_zones[disguise_zones[i]]) then
+			return true
+		end
+	end
+	
+	return false
+end
+
+function set_msg(str, comm, comm2)
+	local txt = strformat( game.translate_string(str) , comm and game.translate_string(comm) or "" , comm2 and game.translate_string(comm2) or "" )
+	actor_menu.set_msg(1, txt,10)
+end
+
+function get_outfit_comm(section)
+	local new_comm = default_comm
+	
+	local outfit_comm = ini_sys:r_string_ex(section,"community")
+	if outfit_comm and (outfit_comm ~= "") then --and possible_factions[outfit_comm] then 
+		new_comm = outfit_comm
+	end
+
+	return new_comm
+end
+
+function get_patch(faction, only_sec)
+	local patch =  faction .. "_patch"
+	if ini_sys:section_exist(patch) then
+		return only_sec and patch or db.actor:object(patch)
+	end
+	return 
+end
+
+function clear_patch(id)
+	se_save_var(id, nil, "unpatched", nil)
+end
+
+function delet_memory()
+	empty_table(disguise_actor)
+	empty_table(npcs_memory)
+end
+
+function time_to_str(tim)
+	local str = tostring(tim.h) .. ":" .. tostring(tim.m) .. ":" .. tostring(tim.s)
+	return str
+end
+
+local last_min_scan
+function increment_disguise_statistic(curr_time)
+	last_min_scan = last_min_scan or curr_time
+	if (curr_time:diffSec(last_min_scan) > 60) then
+		game_statistics.increment_statistic("minutes_disguised")
+		last_min_scan = curr_time
+	end
+end
+
+function debug_disguise(npc, m, t)
+	local id = npc:id()
+	printf("% Disguise | npc seeing you | id: %s - comm: %s - name: %s", id, character_community(npc), npc:character_name())
+	printf("% Disguise | [%s] memory | awareness: %s - memory: %s - first_seen: %s - last_seen: %s", id, m.awareness, m.memo, time_to_str(m.first_seen), time_to_str(m.last_seen))
+	printf("% Disguise | [%s] on equipment | active item: %s - weapon: %s - outfit: %s - helmet: %s - backpack: %s - inv: %s ", id, t.active_item, t.weapon, t.outfit, t.helmet, t.backpack, t.inventory)
+	printf("% Disguise | [%s] on behaviour | speed: %s - distance: %s - stay_time: %s", id, t.speed, t.distance, t.stay_time)
+	printf("% Disguise | [%s] suspicion | spike: %s - result: %s", id, spike, m.suspicion)
+	printf("--==============================================================")
+end
+function debug_memory()
+	local time_passed
+	for k,v in pairs(npcs_memory) do
+		if v then
+			local last_seen = ctime_from(v.last_seen)
+			if last_seen then
+				time_passed = game.get_game_time():diffSec(last_seen)
+				if (time_passed < v.memo) then
+					printf("% Disguise debug_memoery | [%s] still remembers you (%s sec left)",k, (v.memo - time_passed))
+				else
+					printf("% Disguise debug_memoery | [%s] forgot you",k)
+				end
+			end
+		end
+	end
+end
+
+
+------------------------------------------------------------
+-- NPC Logic
+------------------------------------------------------------
+local need_inv_scan = true
+local update_step_seconds = update_step/1000
+local function npc_on_update(npc)
+	if (not is_enabled) or (not default_comm) or (not db.actor) then
+		return
+	end
+	
+	local id = npc:id()
+	local npc_squad = get_object_squad(npc)
+	--printf("-NPC Update | id: %s - comm: %s - name: %s", id, comm, npc:character_name())
+
+	if npc:see(db.actor) and not (npc_squad and axr_companions.companion_squads[npc_squad.id]) then
+		
+		-- Ignore in Arena fight
+		if inside_disguise_zone() then
+			return
+		end
+		
+		local comm = character_community(npc)
+		local curr_comm = character_community(db.actor):sub(7)
+		local curr_time = game.get_game_time()
+		local moment = ctime_to(curr_time) -- time table
+		local pos = npc:position()
+		local sec = npc:section()
+	
+		-- Set up NPC's memory
+		if (not npcs_memory[id]) then
+			npcs_memory[id] = {}
+			npcs_memory[id].is_enem = game_relations.is_factions_enemies(default_comm,comm) --or (npc:relation(db.actor) < game_object.enemy)
+			npcs_memory[id].memo = npcs_memory[id].is_enem and (enemy_memory_limit * time_f) or (usual_memory_limit * time_f)
+			npcs_memory[id].memo = math.floor(npcs_memory[id].memo * (math.random(80,120) / 100))
+			npcs_memory[id].awareness = get_npc_awareness(sec)
+		end
+		npcs_memory[id].first_seen = npcs_memory[id].first_seen or moment
+		npcs_memory[id].last_seen = moment
+		
+		if is_disguised and (not game_relations.is_factions_enemies(curr_comm,comm)) then
+			-- Set up and calculate NPC's suspicion
+			local thoughts_on_actor = {}
+			thoughts_on_actor.active_item = examinate_active_item() -- 0~100
+			thoughts_on_actor.weapon      = examinate_weapon()      -- 0~100
+			thoughts_on_actor.outfit      = examinate_outfit()      -- 0~100
+			thoughts_on_actor.helmet      = examinate_helmet()      -- 0~100
+			thoughts_on_actor.backpack    = examinate_backpack()    -- 0~100
+			thoughts_on_actor.inventory   = examinate_inventory()   -- 0~100
+			
+			thoughts_on_actor.speed       = examinate_speed()       -- meters/sec
+			thoughts_on_actor.distance    = examinate_distance(pos)    -- meters
+			thoughts_on_actor.stay_time   = examinate_stay_time(npcs_memory[id].first_seen, npcs_memory[id].last_seen) -- 0~1
+			
+			npcs_memory[id].suspicion = calculate_npc_suspicion(npc, id, thoughts_on_actor, npcs_memory[id].awareness)
+			
+			-- if NPC's suspicion is bigger than highest suspicion, tag him
+			if (npcs_memory[id].suspicion > highest_suspicion.value) then 
+				highest_suspicion.value = npcs_memory[id].suspicion
+				highest_suspicion.id = id
+			
+			-- if tagged NPC has less suspicion now, reduce the highest suspicion
+			elseif (id == highest_suspicion.id) and (npcs_memory[id].suspicion < highest_suspicion.value) then
+				highest_suspicion.value = highest_suspicion.value - susp_cool
+			end
+			
+			-- if the highest suspicion has reach the limit, expose the actor
+			if (highest_suspicion.value > break_point) then
+				expose_actor(npc, comm, npcs_memory[id].is_enem)
+			end
+			
+			-- Statistic
+			increment_disguise_statistic(curr_time)
+		
+			if enable_debug then
+				debug_disguise(npc,npcs_memory[id],thoughts_on_actor)
+			end
+		end
+		
+	-- NPC will forget you after enough time
+	elseif npcs_memory[id] then 
+	
+		npcs_memory[id].first_seen = nil
+		local last_seen = ctime_from(npcs_memory[id].last_seen)
+		local time_passes = game.get_game_time():diffSec(last_seen)
+		if (time_passes > npcs_memory[id].memo) then
+			npcs_memory[id] = nil
+		end
+	end
+end
+
+local function npc_on_death_callback(npc) -- delete memory on npc death
+	local id = npc:id()
+	if id and npcs_memory[id] then
+		npcs_memory[id] = nil
+	end
+end
+
+function get_npc_awareness(sec)
+	sec = sec or "_0"
+	local awareness = 1
+	if string.find(sec,"_0") then
+		awareness = npc_awareness["v_0"]
+	elseif string.find(sec,"_1") then
+		awareness = npc_awareness["v_1"]
+	elseif string.find(sec,"_2") then
+		awareness = npc_awareness["v_2"]
+	elseif string.find(sec,"_3") then
+		awareness = npc_awareness["v_3"]
+	elseif string.find(sec,"_4") then
+		awareness = npc_awareness["v_4"]
+	elseif string.find(sec,"_5") then
+		awareness = npc_awareness["v_5"]
+	end
+	
+	return awareness
+end
+
+function examinate_active_item() -- { id , condition , factor }
+	if (not factor.active_item) then return 0 end
+	
+	local active_item = db.actor:active_item()
+	local section = active_item and active_item:section() or false
+	
+	if (not active_item) then
+		disguise_actor["active_item"] = {}
+		return 100
+	end
+	
+	if (not disguise_actor["active_item"]) then disguise_actor["active_item"] = {} end
+	
+	-- no need to check again if nothing changed
+	if disguise_actor["active_item"].id and (disguise_actor["active_item"].id == active_item:id()) and (disguise_actor["active_item"].condition == active_item:condition()) then
+		return disguise_actor["active_item"].factor
+	end
+	
+	-- Calculate factor
+	disguise_actor["active_item"].condition = active_item:condition()
+	local factor = 100
+	if active_item then
+		if IsWeapon(active_item) then
+			factor = 80 * disguise_actor["active_item"].condition
+		elseif string.find(section,"detector") then
+			factor = 60
+		elseif IsGrenade(active_item) then
+			factor = 30
+		end
+	end
+	
+	factor = math.floor(clamp(factor,20,99))
+	disguise_actor["active_item"].factor = factor
+	return factor
+end
+
+function examinate_weapon() -- { id , condition , factor}
+	if (not factor.weapon) then return 0 end
+	
+	local weapon = db.actor:item_in_slot(3) or db.actor:item_in_slot(2)
+	local section = weapon and weapon:section() or false
+	
+	if (not weapon) then	
+		disguise_actor["weapon"] = {}
+		return 80 -- carrying weapon is not necessary
+	end
+	
+	if (not disguise_actor["weapon"]) then disguise_actor["weapon"] = {} end
+	
+	-- no need to check again if nothing changed
+	if disguise_actor["weapon"].id and (disguise_actor["weapon"].id == weapon:id()) and (disguise_actor["weapon"].condition == weapon:condition()) then
+		return disguise_actor["weapon"].factor
+	end
+	
+	-- Calculate factor
+	disguise_actor["weapon"].condition = weapon:condition()
+	
+	
+	local factor = disguise_actor["weapon"].condition * 100
+	factor = math.floor(clamp(factor,50,99))
+	disguise_actor["weapon"].factor = factor
+	return factor
+end
+
+function examinate_outfit() -- { id , condition , pre-helmet , factor}
+	if (not factor.outfit) then return 0 end
+	
+	local outfit = db.actor:item_in_slot(7)
+	local section = outfit and outfit:section() or false
+	
+	if (not outfit) then
+		return 1
+	end
+	
+	if (not disguise_actor["outfit"]) then disguise_actor["outfit"] = {} end
+	
+	-- no need to check again if nothing changed
+	if disguise_actor["outfit"].id and (disguise_actor["outfit"].id == outfit:id()) and (disguise_actor["outfit"].condition == outfit:condition()) then
+		return disguise_actor["outfit"].factor
+	end
+	
+	-- Calculate factor
+	disguise_actor["outfit"].pre_helmet = (ini_sys:r_bool_ex(section, "helmet_avaliable") == false)
+	disguise_actor["outfit"].condition = outfit:condition()
+	
+	local factor = disguise_actor["outfit"].condition * 100
+	factor = math.floor(clamp(factor,1,99))
+	disguise_actor["outfit"].factor = factor
+	return factor
+end
+
+function examinate_helmet() -- { id , condition , factor}
+	if (not factor.helmet) then return 0 end
+	
+	local helmet = db.actor:item_in_slot(12)
+	local section = helmet and helmet:section() or false
+	
+	if disguise_actor["outfit"] and disguise_actor["outfit"].pre_helmet then
+		return disguise_actor["outfit"].factor
+	end
+	
+	if (not helmet) then
+		disguise_actor["helmet"] = {}
+		return 1
+	end
+	
+	if (not disguise_actor["helmet"]) then disguise_actor["helmet"] = {} end
+	
+	-- no need to check again if nothing changed
+	if disguise_actor["helmet"].id and (disguise_actor["helmet"].id == helmet:id()) and (disguise_actor["helmet"].condition == helmet:condition()) then
+		return disguise_actor["helmet"].factor
+	end
+	
+	-- Calculate factor
+	disguise_actor["helmet"].condition = helmet:condition()
+	
+	local factor = disguise_actor["helmet"].condition * 100
+	factor = math.floor(clamp(factor,1,99))
+	disguise_actor["helmet"].factor = factor
+	return factor
+end
+
+function examinate_backpack() -- { id , condition , factor}
+	if (not factor.backpack) then return 0 end
+	
+	local backpack = db.actor:item_in_slot(13)
+	local section = backpack and backpack:section() or false
+	
+	if (not backpack) then
+		disguise_actor["backpack"] = {}
+		return 60 -- backpack is not necessary
+	end
+	
+	if (not disguise_actor["backpack"]) then disguise_actor["backpack"] = {} end
+	
+	-- no need to check again if nothing changed
+	if disguise_actor["backpack"].id and (disguise_actor["backpack"].id == backpack:id()) and (disguise_actor["backpack"].condition == backpack:condition()) then
+		return disguise_actor["backpack"].factor
+	end
+	
+	need_inv_scan = true -- inventory need a rescan after backpack changes
+	
+	-- Calculate factor
+	disguise_actor["backpack"].condition = backpack:condition()
+	local con = disguise_actor["backpack"].condition * 100
+	local carry_weight = ini_sys:r_float_ex(section, "additional_inventory_weight")
+	local cw_f = carry_weight and carry_weight > 30 and 30 or 1 -- big backpacks are more suspicious
+	local factor = con - cw_f
+	
+	factor = math.floor(clamp(factor,50,99))
+	disguise_actor["backpack"].factor = factor
+	return factor
+end
+
+function examinate_inventory() -- { num , num_big, weight , factor }
+	if (not factor.inventory) then return 0 end
+
+	if (not disguise_actor["inventory"]) then disguise_actor["inventory"] = {} end
+
+	-- No need to check again if nothing changed
+	if (not need_inv_scan) and (disguise_actor["inventory"].num) and (disguise_actor["inventory"].num_big) and (disguise_actor["inventory"].weight) then
+		return disguise_actor["inventory"].factor
+	end
+	
+	-- Collect total inv weight and items number
+	local total_weight = 0
+	local total_num = 0
+	local total_num_big = 0
+	local function iterate(temp, obj)
+		local sec = obj:section()
+		local weight = ini_sys:r_float_ex(sec,"weight") or 0
+		local grid_width = ini_sys:r_float_ex(sec,"inv_grid_width") or 1
+		local grid_height = ini_sys:r_float_ex(sec,"inv_grid_height") or 1
+		
+		total_num = total_num + 1
+		total_weight = total_weight + weight
+		total_num_big = (grid_width >= 2) and (grid_height >=2) and (total_num_big + 1) or total_num_big
+	end
+	db.actor:iterate_inventory(iterate,nil)
+	
+	need_inv_scan = false
+
+	disguise_actor["inventory"].weight = total_weight
+	disguise_actor["inventory"].num = total_num
+	disguise_actor["inventory"].num_big = total_num_big
+	
+	local factor = 100
+	local is_messy = false
+	if (total_weight > inventory_specs[1]) then
+		factor = factor - (total_weight - inventory_specs[1])
+		is_messy = true
+	end
+	if (total_num_big > inventory_specs[2]) then
+		factor = factor - (total_num_big - inventory_specs[2]) * 5
+		is_messy = true
+	end
+	if (total_num > inventory_specs[3]) then
+		factor = factor - (total_num - inventory_specs[3])
+		is_messy = true
+	end
+	if is_messy and (not (disguise_actor["backpack"] and disguise_actor["backpack"].id)) then -- no backpack 
+		factor = factor - 50
+	end
+	
+	factor = math.floor(clamp(factor,30,99))
+	disguise_actor["inventory"].factor = factor
+	return factor
+end
+
+function examinate_speed()
+	if (not factor.speed) then return 1 end
+	
+	local speed = (pos_diff/update_step_seconds)  -- [meter/second]
+	speed = (speed > 1) and (speed < 10) and math.floor(speed) or 1
+	local result = (9 + speed) / 10
+	return result * factor.speed_factor
+end
+
+function examinate_distance(pos)
+	if (not factor.distance) or (not pos) then return 1 end
+	
+	local distance = db.actor:position():distance_to(pos) -- meters
+	local factor = factor.distance_factor
+	distance = distance > 1 and distance or 1 -- make sure its not small fraction
+	local result = (distance < factor) and factor/distance or 1
+	return result
+end
+
+function examinate_stay_time(first_seen, last_seen)
+	if (not factor.stay_time) then return 1 end
+	
+	first_seen = ctime_from(first_seen)
+	last_seen = ctime_from(last_seen)
+	local stay_time = last_seen:diffSec(first_seen)
+	local factor = factor.stay_time_factor
+	stay_time = stay_time / time_f -- real time
+	local result = (stay_time > factor) and (stay_time / factor) or 1
+	return result
+end
+
+
+function calculate_npc_suspicion(npc, id, t, awareness)
+	local be = npc:best_enemy()
+	
+	local fraction = (factor.active_item and 1 or 0) + (factor.weapon and 1 or 0) + (factor.outfit and 1 or 0) + (factor.helmet and 1 or 0) + (factor.backpack and 1 or 0) + (factor.inventory and 1 or 0)
+	local item_factor
+	if fraction > 0 then
+		itm_factor = (
+		  (t.active_item * factor.active_item_factor) 
+		+ (t.weapon      * factor.weapon_factor) 
+		+ (t.outfit      * factor.outfit_factor) 
+		+ (t.helmet      * factor.helmet_factor) 
+		+ (t.backpack    * factor.backpack_factor) 
+		+ (t.inventory   * factor.inventory_factor)
+		) / fraction
+		itm_factor = 100 - itm_factor
+	else -- everything is disabled
+		itm_factor = 1
+	end
+
+	-- Formula: ( npc's awareness  x  player's behaviour  x  player's equipment )  +  player's sudden action  -  npc's current danger
+	local suspicion = (awareness * ( t.stay_time * t.distance * t.speed ) * itm_factor) + ((game_achievements.has_achievement("unforeseen_guest")) and clamp(spike-15,0,spike) or spike) - (be and (be:id() ~= AC_ID) and 50 or 0)
+
+	if enable_debug then
+		printf("% Disguise calc | fraction [%s] = active_item [%s] + weapon [%s] +  outfit [%s] + helmet [%s] + backpack [%s] + inventory [%s]", fraction, (factor.active_item and 1 or 0), (factor.weapon and 1 or 0), (factor.outfit and 1 or 0), (factor.helmet and 1 or 0), (factor.backpack and 1 or 0), (factor.inventory and 1 or 0))
+		printf("% Disguise calc | itm_factor [%s] = active_item [%s]x[%s] + weapon [%s]x[%s] +  outfit [%s]x[%s] + helmet [%s]x[%s] + backpack [%s]x[%s] + inventory [%s]x[%s] / fraction [%s]", itm_factor, t.active_item, factor.active_item_factor, t.weapon, factor.weapon_factor, t.outfit, factor.outfit_factor, t.helmet, factor.helmet_factor, t.backpack, factor.backpack_factor, t.inventory, factor.inventory_factor, fraction)
+		printf("% Disguise calc | suspicion [%s] = (awareness [%s] x ( t.stay_time [%s] x t.distance [%s] x t.speed [%s]) x itm_factor [%s]) + spike [%s] - best enemy [%s]", suspicion, awareness , t.stay_time , t.distance , t.speed ,itm_factor,((game_achievements.has_achievement("unforeseen_guest")) and clamp(spike-15,0,spike) or spike), (be and (be:id() ~= AC_ID) and 50 or 0))
+		printf("-------------------------------------------------------------")
+	end
+	
+	return math.floor(clamp(suspicion,1,100))
+end
+
+
+------------------------------------------------------------
+-- Callbacks
+------------------------------------------------------------
+function try_to_disguise(new_comm, naked, no_patch)
+	local curr_comm = character_community(db.actor):sub(7)
+	--printf("/ Disguise | current comm: %s - new comm: %s", curr_comm, new_comm)
+	
+	if (new_comm == curr_comm) then
+		return
+	end
+	
+	if no_patch then
+		set_msg("ui_st_disguse_patch_torn", default_comm)
+		set_comm(default_comm)
+	elseif (new_comm == default_comm) then
+		set_msg("ui_st_disguse_back_to_default", default_comm)
+		set_comm(default_comm)
+	elseif blacklisted_factions[new_comm] and IsStoryMode() then
+		set_msg("ui_st_disguse_blacklisted_faction", new_comm, curr_comm)
+	elseif anybody_see() then
+		set_msg("ui_st_disguse_someone_saw", curr_comm)
+	elseif anybody_remember() then
+		set_msg("ui_st_disguse_someone_remember", curr_comm)
+	else
+		if naked then
+			set_msg("ui_st_disguse_naked", default_comm)
+			set_comm(default_comm)
+		elseif start_record then
+			set_msg("ui_st_disguse_on", new_comm)
+			set_comm(new_comm)
+		end
+	end
+end
+
+function expose_actor(npc, comm, is_enem)
+	set_msg("st_disguse_actor_exposed",default_comm)
+	set_comm(default_comm)
+	
+	-- News
+	if npc and (not inside_disguise_zone()) then
+		local str = ""
+		if is_enem then
+			str = "st_news_disguse_enemy_expose_"
+		else
+			str = "st_news_disguse_natural_expose_"
+			if (comm ~= default_comm) then
+				if (ui_options.get("alife/general/dynamic_relations") == true)
+				and (not game_relations.is_faction_unaffected(comm))
+				and (not game_relations.is_faction_unaffected(default_comm))
+				and (not game_relations.is_faction_pair_unaffected(comm, default_comm))
+				then
+					game_relations.change_faction_relations(comm, default_comm, relation_hit)
+				end
+				game_relations.change_factions_community_num(comm, default_comm, goodwill_hit)
+				game_statistics.increment_reputation(reputation_hit)
+			end
+		end
+		local msg = game.translate_string(str .. tostring(math.random(1,4)))
+		local comm_name = ", " .. game.translate_string("st_dyn_news_comm_" .. comm .. "_6")
+		local se = strformat("%s%s", npc:character_name(), string.find(comm_name,"_6") and comm_name or "")
+		dynamic_news_helper.send_tip(msg,se,2,nil,npc:character_icon(),nil,"npc")
+	end
+	
+	-- long-term memory
+	for k,v in pairs(npcs_memory) do
+		if v then
+			v.memo = v.memo * memory_multi
+		end
+	end
+	
+	is_disguised = nil
+end
+
+local last_update = 2000
+local old_pos
+
+local function actor_on_first_update()
+	-- Set up basic things
+	default_comm = alife_storage_manager.get_state().default_faction or character_community(db.actor):sub(7) or "stalker"
+	printdbg("- Default community: %s",default_comm)
+	time_f = level.get_time_factor()
+	
+	-- Control feature by its options
+	update_settings()
+	
+	if (previous_relation == nil) and is_disguised then -- initialize previous_relation in case of old save games
+		previous_relation = relation_registry.community_relation(default_comm, character_community(db.actor):sub(7)) -- read (actor_faction1 and faction2) relation from (faction1 and faction2) relation
+	end
+	actor_is_loaded = true
+	has_comms()
+end
+
+local function actor_on_update()
+	-- Basic conditions
+	if (not is_enabled) or (not default_comm) or (not db.actor) then
+		return
+	end
+	
+	-- Less hooks
+	local tg = time_global()
+	if (tg < last_update) then
+		return
+	end
+	last_update = tg + update_step -- 2 sec
+	
+	-- Update suspicion
+	moniter_highest_suspicion(tg)
+	
+	-- Update NPCs memories
+	moniter_memories(tg)
+	
+	-- Reset suspicion spike
+	spike = 0 
+	
+	-- Update disguise bar
+	hud_update()
+	
+	-- not in arena fight
+	if (not inside_disguise_zone()) then
+	
+		-- Speed calculation
+		local curr_pos = db.actor:position()
+		pos_diff = curr_pos:distance_to(old_pos or curr_pos)
+		old_pos = curr_pos
+		--printf("-Actor Speed = " .. tostring(pos_diff/update_step_seconds))
+		
+		-- Scan equipment for changes
+		for i=1,13 do
+			if (i ~= 10) and (i ~= 11) then
+				local item = db.actor:item_in_slot(i)
+				local id = item and item:id() or 0
+				if id and id ~= disguise_equipment[i] then
+					spike = 15
+					disguise_equipment[i] = id
+					if (i == 7) then
+						local comm
+						local state = se_load_var(id, nil, "unpatched")
+						if (id == AC_ID) or state then
+							comm = default_comm
+						else
+							comm = get_outfit_comm(item:section())
+						end
+						
+						try_to_disguise( comm , (id == AC_ID) , state )
+					end
+				end
+			end
+		end
+	end
+end
+
+local function actor_on_item_take(obj)
+	need_inv_scan = true
+	
+	if actor_is_loaded then has_comms() end -- Otherwise it seems that this callback happens before actor_on_first_update
+end
+
+local function actor_on_item_drop(obj)
+	need_inv_scan = true
+	spike = 15
+	
+	if actor_is_loaded then has_comms() end -- Otherwise it seems that this callback happens before actor_on_first_update
+end
+
+local function actor_on_weapon_zoom_in(obj)
+	spike = 30
+end
+
+local function on_before_level_changing()
+	highest_suspicion = {value = 0, id = false}
+	printdbg("~ gameplay_disguise | cleaned suspicion")
+end
+
+local function on_key_press(key)
+	start_record = true
+	UnregisterScriptCallback("on_key_press",on_key_press)
+end
+
+local function save_state(m_data)
+	--m_data.disguise_default_comm = default_comm
+	m_data.disguise_state = is_disguised
+	m_data.disguise_highest_suspicion = highest_suspicion
+	
+	m_data.disguise_npcs_memory = npcs_memory
+	
+	-- Banjaji
+	m_data.disguise_previous_relation = previous_relation
+	m_data.disguise_can_communicate = can_communicate
+end
+
+local function load_state(m_data)
+	--default_comm = m_data.disguise_default_comm
+	is_disguised = m_data.disguise_state
+	highest_suspicion = m_data.disguise_highest_suspicion or highest_suspicion
+	
+	npcs_memory = m_data.disguise_npcs_memory or {}
+	
+	-- Banjaji
+	previous_relation = m_data.disguise_previous_relation
+	can_communicate = m_data.disguise_can_communicate or false
+end
+
+function on_game_start()
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
+	RegisterScriptCallback("actor_on_update",actor_on_update)
+	RegisterScriptCallback("npc_on_update",npc_on_update)
+	RegisterScriptCallback("npc_on_death_callback", npc_on_death_callback)
+	RegisterScriptCallback("on_before_level_changing",on_before_level_changing)
+	
+	RegisterScriptCallback("actor_on_item_take",actor_on_item_take)
+	RegisterScriptCallback("actor_on_item_drop",actor_on_item_drop)
+	RegisterScriptCallback("actor_on_weapon_zoom_in",actor_on_weapon_zoom_in)
+	RegisterScriptCallback("on_key_press",on_key_press)
+	
+	RegisterScriptCallback("on_option_change",update_settings)
+end
+
+
+------------------------------------------------------------
+-- Item Menu
+------------------------------------------------------------
+function menu_patch(obj) -- display option for tear patch
+	local p = obj:parent()
+	if not (p and p:id() == AC_ID) then return end
+	local section = obj:section()
+	local comm = ini_sys:r_string_ex(section,"community")
+	if comm and (comm ~= "") and possible_factions[comm] then
+		local id = obj:id()
+		local obj_patch = get_patch(comm)
+		
+		-- if patch is torn from this outfit, and there's an available patch in inventory
+		local state = se_load_var(id, obj:name(), "unpatched")
+		if state and obj_patch then
+			local str = game.translate_string("st_item_attach_patch")
+			local str_patch = ui_item.get_sec_name(get_patch(comm,true))
+			return strformat(str, str_patch)
+			
+		-- if patch is not torn from this outfit
+		elseif (state == nil) then
+			local str = game.translate_string("st_item_tear_patch")
+			local str_patch = ui_item.get_sec_name(get_patch(comm,true))
+			return strformat(str, str_patch)
+		end
+	end
+	return
+end
+
+function menu_patch_action(obj)
+	local section = obj:section()
+	local comm = ini_sys:r_string_ex(section,"community")
+	if comm and (comm ~= "") and possible_factions[comm] then
+		local id = obj:id()
+		local obj_patch = get_patch(comm)
+		
+		-- if patch is torn from this outfit, and there's an available patch in inventory
+		local state = se_load_var(id, obj:name(), "unpatched")
+		if state and obj_patch then
+			se_save_var( id, obj:name(), "unpatched", nil )
+			--alife_release(obj_patch)
+			actor_effects.play_item_fx("disguise_tear_patch")
+			
+			local str = game.translate_string("ui_st_disguse_patch_attach_now")
+			local str_patch = ui_item.get_sec_name(get_patch(comm,true))
+			disguise_equipment[7] = 0
+			--actor_menu.set_msg(1,  strformat(str,str_patch), 10 )
+			
+			if enable_debug then
+				printf("/ Disguise | attached patch to %s", section)
+			end
+			
+		-- if patch is not torn from this outfit
+		elseif (state == nil) then
+			se_save_var( id, obj:name(), "unpatched", true )
+			actor_effects.play_item_fx("disguise_tear_patch")
+			
+			local str = game.translate_string("ui_st_disguse_patch_torn_now")
+			local str_patch = ui_item.get_sec_name(get_patch(comm,true))
+			disguise_equipment[7] = 0
+			--actor_menu.set_msg(1,  strformat(str,str_patch), 10 )
+			
+			if enable_debug then
+				printf("/ Disguise | torn patch of %s", section)
+			end
+		end
+	end
+end
+
+
+------------------------------------------------------------
+-- HUD
+------------------------------------------------------------
+local h_tmr = 0
+local h_a = "=" 	-- bar shape (character)
+local h_bar = 15 	-- total bars
+local h_val = 1 	-- suspicion-meter
+local h_step = 10 -- step size for suspicion changes
+local h_time = 500 -- update step [ms]
+function hud_update()
+	local hud = get_hud()
+	local hud_d = hud:GetCustomStatic("bar_disguise")
+	local wnd
+	
+	if (not is_disguised) or (db.actor:is_talking()) then
+		if (hud_d ~= nil) then
+			hud:RemoveCustomStatic("bar_disguise")
+			hud_d = nil
+		end
+		return
+	end
+	
+	if (hud_d == nil) then
+		hud:AddCustomStatic("bar_disguise",true)
+		hud_d = hud:GetCustomStatic("bar_disguise")
+		wnd = hud_d:wnd()
+		if (wnd ~= nil) then
+			wnd:SetAutoDelete(true)
+		end
+	end
+	
+	-- Update time
+	local tg = time_global()
+	if h_tmr >= tg then
+		return
+	else
+		h_tmr = tg + h_time
+	end
+	
+	if (hud_d ~= nil) then
+		wnd = hud_d:wnd()
+		
+		-- Sliding bar
+		local val = highest_suspicion.value
+		if (val > h_val) and (val - h_val > h_step) then
+			h_val = h_val + h_step
+		elseif (val < h_val) and (h_val - val > h_step) then
+			h_val = h_val - h_step
+		end
+		h_val = clamp(h_val,0,100)
+		
+		-- Color
+		local str = hud_val_to_str(h_val)
+		local green = math.floor(255 * ((100 - h_val)/100))
+		local red = math.floor(255 * (h_val/100))
+		wnd:TextControl():SetTextST(str)
+		wnd:TextControl():SetTextColor(GetARGB(255, red, green, 50))
+	end
+end
+
+function hud_val_to_str(val)
+	local str = ""
+	local bars = (val > (h_step/2)) and math.floor((val/100)*h_bar) or 0
+	for i=1,bars do
+		str = str .. h_a
+	end
+	return str
+end
+
