@@ -1,0 +1,93 @@
+
+inspected_weapons = {}
+music = sound_object('grok\\grok_doom_inspect')
+
+
+function check_weapon(obj)
+    if IsWeapon(obj) then
+        sec = obj:section()
+        if inspected_weapons[sec] == 1 then
+            return
+        else
+            flag_weapon_id = obj:id()
+            inspected_weapons[sec] = 1
+            launch_timer = 1
+        end
+    end
+end
+
+function check_anim()
+	if block_repeat then return end
+    current_wpn = db.actor:active_item()
+    if(current_wpn) then
+        current_wpn_id = current_wpn:id()
+        current_wpn_sec = current_wpn:section()
+        if current_wpn_id == flag_weapon_id then
+            if launch_timer == 1 then
+                tg = time_global()
+                delay = tg + 800
+                launch_timer = 0
+            end
+
+            if time_global() > delay then 
+				local faction = get_actor_true_community()
+				if faction == "isg" or faction == "killer" then
+					lang = "_eng"
+				else
+					lang = ""
+				end
+                local idle_section = utils_item.addon_attached(current_wpn ,"gl") and (current_wpn:weapon_in_grenade_mode() and "anm_bore_g" or "anm_bore_w_gl") or "anm_bore"
+			    local hud = ini_sys:r_string_ex(current_wpn_sec, "hud")
+	            local bored_anim = hud and ini_sys:r_string_ex(hud,idle_section)
+                if bored_anim then
+                    music:play_no_feedback(db.actor, sound_object.s2d, 0, VEC_ZERO, 1.0, 1.0)
+				    local sound = ini_sys:r_string_ex(current_wpn_sec, "snd_bore") or "$no_sound"
+				    play_anim(current_wpn, idle_section, sound)
+                    voice = sound_object("grok\\actor_" .. math.random(1,11) .. "" .. lang)
+                    voice:play_no_feedback(db.actor, sound_object.s2d, 0, VEC_ZERO, 1.0, 1.0)
+                else
+					block_repeat = false
+				end
+                flag_weapon_id = nil
+            end
+        end
+    end
+end
+
+local function save_state(m_data)
+	m_data.inspected_weapons = inspected_weapons
+end
+
+local function load_state(m_data)
+	if (m_data.inspected_weapons) then
+		for k,v in pairs(m_data.inspected_weapons) do 
+			inspected_weapons[k] = v
+		end
+	end
+end
+
+function play_anim(weapon, anim, sound)
+	if not block_repeat then
+		block_repeat = true
+		local length = weapon:play_hud_motion(anim, true, 0, 1, 0)
+		if sound then
+			snd = sound_object(sound)
+			snd:play_no_feedback(db.actor, sound_object.s2d, 0, VEC_ZERO, 1.0, 1.0)
+		end				
+		CreateTimeEvent("grok_inspect", "restore", length/1000, unset)
+	end
+end
+
+function unset()
+	block_repeat = false
+	local current_weapon = db.actor:active_item()
+	current_weapon:switch_state(0)
+	return true
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_update",check_anim)
+    RegisterScriptCallback("actor_item_to_slot",check_weapon)
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+end
