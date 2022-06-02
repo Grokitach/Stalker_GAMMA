@@ -153,9 +153,9 @@ function actor_speak(file,sound_volume,cooldown,chance,requires_squad,has_priori
 	file_to_say.volume = sound_volume --sets how loud the sound should be
 	
 --	printf("actor sound played: " .. file) --prints out played files to the console log, debug purposes
-	
-	state_cooldown = time_global() + cooldown --applies the state cooldown, so that state sounds obey main cooldowns
-	if is_state == false then
+	if is_state then
+		state_cooldown = time_global() + cooldown --applies the state cooldown, so that state sounds obey main cooldowns
+	else
 		speaking_cooldown = time_global() + cooldown --applies the main cooldown
 	end
 	
@@ -289,31 +289,31 @@ function actor_on_update(binder,delta) --thinker function, handles conditional s
 		
 		
 		local hurt_volume = ( 1 - db.actor.health - (db.actor.health * 0.5) ) --sets the volume of the next hurt sound, gets louder the less health the actor has
-		local hurt_pause = 20000 * db.actor.health --sets the pause before the next hurt sound, it gets shorter the less health the actor has
+		local hurt_pause = 40000 * db.actor.health --sets the pause before the next hurt sound, it gets shorter the less health the actor has
 		local sprint_volume = ( 1 - db.actor.power - (db.actor.power * 0.5) ) --sets the volume of the next exhaustion sound, gets louder the less stamina the actor has
-		local sprint_pause = 8000 * db.actor.power --sets the pause before the next exhaustion sound, it gets shorter the less stamina the actor has
+		local sprint_pause = 12000 * db.actor.power --sets the pause before the next exhaustion sound, it gets shorter the less stamina the actor has
 		local psy_volume = ( 1 - arszi_psy.get_psy_health() - (arszi_psy.get_psy_health() * 0.5) ) --sets the volume of the next psy sound, gets louder the less psy-health the actor has
 		local sanity_pause = ( 7000 * arszi_psy.get_psy_health() ) --sets the pause before the next psy sound, it gets shorter the less psy-health the actor has	
 		local fear_pause = ( 20000 * arszi_psy.get_psy_health() ) --sets the pause before the next psy sound, it gets shorter the less psy-health the actor has	
 		local thirst_volume = ( actor_status_thirst.get_water_deprivation(true)* 0.2 )
-		local thirst_pause = 30000 / (actor_status_thirst.get_water_deprivation(true)*0.5 )
+		local thirst_pause = 65000 / (actor_status_thirst.get_water_deprivation(true)*0.5 )
 		local satiety_volume = ( 1 - db.actor:cast_Actor():conditions():GetSatiety() - (db.actor:cast_Actor():conditions():GetSatiety()* 0.5) )
-		local satiety_pause = 48000 * db.actor:cast_Actor():conditions():GetSatiety()
+		local satiety_pause = 96000 * db.actor:cast_Actor():conditions():GetSatiety()
 		local sleep_volume = (actor_status_sleep.get_sleep_deprivation(true)*0.2 )
-		local sleep_pause = 40000 / (actor_status_sleep.get_sleep_deprivation(true)*0.5 )
-		hurt_pause = clamp(hurt_pause,20000,25000) -- limits the hurt_pause value so the pause between sounds isn't too short or too long
-		sprint_pause = clamp(sprint_pause,8000,8500) -- limits the sprint_pause value so the pause between sounds isn't too short or too long
+		local sleep_pause = 120000 / (actor_status_sleep.get_sleep_deprivation(true)*0.5 )
+		hurt_pause = clamp(hurt_pause,40000,45000) -- limits the hurt_pause value so the pause between sounds isn't too short or too long
+		sprint_pause = clamp(sprint_pause,12000,12500) -- limits the sprint_pause value so the pause between sounds isn't too short or too long
 		sanity_pause = clamp(sanity_pause,7000,8000) 
 		fear_pause = clamp(fear_pause,20000,25000) -- limits the psy_pause value so the pause between sounds isn't too short or too long
-		thirst_pause = clamp(thirst_pause,30000,60000) -- new thirst clamp 
+		thirst_pause = clamp(thirst_pause,65000,95000) -- new thirst clamp 
 		satiety_pause = clamp(satiety_pause,96000,108000) -- new satiety clamp, set to long rn, more testing and soundcarpet needed
-		sleep_pause = clamp(sleep_pause,40000,80000)
+		sleep_pause = clamp(sleep_pause,120000,160000)
 		
 		--state sounds are played in their own priority order
 		--they are checked one by one and the next state sound will attempt to play only if conditions for the previous one weren't met
 		
 		if db.actor.health < 0.25 and hurt_volume > 0 then --critically hurt state sound has the highest priority and will always play over any other state sound
-			actor_speak("characters_voice\\player" .. lang .. "\\" .. muffle .. "hurt_bad_" .. math.random(20),3,hurt_pause,100,false,false,false,true) --plays the critically wounded sound
+			actor_speak("characters_voice\\player" .. lang .. "\\" .. muffle .. "hurt_bad_" .. math.random(20),2.5,hurt_pause,100,false,false,false,true) --plays the critically wounded sound
 		
 		elseif arszi_psy.get_psy_health() < 0.4 and psy_volume > 0 then --new citically psy-hurt sound 
 			actor_speak("characters_voice\\player" .. lang .. "\\" .. muffle .. "sanity_" .. math.random(9),psy_volume,sanity_pause,2000,false,false,false,true)	
@@ -325,16 +325,16 @@ function actor_on_update(binder,delta) --thinker function, handles conditional s
 			actor_speak("characters_voice\\player" .. lang .. "\\" .. muffle .. "exhausted_" .. math.random(62),sprint_volume,sprint_pause,100,false,false,false,true) --plays the exhausted sound
 		
 		elseif db.actor.health < 0.55 and hurt_volume > 0 then --normal hurt state will play if everything else fails to meet the conditions
-			actor_speak("characters_voice\\player" .. lang .. "\\" .. muffle .. "hurt_" .. math.random(13),3,hurt_pause,100,false,false,false,true) --plays the wounded sound
+			actor_speak("characters_voice\\player" .. lang .. "\\" .. muffle .. "hurt_" .. math.random(13),2.5,hurt_pause,100,false,false,false,true) --plays the wounded sound
 		
 		elseif actor_status_thirst.get_water_deprivation(true) > 0 and thirst_volume > 0 then 
-			actor_speak("characters_voice\\player" .. lang .. "\\" .. muffle .. "thirst_" .. math.random(7),1.5,thirst_pause,100,false,false,false,true)
+			actor_speak("characters_voice\\player" .. lang .. "\\" .. muffle .. "thirst_" .. math.random(7),1.3,thirst_pause,100,false,false,false,true)
 		
 		elseif db.actor:cast_Actor():conditions():GetSatiety() < 0.6 and satiety_volume > 0 then 
-			actor_speak("characters_voice\\player" .. lang .. "\\" .. muffle .. "hunger_" .. math.random(3),1.5,satiety_pause,100,false,false,false,true) -- new satiety sound call, adjust filename and corresponding math factor
+			actor_speak("characters_voice\\player" .. lang .. "\\" .. muffle .. "hunger_" .. math.random(3),1.3,satiety_pause,100,false,false,false,true) -- new satiety sound call, adjust filename and corresponding math factor
 		
 		elseif actor_status_sleep.get_sleep_deprivation(true) > 0 and sleep_volume > 0 then
-			actor_speak("characters_voice\\player" .. lang .. "\\" .. muffle .. "tired_" .. math.random(3),1.5,sleep_pause,100,false,false,false,true)
+			actor_speak("characters_voice\\player" .. lang .. "\\" .. muffle .. "tired_" .. math.random(3),1.3,sleep_pause,100,false,false,false,true)
 		
 		end
 	end
@@ -398,10 +398,10 @@ function actor_on_weapon_jammed(wpn) --plays responses to weapon jams
 	already_commented_this_jam = true --marks that we already tried to respond to this jam
 
 	if is_actor_in_squad() == true then --if actor is in a squad, call the speaker function with slightly different values
-		actor_speak("characters_voice\\player" .. lang .. "\\" .. muffle .. "gun_jam_" .. math.random(7),1.0,2000,100,true,false,false,false)
+		actor_speak("characters_voice\\player" .. lang .. "\\" .. muffle .. "gun_jam_" .. math.random(7),2,2000,100,true,false,false,false)
 		add_action_intensity(30,0.5,125)
 	else
-		actor_speak("characters_voice\\player" .. lang .. "\\" .. muffle .. "gun_jam_" .. math.random(6),1.0,2000,50,false,false,false,false)
+		actor_speak("characters_voice\\player" .. lang .. "\\" .. muffle .. "gun_jam_" .. math.random(7),2,2000,50,false,false,false,false)
 		add_action_intensity(35,0.5,150)
 	end
 	
