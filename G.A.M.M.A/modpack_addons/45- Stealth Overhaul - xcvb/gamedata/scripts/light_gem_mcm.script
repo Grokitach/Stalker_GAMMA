@@ -1,0 +1,56 @@
+-- RavenAscendant
+
+
+TINT_MAX = 245
+LUM_MULT = 1  -- multiplier applied to the luminosity value, higher generaly means lighter. too high and the gem won't get dark, to low and it won't get light. 
+-- both of these can be set from the debug menue. f7->0 light_gem.LUM_MULT = 1.9 into the execute text box then hit execute button. (typos will crash the game)
+
+FLASHLIGHT_PENALTY = .3 --flat value to make the gem jump as a reminder that you should shut off the light.
+
+GEM_ON = false
+
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_update",light_gem)
+end
+
+
+local gem
+
+function light_gem()
+	local hud = get_hud()
+	local cs = hud:GetCustomStatic("mp_warm_up") 
+		if (cs == nil) then 
+		hud:AddCustomStatic("mp_warm_up", true)
+		local xml = CScriptXmlInit()
+		xml:ParseFile("ui_light_gem.xml")
+		cs = hud:GetCustomStatic("mp_warm_up")
+		local w = cs:wnd()
+		local pos = w:GetWndPos()
+		if pos.x ~= 0 then
+			pos.x = 0
+			pos.y = 0
+			w:SetWndPos(pos)
+		end
+
+		gem = xml:InitStatic("gem", w )
+				
+	end
+	gem:Show(stealth_mcm.get_config("icon") or GEM_ON)
+	
+	local gem_lum = visual_memory_manager.icon_lum()
+	local torch = db.actor:item_in_slot(10)
+	local flash = db.actor:item_in_slot(9)
+
+	if (torch and torch:torch_enabled()) then
+		gem_lum = gem_lum + FLASHLIGHT_PENALTY --flat value to make the gem jump as a reminder that you should shut off the light
+	elseif (flash and (flash:section() == "device_flashlight") and db.actor:active_detector()) then
+		gem_lum = gem_lum + FLASHLIGHT_PENALTY --flat value to make the gem jump as a reminder that you should shut off the light
+	end
+	
+	local val = TINT_MAX - clamp(TINT_MAX * LUM_MULT * gem_lum, 0, TINT_MAX)
+
+	local gem_color = GetARGB(255,255-val,255-val,255-val)
+	gem:SetTextureColor(gem_color)
+
+end
