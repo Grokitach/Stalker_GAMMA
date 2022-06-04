@@ -1,0 +1,267 @@
+--[[
+	squads spawn only if "spawn_timer" game time passed
+	spawned squads are default vanilla's, so most of them have from 1 to 3 npcs
+	you can spawn whatever you want from squad_descr_default_stalkers.ltx or squad_descr_default_mutants.ltx (or make yours) as long as it does not have "story_id" in squad section
+
+	"factions" picks a random faction to spawn
+	"max_amount" will spawn squads until max_amount is reached
+	"ranks" picks a random rank
+	"smart_faction" spawned squads will have this faction (can even spawn mutants and they will guard it xd)
+
+	"squads" you can put certain squads that are gonna be spawned instead of "factions" and "ranks" here, need full squad section names (picked randomly)
+	
+
+	factions: stalker, dolg, freedom, csky, ecolog, killer, army, bandit, renegade, monolith, greh, isg
+	ranks: novice, advanced, veteran, alpha
+--]]
+
+local spawn_timer = 129600		-- 86400 = 1 day for each smart/squad
+
+local DELETE_ALL_GUARDS = false		-- if "true" it will delete all created guards on next loading
+local debugx = false		-- "M" sets update and respawn times to very low and spawn squads, "P" prints squads info, "K" delete guards
+
+local guards_t = {
+--------- Cordon ---------
+	-- rookie village
+	["esc_smart_terrain_2_12"] = { factions = { "stalker" }, max_amount = 2, ranks = { "novice" }, smart_faction = "stalker", squads = {} },
+	-- farm
+	["esc_smart_terrain_5_7"] = { factions = { "stalker" }, max_amount = 1, ranks = { "novice", "advanced" }, smart_faction = "stalker", squads = {} },
+	-- southern military outpost
+	["esc_smart_terrain_3_16"] = { factions = { "army" }, max_amount = 2, ranks = { "advanced" }, smart_faction = "army", squads = {} },
+
+--------- Swamps ---------
+	-- clear sky base
+	["mar_smart_terrain_8_11"] = { factions = { "ecolog" }, max_amount = 3, ranks = { "advanced", "veteran" }, smart_faction = "ecolog", squads = {} },
+	-- renegade base
+	["mar_smart_terrain_3_3"] = { factions = { "renegade" }, max_amount = 1, ranks = { "novice", "advanced" }, smart_faction = "renegade", squads = {} },
+
+--------- Garbage ---------
+	-- gates to bar
+	["gar_smart_terrain_5_2"] = { factions = { "dolg" }, max_amount = 1, ranks = { "novice", "advanced" }, smart_faction = "dolg", squads = {} },
+
+--------- Radar ---------
+	-- lab entrance
+	["rad_antenna_patrol"] = { factions = { "monolith" }, max_amount = 1, ranks = { "advanced", "veteran" }, smart_faction = "monolith", squads = {} },
+	["rad_antenna_monolith"] = { factions = { "monolith" }, max_amount = 1, ranks = { "advanced", "veteran", "alpha" }, smart_faction = "monolith", squads = {} },
+
+--------- Pripyat ---------
+	-- monolith base
+	["pri_monolith"] = { factions = { "monolith" }, max_amount = 2, ranks = { "veteran", "alpha" }, smart_faction = "monolith", squads = {} },
+}
+
+-- factions with weird mixed names
+local faction_name_replace = {
+	["dolg"] = "duty",
+	["killer"] = "merc",
+}
+
+-- some squads have different section names
+local squad_replace = {
+	["duty_sim_squad_alpha"] = "dolg_sim_squad_alpha",
+	["merc_sim_squad_alpha"] = "killer_sim_squad_alpha",
+	["ecolog_sim_squad_alpha"] = "ecolog_sim_squad_veteran",
+}
+
+local upd_tmr
+local upd_upd_tmr = 60000
+local prev_time
+local guarded_smarts = {}
+local ctime_to_t = utils_data.CTime_to_table
+local t_to_ctime = utils_data.CTime_from_table
+
+function spawn_guard()
+	local tg = time_global()
+	if (upd_tmr and tg < upd_tmr) then
+		return
+	end
+	upd_tmr = tg + upd_upd_tmr
+
+	local cur_game_time = game.get_game_time()
+	if not prev_time then
+		prev_time = ctime_to_t(cur_game_time)
+	end
+
+	local time_diff = cur_game_time:diffSec(t_to_ctime(prev_time))
+	if time_diff < spawn_timer then
+		pr("~ time_diff < spawn_timer || %s < %s", math.ceil(time_diff), spawn_timer)
+		return
+	end
+
+	prev_time = ctime_to_t(cur_game_time)
+
+	pr("------------- Spawning Squads -------------")
+	for smart_name, t in pairs(guards_t) do
+		pr("=================")
+		if t.max_amount > 0 and ( (not guarded_smarts[smart_name]) or ( #guarded_smarts[smart_name] < t.max_amount) ) then
+			local smart = SIMBOARD:get_smart_by_name(smart_name)
+
+			-- build squad section
+			local random_faction = is_not_empty(t.factions) and t.factions[math.random(#t.factions)]
+			random_faction = faction_name_replace[random_faction] or random_faction
+			local random_rank = is_not_empty(t.ranks) and t.ranks[math.random(#t.ranks)]
+			local squad_section = (random_faction and random_rank) and random_faction .. "_sim_squad_" .. random_rank
+			squad_section = squad_replace[squad_section] or squad_section
+
+			-- replace squads if "squads" field filled
+			if t.squads and is_not_empty(t.squads) then
+				squad_section = t.squads[math.random(#t.squads)]
+			end
+
+			-- spawn squad
+			local squad = smart and squad_section and ini_sys:section_exist(squad_section) and SIMBOARD:create_squad(smart, squad_section)
+
+			-- set this smart as target and add squad.id to table
+			if squad then
+				guarded_smarts[smart_name] = guarded_smarts[smart_name] or {}
+				table.insert(guarded_smarts[smart_name], squad.id)
+				pr("Spawning at smart_name: [ %s ] || squad_section: [ %s ] || current_amount: [ %s ] || max_amount: [ %s ]", smart_name, squad_section, #guarded_smarts[smart_name], t.max_amount)
+				squad.scripted_target = smart_name
+			end
+
+		else
+			pr("# No spawn, smart_name: [ %s ] || guards_amount: [ %s ] || max_amount: [ %s ]", smart_name, #guarded_smarts[smart_name], t.max_amount)
+		end
+	end
+	pr("---------------------------------------------")
+
+end
+
+function server_entity_on_unregister(squad)
+	for smart_name, t in pairs(guarded_smarts) do
+		for idx, squad_id in ipairs(t) do
+			if squad.id == squad_id then
+				table.remove(guarded_smarts[smart_name], idx)
+				pr("~ entity unregister || change guarded_smarts[%s] to: %s", smart_name, #guarded_smarts[smart_name])
+			end
+		end
+	end
+
+end
+
+function on_enemy_eval(obj, enemy, flags)
+	for smart_name, t in pairs(guarded_smarts) do
+		for i = 1, #t do
+			local squad = alife_object(t[i])
+
+			if squad and squad:commander_id() then
+				for se_npc in squad:squad_members() do
+					local npc = level.object_by_id(se_npc.id)
+					local smarts_faction = guards_t[smart_name] and guards_t[smart_name].smart_faction
+					if npc and smarts_faction then
+
+						local is_enemy
+
+						local enemys_faction = character_community(enemy)
+						local enemy_to_faction = game_relations.is_factions_enemies(smarts_faction, enemys_faction)
+
+						local objs_faction = character_community(obj)
+						local obj_to_faction = game_relations.is_factions_enemies(smarts_faction, objs_faction)
+
+
+						-- npc obj AND enemy hostile/friendly to faction (true/false)
+						if npc:id() == obj:id() then
+							is_enemy = enemy_to_faction
+
+						-- npc enemy AND obj hostile/friendly to faction (true/false)
+						elseif npc:id() == enemy:id() then
+							is_enemy = obj_to_faction
+						end
+
+						if is_enemy ~= nil and is_enemy == false then
+							flags.override = true
+							flags.result = false
+						end
+
+
+						-- guard vs guard
+						for ii = 1, #guarded_smarts[smart_name] do
+							local squad_2 = alife_object(guarded_smarts[smart_name][ii])
+							if squad_2 and squad_2:commander_id() then
+								for se_npc_2 in squad_2:squad_members() do
+									local npc_2 = level.object_by_id(se_npc_2.id)
+									if npc_2 and ( (npc:id() == obj:id() and npc_2:id() == enemy:id()) or (npc:id() == enemy:id() and npc_2:id() == obj:id()) ) then
+										flags.override = true
+										flags.result = false
+									end
+								end
+							end
+						end
+
+					end
+				end
+			end
+		end
+	end
+
+end
+---------------------------------------------------------------------------
+
+function delete_all_guards()
+	if not DELETE_ALL_GUARDS then return end
+
+	for smart_name, t in pairs(guarded_smarts) do
+		for i = 1, #t do
+			local squad = alife_object(t[i])
+			if squad then
+				pr("~ releasing squad_section: [ %s ] || squad_id: [ %s ]", squad:section_name(), t[i])
+				alife_release_id(t[i])
+			end
+		end
+	end
+
+	empty_table(guarded_smarts)
+
+end
+
+function on_key_press_dbg(key)
+	if not debugx then return end
+
+	if key == DIK_keys.DIK_M then
+		upd_upd_tmr = 1000
+		spawn_timer = 30
+		spawn_guard()
+
+	elseif key == DIK_keys.DIK_P then
+		pr("---- guarded_smarts ----- ")
+		for smart_name, t in pairs(guarded_smarts) do
+			pr("===== %s =====", smart_name)
+			for i = 1, #t do
+				local squad = alife_object(t[i])
+				if squad then
+					pr("section_name: [ %s ] || id: [ %s ]", squad:section_name(), t[i])
+					pr("--------------------")
+				end
+			end
+		end
+
+	elseif key == DIK_keys.DIK_K then
+		DELETE_ALL_GUARDS = true
+		delete_all_guards()
+	end
+
+end
+
+function save_state(m_data)
+	m_data.guarded_smarts = guarded_smarts
+    m_data.prev_time = prev_time
+end
+
+function load_state(m_data)
+	guarded_smarts = m_data.guarded_smarts or {}
+    prev_time = m_data.prev_time or nil
+end
+
+function pr(...)
+	if not debugx then return end
+	printf(...)
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_update", spawn_guard)
+	RegisterScriptCallback("server_entity_on_unregister", server_entity_on_unregister)
+	RegisterScriptCallback("on_enemy_eval", on_enemy_eval)
+	RegisterScriptCallback("actor_on_first_update", delete_all_guards)
+	RegisterScriptCallback("on_key_press", on_key_press_dbg)
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
+end
