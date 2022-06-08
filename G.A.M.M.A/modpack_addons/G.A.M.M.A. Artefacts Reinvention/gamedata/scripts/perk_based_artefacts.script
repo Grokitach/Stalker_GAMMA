@@ -1415,9 +1415,33 @@ artefact_props = { -- Special props of artefacts that are used in processing
 		effect_time = 7,
 		bleed_coeff = 0.0014, -- Bigger number => bigger bleeding damage
 		hit_coeff = 0.5,
+		pellet_count = 1,
 		on_before_hit = function(self, actor, artefact_count, artefact_ids, artefact_names, npc, s_hit, bone_id, flags)
 			local hit_k = self.hit_coeff
-			local bleeding_hit = s_hit.power * -self.bleed_coeff * artefact_count
+						
+			-- Stolen from GBOOBS. Shame me.
+			-- Suppossed some nice and wellspoken individuals would want shotguns to be fucking useless again.
+			-- So I did this patch:
+			
+			local shooter = s_hit.draftsman
+			wpn = level.object_by_id(s_hit.weapon_id)
+			sec = wpn:section()
+			
+			local wpn_id = wpn:id()
+			local ammo_type_number = wpn:get_ammo_type()
+			local ammo_list = utils_item.get_ammo(sec, wpn_id)
+			local ammo_section = ammo_list[ammo_type_number+1]
+			
+			self.pellet_count = 1
+			
+			if ammo_section == "ammo_12x70_buck" or ammo_section == "ammo_12x70_buck_bad" or ammo_section == "ammo_20x70_buck" then
+						self.pellet_count = 9
+						end
+			if ammo_section == "ammo_23x75_shrapnel" then	
+						self.pellet_count = 6
+					end
+			
+			local bleeding_hit = (s_hit.power / self.pellet_count) * -self.bleed_coeff * artefact_count
 			s_hit.power = s_hit.power * hit_k
 			
 			add_simple_timed_effect(self.effect_time, function()
