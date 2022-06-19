@@ -523,6 +523,15 @@ function npc_on_before_hit(npc,shit,bone_id)
 		if faction == "greh" then
 			sin_res = 0.25
 		end
+		
+--	/////// CHECK IF NPC IS FROM THE ISG FACTION TO REDUCE PENETRATION //////
+
+		local se_obj = alife_object(npc:id())
+		local faction = se_obj:community()
+		isg_res = 1
+		if faction == "isg" then
+			isg_res = 0.65
+		end
 
 --////////////// ACTUAL INTERESTING MATH PART ABOUT BALLISTICS //////////////
 
@@ -546,6 +555,7 @@ function npc_on_before_hit(npc,shit,bone_id)
 	end
 
 	if tonumber(bone_id) >= 16 and tonumber(bone_id) <= 18 then -- headshot bonus on unprotected parts
+		isg_res = 1
 		if ammo_section == "ammo_12x70_buck" or ammo_section == "ammo_12x70_buck_bad" or
 		   ammo_section == "ammo_20x70_buck" or ammo_section == "ammo_23x75_shrapnel" then
 			k_ap = ( k_ap + 0.017 )
@@ -556,7 +566,7 @@ function npc_on_before_hit(npc,shit,bone_id)
 
 	local k_ap = k_ap * custom_bone_ap_scale * barrel_condition_corrected -- reduce bullet ap following npc ap scale and barrel condition
 
-	k_ap = k_ap / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 )))
+	k_ap = k_ap / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * isg_res
 
 	shit.power = wpn_hit_power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * k_hit * custom_bone_dmg_mult * custom_bone_ap_scale * 1.1 * sniper_bad_bone_shit_reduce * barrel_condition_corrected * sin_res
 
