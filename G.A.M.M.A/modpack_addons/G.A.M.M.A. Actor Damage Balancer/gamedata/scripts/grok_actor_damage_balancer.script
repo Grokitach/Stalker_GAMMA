@@ -227,6 +227,12 @@ function get_protection(shit,bone_id,k_ap)
 
 	total_prot = 0
 	local actor = db.actor
+	
+	-- Special case for Headshot
+	headshot = 0
+	if hitboxes[bone_id] == "head" then
+		headshot = 1
+	end
 
 	-- Outfit protection
 	local armor_protection = 0
@@ -236,7 +242,11 @@ function get_protection(shit,bone_id,k_ap)
 		local cond = outfit:condition()
 		local c_outfit = outfit:cast_CustomOutfit()
 		if (c_outfit) then    
-			armor_protection = utils_item.get_outfit_protection( outfit , nil, protection) * cond * adjuster or 0
+			if protection == "FireWound" then
+				armor_protection = c_outfit:GetBoneArmor( BoneID["bip01_spine"] ) * cond * adjuster or 0
+			else
+				armor_protection = c_outfit:GetDefHitTypeProtection( hit_type ) * adjuster or 0
+			end
 			armor_hit_frac = ini_sys:r_float_ex(outfit:section(), "hit_fraction_actor") or 1
 			armor_bone_value = (1 - armor_hit_frac) * cond * 0.75 or 0
 		end
@@ -250,7 +260,11 @@ function get_protection(shit,bone_id,k_ap)
 		local cond = helmet:condition()
 		local c_helmet = helmet:cast_Helmet()
 		if (c_helmet) then    
-           	helmet_protection = utils_item.get_outfit_protection( helmet , nil, protection) * cond or 0
+			if protection == "FireWound" then
+				helmet_protection = c_helmet:GetBoneArmor( BoneID["bip01_head"] ) * cond * adjuster or 0
+			else
+				helmet_protection = c_helmet:GetDefHitTypeProtection( hit_type ) * adjuster or 0
+			end
 			helmet_hit_frac = ini_sys:r_float_ex(helmet:section(), "hit_fraction_actor") or 1
 			helmet_bone_value = (1 - helmet_hit_frac) * cond or 0  
         end
@@ -258,12 +272,39 @@ function get_protection(shit,bone_id,k_ap)
 
 	-- Artefacts protection
 	local artefacts_protection = 0
+	local artefacts_ap_res = 0
 	actor:iterate_belt( function(owner, obj)
 		local sec = obj:section()
 		local cond = obj:condition()
+		
+		af_bone_value = 0
+		prot = 0
+		
+		if sec == "af_kevlar" then
+			af_bone_value = 0.01
+		end
+		if sec == "af_kevlar_up" then
+			af_bone_value = 0.02
+		end
+		if sec == "af_plates" then
+			af_bone_value = 0.03
+		end
+		if sec == "af_plates_up" then
+			af_bone_value = 0.04
+		end
+		
 		local immunities_sec = SYS_GetParam(0, sec, "hit_absorbation_sect", sec)
 		local prot = SYS_GetParam(2, immunities_sec, immunity , 0) * cond
+		
+		if headshot == 1 then
+			if sec == "af_kevlar" or sec == "af_kevlar_up" or sec == "af_plates" or sec == "af_plates_up" then
+				prot = 0
+				af_bone_value = 0
+			end
+		end
+		
 		artefacts_protection = artefacts_protection + prot
+		artefacts_ap_res = artefacts_ap_res + af_bone_value
 	end)
 	artefacts_protection = artefacts_protection * 0.6 -- scale to the displayed inventory values more or less
 
@@ -274,12 +315,6 @@ function get_protection(shit,bone_id,k_ap)
 			booster_protection = booster_value
 		end
 	end)
-	
-	-- Special case for Headshot
-	headshot = 0
-	if hitboxes[bone_id] == "head" then
-		headshot = 1
-	end
 
 	if headshot == 1 then
 		armor_bone_value = 0
@@ -308,6 +343,9 @@ function get_protection(shit,bone_id,k_ap)
 		else
 			printf('ammo pen = %s', k_ap)	
 			printf('armor class = %s', armor_bone_value)
+			printf('plates armor class = %s', artefacts_ap_res)
+			armor_bone_value = armor_bone_value + artefacts_ap_res
+			printf('total armor class = %s', armor_bone_value)
 			if k_ap < armor_bone_value then
 				armor_protection = armor_protection * 0.2 + armor_bone_value * 1.3
 				printf("ammo didn't penetrate armor, damage reduction applied")
@@ -374,7 +412,9 @@ function shit_booster(shit, bone_id, k_ap)
 	shit.power = 0
 	db.actor:set_health_ex(db.actor.health - damage)
 	if no_pen == 0 then
-		db.actor:cast_Actor():conditions():AddWound(damage, hit_type, bone_id)
+		if shit.type == hit.fire_wound or shit.type == hit.wound then
+			db.actor:cast_Actor():conditions():AddWound(damage, hit_type, bone_id)
+		end
 	end
 	
 	if headshot == 1 then
@@ -425,12 +465,12 @@ function actor_on_before_hit(shit,bone_id)
 	
 		if (string.find(ammo_section, "buck")) then
 			printf("/// Reducing buckshots damage")
-			shit.power = shit.power / 4
+			shit.power = shit.power / 3
 		end
 
 	    if (string.find(ammo_section, "23x75")) then
 			printf("/// Reducing KS23 damage")
-			shit.power = shit.power / 9
+			shit.power = shit.power / 5
 		end
 		
 		if (string.find(ammo_section, "dart")) then
