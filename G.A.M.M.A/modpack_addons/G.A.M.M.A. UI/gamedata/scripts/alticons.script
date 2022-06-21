@@ -1,0 +1,76 @@
+--[[
+
+	Blackgrowl, Script made by RavenAscendant
+	2021/5/2
+	
+	AltIcons Script - Made so it's perfectly compatible with all other mods that use "actor_status.script"
+	
+--]]
+
+size_adjust = 0.75
+
+basethrst = actor_status_thirst.create
+	function actor_status_thirst.create()
+		basethrst()
+		actor_status.indicators["Thirst"]                 = { index= 3 	,typ= "state"	,functor= {"actor_status_thirst","get_water_deprivation",true}	                    ,icon= "ui\\alticons\\StatusThirst.dds"      ,background= "ui\\alticons\\bg1.dds"	,anim_icon= false	,anim_bk= false  }
+		
+	end 
+
+	basesleep = actor_status_sleep.create
+	function actor_status_sleep.create()
+		basesleep()
+		actor_status.indicators["Sleep"]                  = { index= 4 	,typ= "state"	,functor= {"actor_status_sleep","get_sleep_deprivation",true}	                    ,icon= "ui\\alticons\\StatusSleep.dds"      ,background= "ui\\alticons\\bg1.dds"	,anim_icon= false	,anim_bk= false  }
+	
+	end 
+    
+	-- functor must return number [1-4] if it's a state (to indicate the color), boosters will always use one color
+
+function on_game_start()
+		actor_status.indicators["Radiation"]       	   	 = { index= 1 	,typ= "state"	,functor= {"actor_status","get_radiation",true}	                    ,icon= "ui\\alticons\\StatusRadiation.dds"           ,background= "ui\\alticons\\bg3.dds"	,anim_icon= true	,anim_bk= false  }
+		actor_status.indicators["Hunger"]                 = { index= 2 	,typ= "state"	,functor= {"actor_status","get_satienty",true}	                    ,icon= "ui\\alticons\\StatusHunger.dds"      ,background= "ui\\alticons\\bg1.dds"	,anim_icon= false	,anim_bk= false  }
+		actor_status.indicators["Overweight"]             = { index= 5 	,typ= "state"	,functor= {"actor_status","get_overweight",true}	                ,icon= "ui\\alticons\\StatusOverweight.dds"  ,background= "ui\\alticons\\bg1.dds"	,anim_icon= false	,anim_bk= false  }
+
+		actor_status.indicators["HpRestore"]              = { index= 6 	,typ= "booster"	,functor= {"actor_status","get_boost","HpRestore",true}             ,icon= "ui\\alticons\\BuffHealing.dds"        ,background= "ui\\alticons\\bg2.dds"	,anim_icon= false	,anim_bk= false  ,anim_period= 5 }
+		actor_status.indicators["BleedingRestore"]        = { index= 7 	,typ= "booster"	,functor= {"actor_status","get_boost","BleedingRestore",true}       ,icon= "ui\\alticons\\BuffBleedRes.dds"         ,background= "ui\\alticons\\bg2.dds"	,anim_icon= false	,anim_bk= false  ,anim_period= 5 }
+		actor_status.indicators["RadiationRestore"]       = { index= 8 	,typ= "booster"	,functor= {"actor_status","get_boost","RadiationRestore",true}      ,icon= "ui\\alticons\\BuffRadRes.dds"           ,background= "ui\\alticons\\bg2.dds"	,anim_icon= false	,anim_bk= false  ,anim_period= 5 }
+		actor_status.indicators["MaxWeight"]              = { index= 9 	,typ= "booster"	,functor= {"actor_status","get_boost","MaxWeight",true}             ,icon= "ui\\alticons\\BuffCarryweight.dds"  ,background= "ui\\alticons\\bg2.dds"	,anim_icon= false	,anim_bk= false  ,anim_period= 5 }
+		actor_status.indicators["PowerRestore"]           = { index= 10	,typ= "booster"	,functor= {"actor_status","get_boost","PowerRestore",true}          ,icon= "ui\\alticons\\BuffStaminaRegen.dds"         ,background= "ui\\alticons\\bg2.dds"	,anim_icon= false	,anim_bk= false  ,anim_period= 5 }
+		actor_status.indicators["RadiationProtection"]    = { index= 11	,typ= "booster"	,functor= {"actor_status","get_boost","RadiationProtection",true}   ,icon= "ui\\alticons\\BoostRad.dds"       ,background= "ui\\alticons\\bg2.dds"	,anim_icon= false	,anim_bk= false  ,anim_period= 5 }
+		actor_status.indicators["TelepaticProtection"]    = { index= 12	,typ= "booster"	,functor= {"actor_status","get_boost","TelepaticProtection",true}   ,icon= "ui\\alticons\\BoostPsy.dds"           ,background= "ui\\alticons\\bg2.dds"	,anim_icon= false	,anim_bk= false  ,anim_period= 5 }
+		actor_status.indicators["ChemicalBurnProtection"] = { index= 13	,typ= "booster"	,functor= {"actor_status","get_boost","ChemicalBurnProtection",true},icon= "ui\\alticons\\BoostChem.dds"          ,background= "ui\\alticons\\bg2.dds"	,anim_icon= false	,anim_bk= false  ,anim_period= 5 }
+		actor_status.indicators["FireWoundImmunity"]      = { index= 14	,typ= "booster"	,functor= {"actor_status","get_boost","FireWoundImmunity",true},     icon= "ui\\alticons\\BoostFireWound.dds"          ,background= "ui\\alticons\\bg2.dds"	,anim_icon= false	,anim_bk= false  ,anim_period= 5 }
+end	
+
+
+
+function actor_status.UIIndicators:InitControls()
+	ratio = (device().height / device().width) / (768 / 1024)
+	self.W = 39 * size_adjust * ratio --Only change by amout of margin in the icon textures
+	self.offset = 2 * ratio * size_adjust -- controls the spacing between icons
+	
+	local xml = utils_xml.get_hud_xml()
+	
+	self.dialog = xml:InitStatic("indicators", self)
+	pos = self.dialog:GetWndPos()
+	self.dialog:SetWndPos( vector2():set(pos.x - 60, pos.y - 8)) --nudgeing it up slightly for reasons. might add an adjustment in game for this as well.
+	--utils_xml.correct_ratio(self.dialog)
+	self.dialog:Show(false)
+	
+	local t_size = size_table(actor_status.indicators)
+	for i=1,t_size do
+		local x = (i-1)*(self.W + self.offset)
+		if self.mirrored then
+			x = (1-i)*(self.W + self.offset)
+		end
+		
+		self.slot[i] = {}
+		self.slot[i].back_s = xml:InitStatic("indicators:static", self.dialog)
+		self.slot[i].back_f = xml:InitStatic("indicators:flashing", self.dialog)
+		self.slot[i].icon_s = xml:InitStatic("indicators:static", self.dialog)
+		self.slot[i].icon_f = xml:InitStatic("indicators:flashing", self.dialog)
+		for k, ele in pairs(self.slot[i]) do
+			ele:SetWndPos( vector2():set( x , 0 - ele:GetHeight() * (size_adjust -1 ) ))
+			ele:SetWndSize(vector2():set(ele:GetWidth() * ratio * size_adjust, ele:GetHeight() * size_adjust))
+		end
+	end
+end
