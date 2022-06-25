@@ -1,0 +1,194 @@
+
+local part_lookup
+
+local d_flag      = false
+local d_key       = "DIK_LSHIFT" -- Saftey key hold (Left Alt)
+
+function print_dbg(text, ...)
+    arti_debug_mcm.print_dbg("ammo_maker", text, ...)
+end
+
+-- break ammo down, returning an appropriate amount of items
+function breakdown(ammo, tool, batch)
+    local sec = ammo and ammo:section() or nil
+	local name = ui_item.get_sec_name(sec)
+	local delay = actor_effects.is_animations_on() and 3 or 0
+    local npc = db.actor--ammo:parent()
+	if (not npc) then
+		printf("~ breakdown | no owner found for [%s]", ammo:name())
+		return
+	end
+    if not sec then return end
+    
+    local to_breakdown = {}
+    if batch then
+        db.actor:iterate_ruck(function(temp, item)
+            if item:section() == sec then
+                table.insert(to_breakdown, item)
+            end
+        end)
+    else
+        to_breakdown[1] = ammo
+    end
+
+    local tbl = do_breakdown(to_breakdown, tool)
+
+    -- Increase Statistic
+    game_statistics.increment_statistic("items_disassembled")
+    
+    -- Animation
+    actor_effects.play_item_fx("disassemble_metal_fast")
+    CreateTimeEvent("ammo_maker","delay_disassembly" .. ammo:id(), delay, timer_disassembly_item, npc:id(), tbl, name)
+
+end
+
+function do_breakdown(ammo_list, tool)
+    if is_empty(ammo_list) then return {} end
+    local tbl = {}
+    local sec = ammo_list[1]:section()
+    
+    local salvage_coef = string.find(sec, "bad") and 0.4 or 0.9
+    local parts = part_lookup:r_value(sec, "parts")
+    local parts_map = str_explode(parts, ",")
+    local degrade = tonumber(part_lookup:r_value(sec, "degrade")) or 0.0001
+    local name = ui_item.get_sec_name(sec)
+
+    local tbl = {}
+
+    for k,v in pairs(ammo_list) do
+        -- short circuit if tool gets depleted
+        if not tool then return tbl end
+        local box_size = v:ammo_get_count()
+        local parts = part_lookup:r_value(sec, "parts")
+        print_dbg("Scrapping ammo %s with rounds %s", sec, box_size)
+        for i=1,#parts_map,2 do
+            local new_box_size = 0
+            local box_to_make = parts_map[i]
+            local base_amt = tonumber(parts_map[i+1])
+            print_dbg("Giving %s, base amount %s", box_to_make, base_amt)
+            -- new 1 by 1 formula for consistency
+            for i=1,box_size do 
+                if math.random() < salvage_coef then
+                    new_box_size = new_box_size + base_amt
+                end
+            end
+            print_dbg("Creating %s of %s", new_box_size, box_to_make)
+            if new_box_size > 0 then
+                if tbl[box_to_make] then 
+                    tbl[box_to_make] = tbl[box_to_make] + new_box_size
+                else
+                    tbl[box_to_make] = new_box_size
+                end
+            end
+        end
+        utils_item.discharge(v)
+        
+        utils_item.degrade(tool, degrade)
+    end
+    return tbl
+end
+
+function timer_disassembly_item(npc_id, table, name)
+    	-- Who is item owner? we must give them the parts
+	local npc = npc_id and get_object_by_id(npc_id)
+	if (not npc) then
+		printf("~ breakdown timer | no owner found")
+		return
+	end
+    for k,v in pairs(table) do
+        create_ammo(k, npc:position(), npc:level_vertex_id(), npc:game_vertex_id(), npc:id(), v)
+    end
+	-- CreateTimeEvent(npc:id(), "box_ammo_aggregation", 0, item_weapon.ammo_aggregation_full, npc:id())
+    
+    local parts_text = create_disassemble_list(table)
+	actor_menu.set_item_news("success", "weapon_ammo", "st_dis_text_11", name, game.translate_string("st_dis_text_9"), parts_text)
+
+    return true
+end
+
+
+function create_disassemble_list(t)
+	local str = ""
+	for k,v in pairs(t) do
+		str = str .. "\\n- " .. v .. " " .. ui_item.get_sec_name(k)
+	end
+	return str
+end
+
+Disassemble = item_parts.disassembly_item
+function wrap_disassemble(obj, obj_d, batch)
+	obj_d = obj_d or item_parts.get_suitable_dtool(obj)
+	if (not item_parts.is_suitable_dtool(obj, obj_d)) then
+		if IsWeapon(obj) then
+			actor_menu.set_item_news('fail', 'weapon', "st_dis_text_3", " ")
+		else
+			news_manager.send_tip(db.actor, game.translate_string("st_news_dis_items"), nil, "swiss_knife", 6000)
+		end
+		return
+	end
+
+    if part_lookup:section_exist(obj:section()) then
+        breakdown(obj, obj_d, batch)
+    else
+        item_parts.disassembly_item(obj, obj_d)
+    end
+end
+
+function item_parts.disassembly_item(obj, obj_d)
+	obj_d = obj_d or item_parts.get_suitable_dtool(obj)
+	if (not item_parts.is_suitable_dtool(obj, obj_d)) then
+		if IsWeapon(obj) then
+			actor_menu.set_item_news('fail', 'weapon', "st_dis_text_3", " ")
+		else
+			news_manager.send_tip(db.actor, game.translate_string("st_news_dis_items"), nil, "swiss_knife", 6000)
+		end
+		return
+	end
+
+    if part_lookup:section_exist(obj:section()) then
+        breakdown(obj, obj_d, false)
+    else
+        Disassemble(obj, obj_d)
+    end
+end
+
+function check_batch(obj)
+    local sec = obj:section()
+    if IsAmmo(obj) and part_lookup:section_exist(sec) then
+        return 'st_batch_breakdown'
+    end
+end
+
+NameCustom = ui_inventory.UIInventory.Name_Custom
+function ui_inventory.UIInventory:Name_Custom(obj, bag, temp, i)
+	obj = self:CheckItem(obj,"Name_Custom " .. i)
+	if i == 4 and IsAmmo(obj) then -- check unjam
+		return check_batch(obj)
+	else
+		return NameCustom(self, obj, bag, temp, i)
+	end
+end
+
+ActionCustom = ui_inventory.UIInventory.Action_Custom
+function ui_inventory.UIInventory:Action_Custom(obj, bag, temp, i)
+	obj = self:CheckItem(obj,"Action_Custom " .. i)
+	if i == 4 and IsAmmo(obj) then -- check unjam
+		wrap_disassemble(obj, nil, true)
+	else
+		ActionCustom(self, obj, bag, temp, i)
+	end
+end
+
+
+function on_game_start()
+    part_lookup 	= ini_file_ex("parts\\importer.ltx")
+    local ini_ammo = ini_file("items\\ammo\\importer.ltx")
+    ini_ammo:section_for_each(function(ammo)
+        local count = ini_ammo:line_count(ammo) or 0
+        for i=0,count-1 do
+            local result, id, value = ini_ammo:r_line(ammo , i , "", "")
+            print_dbg("assigning ammo %s recipe %s", id, value)
+            workshop_autoinject.add_override_recipe(id, value, 6)
+        end
+    end)
+end
