@@ -1,0 +1,248 @@
+local in_actor_ruck = utils_item.in_actor_ruck
+local rad_factor = 0.5 -- multiplier to artefact rad effect in ruck
+local rad_tg_step = 300 --[ms]
+local dgr_tg_step = 2000 --[ms]
+
+-- Load the defaults
+local function load_defaults()
+	local t = {}
+	local op = zz_item_artefact_mcm.op
+	for i, v in ipairs(op.gr) do
+		if v.def ~= nil then
+			t[v.id] = v.def
+		end
+	end
+	return t
+end
+local settings = load_defaults()
+settings.enable_condition_bar = true
+settings.enable_degraded_drops = true
+
+-- Artefact condition enable
+item_artefact.artefact_binder.net_spawn = function(self, se_abstract)
+	if not object_binder.net_spawn(self, se_abstract) then
+		return false
+	end
+	db.add_obj(self.object)
+	local artefact = self.object:get_artefact()
+	local id = self.object:id()
+	if bind_anomaly_zone.artefact_ways_by_id[id] ~= nil then
+		local anomal_zone = bind_anomaly_zone.parent_zones_by_artefact_id[id]
+		local force_xz	= anomal_zone.applying_force_xz
+		local force_y	= anomal_zone.applying_force_y
+		artefact:FollowByPath(bind_anomaly_zone.artefact_ways_by_id[id],bind_anomaly_zone.artefact_points_by_id[id],vector():set(force_xz,force_y,force_xz))
+--		artefact:FollowByPath(bind_anomaly_zone.artefact_ways_by_id[id],0,vector():set(force_xz,force_y,force_xz))
+	end
+
+	self.first_call = true 
+	
+	local tg = time_global()
+	self._tmr_rad = tg
+	self._tmr_dgr = tg
+	return true
+end
+
+item_artefact.artefact_binder.update = function(self, delta)
+	object_binder.update(self, delta)
+--	printf("pl:art [%s] pos %s", self.object:name(), vec_to_str(self.object:position()))
+	
+    if self.first_call == true then
+		local se_obj = alife_object(self.object:id())
+		if (se_obj) then
+			local m_data = alife_storage_manager.get_se_obj_state(se_obj, true)
+			if (m_data and m_data.offline_condition) then
+				printf("loaded condition for %s "..tonumber(m_data.offline_condition), se_obj:section_name())
+				self.object:set_condition(tonumber(m_data.offline_condition) or 0.9999999)
+				--m_data.offline_condition = nil
+			end
+		end								  
+		local ini = self.object:spawn_ini()
+		if not (ini and ini:section_exist("fixed_bone")) then
+			self.first_call = false
+			return
+		end
+		local bone_name = ini:r_string_ex("fixed_bone", "name")
+
+		local ph_shell = self.object:get_physics_shell()
+		if not ph_shell then
+			--printf("no ph shell")
+			return
+		end
+
+		local ph_element = ph_shell:get_element_by_bone_name(bone_name)
+
+		if ph_element:is_fixed() then
+			--printf("OBJECT FIXED")
+		else
+			--printf("FIXING OBJECT")
+			ph_element:fix()
+		end
+		
+		self.first_call = false
+
+
+    end	
+	
+		local obj = self.object
+		local cobj = obj:cast_Artefact()
+		if (not cobj) then
+			return
+		end
+		local tg = time_global()
+		local val = 0
+		
+		if (tg > self._tmr_rad) and (not self.no_rad) and in_actor_ruck(obj) then
+			self._tmr_rad = tg + rad_tg_step
+	
+		-- Get radiation restore speed
+		local rad_val = cobj.m_fRadiationRestoreSpeed or 0
+		
+		-- No process for artefacts with no / healing rad effect
+		if (self.no_rad == nil) then
+			self.no_rad = (rad_val <= 0)
+			if self.no_rad then
+				--print_dbg("Inventory radiation | artefact [%s] is not harmful -> exclude!", obj:name())
+				return
+			end
+		end
+
+		-- Apply radiation on actor
+		local rad_delta = rad_val * rad_factor
+		db.actor:change_radiation(rad_delta)
+		
+		--print_dbg("Inventory radiation | artefact: %s - radiation effect: %s", obj:name(), rad_delta)
+		end
+end
+
+item_artefact.artefact_binder.net_destroy = function(self, se_abstract)
+	db.del_obj(self.object)
+	object_binder.net_destroy(self)
+end
+
+item_artefact.artefact_binder.load = function(self, stpk)
+	object_binder.load(self,stpk)
+end
+
+item_artefact.artefact_binder.save = function(self, stpk)
+	object_binder.save(self,stpk)
+	local se_obj = alife_object(self.object:id())
+	if (se_obj) then
+		local m_data = alife_storage_manager.get_se_obj_state(se_obj, true)
+		if (m_data) then 
+			m_data.offline_condition = self.object:condition()
+			printf("saved condition for %s "..tonumber(m_data.offline_condition), se_obj:section_name())
+		end
+	end
+end
+
+se_artefact.se_artefact.on_register = function(self)
+    cse_alife_item_artefact.on_register(self)
+    -- Проверяем кастомдату обьекта на наличие стори айди.
+    story_objects.check_spawn_ini_for_story_id(self)
+    
+    -- persistent storage
+    alife_storage_manager.get_se_obj_state(self,true)
+
+    SendScriptCallback("server_entity_on_register",self,"se_artefact")
+end
+
+se_artefact.se_artefact.on_unregister = function(self)
+    local m_data = alife_storage_manager.get_state()
+    if (m_data.se_object) then
+        m_data.se_object[self.id] = nil
+    end
+    unregister_story_object_by_id(self.id)
+
+    SendScriptCallback("server_entity_on_unregister",self,"se_artefact")
+    cse_alife_item_artefact.on_unregister(self)
+end
+
+local is_degradable = utils_item.is_degradable
+local arts_degradable = {
+    ["i_arty"] = true,
+    ["i_arty_cont"] = true,
+    ["i_arty_junk"] = true,
+    ["i_attach"] = true,
+    ["i_mutant_belt"] = true,
+}
+
+local ignore_sec = {
+	["lead_box"] = true,
+	["af_iam"] = true,
+	["af_aam"] = true,
+	["af_aac"] = true,
+}
+
+local function is_art_degradable(obj, sec)
+    local section = obj and obj:section() or sec
+    return arts_degradable[SYS_GetParam(0, section, "kind", "")]
+end
+
+utils_item.is_degradable = function(obj, sec)
+    return is_degradable(obj, sec) or (settings.enable_degraded_drops and is_art_degradable(obj, sec))
+end
+
+local stats = utils_ui.prepare_stats_table
+local stats_table = utils_ui.stats_table
+utils_ui.prepare_stats_table = function()
+    if is_not_empty(stats_table) then return end
+    
+    stats()
+    stats_table["artefact"]["additional_inventory_weight"] = { index= 16, typ= "float",   name= "ui_inv_outfit_additional_weight",        icon_p= "ui_am_propery_08",                 icon_n= "ui_am_prop_carry_weight_negative", track= false, magnitude= 1000, unit = "st_g",    condition= true, compare= false, sign= true, show_always= false, section= nil }
+end
+
+-- Adding condtition bars
+base_add_bar = utils_ui.UICellItem.Add_ProgressBar
+local XMLP = CScriptXmlInit()
+XMLP:ParseFile("utils.xml")
+
+utils_ui.UICellItem.Add_ProgressBar = function(self, xml, obj, sec, clsid)
+    if settings.enable_condition_bar and (not self.bar) and self.path == "equipment:cont_belt" then
+        self.bar = XMLP:InitProgressBar("container:cell:bar", self.cell)
+
+            local h_bar = self.bar:GetHeight()
+        self.bar:SetWndPos(vector2():set( 0 , (self.H - h_bar)))
+    end
+    base_add_bar(self, xml, obj, sec, clsid)
+end
+
+local get_param = SYS_GetParam
+local function new_get_param(typ, sec, param, def)
+    if settings.enable_condition_bar and param == "use_condition" and arts_degradable[get_param(0, sec, "kind", "")] and not ignore_sec[sec] then
+        return true
+    else
+        return get_param(typ, sec, param, def)
+    end
+end
+
+ui_inventory.SYS_GetParam = new_get_param
+utils_ui.SYS_GetParam = new_get_param
+
+-- Adding mutant loot condition setup
+local create_part = alife_create_item
+local function new_create_part(section, obj, t)
+	t.cond_r = {settings.mutant_part_condition_min, settings.mutant_part_condition_max}
+	t.cond_cr = {settings.mutant_part_condition_min, settings.mutant_part_condition_max}
+	return create_part(section, obj, t)
+end  
+
+ui_mutant_loot.alife_create_item = new_create_part
+if zz_ui_mutant_loot_hunter_backpacks then zz_ui_mutant_loot_hunter_backpacks.alife_create_item = new_create_part end -- Hunting Backpacks DLTX
+
+local function on_option_change()
+	settings = load_defaults()
+	if ui_mcm then
+		for k, v in pairs(settings) do
+			settings[k] = ui_mcm.get("item_artefact/" .. k)
+		end
+		
+		settings.enable_condition_bar = true
+		settings.enable_degraded_drops = true
+	end
+	
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", on_option_change)
+	RegisterScriptCallback("on_option_change", on_option_change)
+end
