@@ -864,28 +864,42 @@ end
 
 --[TB] CONSTANTLY RUNS TO CHECK IF PLAYER HOLDING RF RECEIVER AND CALL EXTRA BEEPS FUNCTION (IF PACKAGE EXISTS IN SAME LEVEL)
 --[TB] ALSO CHECKS PLAYER DISTANCE FROM PACKAGE FOR CHANCE SPAWNING ENEMY NPCS
+
+trigger = 0
+delay = 2000
+
 function actor_on_update()
-	if (tb_package_active == true) and tb_package_in_level == level.name() then
-		local tg = time_global()
-		if tb_package_in_level ~= "l05_bar" then
-			if (tg > tb_tg_badguys) then
-				tb_tg_badguys = tg + 2000
-				if tb_badguy_spawned == false then
-					local dist_to_package = db.actor:position():distance_to(alife():object(tb_target_item).position)
-					if (dist_to_package < 100) then
-						spawn_some_badguys()
-						tb_badguy_spawned = true
+	tg = time_global()
+	
+	if trigger == 0 then
+       		grok_delay = tg + delay
+		trigger = 1
+	end
+	
+	if (trigger == 1 and tg > grok_delay) then
+		trigger = 0
+		if (tb_package_active == true) and tb_package_in_level == level.name() and  tb_target_item ~= 0 then
+			local tg = time_global()
+			if tb_package_in_level ~= "l05_bar" then
+				if (tg > tb_tg_badguys) then
+					tb_tg_badguys = tg + 2000
+					if tb_badguy_spawned == false then
+						local dist_to_package = db.actor:position():distance_to(alife():object(tb_target_item).position)
+						if (dist_to_package < 100) then
+							spawn_some_badguys()
+							tb_badguy_spawned = true
+						end
 					end
 				end
 			end
-		end
-		local obj_det = db.actor:active_detector()
-		if not (obj_det and obj_det:section() == tb_device and obj_det:condition() >= obj_det:power_critical()) then
-			return
-		end
-		if (tg > tb_tg_scan) then
-			tb_tg_scan = tg + tb_scan_time
-			boop_if_nearby()
+			local obj_det = db.actor:active_detector()
+			if not (obj_det and obj_det:section() == tb_device and obj_det:condition() >= obj_det:power_critical()) then
+				return
+			end
+			if (tg > tb_tg_scan) then
+				tb_tg_scan = tg + tb_scan_time
+				boop_if_nearby()
+			end
 		end
 	end
 end
