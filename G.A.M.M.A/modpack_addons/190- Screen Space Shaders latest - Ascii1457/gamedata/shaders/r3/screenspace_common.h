@@ -1,5 +1,5 @@
 // Screen Space Shaders - MAIN File
-// Update 6 [ 2022/05/24 ]
+// Update 7 [ 2022/06/27 ]
 
 #define SSFX_READY
 
@@ -7,6 +7,8 @@
 #include "hmodel.h"
 
 #include "check_screenspace.h"
+
+uniform float4 sky_color;
 
 static const float4 SSFX_ripples_timemul = float4(1.0f, 0.85f, 0.93f, 1.13f); 
 static const float4 SSFX_ripples_timeadd = float4(0.0f, 0.2f, 0.45f, 0.7f);
@@ -27,9 +29,26 @@ bool SSFX_is_valid_uv(float2 value) { return (value.x >= 0.0f && value.x <= 1.0f
 
 float2 SSFX_view_to_uv(float3 Pos)
 {
-    float4 tc = mul(m_P, float4(Pos, 1));
-    return (tc.xy / tc.w) * float2(0.5f, -0.5f) + 0.5f;
+	float4 tc = mul(m_P, float4(Pos, 1));
+	return (tc.xy / tc.w) * float2(0.5f, -0.5f) + 0.5f;
 }
+
+
+float3 SSFX_yaw_vector(float3 Vec, float Rot)
+{
+	float s = sin(Rot);
+	float c = cos(Rot);
+	
+	// y-axis rotation matrix
+	float3x3 rot_mat = 
+	{
+		c, 0, s,
+		0, 1, 0,
+		-s, 0, c
+	};
+	return mul(rot_mat, Vec);
+}
+
 
 float SSFX_get_depth(float2 tc, uint iSample : SV_SAMPLEINDEX)
 {
@@ -39,6 +58,7 @@ float SSFX_get_depth(float2 tc, uint iSample : SV_SAMPLEINDEX)
 		return s_position.Load(int3(tc * screen_res.xy, 0), iSample).z;
 	#endif
 }
+
 
 float3 SSFX_get_position(float2 tc, uint iSample : SV_SAMPLEINDEX)
 {
@@ -65,9 +85,9 @@ RayTrace SSFX_ray_init(float3 ray_start_vs, float3 ray_dir_vs, float ray_max_dis
     float2 ray_end  = SSFX_view_to_uv(ray_end_vs);
 
     // Compute ray step
-    float2 ray_dist	= ray_end - rt.r_start;
-    rt.r_step     	= ray_dist / (float)ray_steps; 
-	rt.r_length   	= length(ray_dist);
+    float2 ray_diff	= ray_end - rt.r_start;
+    rt.r_step     	= ray_diff / (float)ray_steps; 
+	rt.r_length   	= length(ray_diff);
 	
 	rt.r_pos 		= rt.r_start + rt.r_step * noise;
 	
@@ -94,7 +114,7 @@ float4 SSFX_get_fast_scenelighting(float2 tc, uint iSample : SV_SAMPLEINDEX)
 		float4 C = s_diffuse.Sample( smp_nofilter, tc );
 	#else
 		float4 rL = s_accumulator.Load(int3(tc * screen_res.xy, 0), iSample);
-		float4 C = s_diffuse.Load( int3( tc * screen_res.xy, 0 ), iSample );
+		float4 C = s_diffuse.Load(int3( tc * screen_res.xy, 0 ), iSample);
 	#endif
 	
 	#ifdef SSFX_ENHANCED_SHADERS // We have Enhanced Shaders installed
@@ -103,13 +123,13 @@ float4 SSFX_get_fast_scenelighting(float2 tc, uint iSample : SV_SAMPLEINDEX)
 		
 		rL.rgb += rL.a * SRGBToLinear(C.rgb);
 		
-		return float4( LinearTosRGB((rL.rgb + hdiffuse) * saturate(rL.rrr * 100)), C.w );
+		return float4(LinearTosRGB((rL.rgb + hdiffuse) * saturate(rL.rrr * 100)), C.w);
 		
 	#else
 		
 		float3 hdiffuse = C.rgb + L_ambient.rgb;
 
-		return float4( (rL.rgb + hdiffuse) * saturate(rL.rrr * 100), C.w );
+		return float4((rL.rgb + hdiffuse) * saturate(rL.rrr * 100), C.w);
 		
 	#endif
 }
@@ -118,7 +138,7 @@ float4 SSFX_get_fast_scenelighting(float2 tc, uint iSample : SV_SAMPLEINDEX)
 float3 SSFX_get_scenelighting(float2 tc, uint iSample : SV_SAMPLEINDEX)
 { 
 	// Same way of building color and lighting in "combine_1.ps" but we can sample a especific uv
-	gbuffer_data rgbd = gbuffer_load_data( GLD_P(tc, tc * screen_res.xy, iSample) );
+	gbuffer_data rgbd = gbuffer_load_data(GLD_P(tc, tc * screen_res.xy, iSample));
 	
 	// Sky from albedo
 	if (rgbd.mtl <= 0.05)
@@ -172,17 +192,28 @@ float3 SSFX_get_scenelighting(float2 tc, uint iSample : SV_SAMPLEINDEX)
 	#endif
 }
 
+
 #ifndef REFLECTIONS_H
-	TextureCube	s_env0;
-	TextureCube	s_env1;
+	TextureCube s_env0;
+	TextureCube s_env1;
 #endif
 
 float3 SSFX_calc_sky(float3 dir)
 {
-	dir.y = dir.y * 2 - 0.5;
+	dir = SSFX_yaw_vector(dir, -sky_color.w); // Sky rotation
+	
+	dir.y = (dir.y - max(cos(dir.x) * 0.65f, cos(dir.z) * 0.65f)) * 2.1f; // Fix perspective
+	dir.y -= -0.35; // Altitude
+	
 	float3 sky0 = s_env0.SampleLevel(smp_base, dir, 0).xyz;
 	float3 sky1 = s_env1.SampleLevel(smp_base, dir, 0).xyz;
-	return lerp(sky0, sky1, L_ambient.w);
+	
+	// Use hemi color or real sky color if the modded executable is installed.
+#ifndef SSFX_MODEXE
+	return saturate(L_hemi_color.rgb * 3.0f) * lerp(sky0, sky1, L_ambient.w);
+#else
+	return saturate(sky_color.bgr * 3.0f) * lerp(sky0, sky1, L_ambient.w);
+#endif
 }
 
 
@@ -190,25 +221,25 @@ float3 SSFX_calc_sky(float3 dir)
 // 1.3f water ~ 1.5f glass ~ 1.8f diamond
 float SSFX_calc_fresnel(float3 V, float3 N, float ior)
 {
-    float cosi = clamp(-1, 1, dot(V, N)); 
-    float etai = 1, etat = ior; 
-    if (cosi > 0) 
-	{ 
-		etai = ior; 
-		etat = 1; 
-	} 
-    // Compute sini using Snell's law
-    float sint = etai / etat * sqrt(max(0.f, 1 - cosi * cosi)); 
-    // Total internal reflection
-    if (sint >= 1) 
-        return 1.0f; 
-   
-	float cost = sqrt(max(0.f, 1 - sint * sint)); 
+	float cosi = clamp(-1, 1, dot(V, N));
+	float etai = 1, etat = ior;
+	if (cosi > 0)
+	{
+		etai = ior;
+		etat = 1;
+	}
+	// Compute sini using Snell's law
+	float sint = etai / etat * sqrt(max(0.f, 1 - cosi * cosi));
+	// Total internal reflection
+	if (sint >= 1)
+		return 1.0f;
+
+	float cost = sqrt(max(0.f, 1 - sint * sint));
 	cosi = abs(cosi); 
-	float Rs = ((etat * cosi) - (etai * cost)) / ((etat * cosi) + (etai * cost)); 
-	float Rp = ((etai * cosi) - (etat * cost)) / ((etai * cosi) + (etat * cost)); 
-	
-	return (Rs * Rs + Rp * Rp) / 2; 
+	float Rs = ((etat * cosi) - (etai * cost)) / ((etat * cosi) + (etai * cost));
+	float Rp = ((etai * cosi) - (etat * cost)) / ((etai * cosi) + (etat * cost));
+
+	return (Rs * Rs + Rp * Rp) / 2;
 }
 
 
@@ -225,6 +256,7 @@ float3 SSFX_computeripple(float4 Ripple, float CurrentTime, float Weight)
 
     return float3(Ripple.yz * FinalFactor * 0.65f, 1.0f);
 }
+
 
 float3 SSFX_ripples( Texture2D ripple_tex, float2 tc ) 
 {
