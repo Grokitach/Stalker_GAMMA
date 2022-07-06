@@ -1,0 +1,56 @@
+[logic]
+active = sr_idle@lttz_ll_start
+
+[sr_idle@lttz_ll_start]
+on_info = {=actor_has_item(x8_documents)} %+x8_documents%
+on_info2 = {+living_legend_strelok_preparations} sr_idle@lttz_ll_prep
+
+[sr_idle@lttz_ll_prep]
+on_info = {+living_legend_strelok_eidolon} sr_idle@lttz_oa_start %=give_task(lttz_ll_eidolon_start)%
+
+[sr_idle@lttz_oa_start]
+on_info = {=actor_on_level(pripyat) +operation_afterglow_jupiter_final} sr_idle@lttz_oa_strelok_spawn %=clear_smart_terrain(pri_a17) =clear_smart_terrain(pri_a28_shop)%
+
+[sr_idle@lttz_oa_strelok_spawn]
+on_info = {=actor_on_level(pripyat) +operation_afterglow_jupiter_final} sr_idle@lttz_oa_attack %=create_squad(stalker_strelok_oa_squad:pri_a17) =clear_smart_terrain(pri_a25_smart_terrain) =clear_smart_terrain(pri_sim_1) =clear_smart_terrain(pri_a28_heli)%
+
+[sr_idle@lttz_oa_attack]
+on_game_timer = 240 | sr_idle@lttz_oa_wait %=pripyat_strelok_message() =give_task(lttz_oa_strelok)%
+
+[sr_idle@lttz_oa_wait]
+on_info = {+pri_a16_strelok_reached} sr_idle@lttz_oa_strelok_team %=create_squad(pri_a16_stalker_strelok_oa_squad:pri_a16)%
+
+[sr_idle@lttz_oa_strelok_team]
+on_info = {=actor_near_smart(pri_a25_smart_terrain:50) +pri_a16_strelok_dialogue -lttz_oa_rogue} %=pripyat_rogue_message() =give_task(lttz_oa_rogue) +lttz_oa_rogue%
+on_info2 = {=actor_in_zone(pri_a28_sr_big) +pri_a16_strelok_dialogue -lttz_oa_stitch} %=pripyat_stitch_message() =give_task(lttz_oa_stitch) +lttz_oa_stitch%
+on_info3 = {=actor_has_item(drug_psy_blockade) +stalker_rogue_dialog_oa_help_psycho} %+actor_has_psy_block%
+on_info4 = {!actor_has_item(drug_psy_blockade) +stalker_rogue_dialog_oa_help_psycho} %-actor_has_psy_block%
+on_info5 = {+stalker_rogue_dialog_oa_lost -rogue_enemy} %=lttz_set_squad_enemy_to_actor(stalker_rogue) +rogue_enemy%
+on_info6 = {+pri_a18_rogue_inside -rogue_respawn} %=create_squad(pri_a16_stalker_rogue_oa_squad:pri_a16) +rogue_respawn%
+on_info7 = {+pri_a28_stitch_inside -stitch_respawn} %=create_squad(pri_a16_stalker_stitch_oa_squad:pri_a16) +stitch_respawn%
+on_info8 = {+lttz_oa_rogue_done +lttz_oa_stitch_done} sr_idle@lttz_oa_wait2 %=clear_smart_terrain(pri_b35_mercs)%
+
+[sr_idle@lttz_oa_wait2]
+on_info = {!actor_in_zone(pri_surge_hide_a16) +pri_a16_strelok_dialogue_team} sr_idle@lttz_oa_response %=pripyat_degtyarev_message() =create_squad(degtyarev_pri_b35_squad:pri_b35_mercs) =create_squad(tarasov_pri_b35_squad:pri_b35_mercs)%
+
+[sr_idle@lttz_oa_response]
+on_game_timer = 100 | sr_idle@lttz_oa_finale %=pripyat_strelok_message2() =give_task(lttz_oa_loose_ends) =clear_smart_terrain(pri_sim_5) =clear_smart_terrain(pri_b35_military) =clear_smart_terrain(pri_b305_dogs)%
+
+[sr_idle@lttz_oa_finale]
+on_info = {+degtyarev_finale_defiant_choice} sr_idle@lttz_oa_finale2 %=lttz_set_squad_enemy_to_actor(army_degtyarev) =lttz_set_squad_enemy_to_actor(tarasov_pri_b35_squad)%
+on_info2 = {+degtyarev_finale_military_choice =actor_in_zone(pri_a16_sr_light)} sr_idle@lttz_oa_finale2 %=lttz_set_squad_enemy_to_actor(stalker_stitch) =lttz_set_squad_enemy_to_actor(stalker_rogue) =lttz_set_squad_enemy_to_actor(lost_stalker_strelok)%
+on_info3 = {+strelok_choice_fight =dist_to_actor_le(100)} sr_idle@lttz_oa_finale2 %=lttz_set_squad_enemy_to_actor(army_degtyarev) =lttz_set_squad_enemy_to_actor(tarasov_pri_b35_squad)%
+on_info4 = {=actor_in_zone(pri_b35_sr_mercs) +strelok_choice_negotiate} sr_idle@lttz_oa_finale2 %=pripyat_unisg_message() =create_squad(isg_pripyat_squad:pri_b305_dogs) +pripyat_isg_threat%
+
+[sr_idle@lttz_oa_finale2]
+on_info = {+strelok_finale_fight_dialogue} sr_idle@ending_credits %=remove_special_companion_squad(stalker_rogue:stalker_stitch:lost_stalker_strelok) +operation_afterglow_complete%
+on_info2 = {+degtyarev_finale_military_dialogue} sr_idle@ending_credits %=remove_special_companion_squad(army_degtyarev:tarasov_pri_b35_squad) =complete_task_inc_goodwill(50:army:army_npc) +operation_afterglow_complete%
+on_info3 = {+degtyarev_finale_negotiator_dialogue} sr_idle@good_ending %=remove_special_companion_squad(army_degtyarev:tarasov_pri_b35_squad) =complete_task_inc_goodwill(100:army:army_npc)%
+
+[sr_idle@good_ending]
+on_info = {+strelok_finale_negotiator_dialogue} sr_idle@ending_credits %=remove_special_companion_squad(stalker_rogue:stalker_stitch:lost_stalker_strelok) =complete_task_inc_goodwill(50:stalker) +operation_afterglow_complete%
+
+[sr_idle@ending_credits]
+on_info = {+lttz_oa_loose_ends_done} sr_idle@nil %=game_credits()%
+
+[sr_idle@nil]
