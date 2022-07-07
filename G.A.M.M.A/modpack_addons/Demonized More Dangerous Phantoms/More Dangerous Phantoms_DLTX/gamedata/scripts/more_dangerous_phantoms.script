@@ -1,0 +1,36 @@
+damage_radius = 3
+
+function change_psy_health(amount)
+    local m_data = alife_storage_manager.get_state() 
+    arszi_psy.save_state(m_data)
+    local psy_table = m_data.psy_table
+    psy_table.actor_psy_health = psy_table.actor_psy_health + amount
+end
+
+function give_psy_damage(obj)
+	if not obj then return end
+
+	local sec = obj:section()
+	local contact_hit = SYS_GetParam(2, sec, "contact_hit")
+	if not contact_hit then return end
+
+	local dist = obj:position():distance_to(db.actor:position())
+	local coeff = 1 - dist / damage_radius
+	local damage = contact_hit * coeff
+	if damage > 0 then
+		-- print_tip("fantom %s, dist %s, coeff %s, damage %s, contact_hit %s", obj:name(), dist, coeff, damage, contact_hit)
+		change_psy_health(-damage)
+	end
+end
+
+phantom_death = phantom_manager.Phantom.net_destroy
+phantom_manager.Phantom.net_destroy = function(self)
+	give_psy_damage(self.object)
+	phantom_death(self)
+end
+
+DynamicPhantom_death = phantom_manager.DynamicPhantom.net_destroy
+phantom_manager.DynamicPhantom.net_destroy = function(self)
+	give_psy_damage(self.object)
+	DynamicPhantom_death(self)
+end
