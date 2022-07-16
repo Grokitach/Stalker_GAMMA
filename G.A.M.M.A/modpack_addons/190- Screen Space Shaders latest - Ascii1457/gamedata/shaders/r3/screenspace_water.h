@@ -1,5 +1,10 @@
-// Screen Space Shaders - Water File
-// Update 7 [ 2022/06/27 ]
+/**
+ * @ Version: SCREEN SPACE SHADERS - UPDATE 8
+ * @ Description: Water implementation
+ * @ Modified time: 2022-07-13 08:39
+ * @ Author: https://www.moddb.com/members/ascii1457
+ * @ Mod: https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders
+ */
 
 #include "screenspace_common.h"
 #include "settings_screenspace_WATER.h"
@@ -23,7 +28,7 @@ float3 SSFX_ssr_water_ray(float3 ray_start_vs, float3 ray_dir_vs, float noise, u
 	float RayThick = clamp( 48.0f / q_steps[G_SSR_WATER_QUALITY].x, 1.0f, 3.0f);
 
 	// Initialize Ray
-	RayTrace ssr_ray = SSFX_ray_init(ray_start_vs, ray_dir_vs, 150, q_steps[G_SSR_WATER_QUALITY].x, noise); // 300?
+	RayTrace ssr_ray = SSFX_ray_init(ray_start_vs, ray_dir_vs, 150, q_steps[G_SSR_WATER_QUALITY].x, noise);
 
 	// Depth from the start of the ray
 	float ray_depthstart = SSFX_get_depth(ssr_ray.r_start, iSample);
@@ -39,13 +44,16 @@ float3 SSFX_ssr_water_ray(float3 ray_start_vs, float3 ray_dir_vs, float noise, u
 		// Ray intersect check ( x = difference | y = depth sample )
 		float2 ray_check = SSFX_ray_intersect(ssr_ray, iSample);
 
-		// Don't want interaction with weapons and sky ( SKY_EPS float(0.001) )
-		ray_check.x *= ray_check.y > 1.3f;
+		// Sampled depth is not weapon or sky ( SKY_EPS float(0.001) )
+		bool NoWpnSky = ray_check.y > 1.3f;
+
+		// Don't want interaction with weapons or sky
+		ray_check.x *= NoWpnSky;
 
 		// Depth difference positive...
 		if (ray_check.x > 0)
 		{
-			// Conditions to use as reflections...
+			// Conditions to use as reflection...
 			if (ray_check.x <= RayThick || (ray_depthstart + 40.0f < ray_check.y))
 				return float3(ssr_ray.r_pos, ray_check.y);
 
@@ -79,7 +87,6 @@ float3 SSFX_ssr_water_ray(float3 ray_start_vs, float3 ray_dir_vs, float noise, u
 			// Restore previous ray position & step
 			ssr_ray.r_pos = prev_step.xy;
 			ssr_ray.r_step = prev_step.zw;
-			ssr_ray.r_pos += ssr_ray.r_step;
 		}
 		else
 		{
@@ -87,11 +94,14 @@ float3 SSFX_ssr_water_ray(float3 ray_start_vs, float3 ray_dir_vs, float noise, u
 			behind_hit = float3(ssr_ray.r_pos, ray_check.y);
 
 			// Reset or keep depending on... ( > 1.3f = no interaction with weapons and sky )
-			behind_hit *= (ray_depthstart - 2.0f < ray_check.y) && ray_check.y > 1.3f;
+			behind_hit *= (ray_depthstart - 2.0f < ray_check.y) && NoWpnSky;
 		}
 
-		// Step ray
-		ssr_ray.r_pos += ssr_ray.r_step;
+		// Pass through condition
+		bool PTh = (!NoWpnSky && ray_check.y > 0.01f && step > q_steps[G_SSR_WATER_QUALITY].x * 0.4f);
+
+		// Step ray... Try to pass through closer objects ( Like weapons and sights )
+		ssr_ray.r_pos += ssr_ray.r_step * (1.0f + 2.5f * PTh);
 	}
 
 	return behind_hit;
