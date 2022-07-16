@@ -1,8 +1,8 @@
 local tex_base                = "water\\water_ryaska1"
 local tex_nmap                = "fx\\water_normal"
 local tex_dist                = "water\\water_dudv"
-local tex_sky0                = "$user$sky0"         -- "sky\\sky_8_cube"
-local tex_sky1                = "$user$sky1"         -- "sky\\sky_8_cube"
+local tex_env0                = "$user$sky0"         -- "sky\\sky_8_cube"
+local tex_env1                = "$user$sky1"         -- "sky\\sky_8_cube"
 
 local tex_bluenoise           = "fx\\blue_noise"
 local tex_rainsplash          = "fx\\water_sbumpvolume"
@@ -18,8 +18,8 @@ function normal                (shader, t_base, t_second, t_detail)
 
 	shader:dx10texture	("s_base",		tex_base)
 	shader:dx10texture	("s_nmap",		tex_nmap)
-	shader:dx10texture	("sky_s0",		tex_sky0)
-	shader:dx10texture	("sky_s1",		tex_sky1)
+	shader:dx10texture	("s_env0",		tex_env0)
+	shader:dx10texture	("s_env1",		tex_env1)
 	shader:dx10texture	("s_position", "$user$position")
 
 shader:dx10texture  ("s_image", "$user$generic_temp")
