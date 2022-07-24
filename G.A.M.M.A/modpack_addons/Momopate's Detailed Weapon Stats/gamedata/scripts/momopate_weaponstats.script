@@ -1,0 +1,136 @@
+function get_weapon_range(obj, sec)
+	if obj then
+		local cobj = obj:cast_Weapon()
+		if (not cobj) then 
+			return 0 
+		end
+		local fire_distance = utils_item.get_param(sec, obj and obj:id(), "fire_distance", "float", true)
+		return normalize(fire_distance, 0, 1000)
+	end
+end
+
+function get_weapon_bspeed(obj, sec)
+	if obj then
+		local cobj = obj:cast_Weapon()
+		if (not cobj) then 
+			return 0 
+		end
+		local id = obj and obj:id()
+		local bullet_speed = utils_item.get_param(sec, obj and obj:id(), "bullet_speed", "float", true)
+		local ammo_list = utils_item.get_ammo(obj:section(), id)
+		if ammo_list[1] then
+			local k_bullet_speed = ini_sys:r_float_ex(ammo_list[1], "k_bullet_speed") or 1
+			bullet_speed = (bullet_speed ~= 0) and (k_bullet_speed*bullet_speed) or k_bullet_speed
+		end
+		return normalize(bullet_speed, 0, 1000)
+	end
+end
+
+function get_weapon_drag(obj)
+	if obj then
+		local cobj = obj:cast_Weapon()
+		if (not cobj) then 
+			return 0 
+		end
+		local id = obj and obj:id()
+		local ammo_list = utils_item.get_ammo(obj:section(), id)
+		local k_air_resistance = 0
+		if ammo_list[1] then
+			--printf("%s", tostring(ammo_list[1]))
+			k_air_resistance = ini_sys:r_float_ex(ammo_list[1], "k_air_resistance") or 1
+			--k_air_resistance = 1.0 - k_air_resistance
+		end
+		--return normalize(k_air_resistance, 0, 100)
+		return -k_air_resistance
+	end
+end
+
+function get_weapon_reliability(obj, sec)
+	if obj then
+		local cobj = obj:cast_Weapon()
+		if (not cobj) then 
+			return 0 
+		end
+		
+		local val = utils_item.get_param(sec, obj and obj:id(), "condition_shot_dec", "float", true)
+		return (1.0 - val - 0.99) or 0
+	end
+end
+
+local ini_eff = ini_file("plugins\\grok_bo_enhanced_recoil.ltx")
+function get_weapon_recoil(obj, sec)
+	if obj then
+		local cobj = obj:cast_Weapon()
+		if (not cobj) then 
+			return 0 
+		end
+		
+		local sec_p = ini_sys:r_string_ex(sec, "parent_section") or sec
+		local tbl = {}
+		
+		if not ini_eff:section_exist(sec_p) then
+			printf("!!! no effects exist for %s", sec_p)
+			return 0 												-- Safeguard to prevent crashes!
+		end
+		
+		-- Literally just copy-pasted from grok_bo_enhanced_recoil.script
+		tbl.s = {}
+		local s = ini_eff:r_string_ex(sec_p,"s")
+		local _s = str_explode(s,",")
+		for i=1,#_s do
+			tbl.s[#tbl.s + 1] = tonumber(_s[i])
+		end
+		
+		tbl.e = {}
+		local e = ini_eff:r_string_ex(sec_p,"e")
+		local _e = str_explode(e,",")
+		for i=1,#_e do
+			local __e = str_explode(_e[i],":")
+			for j=1,#__e do
+				if (tonumber(__e[j]) > 0) then 
+					tbl.e[#tbl.e + 1] = tonumber(__e[j])
+				end
+			end
+			--tbl.e[#tbl.e + 1] = __e
+		end
+		
+		local cam_dispersion = utils_item.get_param(sec, obj and obj:id(), "cam_dispersion", "float", true) or 0
+		local cam_dispersion_inc = utils_item.get_param(sec, obj and obj:id(), "cam_dispersion_inc", "float", true) or 0
+		local zoom_cam_dispersion = utils_item.get_param(sec, obj and obj:id(), "zoom_cam_dispersion", "float", true) or 0 
+		local zoom_cam_dispersion_inc = utils_item.get_param(sec, obj and obj:id(), "zoom_cam_dispersion_inc", "float", true) or 0
+		
+		local disp = (cam_dispersion + zoom_cam_dispersion)
+		local inc = (cam_dispersion_inc + zoom_cam_dispersion_inc)
+		local recoil_b = (disp + inc) / 2.0
+		
+		local recoil_s = 0
+		local recoil_s_cnt = 0
+		for i = 1, #tbl.s do
+			recoil_s = recoil_s + tonumber(tbl.s[i])
+			recoil_s_cnt = recoil_s_cnt + 1
+		end
+		recoil_s = (recoil_s / recoil_s_cnt)
+		
+		local recoil_e = 0
+		local recoil_e_cnt = 0
+		for i = 1, #tbl.e do
+			recoil_e = recoil_e + tonumber(tbl.e[i])
+			recoil_e_cnt = recoil_e_cnt + 1
+		end
+		recoil_e = (recoil_e / recoil_e_cnt)
+		
+		--[[
+		-- NOTE:
+		--
+		-- WHEN USED WITH BETTER UPGRADES FROM THE DLTX MINIMOD REPOSITORY, 
+		-- weapons with really low recoil stats like the AR-15 can go into 
+		-- the negatives, usually within the first or second recoil upgrades.
+		--
+		-- Keep this in mind before reporting "-0" recoil guns!
+		-- - Momopate
+		--]]
+		
+		-- return (zoom_cam_dispersion * tonumber(tbl.s[1]) * tonumber(tbl.e[1]) * 100.0)
+		return (recoil_b * recoil_s * recoil_e * 100.0)
+	end
+end
