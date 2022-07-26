@@ -1,0 +1,429 @@
+local ray_pos = {}
+--local se_campfires = {}
+local se_anoms = {}
+local prev_level = {}
+local chop_allowed = true
+
+--[[
+local axes = {
+	["wpn_axe"] = { degr = 0.15, item_to_use = "itm_xcvb_1", hours = 1, minutes = 30},
+	["wpn_axe2"] = { degr = 0.1, item_to_use = "itm_xcvb_2", hours = 1, minutes = 0},
+	["wpn_axe3"] = { degr = 0.05, item_to_use = "itm_xcvb_3", hours = 0, minutes = 45},
+	["wpn_knife9"] = { degr = 0.05, item_to_use = "itm_xcvb_3", hours = 0, minutes = 45},
+}
+--]]
+
+local axes = {
+	["wpn_axe"]    = { degr = 13, item_to_use = "itm_xcvb_1", minutes = 90},
+	["wpn_axe2"]   = { degr = 9, item_to_use = "itm_xcvb_2", minutes = 61},
+	["wpn_axe3"]   = { degr = 5, item_to_use = "itm_xcvb_3", minutes = 45},
+	["wpn_knife9"] = { degr = 5, item_to_use = "itm_xcvb_3", minutes = 45},
+}
+
+function save_state(m_data)
+ --   m_data.se_campfires = se_campfires
+	m_data.se_anoms = se_anoms
+	m_data.prev_level = prev_level
+end
+
+function load_state(m_data)
+ --   se_campfires = m_data.se_campfires or {}
+	se_anoms = m_data.se_anoms or {}
+	prev_level = m_data.prev_level or {}
+end
+
+function actor_on_first_update()
+	if campfire_placeable_mcm.get_config("delete_items") then
+		for i = 1, 65534 do
+			local se_obj = alife_object(i)
+			if se_obj and (se_obj:section_name() == "itm_campfire" or se_obj:section_name() == "ph_campfiremod" or se_anoms[se_obj.id]) then
+				alife_release(se_obj)
+			end
+		end
+--		se_campfires = {}
+		se_anoms = {}
+	end
+
+	-- del obj on level change
+	local curr_level = level.name()
+	if (is_empty(prev_level)) then
+		prev_level.level_name = curr_level
+		printf("tbl is empty || .level_name is now: %s", prev_level.level_name)
+	elseif (prev_level.level_name) then
+		printf("tbl is not empty")
+		if (prev_level.level_name ~= curr_level) and (campfire_placeable_mcm.get_config("transition_delete_items")) then
+			printf(".level_name is not equal curr_level")
+			-- del
+			for i = 1, 65534 do
+				local se_obj = alife_object(i)
+				if se_obj and (se_obj:section_name() == "ph_campfiremod" or se_anoms[se_obj.id]) then
+					alife_release(se_obj)
+					printf("- Object deleted (id): %s", se_obj.id)
+				end
+			end
+			se_anoms = {}
+			prev_level.level_name = curr_level
+		end
+	end
+
+end
+
+function ray_main(add_pos_x, add_pos_y, add_pos_z, dir)
+	local pick = ray_pick()
+	local pos = device().cam_pos
+	pos.x = pos.x + add_pos_x
+	pos.y = pos.y + add_pos_y
+	pos.z = pos.z + add_pos_z
+
+	pick:set_position(pos)
+	pick:set_direction(dir)
+	pick:set_flags(2)
+	pick:set_range(200)
+	pick:query()
+	local distance = pick:get_distance()
+
+	return distance
+end
+
+function is_flat_surface()
+	local radius = campfire_placeable_mcm.get_config("place_radius")
+	local diff = campfire_placeable_mcm.get_config("dot_dist_diff")
+	local dir = vector():set(0, -0.5, 0)
+	ray_pos[1] = ray_main(0, 0, 0, dir)
+	ray_pos[2] = ray_main(radius, 0, 0, dir)
+	ray_pos[3] = ray_main(-radius, 0, 0, dir)
+	ray_pos[4] = ray_main(0, 0, radius, dir)
+	ray_pos[5] = ray_main(0, 0, -radius, dir)
+
+--	printf("-----------------------------------")
+	local cnt = 0
+	for k, v in pairs(ray_pos) do
+--		printf("[%s] = %s", k, v)
+		for i = 1, #ray_pos do
+			if ray_pos[i] + diff < v or ray_pos[i] - diff > v then
+				cnt = cnt + 1
+			end
+		end
+	end
+--	news_manager.send_tip(db.actor, string.format("surface comparison count: [ %s ]", (cnt)), 0, nil, 1500)
+
+	local front = ray_main(0, 0, 0, device().cam_dir)			-- dist to obstacle infront
+	if cnt < 3 and front > 3 then
+--		actor_menu.set_msg(1, strformat("Surface around is FLAT"))
+		return true
+	end
+--		actor_menu.set_msg(1, strformat("Surface is meh"))
+	return false
+end
+
+function prepare_campfire()
+	local game_minutes = math.random(5, 10)
+	level.add_pp_effector("fade_nine_sec.ppe", 855121, false)
+	level.change_game_time(0, 0, game_minutes)
+	CreateTimeEvent("placing_cf", "placing_cf", 2, place_campfire)
+
+end
+
+function place_campfire()
+--	local snd = sound_object("no_sound_yet\\feels_bad")
+--	snd:play_no_feedback(db.actor, sound_object.s2d, 0, VEC_ZERO, 1.0, 1.0)
+
+	local function apply_force_to_campfire(obj_id)
+		local game_obj = get_object_by_id(obj_id)
+		if game_obj then
+			game_obj:get_physics_shell():apply_force(0, 1, 0)
+			CreateTimeEvent("spawn_anomaly_cf", "spawn_anomaly_cf", 1, spawn_anomaly_campfire, game_obj)
+			return true
+		end
+		return false
+	end
+
+	local pos = db.actor:position()
+	local dir = db.actor:direction()
+	pos = pos:add(dir:mul(2))
+	local ph_sec = ini_sys:r_string_ex("itm_campfire", "placeable_section")
+	local se_obj = alife_create(ph_sec or "ph_campfiremod", pos, db.actor:level_vertex_id(), db.actor:game_vertex_id())
+--	se_campfires[se_obj.id] = true
+	
+	CreateTimeEvent("apply_force_to_cf", "apply_force_to_cf", 0.5, apply_force_to_campfire, se_obj.id)
+
+	return true
+end
+
+function spawn_anomaly_campfire(obj)
+	local pos = obj:position()
+	local new_pos = vector():set(pos.x - 0.05, pos.y + 0.15, pos.z + 0.05)
+	local se_obj = alife_create("campfire", new_pos, obj:level_vertex_id(), obj:game_vertex_id())
+	se_anoms[se_obj.id] = true
+
+	local data = utils_stpk.get_anom_zone_data(se_obj)
+	if not (data) then return end
+	data.shapes[1] = {}
+	data.shapes[1].shtype = 0
+	data.shapes[1].offset = vector():set(0, 0, 0)
+	data.shapes[1].center = vector():set(0, 0, 0)
+	data.shapes[1].radius = 0.85
+	utils_stpk.set_anom_zone_data(data, se_obj)
+
+	return true
+end
+
+function actor_on_item_use(obj)
+	local sec = obj:section()
+	if (sec == "itm_campfire") then
+		if not (is_flat_surface()) then
+			news_manager.send_tip(db.actor, game.translate_string("st_bad_surface"), 0, nil, 1500)
+		else
+			alife_release(obj)
+			prepare_campfire()
+			hide_hud_inventory()
+		end
+	end
+
+end
+
+-------------------------- gather wood xd -------------------------
+function allowing_chop()
+	chop_allowed = true
+	return true
+end
+
+function gather_wood(obj)
+	chop_allowed = false
+	CreateTimeEvent("allowing_chop_again", "allowing_chop_again", 7, allowing_chop)
+
+	local sec = obj:section()
+
+-- spawn fake item in inv and eat it
+	local itm_to_spawn = axes[sec].item_to_use
+	alife_create_item(itm_to_spawn, db.actor)
+
+	local function delay_item_use()
+		local itm_obj
+		db.actor:iterate_inventory( function(owner, item)
+			if item:section() == itm_to_spawn then
+				itm_obj = item
+			end
+		end)
+
+		db.actor:eat(itm_obj)
+		return true
+	end
+
+	CreateTimeEvent("eat_xcvb", "eat_xcvb", 0.25, delay_item_use)	-- item spawn has small delay apparently ;[
+
+-- degradate axe
+	local cond = obj:condition()
+	local degr_for = axes[sec].degr
+	degr_for = (math.random(degr_for - 2, degr_for + 3)) / 100
+	printf("%s degraded for: %s %", sec, degr_for * 100)
+	if cond > degr_for then
+		obj:set_condition(cond - degr_for)
+	else
+		obj:set_condition(0.01)
+	end
+
+-- change time + fade out + play sound
+	local minutes = axes[sec].minutes
+	minutes = math.random(minutes - 15, minutes + 15)
+	hide_hud_inventory()
+	level.change_game_time(0, 0, minutes)
+	printf("Time spent on chopping wood: %s Minutes", minutes)
+	level.add_pp_effector("fade_nine_sec.ppe", 8551213, false)
+
+-- spawn campfire in inv
+	alife_create_item("itm_campfire", db.actor)
+
+end
+
+function menu_gather_wood(obj)
+	local p = obj:parent()
+	if not (p and p:id() == AC_ID) then return end
+
+	return game.translate_string("st_gather_wood")
+end
+
+function func_gather_wood(obj)
+	local p = obj:parent()
+	if not (p and p:id() == AC_ID) then return end
+
+	gather_wood(obj)
+
+end
+
+NameCustom = ui_inventory.UIInventory.Name_Custom
+
+function ui_inventory.UIInventory:Name_Custom(obj, bag, temp, i)
+	local active_item = db.actor:active_item()
+	local active_id = active_item and active_item:id()
+	obj = self:CheckItem(obj,"Name_Custom " .. i)
+	if i == 9 and axes[obj:section()] and chop_allowed and (not (level_weathers.bLevelUnderground)) then
+		if obj:condition() >= 0.05 then
+			return menu_gather_wood(obj)
+		else
+			return NameCustom(self, obj, bag, temp, i)
+		end
+	else
+		return NameCustom(self, obj, bag, temp, i)
+	end
+end
+
+ActionCustom = ui_inventory.UIInventory.Action_Custom
+function ui_inventory.UIInventory:Action_Custom(obj, bag, temp, i)
+	local active_item = db.actor:active_item()
+	local active_id = active_item and active_item:id()
+	obj = self:CheckItem(obj,"Action_Custom " .. i)
+	if i == 9 and axes[obj:section()] and chop_allowed and (not (level_weathers.bLevelUnderground)) then
+		if obj:condition() >= 0.05 then
+			func_gather_wood(obj)
+		else
+			ActionCustom(self, obj, bag, temp, i)
+		end
+	else
+		ActionCustom(self, obj, bag, temp, i)
+	end
+end
+
+-------------------------- trader artiinject -------------------------
+local trade_table = {
+
+	["bandit"] = {
+		[1] = {
+			["itm_campfire"] = 3,
+		},
+		[2] = {
+			["itm_campfire"] = 4,
+		},
+	},
+
+	["dolg"] = {
+		[1] = {
+			["itm_campfire"] = 3,
+		},
+		[2] = {
+			["itm_campfire"] = 4,
+		},
+	},
+
+	["ecolog"] = {
+		[1] = {
+			["itm_campfire"] = 3,
+		},
+		[2] = {
+			["itm_campfire"] = 4,
+		},
+	},
+
+	["freedom"] = {
+		[1] = {
+			["itm_campfire"] = 3,
+		},
+		[2] = {
+			["itm_campfire"] = 4,
+		},
+	},
+
+	["killer"] = {
+		[1] = {
+			["itm_campfire"] = 3,
+		},
+		[2] = {
+			["itm_campfire"] = 4,
+		},
+	},
+
+	["army"] = {
+		[1] = {
+			["itm_campfire"] = 3,
+		},
+		[2] = {
+			["itm_campfire"] = 4,
+		},
+	},
+
+	["monolith"] = {
+		[1] = {
+			["itm_campfire"] = 3,
+		},
+		[2] = {
+			["itm_campfire"] = 4,
+		},
+	},
+
+	["greh"] = {
+		[1] = {
+			["itm_campfire"] = 3,
+		},
+		[2] = {
+			["itm_campfire"] = 4,
+		},
+	},
+
+	["stalker"] = {
+		[1] = {
+			["itm_campfire"] = 3,
+		},
+		[2] = {
+			["itm_campfire"] = 4,
+		},
+	},
+
+	["csky"] = {
+		[1] = {
+			["itm_campfire"] = 3,
+		},
+		[2] = {
+			["itm_campfire"] = 4,
+		},
+	},
+
+	["isg"] = {
+		[1] = {
+			["itm_campfire"] = 3,
+		},
+		[2] = {
+			["itm_campfire"] = 4,
+		},
+	},
+
+	["renegade"] = {
+		[1] = {
+			["itm_campfire"] = 3,
+		},
+		[2] = {
+			["itm_campfire"] = 4,
+		},
+	},
+
+}
+
+function campfires_stock(npc)
+
+	local is_trader = trader_autoinject.get_trader_type(npc) == trader_autoinject.SUPPLIER
+	if not is_trader then return end
+
+	local community = npc:character_community() or "stalker"
+	local trader_table = trade_table[community] or trade_table["stalker"]
+	local supply_level = clamp(trader_autoinject.supply_level(npc, true) or 1, 1, 2)
+
+	if trader_table[supply_level] then
+		trader_autoinject.spawn_items(npc, trader_table[supply_level], true)
+	end
+
+end
+
+TraderAuto = trader_autoinject.update
+
+function trader_autoinject.update(npc)
+    TraderAuto(npc)
+    campfires_stock(npc)
+end
+
+------------------------------------------------------------
+
+function on_game_start()
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("actor_on_item_use", actor_on_item_use)
+end
