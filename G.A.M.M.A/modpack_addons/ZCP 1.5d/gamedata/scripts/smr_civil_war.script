@@ -1,0 +1,231 @@
+--[[
+------------------------------------------------------------
+-- Survival Mode Remade - Civil War
+------------------------------------------------------------
+-- Sets up relations if Civil War is enabled.
+-- by dph-hcl
+------------------------------------------------------------
+]]--
+
+-- TODO: factor these out into ltx files
+local smart_bases = {
+    ["sim_smr_default"] = {
+        "pri_a18_smart_terrain",
+        "agr_smart_terrain_1_6",
+        "agr_smart_terrain_1_6_near_1",
+        "agr_smart_terrain_1_6_near_2",
+        "bar_dolg_bunker",
+        "bar_dolg_general",
+        "bar_visitors",
+        "bar_zastava",
+        "bar_zastava_2",
+        "cit_killers",
+        "cit_killers_2",
+        "mlr_terrain",
+        "ds2_domik_st",
+        "esc_smart_terrain_2_12",
+        "esc_smart_terrain_3_16",
+        "esc_smart_terrain_5_7",
+        "gar_smart_terrain_3_5",
+        "gar_smart_terrain_6_3",
+        "jup_a12",
+        "jup_a6",
+        "jup_b41",
+        "mar_smart_terrain_base",
+        "mar_smart_terrain_doc",
+        "mil_smart_terrain_7_10",
+        "mil_smart_terrain_7_8",
+        "mil_smart_terrain_7_7",
+        "mil_smart_terrain_7_12",
+        "pri_a15",
+        "pri_a16_mlr_copy",
+        "pri_a16",
+        "pri_a18_smart_terrain",
+        "pri_monolith",
+        "red_smart_terrain_4_2",
+        "red_smart_terrain_3_2",
+        "ros_smart_stalker_killers1",
+        "ros_smart_stalker1",
+        "trc_sim_20",
+        "val_smart_terrain_7_3",
+        "val_smart_terrain_7_4",
+        "val_smart_terrain_7_5",
+        "yan_smart_terrain_6_4",
+        "zat_b40_smart_terrain",
+        "zat_stalker_base_smart"
+    },
+    ["sim_smr_survival"] = {
+        "pri_a18_smart_terrain",
+        "agr_smart_terrain_1_6",
+        "agr_smart_terrain_1_6_near_1",
+        "agr_smart_terrain_1_6_near_2",
+        "bar_dolg_bunker",
+        "bar_dolg_general",
+        "bar_visitors",
+        "bar_zastava",
+        "bar_zastava_2",
+        "cit_killers",
+        "ds2_domik_st",
+        "esc_smart_terrain_2_12",
+        "esc_smart_terrain_3_16",
+        "gar_smart_terrain_3_5",
+        "jup_a12",
+        "jup_a6",
+        "jup_b41",
+        "mar_smart_terrain_base",
+        "mar_smart_terrain_doc",
+        "mil_smart_terrain_7_10",
+        "mil_smart_terrain_7_7",
+        "pri_monolith",
+        "trc_sim_20",
+        "val_smart_terrain_7_3",
+        "val_smart_terrain_7_4",
+        "val_smart_terrain_7_5",
+        "yan_smart_terrain_6_4",
+        "zat_b40_smart_terrain",
+        "zat_stalker_base_smart"
+    },
+    ["sim_smr_minimal"] = {
+        "bar_dolg_bunker",
+        "bar_dolg_general",
+        "bar_visitors",
+        "bar_zastava",
+        "bar_zastava_2",
+        "yan_smart_terrain_6_4",
+        "zat_stalker_base_smart"
+    },
+    ["sim_smr_none"] = {}
+}
+
+local civil_war_stalkers = {}
+
+function smart_is_base(smart)
+    local l = smart_bases[smr_stalkers_mcm.get_config("base_population")]
+    for i,n in ipairs(l) do
+        if smart == n then return true end
+    end
+    return false
+end
+
+local function setup_squad_relation(squad, member)
+    local sim = alife()
+    for k in squad:squad_members() do
+        if (member.id ~= k.id) then
+            local se_obj = sim:object(member.id)
+            local se_obj2 = sim:object(k.id)
+            smr_debug.get_log().info("civilwar/relations", "setting up squad relations between %s and %s in squad %s", se_obj:section_name(), se_obj2:section_name(), squad:section_name())
+            -- these are cse_alife_human_abstract objs, their implementation of force_set_goodwill takes an ID as parameter.
+            se_obj:force_set_goodwill(5000, se_obj2.id)
+            se_obj2:force_set_goodwill(5000, se_obj.id)
+        end
+    end
+end
+
+local function setup_stalker_relation(squad)
+    local sim = alife()
+    for k in squad:squad_members() do
+        local se_obj = sim:object(k.id)
+        if (not IsStalker(nil, se_obj:clsid())) then
+            smr_debug.get_log().info("civilwar/relations", "not a stalker: %s in squad %s", se_obj:section_name(), squad:section_name())
+            goto continue
+        end
+        smr_debug.get_log().info("civilwar/relations", "setting up relations for %s in squad %s", se_obj:section_name(), squad:section_name())
+        se_obj:force_set_goodwill(-5000, sim:object(0))
+        for i, n in ipairs(game_relations.factions_table) do
+            relation_registry.set_community_goodwill(n, k.id, -2000)
+            game_relations.change_factions_community_num(n, k.id, -2000)
+        end
+        if smr_stalkers_mcm.get_config("civil_war") == "civilwar_squads" then
+            setup_squad_relation(squad, k)
+        end
+        ::continue::      
+    end
+    civil_war_stalkers[squad.id] = true
+end
+
+-- ---
+-- ENTRY POINTS
+-- ---
+
+-- simulation_board:fill_start_position()
+function setup_factions_relation()
+    if smr_stalkers_mcm.get_config("civil_war_monolith_allied") then
+        smr_debug.get_log().info("civilwar/relations", "monolith are allied")
+        relation_registry.set_community_relation("monolith", "monolith", 2000)
+    else
+        smr_debug.get_log().info("civilwar/relations", "monolith are enemies")
+        relation_registry.set_community_relation("monolith", "monolith", -5000)
+    end
+    if smr_stalkers_mcm.get_config("civil_war")  == "civilwar_factions" then
+        apply_faction_civil_war()
+    end
+end
+
+-- smart_terrain.se_smart_terrain:try_respawn()
+function setup_civil_war_squad(squad, smart)
+    if (not smr_amain_mcm.get_config("smr_enabled")) or smr_stalkers_mcm.get_config("civil_war")  == "civilwar_disabled" then
+        -- smr_debug.get_log().info("civilwar", "ZCP or civil war disabled, skipping setup")
+        return
+    end
+    if (not smr_stalkers_mcm.get_config("civil_war_base_population")) and smart_is_base(smart) then
+        smr_debug.get_log().info("civilwar/relations", "smart %s is base, skipping squad %s", smart, squad:section_name())
+        return
+    end
+    local faction = ini_sys:r_string_ex(squad:section_name(), "faction")
+    if is_squad_monster[faction] then
+        smr_debug.get_log().info("civilwar/relations", "skipping monster squad %s", squad:section_name())
+        return
+    end
+    setup_stalker_relation(squad)
+end
+
+function squad_on_npc_death(squad, npc, killer)
+    if not smr_amain_mcm.get_config("smr_enabled") then
+        return
+    end
+    if (not (killer.id == AC_ID) and civil_war_stalkers[squad.id]) then
+        return
+    end
+    local pf = db.actor:character_community()
+    local nf = squad:get_squad_community()
+    if game_relations.is_factions_enemies(pf, nf) then
+        smr_debug.get_log().info("civilwar/relations", "actor killed enemy stalker %s", squad:section_name())
+        return
+    elseif game_relations.is_factions_friends(pf, nf) then
+        smr_debug.get_log().info("civilwar/relations", "actor killed friendly stalker %s", squad:section_name())
+        db.actor:change_character_reputation(100)
+    else
+        smr_debug.get_log().info("civilwar/relations", "actor killed neutral stalker %s", squad:section_name())
+        db.actor:change_character_reputation(75)
+    end
+    if (squad:npc_count() == 0) then
+        smr_debug.get_log().info("civilwar/relations", "actor killed last member of squad %s", squad:section_name())
+        civil_war_stalkers[squad.id] = nil
+    end
+end
+
+local function save_state(data)
+    if not (data.smr_civil_war) then
+		data.smr_civil_war = {}
+	end
+    data.smr_civil_war.civil_war_stalkers = civil_war_stalkers
+end
+
+local function load_state(data)
+    if not (data.smr_civil_war) then
+		return
+	end
+    civil_war_stalkers = data.smr_civil_war.civil_war_stalkers or {}
+    data.smr_civil_war.civil_war_stalkers = {}
+end
+
+function on_game_start()
+    if (not smr_amain_mcm.get_config("smr_enabled")) or smr_stalkers_mcm.get_config("civil_war")  == "civilwar_disabled" then
+        smr_debug.get_log().info("civilwar", "Civil War disabled")
+        return
+    end
+    setup_factions_relation()
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
+    RegisterScriptCallback("squad_on_npc_death", squad_on_npc_death)
+end
