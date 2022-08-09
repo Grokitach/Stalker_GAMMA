@@ -1,0 +1,43 @@
+--====================< Credits >====================--
+
+-- Many thanks to Momopate#7285, Grok#2049, and xcvb#3398 for coding help. Without them this would not have been possible.
+-- Thanks to bz11k#9693 for Russian translation.
+
+--====================< Callbacks >====================--
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_attach_vehicle", actor_on_attach_vehicle)
+    RegisterScriptCallback("actor_on_detach_vehicle", actor_on_detach_vehicle)
+	RegisterScriptCallback("on_before_level_changing", on_before_level_changing)
+	RegisterScriptCallback("on_before_save_input", on_before_save_input)
+end
+
+--====================< Definitions >====================--
+
+local InCar = false
+
+--====================< Actions >====================--
+
+function actor_on_attach_vehicle()
+    InCar = true
+end
+
+function actor_on_detach_vehicle()
+    InCar = false
+end
+
+function on_before_level_changing()
+    if InCar then
+        level.press_action(bind_to_dik(key_bindings.kUSE))
+        InCar = false
+    end
+end
+
+function on_before_save_input(flags, typ, text)
+	if InCar then
+		local str = strformat(game.translate_string("st_save_in_car"),text)
+		actor_menu.set_msg(1, str,4)
+		exec_console_cmd("main_menu off")
+		flags.ret = true
+	end
+end
