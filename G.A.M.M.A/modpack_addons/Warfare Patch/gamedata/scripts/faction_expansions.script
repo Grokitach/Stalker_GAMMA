@@ -1,0 +1,276 @@
+--[[
+
+=======================================================================================
+	Original creator: Werejew
+	Edit log: 
+	2019/05/15 - Tronex - Faction profiles
+	2020/05/25 - Vintar
+	2020/05/31 - Vintar - lowered loner veteran chance
+	2021/02/27 - Vintar - lowered loner advanced/veteran chance again, removed rats from spawn
+	2021/03/02 - Vintar - removed black smoke poltergeist
+
+	This file provides the chance for advanced/veteran squads to spawn instead of novice
+	squads, or picks a normal/rare mutant spawn section.
+=======================================================================================
+
+--]]
+
+-- Profiles
+faction = {}
+level = {}
+mutant = {}
+mutant_tier_by_clsid = {
+	[clsid.bloodsucker_s] 			= 2,
+	[clsid.boar_s] 					= 1,
+	[clsid.burer_s] 				= 4,
+	[clsid.cat_s] 					= 1,
+	[clsid.chimera_s] 				= 3,
+	[clsid.controller_s] 			= 4,
+	[clsid.dog_s] 					= 1,
+	[clsid.flesh_s] 				= 1,
+	[clsid.fracture_s] 				= 2,
+	[clsid.gigant_s] 				= 3,
+	[clsid.poltergeist_s] 			= 4,
+	[clsid.pseudodog_s] 			= 1,
+	[clsid.psy_dog_phantom_s] 		= 4,
+	[clsid.psy_dog_s] 				= 4,
+	[clsid.rat_s]					= 0,
+	[clsid.snork_s] 				= 2,
+	[clsid.tushkano_s] 				= 0,
+	[clsid.zombie_s] 				= 1
+}
+
+-- Warfare
+local faction_list = { -- List of factions to get correct squad section from
+	["stalker"]  		= "stalker", 
+	["monolith"] 		= "monolith",
+	["csky"]   			= "csky",   	
+	["army"] 			= "army", 	
+	["killer"]   		= "merc",  
+	["ecolog"]   		= "ecolog",  
+	["dolg"]    		= "duty",    
+	["freedom"]  		= "freedom", 
+	["bandit"]   		= "bandit",  
+	["greh"]	   		= "greh",	
+	["isg"]		   		= "isg",		
+	["renegade"]		= "renegade",
+	["zombied"]			= "zombied",	
+}
+
+local random_mutants = {
+	"simulation_boar",
+	"simulation_boar",
+	"simulation_boar",
+	"simulation_dog",
+	"simulation_dog",
+	"simulation_dog",
+	"simulation_pseudodog",
+	"simulation_pseudodog",
+	"simulation_flesh",
+	"simulation_flesh",
+	"simulation_flesh",
+	"simulation_mix_dogs",
+	"simulation_mix_dogs",
+	"simulation_mix_dogs",
+	"simulation_mix_dogs",
+	"simulation_mix_boar_flesh",
+	"simulation_mix_boar_flesh",
+	"simulation_mix_boar_flesh",
+	"simulation_tushkano",
+	"simulation_tushkano",
+	"simulation_tushkano",
+	"simulation_cat",
+	"simulation_cat",
+	"simulation_zombie",
+	"simulation_zombie",			-- added in
+	"simulation_lurker",			-- added in
+	"simulation_fracture",			-- added in
+}
+
+local random_rare = {
+	"simulation_gigant",	
+	"simulation_controller",	
+	"simulation_controller",	
+	"simulation_burer",		
+	"simulation_burer",		
+	"simulation_chimera",	
+	"simulation_chimera",	
+	"simulation_bloodsucker",
+	"simulation_bloodsucker",
+	"simulation_bloodsucker",
+	"simulation_snork",
+	"simulation_snork",
+	"simulation_snork",
+	"simulation_poltergeist_tele",				-- added in
+	"simulation_poltergeist_flame",				-- added in
+	"simulation_psysucker",						-- added in
+	"simulation_psy_dog",						-- added in
+	"simulation_lurker",			-- added in
+	"simulation_lurker",			-- added in
+}
+
+local random_zombies = {
+	"simulation_zombie",
+	"simulation_zombie",
+	"simulation_zombie",
+	"simulation_zombie",
+	"simulation_zombie",
+	"simulation_zombie",
+	"simulation_zombie",
+	"simulation_snork",
+	"simulation_snork",
+	"simulation_zombie",
+	"simulation_zombie",
+	"simulation_zombie",
+	"simulation_zombie",
+	"simulation_zombie",
+	"simulation_zombie",
+	"simulation_fracture",			-- added in, used to be a bloodsucker
+	"simulation_fracture",			-- added in, used to be a chimera here for some cruel reason
+	"simulation_fracture",			-- added in
+}
+
+-- old functions were overly complicated and had a weird minimum at 80% resource ownership where your squads would be worse on average
+-- new functions are monotonically increasing so that each point of resource is always a sizeable benefit
+function get_advanced_chance(resource)
+--	return -1 * (100 * (1 / math.pow(warfare.resource_count / 2, 2))) * math.pow((resource - (warfare.resource_count / 2)), 2) + 100
+	return 150 * (math.pow((resource / warfare.resource_count), 0.8))
+end
+
+function get_veteran_chance(resource)
+--	return -100 + (100 / (warfare.resource_count / 2)) * resource
+	return 100 * (math.pow((resource / warfare.resource_count), 2))
+end
+
+function get_spawn_section(faction, resource)
+	if (faction ~= "monster") then
+		if (faction == "stalker") or (faction == "ecolog") then								-- loners and ecologists have set chances for squad skill: 7% veteran, 36% advanced, 57% novice
+			return get_section(faction, 36, 7)
+		else
+			local advanced = get_advanced_chance(resource)
+			local veteran = get_veteran_chance(resource)
+			return get_section(faction, advanced, veteran)
+		end
+	elseif (faction == "monster") then
+		return get_section(faction, resource, resource)										-- for monster spawns, 'resource' is rare_chance
+	end
+end
+
+function get_section(faction, advanced_chance, veteran_chance)
+	local r = math.random(0,100)	
+	local name = faction_list[faction]
+	if name then
+		if r <= veteran_chance then
+			return (name .. "_sim_squad_veteran")
+		elseif r <= advanced_chance then
+			return (name .. "_sim_squad_advanced")
+		else
+			return (name .. "_sim_squad_novice")
+		end
+	elseif faction == "monster" then
+	
+		if not (IsSurvivalMode()) then
+			if (r <= advanced_chance) then													-- 'advanced_chance' is actually rare_chance
+				return random_rare[math.random(#random_rare)]
+			else
+				return random_mutants[math.random(#random_mutants)]
+			end
+		else
+			return random_zombies[math.random(#random_zombies)]
+		end
+	end
+	
+	return nil
+end
+
+function get_faction_squad(faction, typ)
+	local name = faction_list[faction]
+
+	if (typ == "novice") then
+		return name.."_sim_squad_novice"
+	elseif (typ == "advanced") then
+		return name.."_sim_squad_advanced"
+	elseif (typ == "veteran") then
+		return name.."_sim_squad_veteran"
+	elseif (typ == "sniper") then
+		if (name == "monolith" or name == "army") then
+			return name.."_sim_squad_sniper"
+		end
+	end
+end
+
+-----------------------
+function on_game_start()
+	
+	local ini_fact = ini_file("plugins\\faction_profile.ltx")
+	
+	-- Collect faction profiles
+	local factions_list = {
+		["stalker"] = true,
+		["dolg"] = true,
+		["freedom"] = true,
+		["csky"] = true,
+		["ecolog"] = true,
+		["killer"] = true,
+		["army"] = true,
+		["bandit"] = true,
+		["monolith"] = true,
+	}
+
+
+	for k,v in pairs(factions_list) do
+		faction[k] = {}
+		faction[k]["type"] = ini_fact:r_string_ex(k,"type") or "group"
+		local color = parse_list(ini_fact,k,"color")
+		faction[k]["color"] = strformat("%c[%s,%s,%s,%s]",color[1],color[2],color[3],color[4])
+		faction[k]["territory"] = ini_fact:r_string_ex(k,"territory")
+		
+		faction[k]["level_presence"] = parse_list(ini_fact,k,"level_presence",true)
+		faction[k]["pda_topic"] = {}
+		local pda_topics = parse_list(ini_fact,k,"pda_topic")
+		for i=1,#pda_topics do
+			for k1,v1 in string.gmatch(pda_topics[i], "([%w_%-%s%.]+)=([%w_%-%s%.]+)") do
+				faction[k]["pda_topic"][k1] = tonumber(v1)
+			end
+		end
+		faction[k]["pda_topic_mission"] = parse_list(ini_fact,k,"pda_topic_mission")
+		faction[k]["weapon"] = ini_fact:r_string_ex(k,"weapon")
+		
+		faction[k]["leader"] = ini_fact:r_string_ex(k,"leader")
+		faction[k]["trader"] = ini_fact:r_string_ex(k,"trader")
+		faction[k]["mechanic"] = ini_fact:r_string_ex(k,"mechanic")
+		faction[k]["medic"] = ini_fact:r_string_ex(k,"medic")
+		faction[k]["barman"] = ini_fact:r_string_ex(k,"barman")
+		faction[k]["guide"] = ini_fact:r_string_ex(k,"guide")
+		
+		faction[k]["leader_name"] = ini_fact:r_string_ex(k,"leader_name")
+		faction[k]["trader_name"] = ini_fact:r_string_ex(k,"trader_name")
+		faction[k]["mechanic_name"] = ini_fact:r_string_ex(k,"mechanic_name")
+		faction[k]["medic_name"] = ini_fact:r_string_ex(k,"medic_name")
+		faction[k]["barman_name"] = ini_fact:r_string_ex(k,"barman_name")
+		faction[k]["guide_name"] = ini_fact:r_string_ex(k,"guide_name")
+	end
+	
+	local n = 0
+	
+	n = ini_fact:line_count("news_levels")
+	for i=0,n-1 do
+		local result, id, value	= ini_fact:r_line_ex("news_levels",i,"","")
+		if level[id] == nil then
+			level[id] = true
+		end
+	end
+	
+	n = ini_fact:line_count("mutant_tier")
+	for i=0,n-1 do
+		local result, id, value	= ini_fact:r_line_ex("mutant_tier",i,"","")
+		if mutant[id] == nil then
+			mutant[id] = {}
+			mutant[id]["tier"] = tonumber(value)
+		end
+	end
+
+	--utils_data.print_table(faction,"faction_profiles")
+	--utils_data.print_table(level,"news_levels")
+	--utils_data.print_table(mutant,"mutant_tiers")
+end

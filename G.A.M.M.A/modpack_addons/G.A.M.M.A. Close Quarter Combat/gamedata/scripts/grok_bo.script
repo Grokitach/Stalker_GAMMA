@@ -36,6 +36,14 @@ Bone_IDs = {
 [36] =	"bip01_r_forearm",
 }
 
+local headBones = {
+	[15] = true,
+	[16] = true,
+	[17] = true,
+	[18] = true,
+	[19] = true
+}
+
 
 stalker_damage = {
 default						= 0.75,
@@ -220,28 +228,31 @@ function monster_on_before_hit(monster,shit,bone_id)
 	end
 
 	-- /// mutants body parts multipliers ///
-	if string.find(monster:name(), "giant") then
-		spec_monster_mult = 2.20
-		
-		if ammo_mult >= 1 then
-			ammo_mult = ammo_mult * 1.3
-		end
+	if string.find(monster:name(), "gigant") then
 		
 		if ammo_section == "ammo_12x70_buck" or ammo_section == "ammo_12x70_buck_bad" or 
 	    ammo_section == "ammo_20x70_buck" then
 			ammo_mult = 1.3
 		end
 
-                if ammo_section == "ammo_23x75_shrapnel" then
+        if ammo_section == "ammo_23x75_shrapnel" then
 			ammo_mult = 1.7
 		end
 		
+		if ammo_section == "ammo_23x75_barrikada" then
+			ammo_mult = 2.3
+		end
+		
 		if ammo_section == "ammo_357_hp_mag" or ammo_section == "ammo_357_hp_mag_bad" then
-			ammo_mult = 2.10
+			ammo_mult = 1.3
+		end
+		
+		if ammo_section == "ammo_11.43x23_hydro"  or ammo_section == "ammo_11.43x23_hydro_bad"  then
+			ammo_mult = 1.3
 		end
 		
 		if (bone_id == 1) then
-			bone_mult = 2.50
+			bone_mult = 2.00
 			printf("Critical Hit!")
 		end
 	end
@@ -308,9 +319,9 @@ function monster_on_before_hit(monster,shit,bone_id)
 
 
 	if string.find(monster:name(), "fracture") then
-		spec_monster_mult = 0.65
+		spec_monster_mult = 0.50
 		if (bone_id == 12 or bone_id == 13) then
-			bone_mult = 2.00
+			bone_mult = 1.80
 			printf("Critical Hit!")
 		end
 	end
@@ -334,8 +345,10 @@ function npc_on_before_hit(npc,shit,bone_id)
 		return
 	end
 
+	local surrender_bonus = 0
 	if shit.power >= 50 then
-		return
+		surrender_bonus = 1
+		printf("npc is surrendering or wounded.")
 	end
 
 	local shooter = shit.draftsman
@@ -505,6 +518,14 @@ function npc_on_before_hit(npc,shit,bone_id)
 
 		if npc:section() == "monolith_eidolon" then
 			custom_bone_value[custom_bone_id] = 4
+			-- Add a gravi shield effect to make Eidolon even more unique
+			fx = particles_object("anomaly2\\gravi_anomaly_shield_00")
+			pos = npc:bone_position(custom_bone_name)
+			camdir = device().cam_pos:add(device().cam_dir:mul(dist))
+			pos.x = pos.x + (camdir.x * -0.001)
+			pos.z = pos.z + (camdir.z * -0.001)
+			fx:move_to(pos, camdir)
+			fx:play_at_pos(pos)
 		end
 	
 -- 		/////// save hit_fraction value /////// 
@@ -526,14 +547,22 @@ function npc_on_before_hit(npc,shit,bone_id)
 		sin_res = 1
 		if faction == "greh" then
 			sin_res = 0.15
-			fx = particles_object("monsters\\effects\\bloodsucker_trail")
 			pos = npc:bone_position(custom_bone_name)
+			fxdir = shit.direction
+			fxdir.x = (fxdir.x * -1.0) + math.random(-0.009, 0.009)
+			fxdir.y = fxdir.y + math.random(-0.0045, 0.0045)
+			fxdir.z = (fxdir.z * -1.0) + math.random(-0.009, 0.009)
+			camdir = device().cam_pos:add(device().cam_dir:mul(dist))
+			pos.x = pos.x + (camdir.x * -0.0005)
+			pos.z = pos.z + (camdir.z * -0.0005)
+			fx = particles_object("monsters\\effects\\bloodsucker_trail")
+			fx:set_direction(fxdir)
 			fx:play_at_pos(pos)
 			fx = particles_object("monsters\\effects\\polter_trails_02")
-			pos = npc:bone_position(custom_bone_name)
+			fx:set_direction(fxdir)
 			fx:play_at_pos(pos)			
 			fx = particles_object("anomaly2\\effects\\bloodsucker_shleyf")
-			pos = npc:bone_position(custom_bone_name)
+			fx:set_direction(fxdir)
 			fx:play_at_pos(pos)			
 		end
 		
@@ -543,7 +572,18 @@ function npc_on_before_hit(npc,shit,bone_id)
 		local faction = se_obj:community()
 		isg_res = 1
 		if faction == "isg" then
-			isg_res = 0.80
+			isg_res = 0.60
+			pos = npc:bone_position(custom_bone_name)
+			fx = particles_object("hit_fx\\hit_metal_0" .. math.random(0,3))
+			fxdir = shit.direction
+			fxdir.x = (fxdir.x * -1.0) + math.random(-0.009, 0.009)
+			fxdir.y = fxdir.y + math.random(-0.0045, 0.0045)
+			fxdir.z = (fxdir.z * -1.0) + math.random(-0.009, 0.009)
+			fx:set_direction(fxdir)
+			camdir = device().cam_pos:add(device().cam_dir:mul(dist))
+			pos.x = pos.x + (camdir.x * -0.0005)
+			pos.z = pos.z + (camdir.z * -0.0005)
+			fx:play_at_pos(pos)
 		end
 
 --////////////// ACTUAL INTERESTING MATH PART ABOUT BALLISTICS //////////////
@@ -584,31 +624,61 @@ function npc_on_before_hit(npc,shit,bone_id)
 	shit.power = wpn_hit_power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * k_hit * custom_bone_dmg_mult * custom_bone_ap_scale * 1.1 * sniper_bad_bone_shit_reduce * barrel_condition_corrected * sin_res
 
 	local armor_loss_increment = tonumber(k_ap * 0.60) -- reduce bone armor depending on k_ap
-
+	
+	local new_bone_armor = tonumber( tonumber(custom_bone_armor) - tonumber(armor_loss_increment) )-- armor reduce
+	custom_bone_value[custom_bone_id] = new_bone_armor
+	
 	if k_ap < custom_bone_armor then
 		local new_bone_armor = tonumber( tonumber(custom_bone_armor) - tonumber(armor_loss_increment) )-- armor reduce
 		custom_bone_value[custom_bone_id] = new_bone_armor
 		if k_ap > new_bone_armor then -- if bullet damaged armor enough and pen with reduced power
 			shit.power = shit.power * custom_bone_hitfraction
-			fx = particles_object("anomaly2\\effects\\body_tear_blood_01")
-			pos = npc:bone_position(custom_bone_name)
-			pos.z = pos.z - 0.45
-			fx:play_at_pos(pos)
 		else
 			shit.power = 0.025 * shit.power * custom_bone_hitfraction * wm_size * 45 -- residual concussion damage if bullet didn't damage armor enough, the bigger the ammo the bigger the residual damages
+                        pos = npc:bone_position(custom_bone_name)
 			fx = particles_object("hit_fx\\hit_metal_0" .. math.random(0,3))
-			pos = npc:bone_position(custom_bone_name)
-			pos.z = pos.z - 0.45
+			fxdir = shit.direction
+			fxdir.x = (fxdir.x * -1.0) + math.random(-0.009, 0.009)
+			fxdir.y = fxdir.y + math.random(-0.0045, 0.0045)
+			fxdir.z = (fxdir.z * -1.0) + math.random(-0.009, 0.009)
+			fx:set_direction(fxdir)
+			camdir = device().cam_pos:add(device().cam_dir:mul(dist))
+			pos.x = pos.x + (camdir.x * -0.0005)
+			pos.z = pos.z + (camdir.z * -0.0005)
 			fx:play_at_pos(pos)
 		end
 	else
 		custom_bone_value[custom_bone_id] = custom_bone_armor
 	end
-
-	life_remove = npc.health - shit.power
+	
+	-- Add even more feedback on headshots
+	if (k_ap > new_bone_armor) and headBones[bone_id] then
+		fx = particles_object("anomaly2\\effects\\body_tear_blood_01")
+		pos = npc:bone_position(custom_bone_name)
+		fx:play_at_pos(pos)
+	end
+	
+	-- Double the damage if the NPC is wounded
+	-- This is for having better bonuses from PBA as wounded NPCs die instantly anyways.
+	if surrender_bonus == 1 then
+		shit.power = shit.power * 2
+	end
+	
+	perk_based_artefacts.last_npc_hit = hit(shit)
+	perk_based_artefacts.last_npc_hit_bone_index = bone_id    
+	
+	local pbadamage = hit(shit)
+	perk_based_artefacts.process_artefacts(perk_based_artefacts.artefact_on_npc_before_hit_functions, npc, pbadamage, bone_id)
+	
+	shit.power = pbadamage.power
+	life_remove = npc.health - shit.power 
 
 	printf("Real AP power= %s, Bone armor after hit= %s, Damages inflicted= %s, Remaining health= %s", k_ap, custom_bone_value[custom_bone_id], shit.power, life_remove)
-	npc:set_health_ex(life_remove)
+	if surrender_bonus == 1 then
+		npc:set_health_ex(0.0)
+	else
+		npc:set_health_ex(life_remove)
+	end
 	shit.power = 0.0001
 end
 

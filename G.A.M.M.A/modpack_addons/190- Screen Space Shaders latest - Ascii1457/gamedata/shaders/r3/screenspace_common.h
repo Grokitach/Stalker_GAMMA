@@ -1,5 +1,10 @@
-// Screen Space Shaders - MAIN File
-// Update 7 [ 2022/06/27 ]
+/**
+ * @ Version: SCREEN SPACE SHADERS - UPDATE 8
+ * @ Description: Main file
+ * @ Modified time: 2022-07-14 16:46
+ * @ Author: https://www.moddb.com/members/ascii1457
+ * @ Mod: https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders
+ */
 
 #define SSFX_READY
 
@@ -9,6 +14,9 @@
 #include "check_screenspace.h"
 
 uniform float4 sky_color;
+
+TextureCube sky_s0;
+TextureCube sky_s1;
 
 static const float4 SSFX_ripples_timemul = float4(1.0f, 0.85f, 0.93f, 1.13f); 
 static const float4 SSFX_ripples_timeadd = float4(0.0f, 0.2f, 0.45f, 0.7f);
@@ -25,7 +33,7 @@ struct RayTrace
 
 bool SSFX_is_saturated(float2 value) { return (value.x == saturate(value.x) && value.y == saturate(value.y)); }
 
-bool SSFX_is_valid_uv(float2 value) { return (value.x >= 0.0f && value.x <= 1.0f) || (value.y >= 0.0f && value.y <= 1.0f); }
+bool SSFX_is_valid_uv(float2 value) { return (value.x >= 0.0f && value.x <= 1.0f) && (value.y >= 0.0f && value.y <= 1.0f); }
 
 float2 SSFX_view_to_uv(float3 Pos)
 {
@@ -33,6 +41,17 @@ float2 SSFX_view_to_uv(float3 Pos)
 	return (tc.xy / tc.w) * float2(0.5f, -0.5f) + 0.5f;
 }
 
+float SSFX_calc_SSR_fade(float2 tc, float start, float end)
+{
+	// Vectical fade
+	float ray_fade = saturate(tc.y * 2.0f);	
+	
+	// Horizontal fade
+	float2 calc_edges = smoothstep(start, end, float2(tc.x, 1.0f - tc.x));
+	ray_fade *= calc_edges.x * calc_edges.y;
+
+	return ray_fade;
+}
 
 float3 SSFX_yaw_vector(float3 Vec, float Rot)
 {
@@ -49,7 +68,6 @@ float3 SSFX_yaw_vector(float3 Vec, float Rot)
 	return mul(rot_mat, Vec);
 }
 
-
 float SSFX_get_depth(float2 tc, uint iSample : SV_SAMPLEINDEX)
 {
 	#ifndef USE_MSAA
@@ -58,7 +76,6 @@ float SSFX_get_depth(float2 tc, uint iSample : SV_SAMPLEINDEX)
 		return s_position.Load(int3(tc * screen_res.xy, 0), iSample).z;
 	#endif
 }
-
 
 float3 SSFX_get_position(float2 tc, uint iSample : SV_SAMPLEINDEX)
 {
@@ -69,7 +86,6 @@ float3 SSFX_get_position(float2 tc, uint iSample : SV_SAMPLEINDEX)
 	#endif
 }
 
-
 RayTrace SSFX_ray_init(float3 ray_start_vs, float3 ray_dir_vs, float ray_max_dist, int ray_steps, float noise)
 {
 	RayTrace rt;
@@ -77,23 +93,22 @@ RayTrace SSFX_ray_init(float3 ray_start_vs, float3 ray_dir_vs, float ray_max_dis
 	float3 ray_end_vs = ray_start_vs + ray_dir_vs * ray_max_dist;
 	
 	// Ray depth ( from start and end point )
-	rt.z_start 		= ray_start_vs.z;
-	rt.z_end   		= ray_end_vs.z;
-    
-    // Compute ray start and end (in UV space)
-    rt.r_start 		= SSFX_view_to_uv(ray_start_vs);
-    float2 ray_end  = SSFX_view_to_uv(ray_end_vs);
+	rt.z_start		= ray_start_vs.z;
+	rt.z_end		= ray_end_vs.z;
 
-    // Compute ray step
-    float2 ray_diff	= ray_end - rt.r_start;
-    rt.r_step     	= ray_diff / (float)ray_steps; 
-	rt.r_length   	= length(ray_diff);
+	// Compute ray start and end (in UV space)
+	rt.r_start		= SSFX_view_to_uv(ray_start_vs);
+	float2 ray_end	= SSFX_view_to_uv(ray_end_vs);
+
+	// Compute ray step
+	float2 ray_diff	= ray_end - rt.r_start;
+	rt.r_step		= ray_diff / (float)ray_steps; 
+	rt.r_length		= length(ray_diff);
 	
-	rt.r_pos 		= rt.r_start + rt.r_step * noise;
+	rt.r_pos		= rt.r_start + rt.r_step * noise;
 	
 	return rt;
 }
-
 
 float3 SSFX_ray_intersect(RayTrace Ray, uint iSample)
 {
@@ -104,7 +119,6 @@ float3 SSFX_ray_intersect(RayTrace Ray, uint iSample)
 	
 	return float3(depth_ray - depth_scene, depth_scene, len);
 }
-
 
 // Half-way scene lighting
 float4 SSFX_get_fast_scenelighting(float2 tc, uint iSample : SV_SAMPLEINDEX)
@@ -134,53 +148,49 @@ float4 SSFX_get_fast_scenelighting(float2 tc, uint iSample : SV_SAMPLEINDEX)
 	#endif
 }
 
-
-float3 SSFX_get_scenelighting(float2 tc, uint iSample : SV_SAMPLEINDEX)
-{ 
-	// Same way of building color and lighting in "combine_1.ps" but we can sample a especific uv
-	gbuffer_data rgbd = gbuffer_load_data(GLD_P(tc, tc * screen_res.xy, iSample));
-	
-	// Sky from albedo
-	if (rgbd.mtl <= 0.05)
-	{
-		// No idea why, but with MSAA the rgbd.C return a bugged value for the sky
-		#ifndef USE_MSAA
-			return rgbd.C.rgb;
-		#else
-			return fog_color.rgb; // Ugly solution, but at least simulates the right color for day and night cycle. TODO: Find a real solution
-		#endif
-	}
-	float4 rD = float4(rgbd.C.rgb, rgbd.gloss);
-	
-	// Lighting
+// Full scene lighting
+float3 SSFX_get_scene(float2 tc, uint iSample : SV_SAMPLEINDEX)
+{
 	#ifndef USE_MSAA
+		float4 rP = s_position.Sample( smp_nofilter, tc );
+	#else
+		float4 rP = s_position.Load(int3(tc * screen_res.xy, 0), iSample);
+	#endif
+
+	if (rP.z <= 0.05f)
+		return 0;
+
+	#ifndef USE_MSAA
+		float4 rD = s_diffuse.Sample( smp_nofilter, tc );
 		float4 rL = s_accumulator.Sample(smp_nofilter, tc);
 	#else
+		float4 rD = s_diffuse.Load(int3(tc * screen_res.xy, 0), iSample);
 		float4 rL = s_accumulator.Load(int3(tc * screen_res.xy, 0), iSample);
 	#endif
 
-	#ifdef SSFX_ENHANCED_SHADERS // We have Enhanced Shaders installed
-		
-		if (abs(rgbd.mtl - MAT_FLORA) <= 0.05) 
-		{
-			float	fAtten = 1 - smoothstep(0, 50, rgbd.P.z);
-			rD.a	*= (fAtten * fAtten);
-		}
+	float3 rN = gbuf_unpack_normal( rP.xy );
+	float rMtl = gbuf_unpack_mtl( rP.w );
+	float rHemi = gbuf_unpack_hemi( rP.w );
+
+	float3 nw = mul( m_inv_V, rN );
+	
+	#ifdef SSFX_ENHANCED_SHADERS
+
 		rL.rgb += rL.a * SRGBToLinear(rD.rgb);
 
 		// hemisphere
 		float3 hdiffuse, hspecular;
-		hmodel(hdiffuse, hspecular, rgbd.mtl, rgbd.hemi, rD, rgbd.P, rgbd.N);
+		hmodel(hdiffuse, hspecular, rMtl, rHemi, rD, rP, rN);
 
 		// Final color 
 		float3 rcolor = rL.rgb + hdiffuse.rgb;
 		return LinearTosRGB(rcolor);
-		
-	#else // !SSFX_ENHANCED_SHADERS
-	
+
+	#else
+
 		// hemisphere
 		float3 hdiffuse, hspecular;
-		hmodel(hdiffuse, hspecular, rgbd.mtl, rgbd.hemi, rgbd.gloss, rgbd.P, rgbd.N);
+		hmodel(hdiffuse, hspecular, rMtl, rHemi, rD.w, rP, rN);
 
 		// Final color
 		float4 light = float4(rL.rgb + hdiffuse, rL.w);
@@ -188,15 +198,9 @@ float3 SSFX_get_scenelighting(float2 tc, uint iSample : SV_SAMPLEINDEX)
 		float3 spec = C.www * rL.rgb + hspecular * C.rgba;
 		
 		return C.rgb + spec;
-		
+
 	#endif
 }
-
-
-#ifndef REFLECTIONS_H
-	TextureCube s_env0;
-	TextureCube s_env1;
-#endif
 
 float3 SSFX_calc_sky(float3 dir)
 {
@@ -205,8 +209,8 @@ float3 SSFX_calc_sky(float3 dir)
 	dir.y = (dir.y - max(cos(dir.x) * 0.65f, cos(dir.z) * 0.65f)) * 2.1f; // Fix perspective
 	dir.y -= -0.35; // Altitude
 	
-	float3 sky0 = s_env0.SampleLevel(smp_base, dir, 0).xyz;
-	float3 sky1 = s_env1.SampleLevel(smp_base, dir, 0).xyz;
+	float3 sky0 = sky_s0.SampleLevel(smp_base, dir, 0).xyz;
+	float3 sky1 = sky_s1.SampleLevel(smp_base, dir, 0).xyz;
 	
 	// Use hemi color or real sky color if the modded executable is installed.
 #ifndef SSFX_MODEXE
@@ -216,6 +220,13 @@ float3 SSFX_calc_sky(float3 dir)
 #endif
 }
 
+float3 SSFX_calc_env(float3 dir)
+{
+	float3 env0 = env_s0.SampleLevel(smp_base, dir, 0).xyz;
+	float3 env1 = env_s1.SampleLevel(smp_base, dir, 0).xyz;
+	
+	return env_color.xyz * lerp( env0, env1, env_color.w );
+}
 
 // https://www.scratchapixel.com/lessons/3d-basic-rendering/introduction-to-shading/reflection-refraction-fresnel
 // 1.3f water ~ 1.5f glass ~ 1.8f diamond
@@ -242,21 +253,19 @@ float SSFX_calc_fresnel(float3 V, float3 N, float ior)
 	return (Rs * Rs + Rp * Rp) / 2;
 }
 
-
 // https://seblagarde.wordpress.com/2013/01/03/water-drop-2b-dynamic-rain-and-its-effects/
 float3 SSFX_computeripple(float4 Ripple, float CurrentTime, float Weight)
 {
-    Ripple.yz = Ripple.yz * 2 - 1; // Decompress perturbation
+	Ripple.yz = Ripple.yz * 2 - 1; // Decompress perturbation
 
-    float DropFrac = frac(Ripple.w + CurrentTime); // Apply time shift
-    float TimeFrac = DropFrac - 1.0f + Ripple.x;
-    float DropFactor = saturate(0.2f + Weight * 0.8f - DropFrac);
-    float FinalFactor = DropFactor * Ripple.x * 
-                        sin( clamp(TimeFrac * 9.0f, 0.0f, 3.0f) * 3.14159265359);
+	float DropFrac = frac(Ripple.w + CurrentTime); // Apply time shift
+	float TimeFrac = DropFrac - 1.0f + Ripple.x;
+	float DropFactor = saturate(0.2f + Weight * 0.8f - DropFrac);
+	float FinalFactor = DropFactor * Ripple.x * 
+						sin( clamp(TimeFrac * 9.0f, 0.0f, 3.0f) * 3.14159265359);
 
-    return float3(Ripple.yz * FinalFactor * 0.65f, 1.0f);
+	return float3(Ripple.yz * FinalFactor * 0.65f, 1.0f);
 }
-
 
 float3 SSFX_ripples( Texture2D ripple_tex, float2 tc ) 
 {

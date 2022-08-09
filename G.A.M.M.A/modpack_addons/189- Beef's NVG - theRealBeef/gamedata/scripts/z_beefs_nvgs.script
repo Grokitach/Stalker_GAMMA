@@ -1,0 +1,641 @@
+-----------------------------------------------------------------------------
+--		
+-----------------------------------------------------------------------------
+
+-- Beef NVG MCM values
+local nvg_gain_max = 2.0				-- max value for nvg gain (brightness)
+local nvg_gain_min = 0.5				-- min value for nvg gain (brightness)
+local nvg_washout_thresh = 0.1			-- used to calculate washout effect on light sources
+local nvg_view_through_scope = false	-- can you keep your NVGs on when looking through scope?
+local nvg_gain_offset = 1.0				-- offset for nvg gain to accomodate for brighter/darker worlds
+local nvg_mode_gen1 = 3.0					-- overlay mode gen 1
+local nvg_num_tubes_gen2 = 2.0 			-- number of tubes for NVG gen 2
+local nvg_mode_gen1 = 0.0					-- overlay mode gen 2
+local nvg_num_tubes_gen3 = 4.0 			-- number of tubes for NVG gen 3
+local nvg_mode_gen1 = 0.0					-- overlay mode gen 3
+local nvg_stays_pda = true				-- disable nvg on PDA?
+local shader_scope_compat = false 		-- compatibility with 2d shader scopes
+local nvg_radius = 0.5					-- Radius of circles
+
+-- Variables
+local nvg_generation = 0		-- 1, 2, or 3
+local nvg_num_tubes = 0			-- 1, 2, or 4 tubes -- 11 for single offset left and 12 for single offset right
+local nvg_gain_current = 1		-- current gain setting
+local gain_directionality = true -- directionality of brightness adjust
+local vignette_amount = 0.05		-- standard vignette value
+local vignette_current = 1.0		-- current vignette value, for turn-on/ turn-off effect
+local vignette_speed = 1.4 -- how fast vignette changes
+local glitch_power = 0			-- how much 'glitch' to add to NVGs
+local nvg_mode = 0			-- overlay preset
+local crt_latch = false       -- latches crt effect on turn-on
+local flip_latch = false		-- latches flip down effect on turn-on
+local nv_eff = {}				-- to store the effect
+local flip_speed = 1.4			-- how fast to flip down
+local flip_down = 1			-- flip down value (1 all the way up, 100 all the way down)
+
+-- Variables for turn-on animation
+local torch_anm_state = 0
+local torch_anm_start = 0
+local torch_anm_time = 0
+local mc_anm_time_1 = 0
+local torch_anm_sec = "anim_headlamp"
+local mc_anm_sec = "anim_mask_clean"
+local snd_headlamp = sound_object('interface\\inv_torch')
+local hide_hand_speed = 1.5
+
+
+-- Variables for on-weapon zoom (and shader scopes compat)
+local zoomed_in = false
+local tube_count_temp = 0
+--local vignette_temp = 0
+local radius_temp
+local scope_blur_temp = 0
+local shader_scope_flag = false
+local zoom = true
+-- Variables for PDA auto-turn-off functionality
+local disable_nvg = false
+
+local normal_fov
+-----------------------------------------------------------------------------
+--		
+-----------------------------------------------------------------------------
+
+function on_option_change()
+		nvg_gain_max = z_beefs_nvgs_mcm.get_config("nvg_gain_max_mcm")
+		nvg_gain_min = z_beefs_nvgs_mcm.get_config("nvg_gain_min_mcm")
+		nvg_gain_offset = z_beefs_nvgs_mcm.get_config("nvg_gain_offset_mcm")
+		nvg_washout_thresh = z_beefs_nvgs_mcm.get_config("nvg_washout_thresh_mcm")
+		nvg_view_through_scope = z_beefs_nvgs_mcm.get_config("nvg_view_through_scope_mcm")
+		nvg_num_tubes_gen1 = z_beefs_nvgs_mcm.get_config("nvg_gen1_tubes_mcm")
+		nvg_num_tubes_gen2 = z_beefs_nvgs_mcm.get_config("nvg_gen2_tubes_mcm")
+		nvg_num_tubes_gen3 = z_beefs_nvgs_mcm.get_config("nvg_gen3_tubes_mcm")
+		nvg_mode_gen1 = z_beefs_nvgs_mcm.get_config("nvg_gen1_mode_mcm")
+		nvg_mode_gen2 = z_beefs_nvgs_mcm.get_config("nvg_gen2_mode_mcm")
+		nvg_mode_gen3 = z_beefs_nvgs_mcm.get_config("nvg_gen3_mode_mcm")
+		nvg_stays_pda = z_beefs_nvgs_mcm.get_config("nvg_stays_pda_mcm")
+		shader_scope_compat = z_beefs_nvgs_mcm.get_config("shader_scope_compat")
+end
+
+
+-----------------------------------------------------------------------------
+--		NVG DATA PACKING AND UPDATE FUNCTION
+-----------------------------------------------------------------------------
+
+function pack_nvg_data()
+
+	local x_1 = tostring(nvg_generation)                           -- Generation (1,2,3) - outputs 1.x to 3.x
+	local x_2 = tostring(nvg_num_tubes * 10)                            -- Num Tubes (1,2,4,1.1,1.2) outputs x.10, x.20, x.40, x.11, or x.12
+	local y_1 = tostring(math.floor(nvg_gain_current * 10))        -- Gain Adjust (0.1 to 3) -- outputs 1.y to 30.y in 1. increment
+	local y_2 = tostring(math.floor(nvg_washout_thresh * 10))      -- Washout Thresh (0.0 - 0.9) - outputs y.0 to y.9 in .1 increment
+	local z_1 = tostring(math.floor(vignette_current * 100))       -- Vignette Amount (0.0 to 1.0) outputs 0.z to 100.z in 1. increment
+	local z_2 = tostring(math.floor(glitch_power * 10))            -- Glitch Power (0.0 - 0.9) - outputs z.0 to z.9 in .1 increment
+	local w_1 = tostring((math.floor(nvg_gain_offset * 10)) )      -- Gain Offset (0.5 to 3.0) - outputs 5.w to 30.w in 1. increment
+	local w_2 = tostring(nvg_mode)                  		       -- Mode (0,1) - outputs w.0 or w.1 depending on mode
+
+	return "(" .. x_1 .. "." .. x_2 .. "," .. y_1 .. "." .. y_2 .. "," .. z_1 .. "." .. z_2 .. "," .. w_1 .. "." .. w_2 .. ")"
+end
+
+function pack_nvg_data_2()
+
+	local x_1 = tostring(math.floor(flip_down))									-- Flip down amount - outputs 1.x to 100.x
+	local x_2 = tostring(0)								
+	local y_1 = tostring(0)
+	local y_2 = tostring(math.floor(nvg_radius*10))								-- Radius for NVG effect - outputs 0.0 to 0.9
+	local z_1 = tostring(0)
+	local z_2 = tostring(0)
+	local w_1 = tostring(0)
+	local w_2 = tostring(0)
+
+	return "(" .. x_1 .. "." .. x_2 .. "," .. y_1 .. "." .. y_2 .. "," .. z_1 .. "." .. z_2 .. "," .. w_1 .. "." .. w_2 .. ")"
+end
+
+function update_nvgs()
+	get_console():execute("r__nightvision " .. nvg_generation )
+	get_console():execute("shader_param_8 " .. pack_nvg_data() )
+	get_console():execute("shader_param_7 " .. pack_nvg_data_2() )
+end
+
+
+
+-----------------------------------------------------------------------------
+--		NVG TURN ON AND TURN OFF FUNCTIONS, INCL ANIMATION
+-----------------------------------------------------------------------------
+
+function allow_animation()
+	return (torch_anm_state == 0  and game.hud_motion_allowed() and (not game.only_movekeys_allowed()) and actor_menu.get_last_mode() == 0 and (not IsMoveState("mcClimb")))
+end
+
+local lowered_anm_kinds = {
+	["w_sniper"] 	= true,
+	["w_rifle"] 	= true,
+	["w_smg"]	    = true,
+	["w_shotgun"] 	= true,
+}
+
+local lowered_anm_classes = {
+	["WP_VAL"] 		= true,
+	["WP_AK74"] 	= true,
+	["WP_LR300"] 	= true,
+	["WP_BM16"] 	= true,
+	["WP_SVD"] 		= true,
+	["WP_SVU"]		= true,
+	["WP_GROZA"] 	= true,
+	["WP_ASHTG"] 	= true,
+	["WP_ASHTG"] 	= true,
+	["WP_SHOTG"] 	= true,
+	["WP_RG6"] 		= true,
+	["WP_RPG7"] 	= true,
+	["D_PDA"]		= true,
+}
+
+function item_device.set_nightvision(section,state)
+	if (not section) then
+		return
+	end
+
+	nv_eff[section] = nv_eff[section] or ini_sys:r_string_ex(section,"nv_effect")
+
+	if nv_eff[section] ~= nil then
+
+		if (nv_eff[section] == "nightvision_1") then 
+		nvg_generation = 1 
+		nvg_num_tubes = nvg_num_tubes_gen1
+		nvg_mode = nvg_mode_gen1
+		end
+		
+		if (nv_eff[section] == "nightvision_2") then 
+		nvg_generation = 2 
+		nvg_num_tubes = nvg_num_tubes_gen2
+		nvg_mode = nvg_mode_gen2
+		end
+		
+		if (nv_eff[section] == "nightvision_3") then 
+		nvg_generation = 3 
+		nvg_num_tubes = nvg_num_tubes_gen3
+		nvg_mode = nvg_mode_gen3
+		end
+
+		if state and (not item_device.nv_state) then
+
+				-- Check if headlamp is equipped. No need for battery check
+			if (not allow_animation()) or (not item_device.can_toggle_torch()) then
+				return
+			end
+			
+			local weapon_zoomed = axr_main.weapon_is_zoomed and (not (IsPistol(db.actor:active_item(),nil)) or db.actor:active_detector())
+			local det_active = db.actor:active_detector() or nil
+			local det_hide_time = 0
+			local new_speed = 0
+			local anm_name = "script\\headlamp.anm"
+			local anm_additional_length = 0.45
+			
+			if (db.actor:active_item()) then
+				local itm = db.actor:active_item()
+				local hud = ini_sys:r_string_ex(itm:section(),"hud") or "hud_base"
+				local name = ini_sys:r_string_ex(hud,"gasmask_anm")
+				if (name) then
+					anm_name = name
+				else
+					local kind = ini_sys:r_string_ex(itm:section(),"kind") or nil
+					local class = ini_sys:r_string_ex(itm:section(),"class") or nil
+					if ((kind and lowered_anm_kinds[kind]) or (class and lowered_anm_classes[class])) then
+						anm_name = "script\\lower.anm"
+						anm_additional_length = 0.8
+					end
+				end
+				
+				if (not det_active and weapon_zoomed) then
+					if (get_console():get_bool("wpn_aim_toggle")) then
+						level.press_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+					else
+						level.release_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+					end
+				end
+			end
+			
+			if (det_active) then
+				if (weapon_zoomed) then
+					det_active:switch_state(2)
+					det_hide_time = (det_active:play_hud_motion("anm_zoom_hide_fast", true, 3, 1, 0) / 1000)
+					
+					if (get_console():get_bool("wpn_aim_toggle")) then
+						level.press_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+					else
+						level.release_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+					end
+				else
+					det_hide_time = (det_active:play_hud_motion("anm_hide_fast", true, 3, 2, 0) / 1000) + 0.1
+				end
+				
+				if (det_hide_time == 0) then 
+					det_hide_time = (det_active:play_hud_motion("anm_hide", true, 3, 3.5, 0) / 1000) + 0.1
+				end
+				
+				game.play_hud_anm(anm_name, 0, 0.25, 1, false)
+			end
+			
+			local function torch_toggle_anim_fast()
+				local time_g = time_global()
+				
+				if (torch_anm_state == 1) then
+					game.play_hud_motion(1, torch_anm_sec, "anm_switch", true, 0.75)
+					level.add_cam_effector("camera_effects\\headlamp\\headlamp.anm", 7539, false, "", 0, false)
+					torch_anm_start = time_g
+					torch_anm_state = 2
+					
+				elseif (torch_anm_state == 2) and (time_g > torch_anm_start + torch_anm_time - 350) then
+					torch_anm_state = 3
+					
+				elseif (torch_anm_state == 3) and (time_g > torch_anm_start + torch_anm_time + 1) then
+					update_nvgs()
+					utils_obj.play_sound("interface\\inv_nv_start")
+					item_device.nv_state = true
+					torch_anm_state = 0
+					torch_anm_start = 0
+					game.only_allow_movekeys(false)
+					game.set_actor_allow_ladder(true)
+					RemoveTimeEvent(0, "play_torch_toggle")
+				end
+								
+				return false
+			end
+			
+			local function torch_toggle_anim()
+				local time_g = time_global()
+				
+				if (torch_anm_state == 1) then
+					if (det_active) then
+						det_active:switch_state(3)
+						db.actor:force_hide_detector()
+					else
+						game.play_hud_anm(anm_name, 0, 1, 1, false)
+					end
+						
+					game.play_hud_motion(1, mc_anm_sec, "anm_hide_hand", true, hide_hand_speed)
+					new_speed = game.set_hud_anm_time(anm_name, ((torch_anm_time + mc_anm_time_1) / 1000) + anm_additional_length)
+					torch_anm_start = time_g
+					torch_anm_state = 2
+					
+				elseif (torch_anm_state == 2) and (time_g > torch_anm_start + mc_anm_time_1 - 10) then
+					game.play_hud_motion(1, torch_anm_sec, "anm_switch", true, 1)
+					level.add_cam_effector("camera_effects\\headlamp\\headlamp.anm", 7539, false, "", 0, false)
+					torch_anm_state = 3
+					
+				elseif (torch_anm_state == 3) and (time_g > torch_anm_start + mc_anm_time_1 + torch_anm_time - 550) then
+					torch_anm_state = 4
+					
+				elseif (torch_anm_state == 4) and (time_g > torch_anm_start + mc_anm_time_1 + torch_anm_time + 15) then
+					update_nvgs()
+					utils_obj.play_sound("interface\\inv_nv_start")
+					item_device.nv_state = true
+					if (new_speed) then game.play_hud_anm(anm_name, 2, new_speed, 1, false, true) end
+					if (det_active) then db.actor:show_detector(true) end
+					torch_anm_state = 5
+					
+				elseif (torch_anm_state == 5) and (time_g > torch_anm_start + mc_anm_time_1 + torch_anm_time + (anm_additional_length * 1000 + 100)) then
+					torch_anm_state = 0
+					torch_anm_start = 0
+					game.only_allow_movekeys(false)
+					game.set_actor_allow_ladder(true)
+					RemoveTimeEvent(0, "play_torch_toggle")
+				end
+				
+				return false
+			end
+			
+			torch_anm_state = 1
+			game.only_allow_movekeys(true)
+			game.set_actor_allow_ladder(false)
+			
+			RegisterScriptCallback("actor_on_update", actor_on_update)
+			RegisterScriptCallback("actor_on_weapon_zoom_in", actor_on_weapon_zoom_in)
+			RegisterScriptCallback("actor_on_weapon_zoom_out", actor_on_weapon_zoom_out)
+			RegisterScriptCallback("actor_on_info_callback",pda_check)
+			
+			if (not db.actor:active_item() and not det_active) then
+				CreateTimeEvent(0, "play_torch_toggle", det_hide_time, torch_toggle_anim_fast)
+			else
+				CreateTimeEvent(0, "play_torch_toggle", det_hide_time, torch_toggle_anim)
+			end
+
+
+
+
+		elseif (not state) and item_device.nv_state then
+			get_console():execute("r__nightvision 0")
+			get_console():execute("shader_param_8 (0,0,0,0)")
+			crt_latch = false
+			flip_latch = false
+			vignette_current = 1.0
+			flip_down = 1
+			nvg_radius = 0.5 -- hack to fix not correctly going back until i am better at this shit
+			utils_obj.play_sound("interface\\inv_nv_off")
+			item_device.nv_state = false
+			UnregisterScriptCallback("actor_on_weapon_zoom_in", actor_on_weapon_zoom_in)
+			UnregisterScriptCallback("actor_on_weapon_zoom_out", actor_on_weapon_zoom_out)
+			UnregisterScriptCallback("actor_on_info_callback",pda_check)
+			UnregisterScriptCallback("actor_on_update", actor_on_update)
+		end
+	end
+end
+
+-----------------------------------------------------------------------------
+--		NVG BRIGHTNESS ADJUSTMENT FUNCTION
+-----------------------------------------------------------------------------
+
+function brightness_adjust()
+	if item_device.nv_state then
+		local step_size = (nvg_gain_max - nvg_gain_min) / 3
+		if gain_directionality and nvg_gain_current <= nvg_gain_max then
+
+			nvg_gain_current = nvg_gain_current + step_size
+
+			if nvg_gain_current >= nvg_gain_max then
+				nvg_gain_current = nvg_gain_max
+				gain_directionality = not gain_directionality
+			end
+
+		elseif not gain_directionality and nvg_gain_current >= nvg_gain_min then
+			
+			nvg_gain_current = nvg_gain_current - step_size
+		
+			if nvg_gain_current <= nvg_gain_min then
+				nvg_gain_current = nvg_gain_min
+				gain_directionality = not gain_directionality
+			end
+
+		end
+		local snd_adjust = sound_object('interface\\inv_nvg')
+		snd_adjust:play(db.actor,0,sound_object.s2d)
+		update_nvgs()
+	end
+end
+
+
+-----------------------------------------------------------------------------
+--		NVG STATE CHANGE EFFECT, MANIPULATES VIGNETTE AND LOCATION TO
+--			SIMUALATE FLIPPING DOWN AND TURNING ON NVGS
+-----------------------------------------------------------------------------
+
+function state_change_effect()
+	if not flip_latch and item_device.nv_state then
+		if flip_down < 100 then
+			flip_down = flip_down * flip_speed
+		end
+		
+		if flip_down >= 100 then
+			flip_down = 100
+			flip_latch = true
+		end	
+	end
+	
+	if flip_latch and not crt_latch and item_device.nv_state then
+		if vignette_current > vignette_amount then
+			vignette_current = vignette_current * ( 1 / vignette_speed)
+		end
+
+		if vignette_current <= vignette_amount then
+			vignette_current = vignette_amount
+			crt_latch = true
+		end
+	end
+end
+
+-----------------------------------------------------------------------------
+--		NVG GLITCH EFFECT, CALLED FROM ITEM_DEVICES AND GLITCHES NVG DURING
+--			PSY STORM AND BLOWOUT
+-----------------------------------------------------------------------------
+
+-- nvg glitch effect during blowouts and psy storms
+function nvg_glitch(power)
+	if item_device.nv_state then
+		if glitch_power ~= power then
+			glitch_power = power
+			if not zoomed_in then
+				update_nvgs()
+			end
+		end
+	end
+end
+
+-----------------------------------------------------------------------------
+--		TURNS OFF NVGS WHEN ADS, AS WELL AS CHANGE TO SINGLE CENTERED SCOPE
+--			WHEN USING SHADER SCOPES TO MAINTAIN COMPATIBILITY
+-----------------------------------------------------------------------------
+
+function actor_on_weapon_zoom_in()
+	local wpn = db.actor:active_item()
+	zoom_type = wpn:cast_Weapon():GetZoomType()
+	zoom = true
+	if ((not nvg_view_through_scope) or axr_main.binoc_is_zoomed) and item_device.nv_state then
+			zoomed_in = true
+			get_console():execute("r__nightvision 0")
+			get_console():execute("shader_param_8 (0,0,0,0)")
+	elseif (shader_scope_compat and item_device.nv_state) then
+		local scopeName = nil
+		local wpn = db.actor:active_item()
+		if wpn:weapon_scope_status() == 2 then
+			if wpn:weapon_is_scope() then
+				local scope = utils_item.get_attached_scope(wpn)
+				scopeName = utils_item.get_param(scope, wpn:id(), "scope_texture", "string")
+			end
+		else
+			scopeName = utils_item.get_param(wpn:section(), wpn:id(), "scope_texture", "string")
+		end
+		--local tex_active = get_console():get_integer("scope_2dtexactive")
+		if scopeName and scopeRadii.scopeRadii[scopeName] then
+			scope_blur_temp = get_console():get_float("scope_blur_inner")
+			tube_count_temp = nvg_num_tubes
+			radius_temp = nvg_radius
+			--vignette_temp = vignette_current 
+			if zoom_type == 0 then
+				nvg_num_tubes = 1
+				nvg_radius = math.min(scopeRadii.scopeRadii[scopeName],0.9)
+			else
+				nvg_num_tubes = tube_count_temp
+				nvg_radius = 0.5
+			end
+			get_console():execute("scope_blur_inner 0")
+			--vignette_current = 0.5 - scopeRadii.scopeRadii[scopeName]
+			CreateTimeEvent("nvg_scope", "nvg_scope", 0.25, function()
+				update_nvgs()
+				return true 
+			end)
+			shader_scope_flag = true
+		end
+	end
+	
+	zoom_type = nil
+end
+
+-----------------------------------------------------------------------------
+--		TURN NVGS BACK ON AFTER THEY'VE BEEN TEMPORARILY DISABLED BY ADS FUNCTION
+-----------------------------------------------------------------------------
+
+function actor_on_weapon_zoom_out()
+	zoom = false
+	if (not nvg_view_through_scope and item_device.nv_state and zoomed_in) then
+		zoomed_in = false
+		update_nvgs()
+	elseif (shader_scope_compat and item_device.nv_state and shader_scope_flag) then
+		--vignette_current = vignette_temp
+		nvg_num_tubes = tube_count_temp
+		--nvg_radius = radius_temp
+		nvg_radius = 0.5 -- hack to fix not correctly going back until i am better at this shit
+		get_console():execute("scope_blur_inner " .. scope_blur_temp)
+		RemoveTimeEvent("nvg_scope", "nvg_scope")
+		shader_scope_flag = false
+		update_nvgs()
+	end
+end
+
+-----------------------------------------------------------------------------
+--		IF AUTO-TURN-OFF IS ENABLED, THEN AUTO DISABLE NVG WHEN BRING UP PDA
+-----------------------------------------------------------------------------
+
+function pda_check(npc,info_id)
+	local actor = db.actor
+	if actor and item_device.nv_state then
+		if info_id == "ui_pda" and not nvg_stays_pda then
+			if not disable_nvg then
+				get_console():execute("r__nightvision 0")
+				get_console():execute("shader_param_8 (0,0,0,0)")
+				disable_nvg = true
+			end
+		elseif info_id == "ui_pda_hide" and not nvg_stays_pda then
+			if disable_nvg then
+				update_nvgs()
+				disable_nvg = false
+			end
+		end
+	end
+end
+
+
+-----------------------------------------------------------------------------
+--		Actor on update Function - keep as minimal as possible
+-----------------------------------------------------------------------------
+local tmr = 0
+local tmr_step = 200
+function actor_on_update()
+
+	if (not crt_latch or not flip_latch) and item_device.nv_state then
+		state_change_effect()
+		update_nvgs()
+	end
+	
+	tg = time_global()
+	if tg < tmr then return end
+	tmr = tg + tmr_step
+
+	if (not zoom) and (zoomed_in or shader_scope_flag) then
+		-- check for disable NVG while ADS
+		if (not nvg_view_through_scope and item_device.nv_state and zoomed_in) then
+			zoomed_in = false
+			update_nvgs()
+		elseif (shader_scope_compat and item_device.nv_state and shader_scope_flag) then
+			--vignette_current = vignette_temp
+			nvg_num_tubes = tube_count_temp
+			--nvg_radius = radius_temp
+			nvg_radius = 0.5 -- hack to fix not correctly going back until i am better at this shit
+			get_console():execute("scope_blur_inner " .. scope_blur_temp)
+			RemoveTimeEvent("nvg_scope", "nvg_scope")
+			shader_scope_flag = false
+			update_nvgs()
+		end
+	end
+end
+
+-----------------------------------------------------------------------------
+--		Keybinding Functions
+-----------------------------------------------------------------------------
+
+-- long press to turn on/off NVG, short press to change brightness
+function on_key_press(key)
+
+	local bind = dik_to_bind(key)
+	if (bind == key_bindings.kWPN_FUNC) then
+		if item_device.nv_state then
+			
+			local wpn = db.actor:active_item()
+			zoom_type = wpn:cast_Weapon():GetZoomType()
+			zoomed = wpn:cast_Weapon():IsZoomed()
+			scoped = wpn:cast_Weapon():IsScopeAttached()
+			
+			if zoomed then
+			
+				if scoped then
+					if zoom_type == 1 or zoom_type == 2 then
+						nvg_num_tubes = 1
+						update_nvgs()
+						return
+					end
+				end
+				
+				if zoom_type == 0 then
+				
+					if nvg_generation == 1 then
+						nvg_num_tubes = nvg_num_tubes_gen1
+					end
+
+					if nvg_generation == 2 then
+						nvg_num_tubes = nvg_num_tubes_gen2
+					end		
+					
+					if nvg_generation == 3 then
+						nvg_num_tubes = nvg_num_tubes_gen3
+					end						
+					
+					nvg_radius = 0.5
+					update_nvgs()
+					return
+				end
+			end
+		end
+	end
+	
+	return
+end
+
+function on_key_release(key)
+	return
+end
+
+function on_key_press_update_nvgs(key)
+	local bind = dik_to_bind(key)
+	
+	if (bind == key_bindings.kWPN_FUNC) then
+		local wpn = db.actor:active_item()
+		zoom_type = wpn:cast_Weapon():GetZoomType()
+		scoped_weapon_is_zoomed = wpn and IsWeapon(wpn) and wpn:weapon_is_scope()
+
+		if scoped_weapon_is_zoomed then
+			if zoom_type == 0 then
+				nvg_num_tubes = 1
+				update_nvgs()
+			end
+		end
+		
+		if zoom_type == 1 or zoom_type == 2 then
+			nvg_num_tubes = 4
+			nvg_radius = 0.5
+			update_nvgs()
+		end
+	end
+end
+
+-----------------------------------------------------------------------------
+--		RegisterScriptCallback Functions
+-----------------------------------------------------------------------------
+
+local function actor_on_first_update()
+	normal_fov = device().fov * 0.7
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("on_key_press", on_key_press)
+	RegisterScriptCallback("on_key_release", on_key_release)
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	on_option_change()
+end

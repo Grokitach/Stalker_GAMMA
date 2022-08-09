@@ -1,0 +1,1778 @@
+--[[
+	Remade by Tronex
+	New Game Menu (Fresh Start)
+	Last modification: 2021/03/31 - Vintar
+
+	+ Inventory simulator
+	+ Ironman mode save killer
+	+ Setting up new games
+	+ Support for warfare
+	+ Support for new factions
+	+ Simultaneous Warfare and Story modes
+	+ Monolith/Sin/Zombied start with the emitters on, but also start with a good psy helmet
+--]]
+
+
+----------------------------------------------------------------------
+-- Controls
+----------------------------------------------------------------------
+local ini_itm = ini_file("items\\settings\\new_game_loadouts.ltx")
+local ini_map = ini_file("plugins\\new_game_start_locations.ltx")
+local ini_diff = ini_file("plugins\\difficulty.ltx")
+
+local faction_psi_off = {
+	["monolith"] = true,
+	["greh"] = true,
+	["zombied"] = true,
+}
+
+local faction_no_story = {
+	["zombied"] = true,
+	--["renegade"] = true,
+	--["greh"] = true,
+	--["isg"] = true,
+}
+
+local faction_limited_playthrough = {
+	["isg"] = true,
+}
+
+
+----------------------------------------------------------------------
+-- Callbacks
+----------------------------------------------------------------------
+local spawn_path, start_pos, saved_bolt
+local function on_game_load(binder)
+	local config = axr_main.config
+	if not (config) then
+		return
+	end
+
+	local se_actor = alife():actor()
+	local need_save
+	
+	-- Gameplay Options
+	if (USE_MARSHAL) then
+		if (config:r_value("character_creation","new_game_hardcore_mode",1) == true) then
+			-- shitty way to make a uuid but should be good enough to track the same saves
+			local ironman = {}
+			ironman.uuid = GAME_VERSION .. "_" .. tostring(math.random(100)) .. tostring(math.random()) .. tostring(math.random(1000))
+			ironman.death_limit = config:r_value("character_creation","new_game_hardcore_mode_lives",2) or 1
+			ironman.life_feature = config:r_value("character_creation","new_game_hardcore_mode_regenerate",2) and true or false
+			ironman.life_cycle = config:r_value("character_creation","new_game_hardcore_mode_regenerate",2) or 120
+			ironman.death_count = 0
+			ironman.granted_lives = 0
+			ironman.sleep_hrs = 0
+			alife_storage_manager.get_state().ironman = ironman
+			
+			config:w_value("character_creation","new_game_hardcore_mode")
+			config:w_value("character_creation","new_game_hardcore_mode_lives")
+			config:w_value("character_creation","new_game_hardcore_mode_regenerate")
+			need_save = true
+			
+			printdbg("- Ironman mode | Enabled")
+		end
+		if (config:r_value("character_creation","new_game_survival_mode",1) == true) then
+			alife_storage_manager.get_state().enable_survival_mode = true
+			config:w_value("character_creation","new_game_survival_mode")
+			need_save = true
+		end
+		if (config:r_value("character_creation","new_game_azazel_mode",1) == true) then
+			alife_storage_manager.get_state().enable_azazel_mode = true
+			alife_storage_manager.get_state().opened_routes = true
+			config:w_value("character_creation","new_game_azazel_mode")
+			need_save = true
+		end
+		if (config:r_value("character_creation","new_game_warfare",1) == true) then
+			alife_storage_manager.get_state().enable_warfare_mode = true
+			config:w_value("character_creation","new_game_warfare")
+			need_save = true
+		end
+		if (config:r_value("character_creation","new_game_campfire_mode",1) == true) then
+			alife_storage_manager.get_state().enable_campfire_mode = true
+			config:w_value("character_creation","new_game_campfire_mode")
+			need_save = true
+		end
+		if (config:r_value("character_creation","new_game_conditions_mode",1) == true) then
+			alife_storage_manager.get_state().enable_conditions_mode = true
+			config:w_value("character_creation","new_game_conditions_mode")
+			need_save = true
+		end
+		if (config:r_value("character_creation","new_game_timer_mode",2)) then
+			alife_storage_manager.get_state().enable_timer_mode = config:r_value("character_creation","new_game_timer_mode",2)
+			config:w_value("character_creation","new_game_timer_mode")
+			need_save = true
+		end
+		if (config:r_value("character_creation","new_game_opened_routes",1) == true) then
+			alife_storage_manager.get_state().opened_routes = true
+			config:w_value("character_creation","new_game_opened_routes")
+			need_save = true
+		end
+		
+		-- Gameplay
+		if (config:r_value("character_creation","new_game_difficulty",2)) then
+			local difficulty = {}
+			local diff = config:r_value("character_creation","new_game_difficulty",2)
+			
+			difficulty["type"]               	= diff
+			
+			difficulty["actor_immunities"] 	 	= ini_diff:r_float_ex("gdiff_" .. diff , "actor_immunities") or 1
+			difficulty["hit_power"] 	 		= ini_diff:r_float_ex("gdiff_" .. diff , "hit_power") or 1
+			difficulty["dispersion_base"] 	 	= ini_diff:r_float_ex("gdiff_" .. diff , "dispersion_base") or 1
+			difficulty["dispersion_factor"] 	= ini_diff:r_float_ex("gdiff_" .. diff , "dispersion_factor") or 1
+			difficulty["power_loss_bias"] 		= ini_diff:r_float_ex("gdiff_" .. diff , "power_loss_bias") or 0.2
+			difficulty["weight"]	            = ini_diff:r_float_ex("gdiff_" .. diff , "max_weight") or 60
+			difficulty["thirst"] 				= ini_diff:r_bool_ex("gdiff_" .. diff , "thirst") or false
+			difficulty["sleep"] 				= ini_diff:r_bool_ex("gdiff_" .. diff , "sleep") or false
+			difficulty["radiation_day"]			= ini_diff:r_bool_ex("gdiff_" .. diff , "radiation_day") or false
+			
+			alife_storage_manager.get_state().diff_game = difficulty
+			
+			config:w_value("character_creation","new_game_difficulty")
+			need_save = true
+		end
+	
+		-- Economy
+		if (config:r_value("character_creation","new_game_economy",2)) then
+			local economy = {}
+			local eco = config:r_value("character_creation","new_game_economy",2)
+			
+			economy["type"]               	= eco
+			
+			economy["goodwill"]           	= ini_diff:r_float_ex("econ_" .. eco , "goodwill") or 1
+			economy["rewards"]            	= ini_diff:r_float_ex("econ_" .. eco , "rewards") or 1
+			economy["repair"]             	= ini_diff:r_float_ex("econ_" .. eco , "repair") or 1
+			economy["upgrade"]            	= ini_diff:r_float_ex("econ_" .. eco , "upgrade") or 1
+			economy["buy"]                	= ini_diff:r_float_ex("econ_" .. eco , "buy") or 1
+			economy["sell"]               	= ini_diff:r_float_ex("econ_" .. eco , "sell") or 1
+			economy["artefact"]           	= ini_diff:r_float_ex("econ_" .. eco , "artefact") or 1
+			economy["loots"]              	= ini_diff:r_float_ex("econ_" .. eco , "loots") or 1
+			economy["money_loots"]        	= ini_diff:r_float_ex("econ_" .. eco , "money_loots") or 1
+			economy["stash_chance"]			= ini_diff:r_float_ex("econ_" .. eco , "stash_chance") or 0.4
+			economy["weapon_degradation"] 	= ini_diff:r_float_ex("econ_" .. eco , "weapon_degradation") or 1
+			economy["battery_consumption"] 	= ini_diff:r_float_ex("econ_" .. eco , "battery_consumption") or 1
+			economy["random_items"] 		= ini_diff:r_float_ex("econ_" .. eco , "random_items") or 0.5
+			economy["scope_chance"] 		= ini_diff:r_float_ex("econ_" .. eco , "scope_chance") or 0.15
+			economy["restock"] 				= ini_diff:r_float_ex("econ_" .. eco , "restock") or 24
+			economy["percentage_parts"]		= ini_diff:r_bool_ex("econ_" .. eco , "percentage_parts") or false
+			economy["limited_bolts"] 		= ini_diff:r_bool_ex("econ_" .. eco , "limited_bolts") or false
+			economy["arty_degradation"] 	= ini_diff:r_bool_ex("econ_" .. eco , "arty_degradation") or false
+			economy["bkpk_degradation"] 	= ini_diff:r_bool_ex("econ_" .. eco , "bkpk_degradation") or false
+
+			alife_storage_manager.get_state().diff_eco = economy
+			
+			config:w_value("character_creation","new_game_economy")
+			need_save = true
+		end
+	end
+	
+	-- Name
+	local new_character_name = config:r_value("character_creation","new_game_character_name",3) or ""
+	if (new_character_name and new_character_name ~= "") then
+		config:w_value("character_creation","new_game_character_name")
+		need_save = true
+		
+		new_character_name = new_character_name:gsub("_"," ")
+		
+		se_actor:set_character_name(new_character_name)
+	end
+	
+	-- Icon
+	local new_character_icon = config:r_value("character_creation","new_game_icon",3)
+	if (new_character_icon and new_character_icon ~= "") then
+		db.actor_binder.character_icon = new_character_icon
+		
+		config:w_value("character_creation","new_game_icon")
+		need_save = true
+	end
+	
+	-- Faction
+	local faction = config:r_value("character_creation","new_game_faction",3) or ""
+
+
+	if (faction and faction ~= "") then
+		config:w_value("character_creation","new_game_faction")
+		need_save = true
+		
+		-- Faction Spawn Position
+		local start_location = config:r_value("character_creation","new_game_map")
+		config:w_value("character_creation","new_game_map")
+		
+		if start_location and start_location ~= "" then
+			start_pos = {}
+			table.insert(start_pos,ini_map:r_float_ex(start_location, "lvid"))
+			table.insert(start_pos,ini_map:r_float_ex(start_location, "gvid"))
+			table.insert(start_pos,vector():set(ini_map:r_float_ex(start_location,"x"),ini_map:r_float_ex(start_location,"y"),ini_map:r_float_ex(start_location,"z")))
+		else
+			spawn_path = nil  --patrol("spawn_player_"..faction)
+		end
+		
+		-- Enable the story quests + Drx questlines, or disable their components depending on player choice and faction.
+		if (config:r_value("character_creation","new_game_story_mode",1) == true) and (not has_alife_info("story_mode_disabled")) then
+			if faction_psi_off[faction] then
+				-- Don't turn off emitters anymore - just give these factions a good psi helmet
+				--[[
+				-- Turn off the Miracle Machine:
+				give_info("yan_labx16_switcher_1_off")
+				give_info("yan_labx16_switcher_2_off")
+				give_info("yan_labx16_switcher_3_off")
+				give_info("yan_labx16_switcher_primary_off")
+	
+				-- Turn off the Brain Scorcher:
+				give_info("bar_deactivate_radar_done")
+	
+				-- Turn off the Generators:
+				give_info("warlab_deactivate_generators_done")
+				--]]
+			end
+			
+			-- Allow Sin squads to spawn if player is Sinner or Monolith
+			if (faction == "greh") or (faction == "monolith") then
+				give_info("mortal_sin")
+			end
+			
+			-- Allow ISG squads to spawn if player is ISG
+			if (faction == "isg") then
+				give_info("isg_entered_the_zone")
+			end
+			
+			-- For story mode, Mercs and ISG will be enemies
+			if (faction ~= "isg") then
+				local fac_1 = {"killer","actor_killer"}
+				local fac_2 = {"isg","actor_isg"}
+				for i=1,2 do
+					for j=1,2 do
+						game_relations.set_factions_community(fac_1[i], fac_2[j], -4000)
+						game_relations.set_factions_community(fac_2[j], fac_1[i], -4000)
+						save_var( db.actor, ("drx_df_" .. fac_1[i] .. "_" .. fac_2[j] .. "_relations"), -4000)
+						save_var( db.actor, ("drx_df_" .. fac_2[j] .. "_" .. fac_1[i] .. "_relations"), -4000)
+					end
+				end
+			end
+			
+			-- Faction defined here won't have access to all dialog
+			-- This is important for ISG player to prevent him from triggering main LTTZ quests, or changing their factions in Story mode
+			if faction_limited_playthrough[faction] then
+				give_info("faction_limited_playthrough")
+				give_info("faction_limited_playthrough_cf")
+			end
+		
+			-- Determine total number of storyline tasks to complete for this game:
+			save_var( db.actor, "drx_sl_total_task_number", math.random( 8, 12 ) )  -- Set to range of total meet honcho tasks to complete to finish game
+			save_var( db.actor, "drx_sl_current_task_number", 1 )
+	
+			-- Setup DRX questlines
+			xr_effects.drx_sl_setup_questlines( nil, nil, {faction} )
+		else
+			-- Compatibility with many story-specific mechanics.
+			give_info("story_mode_disabled")
+			-- Turn off the Miracle Machine:
+			give_info("yan_labx16_switcher_1_off")
+			give_info("yan_labx16_switcher_2_off")
+			give_info("yan_labx16_switcher_3_off")
+			give_info("yan_labx16_switcher_primary_off")
+
+			-- Turn off the Brain Scorcher:
+			give_info("bar_deactivate_radar_done")
+
+			-- Turn off the Generators:
+			give_info("warlab_deactivate_generators_done")
+			
+			-- Allow Sin and ISG squads to spawn:
+			give_info("mortal_sin")
+			give_info("isg_entered_the_zone")
+		end
+			
+		config:w_value("character_creation","new_game_story_mode") -- clear value
+		
+		-- Set and save the current faction for later uses
+		db.actor:set_character_community("actor_" .. faction, 0, 0)
+		alife_storage_manager.get_state().default_faction = faction
+		printdbg("- Default community setup: %s",faction)
+		
+		-- Reset player goodwill
+		local communities = utils_obj.get_communities_list( )		
+		for i, community in pairs( communities ) do
+			relation_registry.set_community_goodwill( community, 0, 0 )
+		end
+		
+		-- Money
+		local money = config:r_value("character_creation","new_game_money",2)
+		if money and money ~= "" then
+			db.actor:give_money(-db.actor:money()+money)
+		end 
+		config:w_value("character_creation","new_game_money")
+
+		-- MLR - open faction routes
+		if (not mlr_utils.load_var("routes_faction")) then		
+			mlr_utils.save_var("routes_faction", faction)
+		end
+
+		-- Loadout
+		local sim = alife()
+		local loadout = config:r_value("character_creation","new_game_loadout",3)
+		local ammo_to_spawn = {}
+		if loadout and loadout ~= "" then
+			local t = str_explode(loadout,",")
+			for i=1, #t do
+				if ini_sys:section_exist(t[i]) then
+					local to_change = { state = false }
+					if ini_sys:r_string_ex(t[i],"ammo_class") then
+						local slot = ini_sys:r_float_ex(t[i],"slot")
+						local ani_slot = ini_sys:r_float_ex(t[i],"animation_slot")
+						if slot and (((slot == 0) and (ani_slot == 1)) or (slot == 1) or (slot == 2)) then -- retarded way to know that we are dealing with weapon
+							local ammo_class = ini_sys:r_string_ex(t[i],"ammo_class")
+							local ammo_tbl = str_explode(ammo_class,",")
+							local ammo_type = ini_itm:r_string_ex("ammo_type_per_wpn",t[i])
+							local sec_ammo = ammo_tbl[1] --ammo_tbl[math.random(#ammo_tbl)]
+							if ammo_type and ini_sys:section_exist(ammo_type) then
+								to_change.state = true
+								to_change.weapon_sec = t[i]
+								to_change.ammo_sec = sec_ammo
+								sec_ammo = ammo_type
+							end
+							local box_size = (ini_sys:r_float_ex(sec_ammo, "box_size") or 50)
+							local count = ini_itm:r_float_ex("ammo_count",sec_ammo)
+							if (not count) then
+								count = (box_size < 30) and (2 * box_size) or box_size
+							end
+							ammo_to_spawn[sec_ammo] = ammo_to_spawn[sec_ammo] and (ammo_to_spawn[sec_ammo] + count) or count
+						end
+					end
+					local se_obj = alife_create_item(t[i], db.actor)
+					
+					-- save unique ammo type
+					if se_obj and (to_change.state == true) and to_change.weapon_sec and to_change.ammo_sec then
+						if (not alife_storage_manager.get_state().start_wpn_ammo) then
+							alife_storage_manager.get_state().start_wpn_ammo = {}
+						end
+						
+						alife_storage_manager.get_state().start_wpn_ammo[se_obj.id] = sec_ammo
+					end
+					
+					-- save bolt type
+					if (t[i] == "bolt") or (t[i] == "bolt_bullet") then
+						saved_bolt = t[i]
+					end
+				end
+			end
+			
+			-- give good psi helmet to Monolith, Sin, and Zombified players
+			if faction_psi_off[faction] then
+				local helm_name = "good_psy_helmet"
+				alife_create_item(helm_name, db.actor)
+				printf("giving psy helmet to Monolith/Sin/Zombied actor")
+			end
+		end
+		for sec,cnt in pairs(ammo_to_spawn) do
+			alife_create_item(sec, db.actor, { ammo = cnt })
+		end
+		--alife_create_item("device_torch", db.actor) -- base Torch
+		config:w_value("character_creation","new_game_loadout")
+		
+		se_actor:set_profile_name("actor_"..faction)
+	end
+
+	if (need_save) then
+		config:save()
+	end
+end
+
+local function actor_on_first_update(binder,delta)
+	if (spawn_path) then
+		start_pos = {}
+		start_pos[1] = spawn_path:level_vertex_id(0)
+		start_pos[2] = spawn_path:game_vertex_id(0)
+		start_pos[3] = spawn_path:point(0)
+	end
+	
+	-- Survival mode
+	if (IsSurvivalMode()) then
+		game_relations.change_factions_community_num("zombied",0,-5000)
+		game_relations.change_factions_community_num("monolith",0,-5000)
+
+		local faction = character_community(db.actor):sub(7)
+		if (ini_sys:section_exist("survival_squad_"..faction) and start_pos) then
+			local squad = alife_create("survival_squad_"..faction,start_pos[3],start_pos[1],start_pos[2])
+			if (squad) then
+				axr_companions.companion_squads[squad.id] = squad
+				squad:create_npc(nil,start_pos[3],start_pos[1],start_pos[2])
+				local as
+				for k in squad:squad_members() do
+					local se_obj = k.object or k.id and alife():object(k.id)
+					if (se_obj) then
+						game_relations.change_factions_community_num("zombied",k.id,-5000)
+						SIMBOARD:setup_squad_and_group(se_obj)
+						
+						se_save_var(se_obj.id,se_obj:name(),"companion",true)
+						se_save_var(se_obj.id,se_obj:name(),"companion_cannot_dismiss",true)
+					end
+				end
+			end
+		end
+	end
+	
+	if saved_bolt then
+		alife_storage_manager.get_state().bolt_first = saved_bolt
+	end
+
+	if (start_pos and #start_pos == 3) then
+		local warfare_enabled = alife_storage_manager.get_state().enable_warfare_mode
+		if warfare_enabled and (warfare_options.options.all_out_war) then
+			warfare.apply_all_out_war()
+		end
+
+		if warfare_enabled and (warfare_options.options.random_starting_locations) then
+			warfare.initialize_random_starting_locations()
+		else
+			ChangeLevel(start_pos[3],start_pos[1],start_pos[2],VEC_ZERO)
+		end
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_game_load",on_game_load)
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
+end
+
+
+----------------------------------------------------------------------
+-- UI
+----------------------------------------------------------------------
+class "UINewGame" (CUIScriptWnd)
+
+function UINewGame:__init(owner) super()
+	self.owner = owner
+	self.ini_ico = ini_file("plugins\\player_icons.ltx")
+	self.ini_opt = ini_file("plugins\\new_game_options.ltx")
+
+	-- Tables
+	self.table_faction = {
+		["stalker"] = true,
+		["dolg"] = true,
+		["freedom"] = true,
+		["csky"] = true,
+		["ecolog"] = true,
+		["killer"] = true,
+		["army"] = true,
+		["bandit"] = true,
+		["monolith"] = true,
+	}
+	local cfg = axr_main.config
+	if cfg:r_value("unlocked_factions","renegade",1) == true then
+		self.table_faction["renegade"] = true
+	end
+	if cfg:r_value("unlocked_factions","greh",1) == true then
+		self.table_faction["greh"] = true
+	end
+	if cfg:r_value("unlocked_factions","isg",1) == true then
+		self.table_faction["isg"] = true
+	end
+	
+	self.table_icon = {}
+	self.table_map = {}
+	self.table_difficulty = {"st_diff_1","st_diff_2","st_diff_3"}
+	self.table_economy = {"st_econ_1","st_econ_2","st_econ_3"}
+	
+	self.table_hardcore_lives = {}
+	local n = self.ini_opt:line_count("new_game_hardcore_lives") or 0
+	for i=0, n-1 do
+		local result, id, value = self.ini_opt:r_line("new_game_hardcore_lives",i,"","" )
+		local t = str_explode(value,",")
+		local size = #self.table_hardcore_lives + 1
+		self.table_hardcore_lives[size] = {}
+		self.table_hardcore_lives[size][1] = tonumber(t[1])
+		self.table_hardcore_lives[size][2] = tostring(t[2])
+	end
+	
+	self.table_hardcore_regen = {{nil,"st_off"}}
+	local n = self.ini_opt:line_count("new_game_hardcore_regen") or 0
+	for i=0, n-1 do
+		local result, id, value = self.ini_opt:r_line("new_game_hardcore_regen",i,"","" )
+		local t = str_explode(value,",")
+		local size = #self.table_hardcore_regen + 1
+		self.table_hardcore_regen[size] = {}
+		self.table_hardcore_regen[size][1] = tonumber(t[1])
+		self.table_hardcore_regen[size][2] = tostring(t[2])
+	end
+	
+	self.table_timer = {{nil,"st_off"}}
+	local n = self.ini_opt:line_count("new_game_timer") or 0
+	for i=0, n-1 do
+		local result, id, value = self.ini_opt:r_line("new_game_timer",i,"","" )
+		local t = str_explode(value,",")
+		local size = #self.table_timer + 1
+		self.table_timer[size] = {}
+		self.table_timer[size][1] = tonumber(t[1])
+		self.table_timer[size][2] = tostring(t[2])
+	end
+	
+	-- Selected choices
+	self.selected_faction = "stalker"
+	self.selected_icon = nil
+	self.selected_map = nil
+	self.selected_money = nil
+	self.selected_difficulty = self.table_difficulty[1]
+	self.selected_economy = self.table_economy[1]
+	self.selected_hardcore_lives = self.table_hardcore_lives[1]
+	self.selected_hardcore_regen = self.table_hardcore_regen[1]
+	self.selected_timer = self.table_timer[1]
+	self.points_left = ini_itm:r_float_ex("points","total_points_eco_1") or 1000
+	self.points_used = 0
+	
+	-- Utility
+	self.access	= true
+	
+	-- Prepare
+	self:SetWndRect				(Frect():set(0,0,1024,768))
+	self:Enable					(true)
+
+	self.faction_cell = {
+		["stalker"]							= { row = 1 , col = 1},
+		["bandit"]							= { row = 1 , col = 2},
+		["csky"]							= { row = 1 , col = 3},
+		["dolg"]							= { row = 2 , col = 1},
+		["freedom"]							= { row = 2 , col = 2},
+		["killer"]							= { row = 2 , col = 3},
+		["army"]							= { row = 3 , col = 1},
+		["ecolog"]							= { row = 3 , col = 2},
+		["monolith"]						= { row = 3 , col = 3},
+		["renegade"] 						= { row = 4 , col = 1},
+		["greh"] 							= { row = 4 , col = 2},
+		["isg"] 							= { row = 4 , col = 3},
+	}
+
+	-- Main
+	self:Main_Controls()
+	self:Main_CallBacks()
+	
+	-- Faction Select
+	self:PopupFaction_Controls()
+	--self:PopupFaction_Callbacks()
+	self:PopupFaction_Show(false)
+	
+	-- Icon Select
+	self:PopupIcon_Controls()
+	self:PopupIcon_Callbacks()
+	self:PopupIcon_Show(false)
+end
+
+function UINewGame:__finalize()
+
+end
+
+function UINewGame:Main_Controls()
+	local xml					= CScriptXmlInit()
+	self.xml = xml
+	xml:ParseFile				("ui_mm_faction_select.xml")
+
+	xml:InitStatic				("background", self)
+	
+	-- Background
+	self.dialog					= xml:InitStatic("main_dialog:frame_back", self)
+	
+	
+	-- Boxes
+	self.box_map = xml:InitStatic("main_dialog:box_map",self.dialog)
+	self.box_faction = xml:InitStatic("main_dialog:box_faction",self.dialog)
+	self.box_icon = xml:InitStatic("main_dialog:box_icon",self.dialog)
+	
+	self.box_item = xml:InitStatic("main_dialog:box_item",self.dialog)
+	self.box_item_temp = xml:InitStatic("main_dialog:box_item",self.dialog)
+	
+	
+	-- Main frame
+	self.main_frame = xml:InitStatic("main_dialog:frame_front",self.dialog)
+	
+	
+	-- Interactive Text
+	self.text_descr = xml:InitTextWnd("main_dialog:text_descr",nil)
+	self.scroll_desc = xml:InitScrollView("main_dialog:scroll_desc", self.dialog)
+	self.scroll_desc:AddWindow(self.text_descr, true)
+	self.text_descr:SetAutoDelete(false)
+	
+	self.character_name = xml:InitEditBox("main_dialog:input_name",self.dialog)
+	self:Register(self.character_name,"input_name")
+	self.character_name:SetText("Stalker") -- Set Default Name
+	
+	self.text_relations = xml:InitTextWnd("main_dialog:text_relations",self.dialog)
+	self.text_money = xml:InitTextWnd("main_dialog:text_money",self.dialog)
+	self.text_points_left = xml:InitTextWnd("main_dialog:text_points_left",self.dialog)
+	self.text_points_used = xml:InitTextWnd("main_dialog:text_points_used",self.dialog)
+	
+	-- Static Text
+	xml:InitStatic("main_dialog:cap_character",self.dialog)
+	xml:InitStatic("main_dialog:cap_options",self.dialog)
+	xml:InitStatic("main_dialog:cap_inventory",self.dialog)
+	xml:InitStatic("main_dialog:cap_loadout",self.dialog)
+	
+	xml:InitStatic("main_dialog:cap_name",self.dialog)
+	xml:InitStatic("main_dialog:cap_money",self.dialog)
+	xml:InitStatic("main_dialog:cap_points_left",self.dialog)
+	xml:InitStatic("main_dialog:cap_points_used",self.dialog)
+	
+	
+	-- Main Buttons
+	local btn = xml:Init3tButton("main_dialog:btn_start", self.dialog)
+	self:Register(btn,"btn_start")
+	
+	btn = xml:Init3tButton("main_dialog:btn_back", self.dialog)
+	self:Register(btn,"btn_back")
+	
+	btn = xml:Init3tButton("main_dialog:btn_random", self.dialog)
+	self:Register(btn,"btn_random")
+	
+	btn = xml:Init3tButton("main_dialog:btn_faction", self.dialog)
+	self:Register(btn,"btn_faction")
+	
+	btn = xml:Init3tButton("main_dialog:btn_icon", self.dialog)
+	self:Register(btn,"btn_icon")
+	
+	self.list_map = xml:InitComboBox("main_dialog:list_map", self.dialog)
+	self.list_map:SetAutoDelete(true)
+	self:Register(self.list_map, "list_map")
+	
+	
+	-- Item Lists
+	self.CC = {}
+	self.CC["inventory"] = utils_ui.UICellContainer("inventory", self, nil, "main_dialog:cont_inv", self.dialog)
+	self.CC["loadout"]   = utils_ui.UICellContainer("loadout", self, nil, "main_dialog:cont_loadout", self.dialog)
+	
+	for name,cc in pairs(self.CC) do
+		cc.showcase      = true
+		cc.disable_drag  = true
+		cc.disable_stack = true
+		cc:SetGridSpecs(35, 2)
+	end
+	
+	self.ck_reset = xml:Init3tButton("main_dialog:check_reset", self.dialog)
+	self:Register(self.ck_reset,"check_reset")
+	
+	-- Options
+	self.scroll_options = xml:InitScrollView("main_dialog:scroll_options", self.dialog)
+	self.templ_options = xml:InitStatic("main_dialog:templ_options",nil)
+	if (USE_MARSHAL) then
+		self.list_difficulty_cap = xml:InitStatic("main_dialog:list_difficulty_cap",self.dialog)
+		self.list_difficulty = xml:InitComboBox("main_dialog:list_difficulty", self.dialog)
+		self.list_difficulty:SetAutoDelete(true)
+		self:Register(self.list_difficulty, "list_difficulty")
+		self:LoadDifficulty()
+		
+		self.list_economy_cap = xml:InitStatic("main_dialog:list_economy_cap",self.dialog)
+		self.list_economy = xml:InitComboBox("main_dialog:list_economy", self.dialog)
+		self.list_economy:SetAutoDelete(true)
+		self:Register(self.list_economy, "list_economy")
+		self:LoadEconomy()
+		
+		self.ck_story_cap = xml:InitStatic("main_dialog:options:cap_check_story",self.templ_options)
+		self.ck_story = xml:InitCheck("main_dialog:options:check_story",	self.templ_options)
+		self:Register(self.ck_story,"check_story")
+		self.ck_story:SetCheck(true) -- ON by default
+		
+		self.ck_hardcore_cap = xml:InitStatic("main_dialog:options:cap_check_hardcore",self.templ_options)
+		self.ck_hardcore = xml:InitCheck("main_dialog:options:check_hardcore",	self.templ_options)
+		self:Register(self.ck_hardcore,"check_hardcore")
+		
+		self.ck_azazel_mode_cap = xml:InitStatic("main_dialog:options:cap_check_azazel_mode",self.templ_options)
+		self.ck_azazel_mode = xml:InitCheck("main_dialog:options:check_azazel_mode",	self.templ_options)
+		self:Register(self.ck_azazel_mode,"check_azazel_mode")
+		
+		self.ck_survival_cap = xml:InitStatic("main_dialog:options:cap_check_survival",self.templ_options)
+		self.ck_survival = xml:InitCheck("main_dialog:options:check_survival",	self.templ_options)
+		self:Register(self.ck_survival,"check_survival")
+		
+		self.ck_warfare_cap = xml:InitStatic("main_dialog:options:cap_check_warfare",self.templ_options)
+		self.ck_warfare = xml:InitCheck("main_dialog:options:check_warfare",	self.templ_options)
+		self:Register(self.ck_warfare,"check_warfare")
+		
+		self.ck_campfire_cap = xml:InitStatic("main_dialog:options:cap_check_campfire",self.templ_options)
+		self.ck_campfire = xml:InitCheck("main_dialog:options:check_campfire",	self.templ_options)
+		self:Register(self.ck_campfire,"check_campfire")
+		
+		self.ck_routes_cap = xml:InitStatic("main_dialog:options:cap_check_routes",self.templ_options)
+		self.ck_routes = xml:InitCheck("main_dialog:options:check_routes",	self.templ_options)
+		self:Register(self.ck_routes,"check_routes")
+		self.ck_routes:SetCheck(true) -- ON by default
+		
+		self.ck_conditions_cap = xml:InitStatic("main_dialog:options:cap_check_conditions",self.templ_options)
+		self.ck_conditions = xml:InitCheck("main_dialog:options:check_conditions",	self.templ_options)
+		self:Register(self.ck_conditions,"check_conditions")
+		
+		self.list_hardcore_lives_cap = xml:InitStatic("main_dialog:options:cap_list_hardcore_lives",self.templ_options)
+		self.list_hardcore_lives = xml:InitComboBox("main_dialog:options:list_hardcore_lives", self.templ_options)
+		self.list_hardcore_lives:SetAutoDelete(true)
+		self:Register(self.list_hardcore_lives, "list_hardcore_lives")
+		self:LoadHardcoreLives()
+		
+		self.list_hardcore_regen_cap = xml:InitStatic("main_dialog:options:cap_list_hardcore_regen",self.templ_options)
+		self.list_hardcore_regen = xml:InitComboBox("main_dialog:options:list_hardcore_regen", self.templ_options)
+		self.list_hardcore_regen:SetAutoDelete(true)
+		self:Register(self.list_hardcore_regen, "list_hardcore_regen")
+		self:LoadHardcoreRegen()
+		
+		self.list_timer_cap = xml:InitStatic("main_dialog:options:cap_list_timer",self.templ_options)
+		self.list_timer = xml:InitComboBox("main_dialog:options:list_timer", self.templ_options)
+		self.list_timer:SetAutoDelete(true)
+		self:Register(self.list_timer, "list_timer")
+		self:LoadTimer()
+		
+		self.ck_states = { 	
+							--["box_faction"] = false,
+							--["box_icon"] = false,
+							--["list_map"] = false,
+							--["ck_reset"] = false,
+		
+							["ck_survival"] = false,
+							["ck_hardcore"] = false,
+							["ck_azazel_mode"] = false,
+							["ck_story"] = false,
+							["ck_campfire"] = false,
+							["ck_conditions"] = false,
+							["ck_routes"] = false,
+							["ck_warfare"] = false,
+							
+							["list_difficulty"] = false,
+							["list_economy"] = false,
+							["list_hardcore_lives"] = false,
+							["list_hardcore_regen"] = false,
+							["list_timer"] = false
+		}
+	end
+	self.scroll_options:AddWindow(self.templ_options, true)
+	self.templ_options:SetAutoDelete(false)
+	
+	self.item_info = utils_ui.UIInfoItem(self, 1000)
+	
+	-- Update info
+	self:UpdateAll(false)
+	
+	-- Hint Window
+	self.hint_wnd = utils_ui.UIHint(self)
+	
+end
+
+function UINewGame:Main_CallBacks()
+	self:AddCallback("btn_start", ui_events.BUTTON_CLICKED, self.OnStartGame, self)
+	self:AddCallback("btn_random", ui_events.BUTTON_CLICKED, self.OnRandomize, self)
+	self:AddCallback("btn_back", ui_events.BUTTON_CLICKED, self.OnQuit, self)
+	
+	self:AddCallback("btn_faction", ui_events.BUTTON_CLICKED, self.OnFactionClicked, self)
+	self:AddCallback("btn_icon", ui_events.BUTTON_CLICKED, self.OnIconClicked, self)
+	
+	self:AddCallback("list_map", ui_events.LIST_ITEM_SELECT, self.OnSelectMap, self)
+	self:AddCallback("check_reset", ui_events.BUTTON_CLICKED, self.OnCheckResetList, self)
+	
+	self:AddCallback("button_inv", ui_events.BUTTON_CLICKED, self.OnInvCell_Clicked, self)
+	self:AddCallback("button_loadout", ui_events.BUTTON_CLICKED, self.OnLoadoutCell_Clicked, self)
+	
+	self:AddCallback("check_story", ui_events.BUTTON_CLICKED, self.OnCheckSetStory, self)
+	self:AddCallback("check_survival", ui_events.BUTTON_CLICKED, self.OnCheckSetSurvival, self)
+	self:AddCallback("check_azazel_mode", ui_events.BUTTON_CLICKED, self.OnCheckSetAzazel, self)
+	self:AddCallback("check_warfare", ui_events.BUTTON_CLICKED, self.OnCheckSetWarfare, self)
+	self:AddCallback("list_difficulty", ui_events.LIST_ITEM_SELECT, self.OnSelectDifficulty, self)
+	self:AddCallback("list_economy", ui_events.LIST_ITEM_SELECT, self.OnSelectEconomy, self)
+	self:AddCallback("list_hardcore_lives", ui_events.LIST_ITEM_SELECT, self.OnSelectHardcoreLives, self)
+	self:AddCallback("list_hardcore_regen", ui_events.LIST_ITEM_SELECT, self.OnSelectHardcoreRegen, self)
+	self:AddCallback("list_timer", ui_events.LIST_ITEM_SELECT, self.OnSelectTimer, self)
+end
+
+function UINewGame:Update()
+	CUIScriptWnd.Update(self)
+	
+	if (not self.access) then
+		self.hint_wnd:Update()
+		return
+	end
+	
+	for ck_name,v in pairs(self.ck_states) do 
+		if (self[ck_name] and self[ck_name]:IsCursorOverWindow()) then
+			local str = ""
+			if (ck_name == "box_faction") then
+				str = strformat( game.translate_string("st_mm_box_faction_desc") , game.translate_string("st_faction_" .. self.selected_faction))
+				if (self.selected_faction == "bandit") then
+					str = "cheeki breeki"
+				end
+			else
+				str = game.translate_string("st_mm_"..ck_name.."_desc")
+			end
+			self.hint_wnd:Update(str)
+			return
+		end
+	end
+	
+	-- Updating item info box and item cell containers
+	local found_cell = false
+	for name,cc in pairs(self.CC) do
+		if cc:IsShown() then
+			found_cell = cc:Update(self.item_info) or found_cell
+		end
+	end
+	if (not found_cell) then
+		self.item_info:Update()
+	end
+	
+	self.hint_wnd:Update()
+end 
+
+
+-- Faction Select Pop-up
+function UINewGame:PopupFaction_Controls()
+	local xml = self.xml
+
+	-- Main
+	self.black_1					= xml:InitStatic("main_dialog:popup_faction:frame_black",self.dialog)
+	self.dialog_1					= xml:InitStatic("main_dialog:popup_faction:frame", self.dialog)
+	
+	-- Static Text
+	self.cap_faction = xml:InitStatic("main_dialog:popup_faction:cap_faction",self.dialog_1)
+	
+	-- Faction buttons
+	self.scroll_faction = xml:InitScrollView("main_dialog:popup_faction:scroll_faction", self.dialog_1)
+	self.btn_faction = {}
+	
+end
+
+function UINewGame:PopupFaction_Callbacks()
+	for k,v in pairs(self.table_faction) do
+		self:AddCallback("btn_" .. k, ui_events.BUTTON_CLICKED, self["OnFaction_"..k], self)
+	end
+end
+
+function UINewGame:PopupFaction_Show (state)
+	local xml = self.xml
+	local num_of_rows = math.ceil(size_table(self.table_faction)/3)
+	
+	self.black_1:Show(state)
+	self.dialog_1:Show(state)
+	self.cap_faction:Show(state)
+	self.scroll_faction:Clear()
+	if state then
+		self.access = false
+		self:PopupFaction_Callbacks()
+		local _st = xml:InitStatic("main_dialog:popup_faction:templ_faction",nil)
+		
+		for k,v in pairs(self.table_faction) do
+			self.btn_faction[k] = xml:Init3tButton("main_dialog:popup_faction:btn_" .. k , _st)
+			local x,y = self:GetAxis_Icon ( self.scroll_faction, self.btn_faction[k], num_of_rows, 3, self.faction_cell[k].row, self.faction_cell[k].col )
+			self.btn_faction[k]:SetWndPos(vector2():set(x, y))
+			self:Register(self.btn_faction[k], "btn_" .. k )
+		end
+		self.scroll_faction:AddWindow(_st, true)
+		_st:SetAutoDelete(false)
+		
+	else
+		self.access = true
+	end
+end
+
+function UINewGame:OnFactionSelect(faction)
+	self.selected_faction = faction
+	self:UpdateAll(false, self.selected_faction)
+	self:PopupFaction_Show(false)
+	if faction_no_story[faction] then
+		self.ck_story:SetCheck(false)
+		self.ck_story:Enable(false)
+	else
+		self.ck_story:Enable(true)
+	end
+end
+
+function UINewGame:OnFaction_stalker()
+	self:OnFactionSelect("stalker")
+end
+function UINewGame:OnFaction_bandit()
+	self:OnFactionSelect("bandit")
+end
+function UINewGame:OnFaction_csky()
+	self:OnFactionSelect("csky")
+end
+function UINewGame:OnFaction_dolg()
+	self:OnFactionSelect("dolg")
+end
+function UINewGame:OnFaction_freedom()
+	self:OnFactionSelect("freedom")
+end
+function UINewGame:OnFaction_killer()
+	self:OnFactionSelect("killer")
+end
+function UINewGame:OnFaction_army()
+	self:OnFactionSelect("army")
+end
+function UINewGame:OnFaction_ecolog()
+	self:OnFactionSelect("ecolog")
+end
+function UINewGame:OnFaction_monolith()
+	self:OnFactionSelect("monolith")
+end
+function UINewGame:OnFaction_renegade()
+	self:OnFactionSelect("renegade")
+end
+function UINewGame:OnFaction_greh()
+	self:OnFactionSelect("greh")
+end
+function UINewGame:OnFaction_isg()
+	self:OnFactionSelect("isg")
+end
+function UINewGame:OnFaction_zombied()
+	self:OnFactionSelect("zombied")
+end
+
+
+-- Icon Select Pop-up
+function UINewGame:PopupIcon_Controls()
+	local xml = self.xml
+	
+	-- Main
+	self.black_2					= xml:InitStatic("main_dialog:popup_icon:frame_black",self.dialog)
+	self.dialog_2					= xml:InitStatic("main_dialog:popup_icon:frame", self.dialog)
+	
+	-- Static Text
+	self.cap_icon = xml:InitStatic("main_dialog:popup_icon:cap_icon",self.dialog_2)
+	
+	-- Faction buttons
+	self.scroll_icon = xml:InitScrollView("main_dialog:popup_icon:scroll_icon", self.dialog_2)
+	
+	-- Size Reference
+	self.tempy_icon = xml:InitStatic("main_dialog:popup_icon:temp_icon" , self.dialog_2)
+	
+	self.btn_icon = {}
+	self.temp_icon = {}
+end
+
+function UINewGame:PopupIcon_Callbacks()
+	for i = 1 , 30 do
+		self:AddCallback("btn_icon_" .. tostring(i), ui_events.BUTTON_CLICKED, self["OnIcon_" .. tostring(i)], self)
+	end
+end
+
+function UINewGame:PopupIcon_Show (state)
+	local xml = self.xml
+	
+	self.black_2:Show(state)
+	self.dialog_2:Show(state)
+	self.cap_icon:Show(state)
+	self.scroll_icon:Clear()
+	if state then
+		local _st = xml:InitStatic("main_dialog:popup_icon:templ_icon",nil)
+		self.access = false
+		
+		local n = 10
+		local x = 20
+		local w = self.tempy_icon:GetWidth()
+		local h = self.tempy_icon:GetHeight()
+		for i = 1 , #self.table_icon do
+			self.temp_icon[i] = xml:InitStatic("main_dialog:popup_icon:temp_icon" , _st)
+			self.temp_icon[i]:InitTexture(self.table_icon[i])
+			self.temp_icon[i]:SetStretchTexture(true)
+			self.temp_icon[i]:SetWndSize(vector2():set(w , h))
+			self.btn_icon[i] = xml:Init3tButton("main_dialog:popup_icon:btn_icon" , _st)
+			
+			self.temp_icon[i]:SetWndPos(vector2():set(x, n))
+			self.btn_icon[i]:SetWndPos(vector2():set(x, n))
+			
+			self:Register(self.temp_icon[i], "btn_icon_" .. tostring(i) )
+			self:Register(self.btn_icon[i], "btn_icon_" .. tostring(i) )
+			n = n + h + 10
+		end
+		for i = #self.table_icon + 1 , 50 do -- everything else is thrown outside
+			if self.temp_icon[i] and self.btn_icon[i] then
+				self.temp_icon[i]:SetWndPos(vector2():set(x + 200, 0))
+				self.btn_icon[i]:SetWndPos(vector2():set(x + 200, 0))
+			end
+		end
+		_st:SetWndSize(vector2():set(_st:GetWidth(), n - 2 ))
+		self.scroll_icon:AddWindow(_st, true)
+		_st:SetAutoDelete(false)
+	else
+		self.access = true
+	end
+end
+
+function UINewGame:OnIconSelect(num)
+	self.selected_icon = self.table_icon[num]
+	self:UpdateIcon()
+	self:PopupIcon_Show(false)
+end
+
+function UINewGame:OnIcon_1()
+	self:OnIconSelect(1)
+end
+function UINewGame:OnIcon_2()
+	self:OnIconSelect(2)
+end
+function UINewGame:OnIcon_3()
+	self:OnIconSelect(3)
+end
+function UINewGame:OnIcon_4()
+	self:OnIconSelect(4)
+end
+function UINewGame:OnIcon_5()
+	self:OnIconSelect(5)
+end
+function UINewGame:OnIcon_6()
+	self:OnIconSelect(6)
+end
+function UINewGame:OnIcon_7()
+	self:OnIconSelect(7)
+end
+function UINewGame:OnIcon_8()
+	self:OnIconSelect(8)
+end
+function UINewGame:OnIcon_9()
+	self:OnIconSelect(9)
+end
+function UINewGame:OnIcon_10()
+	self:OnIconSelect(10)
+end
+function UINewGame:OnIcon_11()
+	self:OnIconSelect(11)
+end
+function UINewGame:OnIcon_12()
+	self:OnIconSelect(12)
+end
+function UINewGame:OnIcon_13()
+	self:OnIconSelect(13)
+end
+function UINewGame:OnIcon_14()
+	self:OnIconSelect(14)
+end
+function UINewGame:OnIcon_15()
+	self:OnIconSelect(15)
+end
+function UINewGame:OnIcon_16()
+	self:OnIconSelect(16)
+end
+function UINewGame:OnIcon_17()
+	self:OnIconSelect(17)
+end
+function UINewGame:OnIcon_18()
+	self:OnIconSelect(18)
+end
+function UINewGame:OnIcon_19()
+	self:OnIconSelect(19)
+end
+function UINewGame:OnIcon_20()
+	self:OnIconSelect(20)
+end
+function UINewGame:OnIcon_21()
+	self:OnIconSelect(21)
+end
+function UINewGame:OnIcon_22()
+	self:OnIconSelect(22)
+end
+function UINewGame:OnIcon_23()
+	self:OnIconSelect(23)
+end
+function UINewGame:OnIcon_24()
+	self:OnIconSelect(24)
+end
+function UINewGame:OnIcon_25()
+	self:OnIconSelect(25)
+end
+function UINewGame:OnIcon_26()
+	self:OnIconSelect(26)
+end
+function UINewGame:OnIcon_27()
+	self:OnIconSelect(27)
+end
+function UINewGame:OnIcon_28()
+	self:OnIconSelect(28)
+end
+function UINewGame:OnIcon_29()
+	self:OnIconSelect(29)
+end
+function UINewGame:OnIcon_30()
+	self:OnIconSelect(30)
+end
+function UINewGame:OnIcon_31()
+	self:OnIconSelect(31)
+end
+function UINewGame:OnIcon_32()
+	self:OnIconSelect(32)
+end
+function UINewGame:OnIcon_33()
+	self:OnIconSelect(33)
+end
+function UINewGame:OnIcon_34()
+	self:OnIconSelect(34)
+end
+function UINewGame:OnIcon_35()
+	self:OnIconSelect(35)
+end
+function UINewGame:OnIcon_36()
+	self:OnIconSelect(36)
+end
+function UINewGame:OnIcon_37()
+	self:OnIconSelect(37)
+end
+function UINewGame:OnIcon_38()
+	self:OnIconSelect(38)
+end
+function UINewGame:OnIcon_39()
+	self:OnIconSelect(39)
+end
+function UINewGame:OnIcon_40()
+	self:OnIconSelect(40)
+end
+function UINewGame:OnIcon_41()
+	self:OnIconSelect(41)
+end
+function UINewGame:OnIcon_42()
+	self:OnIconSelect(42)
+end
+function UINewGame:OnIcon_43()
+	self:OnIconSelect(43)
+end
+function UINewGame:OnIcon_44()
+	self:OnIconSelect(44)
+end
+function UINewGame:OnIcon_45()
+	self:OnIconSelect(45)
+end
+function UINewGame:OnIcon_46()
+	self:OnIconSelect(46)
+end
+function UINewGame:OnIcon_47()
+	self:OnIconSelect(47)
+end
+function UINewGame:OnIcon_48()
+	self:OnIconSelect(48)
+end
+function UINewGame:OnIcon_49()
+	self:OnIconSelect(49)
+end
+function UINewGame:OnIcon_50()
+	self:OnIconSelect(50)
+end
+
+
+-- Info loading
+function UINewGame:LoadFaction (rand, faction)
+	local pick = faction
+	if (not pick) then
+		local k = random_key_table(self.table_faction)
+		pick = rand and k or "stalker"
+	end
+	
+	self.selected_faction = pick
+	local money = utils_data.read_from_ini(ini_itm, self.selected_faction .. "_money", "money", "float")
+	self.selected_money = money
+	
+	self:UpdateFaction()
+	self:UpdateMoney()
+end
+
+function UINewGame:LoadIcon (rand)
+	local def_icon = "ui_inGame2_no_data"
+	self.table_icon = {}
+	table.insert(self.table_icon, def_icon)
+
+	local section = self.selected_faction .. "_portraits"
+	local n = self.ini_ico:section_exist(section) and self.ini_ico:line_count(section) or 0
+	for i=0 , n-1 do
+		local result, id, value = self.ini_ico:r_line(section,i,"","" )
+		if (id ~= "") then
+			table.insert(self.table_icon, id)
+		end
+	end
+	
+	local pick = rand and self.table_icon[math.random(#self.table_icon)] or def_icon
+	
+	self.selected_icon = pick
+	self:UpdateIcon()
+end
+
+function UINewGame:LoadMap (rand)
+	self.table_map = {}
+	
+	if (not rand) then
+		table.insert(self.table_map, "random_location")
+	end
+	
+	local n = ini_map:line_count(self.selected_faction .. "_start_locations") or 0
+	for i=0, n-1 do
+		local result, id, value = ini_map:r_line(self.selected_faction.."_start_locations",i,"","" )
+		if value then
+			local tbl = str_explode(value,",")
+			if self.ck_story and self.ck_story:GetCheck() then
+				if (tbl[2] == "true") or (tbl[2] == "false") then
+					table.insert(self.table_map, id)
+				end
+			elseif tbl[2] ~= "false" then
+				table.insert(self.table_map, id)
+			end
+		end
+	end
+	
+	self.list_map:ClearList()
+	for i=1,#self.table_map do
+		self.list_map:AddItem(game.translate_string("ui_st_" .. self.table_map[i]), i)
+	end
+	local pick = rand and self.table_map[math.random(#self.table_map)] or self.table_map[1]
+	self.list_map:SetText(game.translate_string("ui_st_" .. pick))
+	
+	self.selected_map = pick
+	self:UpdateMap()
+end
+
+function UINewGame:LoadLoadout (rand)
+	
+	-- Reset
+	local eco_idxs = self.selected_economy:gsub("st_econ_","") or "1"
+	self.points_used = 0
+	self.points_left = ini_itm:r_float_ex("points","total_points_eco_" .. eco_idxs) or 1000
+	self.text_points_used:SetText(tostring(self.points_used))
+	self.text_points_left:SetText(tostring(self.points_left))
+	
+
+	-- Read
+	local t_inv, t_loadout, p_inv, p_loadout = {}, {}, {}, {}
+	local size_inv, size_loadout = 0,0
+	local n = ini_itm:line_count(self.selected_faction .. "_loadout") or 0
+	for i=0, n-1 do
+		local result, sec, value = ini_itm:r_line(self.selected_faction .. "_loadout" , i , "", "")
+		if ini_sys:section_exist(sec) then
+			local t = str_explode(value,",")
+			if (not t[4]) or (t[4] and (tonumber(eco_idxs) <= tonumber(t[4]))) then
+				if (t[1] == "false") then
+					for i=1,tonumber(t[2]) do
+						size_inv = size_inv + 1
+						t_inv[size_inv] = sec
+						p_inv[size_inv] = 0
+					end
+				elseif (t[1] == "true") then
+					for i=1,tonumber(t[2]) do
+						size_loadout = size_loadout + 1
+						t_loadout[size_loadout] = sec
+						p_loadout[size_loadout] = tonumber(t[3])
+					end
+				end
+			end
+		end
+	end
+	
+	-- Update Item containers
+	self.CC["inventory"]:Reinit(t_inv, p_inv)
+	for idx,ci in pairs(self.CC["inventory"].cell) do
+		if ci:IsShown() then
+			local val = ci.flags.info or 0
+			ci.flags.value = val
+			ci.flags.value_str = game.translate_string("st_mm_new_game_points") .. ": " .. val
+		end
+	end
+	
+	self.CC["loadout"]:Reinit(t_loadout, p_loadout)
+	for idx,ci in pairs(self.CC["loadout"].cell) do
+		if ci:IsShown() then
+			local val = ci.flags.info or 0
+			ci.flags.value = val
+			ci.flags.value_str = game.translate_string("st_mm_new_game_points") .. ": " .. val
+		end
+	end
+	
+	-- Pick randomly
+	if (not rand) then
+		return
+	end
+	
+	while true do
+		local idx = random_key_table( self.CC["loadout"].cell )
+		if (not idx) then
+			return
+		end
+		
+		local ci = self.CC["loadout"].cell[idx]
+		if not (ci and ci.section) then
+			break
+		end
+		
+		local points = ci.flags.value
+		printf("sec: %s | points: %s | points left: %s", ci.section, points, self.points_left)
+		if (points > self.points_left) then
+			break
+		end
+		
+		self.points_used = self.points_used + points
+		self.points_left = self.points_left - points
+	
+		self.CC["loadout"]:TransferItem(self.CC["inventory"], nil, ci.section)
+	end
+	
+	self.text_points_used:SetText(tostring(self.points_used))
+	self.text_points_left:SetText(tostring(self.points_left))
+end
+
+function UINewGame:LoadDifficulty (rand)
+	self.list_difficulty:ClearList()
+	for i=1,#self.table_difficulty do
+		self.list_difficulty:AddItem(game.translate_string(self.table_difficulty[i]), i)
+	end
+	local pick = rand and self.table_difficulty[math.random(#self.table_difficulty)] or self.table_difficulty[1]
+	self.list_difficulty:SetText(game.translate_string(pick))
+	self.selected_difficulty = pick
+end
+
+function UINewGame:LoadEconomy (rand)
+	self.list_economy:ClearList()
+	for i=1,#self.table_economy do
+		self.list_economy:AddItem(game.translate_string(self.table_economy[i]), i)
+	end
+	local pick = rand and self.table_economy[math.random(#self.table_economy)] or self.table_economy[1]
+	self.list_economy:SetText(game.translate_string(pick))
+	self.selected_economy = pick
+end
+
+function UINewGame:LoadHardcoreLives (rand)
+	local str
+	self.list_hardcore_lives:ClearList()
+	for i=1, #self.table_hardcore_lives do
+		str = self.table_hardcore_lives[i][1] or ""
+		self.list_hardcore_lives:AddItem(str .. " " .. game.translate_string(self.table_hardcore_lives[i][2]), i)
+	end
+	local pick = rand and self.table_hardcore_lives[math.random(#self.table_hardcore_lives)] or self.table_hardcore_lives[1]
+	str = pick[1] or ""
+	self.list_hardcore_lives:SetText(str .. " " .. game.translate_string(pick[2])) 
+	self.selected_hardcore_lives = pick
+end
+
+function UINewGame:LoadHardcoreRegen (rand)
+	local str
+	self.list_hardcore_regen:ClearList()
+	for i=1, #self.table_hardcore_regen do
+		str = self.table_hardcore_regen[i][1] and tostring(round_idp(self.table_hardcore_regen[i][1]/24)) or ""
+		self.list_hardcore_regen:AddItem(str .. " " .. game.translate_string(self.table_hardcore_regen[i][2]), i)
+	end
+	local pick = rand and self.table_hardcore_regen[math.random(#self.table_hardcore_regen)] or self.table_hardcore_regen[1]
+	str = pick[1] and tostring(round_idp(pick[1]/24)) or ""
+	self.list_hardcore_regen:SetText(str .. " " .. game.translate_string(pick[2])) 
+	self.selected_hardcore_regen = pick
+end
+
+function UINewGame:LoadTimer (rand)
+	local str
+	self.list_timer:ClearList()
+	for i=1, #self.table_timer do
+		str = self.table_timer[i][1] or ""
+		self.list_timer:AddItem(str .. " " .. game.translate_string(self.table_timer[i][2]), i)
+	end
+	local pick = rand and self.table_timer[math.random(#self.table_timer)] or self.table_timer[1]
+	str = pick[1] or ""
+	self.list_timer:SetText(str .. " " .. game.translate_string(pick[2]))
+	self.selected_timer = pick
+end
+
+
+-- GUI Callbacks
+function UINewGame:OnFactionClicked()
+	if (not self.access) then
+		return
+	end
+	
+	self:PopupFaction_Show(true)
+end
+
+function UINewGame:OnIconClicked()
+	if (not self.access) then
+		return
+	end
+	
+	self:PopupIcon_Show(true)
+end
+
+function UINewGame:OnSelectMap()
+	self.selected_map = self.table_map[self.list_map:CurrentID()]
+	self:UpdateMap()
+end
+
+function UINewGame:On_CC_Mouse1(cont, idx)
+	if not (self.access) then
+		return
+	end
+
+	local ci = self.CC[cont].cell[idx]
+	if not (ci) then
+		return
+	end
+
+	local flags = ci.flags
+	if not (flags.value and flags.value > 0) then
+		return
+	end
+
+	local points = flags.value
+	local to_inv = cont == "inventory"
+	local cont2 = (cont == "inventory") and "loadout" or "inventory"
+	
+	local points_used = self.points_used + ((to_inv and -1 or 1) * points)
+	local points_left = self.points_left + ((to_inv and 1 or -1) * points)
+	if points_left < 0 then
+		return
+	end
+	
+	self.points_used = points_used
+	self.points_left = points_left
+
+	self.text_points_used:SetText(tostring(self.points_used))
+	self.text_points_left:SetText(tostring(self.points_left))
+
+	-- Transfer item and points
+	self.CC[cont]:TransferItem(self.CC[cont2], nil, ci.section)
+end
+
+function UINewGame:OnSelectDifficulty()
+	self.selected_difficulty = self.table_difficulty[self.list_difficulty:CurrentID()]
+end
+
+function UINewGame:OnSelectEconomy()
+	self.selected_economy = self.table_economy[self.list_economy:CurrentID()]
+	self:LoadLoadout()
+end
+
+function UINewGame:OnSelectHardcoreLives()
+	self.selected_hardcore_lives = self.table_hardcore_lives[self.list_hardcore_lives:CurrentID()]
+end
+
+function UINewGame:OnSelectHardcoreRegen()
+	self.selected_hardcore_regen = self.table_hardcore_regen[self.list_hardcore_regen:CurrentID()]
+end
+
+function UINewGame:OnSelectTimer()	
+	self.selected_timer = self.table_timer[self.list_timer:CurrentID()]
+end
+
+function UINewGame:OnCheckSetStory()
+	if (not self.access) then
+		return
+	end
+	
+	self.ck_survival:SetCheck(false)
+	self.ck_states["ck_survival"] = false
+	
+	self.ck_azazel_mode:SetCheck(false)
+	self.ck_states["ck_azazel_mode"] = false
+	
+	-- override Warfare exclusivity check
+	--self.ck_warfare:SetCheck(false)
+	--self.ck_states["ck_warfare"] = false
+	
+	self:LoadMap()
+end
+
+function UINewGame:OnCheckSetAzazel()
+	if (not self.access) then
+		return
+	end
+	
+	self.ck_story:SetCheck(false)
+	self.ck_states["ck_story"] = false
+	
+	self:LoadMap()
+end
+
+function UINewGame:OnCheckSetWarfare()
+	if (not self.access) then
+		return
+	end
+	
+	-- override Story mode exclusivity check
+	--self.ck_story:SetCheck(false)
+	--self.ck_states["ck_story"] = false
+	
+	self.ck_survival:SetCheck(false)
+	self.ck_states["ck_survival"] = false
+	
+	self:LoadMap()
+end
+
+function UINewGame:OnCheckSetSurvival()
+	if (not self.access) then
+		return
+	end
+	
+	self.ck_story:SetCheck(false)
+	self.ck_states["ck_story"] = false
+	
+	self.ck_warfare:SetCheck(false)
+	self.ck_states["ck_warfare"] = false
+	
+	self:LoadMap()
+end
+
+function UINewGame:OnCheckResetList()
+	if (not self.access) then
+		return
+	end
+	
+	self:LoadLoadout()
+end
+
+
+-- Update visuals
+function UINewGame:UpdateAll (rand, faction)
+	self:LoadFaction(rand, faction)
+	self:LoadIcon(rand)
+	self:LoadMap(rand)
+	
+	self:UpdateMoney()
+	self:UpdateDescr()
+
+	self:LoadLoadout(rand)
+end
+
+function UINewGame:UpdateFaction()
+	self.box_faction:InitTexture("ui_new_game_flair_" .. self.selected_faction)
+	self.box_faction:SetStretchTexture(true)
+	self.box_faction:SetWndSize(vector2():set(self.box_faction:GetWidth(),self.box_faction:GetHeight()))
+end
+
+function UINewGame:UpdateIcon()
+	self.box_icon:InitTexture(self.selected_icon)
+	self.box_icon:SetStretchTexture(true)
+	self.box_icon:SetWndSize(vector2():set(self.box_icon:GetWidth(),self.box_icon:GetHeight()))
+end
+
+function UINewGame:UpdateMap()
+	local map_pic = (self.selected_map ~= "random_location") and self.selected_map or self.table_map[2]
+	local map = utils_data.read_from_ini(ini_map, self.selected_faction .. "_start_locations", map_pic, "string")
+	map = str_explode(map,",") 
+	
+	self.box_map:InitTexture("ui_new_game_map_" .. map[1])
+	self.box_map:SetStretchTexture(true)
+	self.box_map:SetWndSize(vector2():set(self.box_map:GetWidth(),self.box_map:GetHeight()))
+end
+
+function UINewGame:UpdateMoney()
+	self.text_money:SetText(tostring(self.selected_money) .. " RU")
+end
+
+function UINewGame:UpdateDescr()
+	local faction = self.selected_faction 
+	
+	-- Description and map
+	local desc = "%c[0,250,250,250]" .. game.translate_string("st_mm_new_game_description")
+	desc = desc .. "\\n%c[0,150,150,150]" .. game.translate_string("st_faction_" .. faction .. "_desc")
+	
+	self.text_descr:SetText(desc)
+	self.text_descr:AdjustHeightToText()
+	self.text_descr:SetWndSize(vector2():set(self.text_descr:GetWidth(),self.text_descr:GetHeight()+10))
+	self.scroll_desc:Clear()
+	self.scroll_desc:AddWindow(self.text_descr, true)
+	self.text_descr:SetAutoDelete(false)
+	
+	-- Relations
+	local str_stats = "%c[0,250,250,250]" .. game.translate_string("st_mm_new_game_relations") .. " \\n"
+	for k,v in pairs(self.table_faction) do
+		if not (k == faction) then
+			local v = relation_registry.community_relation("actor_" .. faction, k)
+			if (v >= 1000) then
+				str_stats = str_stats .. "%c[0,150,150,150]• %c[0,50,175,50]" .. game.translate_string("st_faction_" .. k) .. "\\n"
+			elseif (v <= -1000) then
+				str_stats = str_stats .. "%c[0,150,150,150]• %c[0,175,50,50]" .. game.translate_string("st_faction_" .. k) .. "\\n"
+			else
+				str_stats = str_stats .. "%c[0,150,150,150]• %c[0,175,175,50]" .. game.translate_string("st_faction_" .. k) .. "\\n"
+			end
+		end
+	end
+	
+	self.text_relations:SetText(str_stats)
+	self.text_relations:AdjustHeightToText()
+end
+
+function UINewGame:GetAxis_Icon (main , element , all_row , all_col , row , col)
+	local _w = main:GetWidth()
+	local _h = main:GetHeight()
+	local _wi = element:GetWidth()
+	local _hi = element:GetHeight()
+	local off_x = (_w - _wi * all_col)/(all_col+1)
+	local off_y = (_h - _hi * all_row)/(all_row+1)
+	
+	local x = (off_x * col) + (_wi * (col - 1))
+	local y = (off_y * row) + (_hi * (row - 1))
+	return x,y
+end
+
+
+-- Main Buttons
+function UINewGame:OnQuit()
+	if (not self.access) then
+		return
+	end
+	
+	self.owner:ShowDialog(true)
+	self.owner:Show(true)
+	if (self:IsShown()) then
+		self:HideDialog()
+	end
+	self:Show(false)
+	--ui_main_menu.RemoveFactionUI()
+end
+
+function UINewGame:OnRandomize()
+	if (not self.access) then
+		return
+	end
+	
+	-- Faction
+	self.selected_faction  = random_key_table(self.table_faction)
+	
+	-- Name
+	local subset
+	if (self.selected_faction == "army" or self.selected_faction == "dolg" or self.selected_faction == "isg") then 
+		subset = random_choice("private","sergeant","senior_sergeant","lieutenant","captain")
+	else 
+		subset = random_choice("stalker","bandit","science")
+	end
+	local name_cnt = ini_sys:r_float_ex("stalker_names_"..subset,"name_cnt")
+	local last_name_cnt = ini_sys:r_float_ex("stalker_names_"..subset,"last_name_cnt")
+	local first_name = game.translate_string( strformat("name_%s_%s",subset,math.random(0,name_cnt-1)) )
+	local last_name = game.translate_string( strformat("lname_%s_%s",subset,math.random(0,last_name_cnt-1)) )
+	self.character_name:SetText(first_name .. " " .. last_name)
+	
+	-- Difficulty and Economy
+	self:LoadDifficulty(true)
+	self:LoadEconomy(true)
+	
+	-- Everything else
+	self:UpdateAll(true, self.selected_faction)
+end
+
+local char_cache = ""
+local passwords = {
+	["renegade"] = "19_18_49_18_34_30_32_18", -- R E N E G A D E
+	["greh"] = "34_19_18_35", -- G R E H
+	["isg"] = "23_31_34", -- I S G
+}
+function UINewGame:OnKeyboard(dik, keyboard_action)
+	if (not self.access) then
+		return
+	end
+	
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (res == false) then
+		for name, cc in pairs(self.CC) do
+			if cc:IsShown() then
+				cc:OnKeyboard(dik, keyboard_action)
+			end
+		end
+		
+		local bind = dik_to_bind(dik)
+		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+			if dik == DIK_keys.DIK_ESCAPE then
+				self:OnQuit()
+			elseif (dik == DIK_keys.DIK_Z) then
+				self.selected_faction = "zombied"
+				if faction_no_story[self.selected_faction] then
+					self.ck_story:SetCheck(false)
+					self.ck_story:Enable(false)
+				else
+					self.ck_story:Enable(true)
+				end
+				self:UpdateAll(false , self.selected_faction)
+			end
+			
+			char_cache = char_cache .. tostring(dik) .. "_"
+			for k,v in pairs(passwords) do
+				if string.find(char_cache,v) then
+					self.table_faction[k] = true
+				end
+			end
+			
+		end
+	end
+	return res
+end
+
+function UINewGame:OnStartGame()
+	if (not self.access) then
+		return
+	end
+
+	-- start game anyway if no config or axr_main script
+	if not (axr_main and axr_main.config) then
+		self.owner:StartGame()
+		return
+	end
+	
+	-- check name
+	local character_name = self.character_name:GetText()
+	if (character_name == "") then
+		-- Require a name to be entered.
+		return
+	end
+	
+	-- check location
+	if (self.selected_map == nil or self.selected_map == "" or self.selected_map == "random_location" or self.list_map:CurrentID() < 0) then
+		local index = math.random(2,#self.table_map)
+		self.selected_map = self.table_map[index]
+	end
+	
+	-- save modes
+	local hardcore_regen
+	if (self.selected_hardcore_regen[1]) and (type(self.selected_hardcore_regen[1]) == "number") then
+		hardcore_regen = self.selected_hardcore_regen[1]
+	end
+	
+	local timer
+	if (self.selected_timer[1]) and (type(self.selected_timer[1]) == "number") then
+		timer = self.selected_timer[1]
+	end
+	
+	-- prepare loadout
+	local loadout_str
+	for idx,ci in pairs(self.CC["inventory"].cell) do
+		if ci:IsShown() then
+			for i=1,(ci:CountChilds() + 1) do
+				if (not loadout_str) then
+					loadout_str = ci.section
+				else
+					loadout_str = loadout_str .. "," .. ci.section
+				end
+			end
+		end
+	end
+
+	-- preparing game difficulty values
+	if (self.selected_difficulty == nil or self.selected_difficulty == "") then
+		self.selected_difficulty = self.table_difficulty[1]
+	end
+	local diff = self.selected_difficulty:gsub("st_diff_","")
+	diff = tonumber(diff) or 1
+	
+	-- preparing economy values
+	if (self.selected_economy == nil or self.selected_economy == "") then
+		self.selected_economy = self.table_economy[1]
+	end
+	local econ = self.selected_economy:gsub("st_econ_","")
+	econ = tonumber(econ) or 1
+	
+	if (self.ck_warfare and self.ck_warfare:GetCheck()) and (warfare_options.options.random_starting_locations) then
+		self.selected_map = warfare_options.get_random_start_location()	
+	end	
+	
+	axr_main.config:w_value("character_creation","new_game_difficulty",diff)
+	axr_main.config:w_value("character_creation","new_game_economy",econ)
+	axr_main.config:w_value("character_creation","new_game_economy_treasure",econ) -- special for treasure_manager
+	
+	axr_main.config:w_value("character_creation","new_game_hardcore_mode",self.ck_hardcore and self.ck_hardcore:GetCheck() and true or nil)
+	axr_main.config:w_value("character_creation","new_game_hardcore_mode_lives",self.ck_hardcore and self.selected_hardcore_lives[1] or nil)
+	axr_main.config:w_value("character_creation","new_game_hardcore_mode_regenerate",self.ck_hardcore and hardcore_regen or nil)
+	axr_main.config:w_value("character_creation","new_game_story_mode",self.ck_story and self.ck_story:GetCheck() and true or nil)
+	axr_main.config:w_value("character_creation","new_game_azazel_mode",self.ck_azazel_mode and self.ck_azazel_mode:GetCheck() and true or nil)
+	axr_main.config:w_value("character_creation","new_game_survival_mode",self.ck_survival and self.ck_survival:GetCheck() and true or nil)
+	axr_main.config:w_value("character_creation","new_game_campfire_mode",self.ck_campfire and self.ck_campfire:GetCheck() and true or nil)
+	axr_main.config:w_value("character_creation","new_game_conditions_mode",self.ck_conditions and self.ck_conditions:GetCheck() and true or nil)
+	axr_main.config:w_value("character_creation","new_game_opened_routes",self.ck_routes and self.ck_routes:GetCheck() and true or nil)
+	axr_main.config:w_value("character_creation","new_game_warfare",self.ck_warfare and self.ck_warfare:GetCheck() and true or nil) -- special for warfare
+	axr_main.config:w_value("character_creation","new_game_timer_mode",timer or nil)
+	
+	axr_main.config:w_value("character_creation","new_game_character_name",character_name:gsub(" ","_") )
+	axr_main.config:w_value("character_creation","new_game_faction",self.selected_faction or nil)
+	axr_main.config:w_value("character_creation","new_game_icon",self.selected_icon or nil)
+	axr_main.config:w_value("character_creation","new_game_loadout",loadout_str or nil)
+	axr_main.config:w_value("character_creation","new_game_map",self.selected_map or nil)
+	axr_main.config:w_value("character_creation","new_game_money",self.selected_money or nil)
+	
+	axr_main.config:save() -- Store info in temp file
+	self.owner:StartGame() -- Start the game
+end
+

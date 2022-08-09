@@ -1,0 +1,58 @@
+function adjust_random_count(squad, c)
+  -- uncommon squad
+  if not ini_sys:r_bool_ex(squad:section_name(),"common") then
+    smr_debug.get_log().warn("population", "no adjustment to squad size for %s (uncommon squad)", squad:section_name())
+    return c
+  end
+  -- story squad
+  if get_story_squad(squad:section_name()) then
+    smr_debug.get_log().warn("population", "no adjustment to squad size for %s (story squad)", squad:section_name())
+    return c
+  end
+  -- get adjustment factor
+  local variance
+  local squad_size
+  if is_squad_monster[ini_sys:r_string_ex(squad:section_name(), "faction")] then
+    variance = smr_mutants_mcm.get_config("squad_size_variance")
+    squad_size = smr_mutants_mcm.get_config("squad_size")
+  else
+    variance = smr_stalkers_mcm.get_config("squad_size_variance")
+    squad_size = smr_stalkers_mcm.get_config("squad_size")
+  end
+  local fac = variance + squad_size
+  -- factor is 1 (no adjustment)
+  if (fac == 1.0) then
+    smr_debug.get_log().info("population", "no adjustment to squad size for %s", squad:section_name())
+    return c
+  end
+  -- return adjusted count
+  local target_count = math.floor(c * fac)
+  smr_debug.get_log().info("population", "adusted squad size for %s: %s -> %s", squad:section_name(), c, target_count)
+  return target_count
+end
+
+function replace_mutant_variant(section)
+  smr_debug.get_log().info("population/monsters", "FOO %s", section)
+  local vt = smr_pop.get_unused_mutant_spawn_table()
+  for m, v in pairs(vt) do
+      if  (str_explode(section, "_")[1] == m)
+          and (math.random(1,100) <= smr_mutants_mcm.get_config("unused_types_chance"))
+        then
+          local mrs = v[math.random(#v)]
+          smr_debug.get_log().info("population/monsters", "replaced %s with variant %s", section, mrs)
+          return mrs
+      end
+  end
+  return section
+end
+
+function is_mutant_type_enabled(section)
+  local t = smr_pop.get_mutant_spawn_table()
+  for _, m in pairs(t) do
+      if (string.sub(section, 1, string.len(m)) == m) then
+          return true
+      end
+  end
+  return false
+end
+
