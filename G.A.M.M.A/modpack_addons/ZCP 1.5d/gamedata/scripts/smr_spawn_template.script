@@ -1,0 +1,97 @@
+template_cfg = {}
+template_cfg_weights = {}
+
+function get_template_config()
+  if next(template_cfg) == nil then
+    smr_debug.get_log().info("population/monsters", "Using preset %s ", smr_spawns_mcm.get_config("preset_file"))
+    template_cfg = load_template_config()
+  end
+  return template_cfg
+end
+
+function load_template_config()
+  local tcfg = {}
+  local msq = smr_pop.get_mutant_spawn_squads()
+  local ini = ini_file(smr_spawns_mcm.get_config("preset_file"))
+  
+  
+    local function itr(section)
+      local tmp = {}
+      template_cfg_weights[section] = 0
+      lc = ini:line_count(section)
+      for li=0,lc-1 do
+        local sq, weight = smr_utils.read_spawn_template_ln(ini, section, li)
+        local ss = str_explode(sq, "*")
+        if ss[2] and ss[3] then
+          local mini = ini_file("plugins\\zcp\\spawn_groups\\" .. ss[2] .. ".ltx")
+          for nk, nv in pairs(smr_utils.spawn_template_lines_to_table(mini, ss[3])) do
+            template_cfg_weights[section] = template_cfg_weights[section] + nv
+            tmp[nk] = nv
+          end
+        else
+          if smr_utils.table_has_value(msq, sq) then
+            tmp[sq] = weight
+            template_cfg_weights[section] = template_cfg_weights[section] + weight
+          end
+        end
+      end
+      if next(tmp) ~= nil then
+        tcfg[section] = tmp
+      end
+    end
+    ini:section_for_each(itr)
+    return tcfg
+end
+
+-- Weight code adapted from TheMrDemonized's "ZCP Kinda Balanced Spawns" (https://www.moddb.com/mods/stalker-anomaly/addons/zcp-balanced-spawns/)
+function get_random_squad_for_smart(smart)
+  local tier = get_squad_tier()
+  local key = alife():level_name(game_graph():vertex(smart.m_game_vertex_id):level_id()) .. "_tier" .. tier .. "_monsters"
+  local mutant_table = get_template_config()[key]
+  if not mutant_table or next(mutant_table) == nil then
+    smr_debug.get_log().warn("population/monsters", "empty mutant table for %".. key)
+    return nil
+  end
+  local rand = math.random() * template_cfg_weights[key]
+  for mutant, weight in pairs(mutant_table) do
+      if (rand < weight) then
+          smr_debug.get_log().info("population/monsters", "got squad %s for section (roll: %s/%s) ".. key, mutant, rand, weight)
+          return mutant
+      end
+      rand = rand - weight
+  end
+  smr_debug.get_log().warn("population/monsters", "no weighted squad for section".. key)
+  return mutant_table[math.random(#mutant_table)]
+end
+
+function get_squad_tier()
+  local tier_1_fac = get_tier_factor(1)
+  local tier_2_fac = get_tier_factor(2)
+  local tier_3_fac = get_tier_factor(3)
+  local range = tier_1_fac + tier_2_fac + tier_3_fac
+  local rnd = math.random(0, range)
+  if rnd <= tier_1_fac then
+    return 1
+  elseif rnd <= tier_1_fac + tier_2_fac then
+    return 2
+  else
+    return 3
+  end
+end
+
+
+function get_tier_factor(tier)
+  return smr_spawns_mcm.get_config("preset_week".. actor_weeks_in_zone() .."_tier" .. tier)
+end
+
+function actor_weeks_in_zone()
+  if not db.actor then
+    return 0
+  end
+  local s_time = level.get_start_time()
+  local seconds = tonumber(game.get_game_time():diffSec(s_time))
+  local days = math.floor(((seconds/60)/60)/24)
+  weeks = math.floor(days/7)
+  if weeks > 3 then weeks = 3 end
+	return weeks
+end

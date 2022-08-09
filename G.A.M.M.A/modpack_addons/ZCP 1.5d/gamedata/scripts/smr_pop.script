@@ -1,0 +1,412 @@
+--[[
+------------------------------------------------------------
+-- Survival Mode Remade - Setup Zone population and manage smart terrain spawms
+------------------------------------------------------------
+-- by dph-hcl
+------------------------------------------------------------
+]]--
+
+local zombie_spawn_table = {}
+local zombie_spawn_cfg = {
+    ["zombifiedp"] = { "zombied_sim_squad_novice", "zombied_sim_squad_advanced", "zombied_sim_squad_veteran" },
+    ["fracturep"] = { "simulation_fracture" },
+    ["snorkp"] = { "simulation_snork" },
+    ["bloodsuckerp"] = { "simulation_bloodsucker" },
+    ["psysuckerp"] = { "simulation_psysucker" },
+    ["blindp"] = { "simulation_zombie_blind_3zomb_civ", "simulation_zombie_blind_3zomb" },
+}
+
+
+local faction_spawn_table = {}
+local faction_spawn_cfg = {
+    "stalker", "bandit", "csky", "duty", "freedom", "merc", "army", "ecolog", "monolith", "renegade", "greh", "isg", "zombied"
+}
+
+local retarded_squad_names = {
+    ["duty_sim_squad_alpha"] = "dolg_sim_squad_alpha",
+    ["merc_sim_squad_alpha"] = "killer_sim_squad_alpha",
+    ["duty_sim_squad_trader"] = "dolg_sim_squad_trader",
+    ["duty_sim_squad_medic"] = "dolg_sim_squad_medic",
+    ["duty_sim_squad_barman"] = "dolg_sim_squad_barman",
+    ["duty_sim_squad_mechanic"] = "dolg_sim_squad_mechanic",
+}
+
+local mutant_spawn_table = {}
+local mutant_spawn_cfg = {
+    ["psysucker_"] = "psysuckerp",
+    ["bloodsucker_"] = "bloodsuckerp",
+    ["boar_"] = "boarp",
+    ["snork_"] = "snorkp",
+    ["chimera_"] = "chimerap",
+    ["m_controller_"] = "controllerp",
+    ["dog_"] = "dogp",
+    ["tushkano_"] = "tushkanop",
+    ["pseudodog_"] = "dogp",
+    ["fracture_"] = "fracturep",
+    ["lurker_"] = "lurkerp",
+    ["cat_"] = "catp",
+    ["psy_dog_"] = "psydogp",
+    ["m_karlik_"] = "karlikp",
+    ["burer_"] = "burerp",
+    ["m_poltergeist_"] = "poltergeistp",
+    ["gigant_"] = "gigantp",
+    ["flesh_"] = "fleshp",
+    ["rat_"] = "ratp",
+    ["zombie_"] = "zombiep",
+    ["borya_"] = "boryap",
+    ["bibliotekar_"] = "bibliotekarp",
+}
+
+local unused_mutant_spawn_table = {}
+local unused_mutant_spawn_cfg = {
+    ["bloodsucker_strong_bigp"] = { "bloodsucker_strong_big" },
+    ["burer_electrap"] = { "burer_electra" },
+    ["burer_firerp"] = { "burer_fire" },
+    ["flesh_bolotp"] = { "flesh_bolot", "flesh_bolot1" },
+    ["gigant_jumperp"] = { "gigant_jumper" },
+    ["snork_no_maskp"] = { "snork_normal_no_mask", "snork_strong_no_mask", "snork_weak_no_mask" },
+    ["zombie_babkap"] = { "zombi_babka_1", "zombi_babka_2", "zombi_babka_3" },
+    ["zombie_gholp"] = { "zombie_ghol" },
+    ["zombie_ghostp"] = { "zombie_ghost" },
+    ["zombie_tetap"] = { "zombie_teta" },
+    ["zombie_wichp"] = { "zombie_wich" },
+}
+
+local mutant_spawn_squads = {}
+
+
+local function please_die_sid()
+    local ids = {"red_forester_tech", "esc_m_trader"}
+    for i, n in ipairs(ids) do
+        smr_debug.get_log().info("population", "removing story object %s", n)
+        local so = get_story_object_id(n)
+        if so then alife_release_id(so) end
+    end
+end
+
+function get_mutant_spawn_squads()
+    if next(mutant_spawn_squads) == nil then
+        local ini = ini_file("plugins\\zcp\\squads_by_type.ltx")
+        for m, c in pairs(mutant_spawn_cfg) do
+            if (smr_mutants_mcm.get_config(c) == true) then
+                local squads = smr_utils.ini_lines_to_table(ini, c)
+                for i, v in ipairs(squads) do
+                    table.insert(mutant_spawn_squads, v)
+                end
+            end
+        end
+    end
+    return mutant_spawn_squads
+end
+
+function get_unused_mutant_spawn_table()
+    if next(unused_mutant_spawn_table) == nil then
+        for m, c in pairs(unused_mutant_spawn_cfg) do
+            if (smr_mutants_mcm.get_config(m) == true) then
+                local mn = str_explode(m, "_")
+                if not unused_mutant_spawn_table[mn[1]] then
+                    unused_mutant_spawn_table[mn[1]] = {}
+                end
+                for i, v in ipairs(c) do
+                    table.insert(unused_mutant_spawn_table[mn[1]], v)
+                end
+            end
+        end
+    end
+    return unused_mutant_spawn_table
+end
+
+function get_zombie_spawn_table()
+    if next(zombie_spawn_table) == nil then
+        for k, n in pairs(zombie_spawn_cfg) do
+            if smr_zombies_mcm.get_config(k) then
+                for i, s in ipairs(n) do
+                    table.insert(zombie_spawn_table, s)
+                end
+            end
+        end
+        if next(zombie_spawn_table) == nil or smr_zombies_mcm.get_config("zombiesp") then
+            for i = 1, smr_zombies_mcm.get_config("zombies_amount") do
+                table.insert(zombie_spawn_table, "simulation_zombie")
+            end
+        end
+    end
+    return zombie_spawn_table
+end
+
+function get_faction_spawn_table()
+    if next(faction_spawn_table) == nil then
+        for k, n in ipairs(faction_spawn_cfg) do
+            if smr_stalkers_mcm.get_config(n) then
+                table.insert(faction_spawn_table, n)
+            end
+        end
+    end
+    if next(faction_spawn_table) == nil then
+        table.insert(faction_spawn_table, "stalker")
+    end
+    return faction_spawn_table
+end
+
+function is_squad_faction_enabled(squad)
+    local t = get_faction_spawn_table()
+    local faction = ini_sys:r_string_ex(squad, "faction")
+    if faction == "dolg" then
+        faction = "duty"
+    end
+    if faction == "killer" then
+        faction = "merc"
+    end
+    for i, f in ipairs(t) do
+        if (faction == f) then
+            return true
+        end
+    end
+    return false
+end
+
+function get_mutant_spawn_table()
+    if next(mutant_spawn_table) == nil then
+        for m, c in pairs(mutant_spawn_cfg) do
+            if (smr_mutants_mcm.get_config(c) == true) then
+                table.insert(mutant_spawn_table, m)
+            end
+        end
+        if next(mutant_spawn_table) == nil then
+            table.insert(mutant_spawn_table, "chimera_")
+        end
+    end
+    return mutant_spawn_table
+end
+
+function is_mutant_type_enabled(section)
+    local t = get_mutant_spawn_table()
+    for i, m in pairs(t) do
+        if (string.sub(section, 1, string.len(m)) == m) then
+            return true
+        end
+    end
+    return false
+  end
+
+local function get_random_enabled_mutant_squad()
+    local t = get_mutant_spawn_squads()
+    return t[math.random(#t)]
+end
+
+local function get_common_squad_type(squad_name)
+    local ss = str_explode(squad_name, "_")
+    if  ss[4] == "novice"
+        or ss[4] == "advanced"
+        or ss[4] == "veteran"
+        or ss[4] == "alpha"
+        or ss[4] == "trader"
+        or ss[4] == "medic"
+        or ss[4] == "barman"
+        or ss[4] == "mechanic"
+    then
+        return ss[4]
+    end
+    return false
+end
+
+local function release_npc_or_squad(npc, squad)
+    alife_release(npc)
+    if (squad:npc_count() <= 1) then
+        alife_release_id(squad.id)
+    end
+end
+
+local function try_spawn_faction(orig_spawn, smart)
+    if (not orig_spawn) then
+        return false
+    end
+    -- setup comparable squad of random enabled faction
+    local t = get_faction_spawn_table()
+    local st = { "novice", "veteran", "advanced" }
+    local squad_type = get_common_squad_type(orig_spawn) or st[math.random(#st)]
+    local tt = t[math.random(#t)] .. "_sim_squad_" .. squad_type
+    for n, r in pairs(retarded_squad_names) do
+        if tt == n then
+            tt = r
+        end
+    end
+    -- random stalkers
+    if  smr_stalkers_mcm.get_config("random_stalkers")
+        and (math.random(1,100) <= smr_stalkers_mcm.get_config("random_stalkers_chance"))
+        -- only replace common squads with random stalkers
+        and (ini_sys:r_bool_ex(orig_spawn, "common"))
+        -- check if smart is base
+        and (not smr_civil_war.smart_is_base(smart:name()))
+    then
+        smr_debug.get_log().info("population/stalkers", "replaced squad %s with random stalkers %s (smart: %s)", orig_spawn, tt, smart:name())
+        return tt
+    end
+    -- check if faction is enabled
+    if is_squad_faction_enabled(orig_spawn) then
+        smr_debug.get_log().info("population/stalkers", "faction enabled - returning %s", orig_spawn)
+        return orig_spawn
+    end
+    -- replace if option enabled
+    if not smr_stalkers_mcm.get_config("factions_replace_squads") then
+        smr_debug.get_log().info("population/stalkers", "faction %s not enabled - not spawning squad %s", ini_sys:r_string_ex(orig_spawn,"faction"), orig_spawn)
+        return false
+    end
+    smr_debug.get_log().info("population/stalkers", "faction %s not enabled: replaced squad %s with random stalkers %s", ini_sys:r_string_ex(orig_spawn,"faction"), orig_spawn, tt)
+    return tt
+end
+
+local function add_random_npc_to_squad(squad, smart)
+    local npcs = ini_sys:r_string_ex(squad:section_name(),"npc_random")
+    if (not npcs) then
+        -- npcs = ini_sys:r_string_ex(squad:section_name(),"npc")
+        return
+    end
+    local t = parse_names(npcs)
+    local section = t[math.random(#t)]
+    local faction = ini_sys:r_string_ex(squad:section_name(), "faction")
+    if is_squad_monster[faction] and (not is_mutant_type_enabled(section)) then
+        smr_debug.get_log().warn("population/monsters", "could not add %s to squad %s (type disabled)", section, squad:section_name(), faction)
+        return nil
+    end
+    local npc = alife_create(section, smart)
+    if not npc then
+        smr_debug.get_log().error("population/monsters", "error while adding %s to squad %s", section, squad:section_name())
+        return nil
+    end
+    squad:register_member(npc.id)
+    smr_debug.get_log().info("population/monsters", "added %s to squad %s", section, squad:section_name())
+    return npc
+end
+
+-- ---
+-- ENTRY POINTS
+-- ---
+
+-- smart_terrain.se_smart_terrain:try_respawn()
+-- simulation_board:fill_start_position()
+function smr_handle_spawn(orig_spawn, smart)
+    -- player wished for control
+    if has_alife_info("actor_made_wish_for_control") then
+		return SIMBOARD:create_squad(smart, "simulation_controller_psy")
+    end
+    -- ZCP not enabled
+    if not smr_amain_mcm.get_config("smr_enabled") then
+        smr_debug.get_log().info("population", "not replacing spawn -- ZCP disabled")
+        return SIMBOARD:create_squad(smart, orig_spawn)
+    end
+    -- zombies
+    local rnd = math.random(1,100)
+    if  smr_zombies_mcm.get_config("zombie_spawn")
+        and rnd <= smr_zombies_mcm.get_config("zombie_chance")
+        -- only replace common squads
+        and ini_sys:r_bool_ex(orig_spawn,"common")
+        -- skip bases
+        and (not smr_civil_war.smart_is_base(smart))
+    then
+        local t = get_zombie_spawn_table()
+        local tt = t[math.random(#t)]
+        smr_debug.get_log().info("population/zombies", "replaced squad %s with zombie variant %s (%s <= %s)", orig_spawn, tt, rnd, smr_zombies_mcm.get_config("zombie_chance"))
+        return SIMBOARD:create_squad(smart, tt)
+    end
+    local faction = ini_sys:r_string_ex(orig_spawn, "faction")
+    -- mutant squads
+    if is_squad_monster[faction] then
+        if  (string.sub(orig_spawn, 1, string.len("simulation_")) == "simulation_")
+            and smr_mutants_mcm.get_config("random_mutants")
+            and (math.random(1,100) <= smr_mutants_mcm.get_config("random_mutants_chance"))
+        then
+            local m
+            if smr_spawns_mcm.get_config("preset_apply_random") then
+                m = smr_spawn_template.get_random_squad_for_smart(smart) or get_random_enabled_mutant_squad()
+                smr_debug.get_log().info("population/monsters", "replaced squad %s with random mutant %s (template)", orig_spawn, m)
+            else
+                m = get_random_enabled_mutant_squad()
+                smr_debug.get_log().info("population/monsters", "replaced squad %s with random mutant %s", orig_spawn, m)
+            end
+            return SIMBOARD:create_squad(smart, m)
+        end
+    -- stalker squads
+    else
+        local maybe_squad_section = try_spawn_faction(orig_spawn, smart)
+        if maybe_squad_section then
+            return SIMBOARD:create_squad(smart, maybe_squad_section)
+        end
+        return nil
+    end
+    -- return original spawn
+    return SIMBOARD:create_squad(smart, orig_spawn)
+end
+
+-- smart_terrain.se_smart_terrain:try_respawn()
+function smart_can_respawn(smart)
+    local name = smart:name()
+    local last_respawn_update = smart.last_respawn_update
+    -- default value
+    if (not smr_amain_mcm.get_config("smr_enabled")) and (smr_amain_mcm.get_config("respawn_idle") ~= 86400) then
+        smr_debug.get_log().info("population/smart", "default respawn check value: ZCP disabled or respawn_idle set to 86400 (testing for smart %s)", name)
+        return last_respawn_update == nil or curr_time:diffSec(last_respawn_update) > smart.respawn_idle
+    end
+    -- last update was nil
+    local cfg = smr_amain_mcm.get_config("respawn_idle")
+    if last_respawn_update == nil then
+        smr_debug.get_log().info("population/smart", "respawn check sucessful for smart %s (last update was nil)", name)
+        return true
+    end
+    -- respawns disabled
+    if cfg == -1 then
+        smr_debug.get_log().info("population/smart", "respawn check failed: respawns disabled (testing for smart %s)", name)
+        return false
+    end
+    -- use ZCP config value
+    local diff = game.get_game_time():diffSec(last_respawn_update)
+    if diff > cfg then
+        return true
+    else
+        return false
+    end
+end
+
+-- smart_terrain.se_smart_terrain:try_respawn()
+-- simulation_board:fill_start_position()
+function get_stalker_pop_factor()
+    if smr_amain_mcm.get_config("smr_enabled") then
+        --smr_debug.get_log().info("population/stalkers", "overriding population factor")
+        return smr_amain_mcm.get_config("stalker_pop_factor")
+    end
+    --smr_debug.get_log().info("population/stalkers", "ZCP disabled: using default population factor")
+    return ui_options.get("alife/general/alife_stalker_pop")
+end
+
+-- smart_terrain.se_smart_terrain:try_respawn()
+-- simulation_board:fill_start_position()
+function get_monster_pop_factor()
+    if smr_amain_mcm.get_config("smr_enabled") then
+        --smr_debug.get_log().info("population/monsters", "overriding population factor")
+        return smr_amain_mcm.get_config("monster_pop_factor")
+    end
+    --smr_debug.get_log().info("population/monsters", "ZCP disabled: using default population factor")
+    return ui_options.get("alife/general/alife_mutant_pop")
+end
+
+-- simulation_board:fill_start_position()
+function get_population_preset()
+    if smr_amain_mcm.get_config("smr_enabled") and (smr_stalkers_mcm.get_config("base_population") ~= "sim_smr_default") then
+		smr_debug.get_log().info("population", "using population preset %s", "misc\\"..smr_stalkers_mcm.get_config("base_population")..".ltx")
+		return ini_file("misc\\"..smr_stalkers_mcm.get_config("base_population")..".ltx")
+	else 
+        smr_debug.get_log().info("population", "using default population preset")
+		return ini_file("misc\\simulation.ltx")
+	end 
+end
+
+local function actor_on_first_update()
+    if smr_amain_mcm.get_config("smr_enabled") and (smr_stalkers_mcm.get_config("base_population") == "sim_smr_none") then
+        smr_debug.get_log().info("population", "removing story objects")
+	    please_die_sid()
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+end
