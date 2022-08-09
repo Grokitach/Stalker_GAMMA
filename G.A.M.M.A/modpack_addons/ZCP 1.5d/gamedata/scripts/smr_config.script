@@ -1,0 +1,62 @@
+--[[
+------------------------------------------------------------
+-- Survival Mode Remade - Persistent configuration per savefile
+------------------------------------------------------------
+-- Saves/Load configuration state to/from savefile.
+-- by dph-hcl
+------------------------------------------------------------
+]]--
+
+local collection = "SMR"
+local modules = {
+    "smr_amain",
+    "smr_loot",
+    "smr_zzintegration",
+    "smr_zombies",
+    "smr_stalkers",
+}
+
+local function load_state(data)
+    if smr_amain_mcm.get_config("smr_persist_override") then
+        return
+    end
+    local t = axr_main.config:collect_section("mcm")
+    for p, v in pairs(t) do
+        for i, m in ipairs(modules) do
+            if not data[m] then
+                goto continue
+            end
+            local pp = str_explode(p, "/")
+            if  (pp[1] and pp[1] == collection)
+                and (pp[2] and pp[2] == m)
+                and (pp[3])
+            then
+                ui_mcm.set(p, (data[m][p] or false))
+            end
+            ::continue::
+        end
+    end
+end
+
+local function save_state(data)
+    local t = axr_main.config:collect_section("mcm")
+    for p, v in pairs(t) do
+        for i, m in ipairs(modules) do
+            if not data[m] then
+                data[m] = {}
+            end
+            local pp = str_explode(p, "/")
+            if  (pp[1] and pp[1] == collection)
+                and (pp[2] and pp[2] == m)
+                and (pp[3])
+            then
+                data[m][p] = ui_mcm.get(p)
+            end
+        end
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
+end
