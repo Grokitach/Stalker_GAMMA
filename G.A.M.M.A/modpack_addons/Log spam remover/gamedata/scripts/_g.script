@@ -20,7 +20,7 @@
 		Ex: calling IsStalker in some script will call the function found here directly, even if you didn't specify the script like this: _G.IsStalker
 --]]
 
-GAME_VERSION = "1.5.1"
+GAME_VERSION = "1.5.2"
 
 if string.find(command_line(), "-dbg") then
 	DEV_DEBUG = true
@@ -52,7 +52,7 @@ AC_ID                    	= 0				-- Used for getting actor id
 -- AC_LVL_ID					= nil			-- Used for getting actor's level id, set by simulation_objects ------- replaced with function because crashes
 mus_vol                  	= 0             -- Used for temp sound muting
 amb_vol                  	= 0             -- Used for temp sound muting
-timer_transparent        	= 0 			--пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+timer_transparent        	= 0 			--маскхалат
 KEYS_UNLOCK					= true			-- Used for scripted GUI to disable action keybinds while they are active
 ----------------------------------------------------------------------
 -- Utilities
@@ -122,6 +122,10 @@ function SendScriptCallback(name,...)
 	if (axr_main[name]) then
 		axr_main[name](...)
 	end
+end
+
+function AddScriptCallback(name)
+	axr_main.callback_add(name)
 end
 
 
@@ -529,7 +533,7 @@ function TeleportSquad(squad,pos,lvid,gvid)
 end
 
 function in_time_interval(val1, val2)
---пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+--Проверка по временному интервалу.
 	local game_hours = level.get_time_hours()
 	if val1 >= val2 then
 		return game_hours < val2 or game_hours >= val1
@@ -539,8 +543,8 @@ function in_time_interval(val1, val2)
 end
 
 function level_changing()
--- пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ?
--- пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ
+-- происходит ли в данный момент смена уровня?
+-- нужно для того, чтобы объекты знали, какую информацию записывать при сохранении, а какую нет
 	local sim = alife()
 
 	if (not sim) then
@@ -729,7 +733,7 @@ end
 -------------------------------------------------------------------------------------------------------
 -- 											MATHEMATICAL
 -------------------------------------------------------------------------------------------------------
--- пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+-- іонстанта, которуі использовать в местах, где нужно задать неограниченное время действия
 time_infinite = 100000000
 
 function time_global()
@@ -741,10 +745,7 @@ function time_continual()
 end
 
 function round(value)
-	local min = math_floor (value)
-	local max = min + 1
-	if (value - min) > (max - value) then return max end
-	return min
+	return math.floor(value+0.5)
 end
 
 function round_idp(num, idp)
@@ -793,7 +794,7 @@ function random_float(min_value, max_value)
     return min_value + math.random() * (max_value - min_value)
 end
 
---TvпїЅпїЅпїЅпїЅпїЅпїЅпїЅ yaw пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+--Tvчисляет yaw в радианах
 function yaw( v1, v2 )
 	return  math_acos( ( (v1.x*v2.x) + (v1.z*v2.z ) ) / ( math_sqrt(v1.x*v1.x + v1.z*v1.z ) * math_sqrt(v2.x*v2.x + v2.z*v2.z ) ) )
 end
@@ -806,12 +807,12 @@ end
 function vector_cross(v1, v2)
 	return vector():set(v1.y  * v2.z  - v1.z  * v2.y, v1.z  * v2.x  - v1.x  * v2.z, v1.x  * v2.y  - v1.y  * v2.x)
 end
-function vec_to_str (vector) -- пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ.
+function vec_to_str (vector) -- переводит вектор в строку.
 	if vector == nil then return "nil" end
 	return string_format("[%s:%s:%s]", vector.x, vector.y, vector.z)
 end
 
---пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ y пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+--Поворачивает вектор вокруг оси y против часовой стрелки.
 function vector_rotate_y(v, angle)
 	angle = angle * 0.017453292519943295769236907684886
 	local c = math_cos (angle)
@@ -953,7 +954,7 @@ function has_translation(string_id)
 	return (game.translate_string(string_id) ~= string_id)
 end
 
-function get_param_string(src_string, obj) -- пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+function get_param_string(src_string, obj) -- преобразует строку в соответствии со значением
 	--printf("src_string is [%s] obj name is [%s]", tostring(src_string), obj:name())
 	local script_ids = db.script_ids[obj:id()]
 	local out_string, num = string_gsub(src_string, "%$script_id%$", tostring(script_ids))
@@ -1040,7 +1041,7 @@ function action_first(obj,...)
 	return entity_action(e_act)
 end
 
--- +пїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅvпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅvпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ-пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅvпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅvпїЅ пїЅпїЅпїЅпїЅпїЅ
+-- +сли в даннvй момент вvполняется какое-то действие, прерvвает его и отклічает скриптовvй режим
 function interrupt_action(who, script_name)
 	if who:get_script() then
 		who:script(false, script_name)
@@ -1061,7 +1062,7 @@ function get_clsid(obj)
 	return obj:clsid()
 end
 
---' LпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+--' Lсталость
 function on_actor_critical_power()
 
 end
@@ -1069,7 +1070,7 @@ end
 function on_actor_critical_max_power()
 end
 
---' пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+--' іровотечение
 function on_actor_bleeding()
 
 end
@@ -1077,27 +1078,27 @@ end
 function on_actor_satiety()
 end
 
---' пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+--' іадиация
 function on_actor_radiation()
 
 end
 
---' пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+--' іаклинило оружие
 function on_actor_weapon_jammed()
 
 end
 
---' пїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ
+--' не может ходить изза веса
 function on_actor_cant_walk_weight()
 
 end
 
---' пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+--' пси воздействие
 function on_actor_psy()
 end
 
 local save_marker_result = {}
--- пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ
+-- Функции для проверки корректности сейв лоад
 function set_save_marker(p, mode, check, prefix)
 	prefix = tostring(prefix)
 		if (check ~= true) then
@@ -1150,6 +1151,29 @@ function CInventory__eat(item)
 	flags.ret_value = true
 	SendScriptCallback("actor_on_item_before_use",item,flags)
 	return flags.ret_value
+end
+
+-- called after actor hit callbacks, can be used to replace engine's artefact resistance calculation
+-- How to override hit_power:
+-- hit_table["override"] = true
+-- hit_table["hit_power"] = {new damage value}
+function CActor__HitArtefactsOnBelt(hit_table, hit_power, hit_type)
+	SendScriptCallback("actor_on_before_hit_belt",hit_table, hit_power, hit_type)
+	return hit_table
+end
+
+-- Called on CHudItem Motion Mark
+function CHudItem__OnMotionMark(state, mark)
+	SendScriptCallback("actor_on_hud_animation_mark",state,mark)
+end
+
+function CHudItem__PlayHUDMotion(anm_table, obj)
+	SendScriptCallback("actor_on_hud_animation_play",anm_table,obj)
+	return anm_table
+end
+
+function player_hud__OnMovementChanged(cmd)
+	SendScriptCallback("actor_on_movement_changed",cmd)
 end
 
 -- Called before actor hit callback
@@ -1310,7 +1334,7 @@ function CALifeUpdateManager__on_before_change_level(packet)
 	end
 end
 
--- 'пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ.
+-- 'Запуск динамического окна.
 function run_dynamic_element(folder,close_inv)
    if close_inv==false then
       folder:ShowDialog(true)
@@ -1323,7 +1347,7 @@ function run_dynamic_element(folder,close_inv)
    end
 end
 
--- 'пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ.
+-- 'Создание предмета в рюкзаке ГГ.
 function give_object_to_actor(sec,count)
 	if count==nil then count=1 end
 	for i=1, count do
@@ -1331,7 +1355,7 @@ function give_object_to_actor(sec,count)
 	end
 end
 
-local actor_move_states = {
+actor_move_states = {
 	['mcFwd'] 			= 1,
 	['mcBack'] 			= 2,
 	['mcLStrafe'] 		= 4,
@@ -1537,7 +1561,7 @@ function ini_file_ex:__init(fname,advanced_mode)
 	if (advanced_mode) then
 		self.ini:set_override_names(true)
 		self.ini:set_readonly(false)
-		--self.ini:save_at_end(true)
+		self.ini:save_at_end(false)
 	end
 end
 
@@ -1709,6 +1733,7 @@ function empty_table(t)
 end
 
 function size_table(t)
+	assert(t and type(t) == "table", "global function size_table() called with invalid argument (nil or not table)")
 	local n = 0
 	for k,v in pairs(t) do
 		n = n + 1
@@ -1717,18 +1742,22 @@ function size_table(t)
 end
 
 function random_key_table(t)
-	t = t or {}
+	local check = t and type(t) == "table"
+	if not check then
+		callback()
+		assert(nil, "global function random_key_table() called with invalid argument (nil or not table)")
+	end
 	local n = {}
 	for k,v in pairs(t) do
 		n[#n+1] = k
 	end
-	return (#n > 0) and n[math.random(#n)]
+	return #n > 0 and n[math.random(#n)] or nil
 end
 
 function copy_table(dest, src)
 	for k,v in pairs(src) do
 		if type(v) == "table" then
-			--' пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+			--' рекурсивный вызов себя же для подтаблиц
 			dest[k] = {}
 			copy_table(dest[k], v)
 		else
@@ -2161,7 +2190,7 @@ function alife_release(se_obj, msg)
 		end
 		
 	-- Squads
-	elseif (cls == clsid.online_offline_group_s) then
+	elseif (cls == clsid.online_offline_group_s or cls == clsid.online_offline_group) then
 		se_obj:remove_squad()
 		return true
 		
@@ -2383,7 +2412,7 @@ function set_actor_true_community(new_comm, now) -- no "actor_"
 	end
 end
 
-function get_object_squad(object,caller) -- пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ!!!!!
+function get_object_squad(object,caller) -- Получить сквад обьекта!!!!!
 	if not (object) then
 		return
 	end
@@ -2401,7 +2430,7 @@ function set_inactivate_input_time(delta)
 	level.disable_input()
 end
 
-function npc_in_actor_frustrum(npc) --' пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ NPC пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+function npc_in_actor_frustrum(npc) --' находится ли NPC во фруструме игрока
 	local actor_dir = device().cam_dir
 	--local actor_dir = db.actor:direction()
 	local npc_dir = vec_sub(npc:position(),db.actor:position())
@@ -2410,7 +2439,7 @@ function npc_in_actor_frustrum(npc) --' пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ NPC п
 	return yaw < 35
 end
 
-function change_team_squad_group(se_obj, team, squad, group) -- пїЅпїЅпїЅпїЅпїЅпїЅ team:squad:group пїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+function change_team_squad_group(se_obj, team, squad, group) -- меняет team:squad:group обьекта.
 	local cl_obj = db.storage[se_obj.id] and db.storage[se_obj.id].object
 	if cl_obj ~= nil then
 		cl_obj:change_team(team, squad, group)
@@ -2770,7 +2799,7 @@ function IsStalker(o,c)
 	if not (c) then
 		c = o and o:clsid()
 	end
-	return c and (c == clsid.script_stalker or c == clsid.script_actor) or false
+	return c and (c == clsid.script_stalker or c == clsid.script_actor or c == clsid.stalker or c == clsid.actor) or false
 end
 
 function IsMonster(o,c)
@@ -2779,22 +2808,37 @@ function IsMonster(o,c)
 	end
 	if not (monster_classes) then
 		monster_classes = {
+		[clsid.bloodsucker] 			= true,
 		[clsid.bloodsucker_s] 			= true,
+		[clsid.boar] 					= true,
 		[clsid.boar_s] 					= true,
+		[clsid.dog_red] 				= true,
 		[clsid.dog_s] 					= true,
+		[clsid.flesh] 					= true,
 		[clsid.flesh_s] 				= true,
+		[clsid.dog_black] 				= true,
 		[clsid.pseudodog_s] 			= true,
+		[clsid.burer] 					= true,
 		[clsid.burer_s] 				= true,
+		[clsid.cat] 					= true,
 		[clsid.cat_s] 					= true,
 		[clsid.rat] 					= true,
 		[clsid.rat_s]					= true,
+		[clsid.chimera] 				= true,
 		[clsid.chimera_s] 				= true,
+		[clsid.controller] 				= true,
 		[clsid.controller_s] 			= true,
+		[clsid.fracture] 				= true,
 		[clsid.fracture_s] 				= true,
+		[clsid.poltergeist] 			= true,
 		[clsid.poltergeist_s] 			= true,
+		[clsid.pseudo_gigant] 			= true,
 		[clsid.gigant_s] 				= true,
+		[clsid.zombie] 					= true,
 		[clsid.zombie_s] 				= true,
+		[clsid.snork] 					= true,
 		[clsid.snork_s] 				= true,
+		[clsid.tushkano] 				= true,
 		[clsid.tushkano_s] 				= true,
 		[clsid.psy_dog_s] 				= true,
 		[clsid.psy_dog_phantom_s] 		= true
@@ -2810,21 +2854,25 @@ function IsAnomaly(o,c)
 	if not (anomaly_classes) then
 		anomaly_classes = {
 		[clsid.zone]				= true,
+		[clsid.ameba_zone]			= true,
+		[clsid.zone_ameba_s]		= true,
 		[clsid.zone_acid_fog]		= true,
-		[clsid.zone_bfuzz]			= true,
 		[clsid.zone_campfire]		= true,
 		[clsid.zone_dead]			= true,
-		[clsid.zone_galantine]		= true,
-		[clsid.zone_mincer]			= true,
-		[clsid.zone_mosquito_bald]	= true,
-		[clsid.zone_radioactive]	= true,
 		[clsid.zone_rusty_hair]		= true,
+		[clsid.zone_bfuzz]			= true,
 		[clsid.zone_bfuzz_s]		= true,
+		[clsid.zone_mosquito_bald]	= true,
 		[clsid.zone_mbald_s]		= true,
+		[clsid.zone_galantine]		= true,
 		[clsid.zone_galant_s]		= true,
+		[clsid.zone_mincer]			= true,
 		[clsid.zone_mincer_s]		= true,
+		[clsid.zone_radioactive]	= true,
 		[clsid.zone_radio_s]		= true,
+		[clsid.torrid_zone]			= true,
 		[clsid.zone_torrid_s]		= true,
+		[clsid.nogravity_zone]		= true,
 		[clsid.zone_nograv_s]		= true,
 		}
 	end
@@ -2835,14 +2883,21 @@ function IsTrader(o,c)
 	if not (c) then
 		c = o and o:clsid()
 	end
-	return c and (c == clsid.script_trader) or false
+	return c and (c == clsid.script_trader or c == clsid.trader) or false
 end 
+
+function IsCar(o,c)
+	if not (c) then
+		c = o and o:clsid()
+	end
+	return c and (c == clsid.car or c == clsid.car_s) or false
+end
 
 function IsHelicopter(o,c)
 	if not (c) then
 		c = o and o:clsid()
 	end
-	return c and (c == clsid.helicopter or c == clsid.car or c == clsid.script_heli) or false
+	return c and (c == clsid.helicopter or c == clsid.script_heli) or false
 end
 
 function IsInvbox(o,c)
@@ -2853,11 +2908,11 @@ function IsInvbox(o,c)
 end
 
 function isLc(obj)
-	return (obj:clsid() == clsid.level_changer)
+	return (obj:clsid() == clsid.level_changer or obj:clsid() == clsid.level_changer_s)
 end
 
 function IsWounded(o)
-	if not (o:clsid() == clsid.script_stalker and o:alive()) then 
+	if not ((o:clsid() == clsid.stalker or o:clsid() == clsid.script_stalker) and o:alive()) then 
 		return false 
 	end 
 	
@@ -2923,7 +2978,7 @@ function IsMelee(o,c)
 	if not (c) then
 		c = o and o:clsid()
 	end
-	return c and (c == clsid.wpn_knife) or false
+	return c and (c == clsid.wpn_knife or c == clsid.wpn_knife_s) or false
 end
 
 function IsSniper(o,c)
@@ -2964,7 +3019,6 @@ function IsShotgun(o,c)
 				[clsid.wpn_auto_shotgun_s] = true,
 				[clsid.wpn_bm16] = true,
 				[clsid.wpn_shotgun] = true
-				--[clsid.wpn_auto_shotgun] = true
 	}
 	return c and shotgun[c] or false
 end
@@ -3013,7 +3067,6 @@ function IsWeapon(o,c)
 				[clsid.wpn_hpsa] 				= true,
 				[clsid.wpn_pm] 					= true,
 				[clsid.wpn_shotgun] 			= true,
-				--[clsid.wpn_auto_shotgun]		= true,
 				[clsid.wpn_bm16] 				= true,
 				[clsid.wpn_svd] 				= true,
 				[clsid.wpn_svu] 				= true,
@@ -3056,14 +3109,11 @@ function IsGrenade(o,c)
 	return c and grenade_classes[c] or false
 end
 
-function IsBolt(o)
-	if o then
-		local sec = o:section()
-		if (sec == "bolt") or (sec == "bolt_bullet") then
-			return true
-		end
+function IsBolt(o,c)
+	if not (c) then
+		c = o and o:clsid()
 	end
-	return false
+	return c and (c == clsid.obj_bolt)
 end
 
 function IsArtefact(o,c)
@@ -3363,12 +3413,16 @@ function update_best_weapon(npc,cur_wpn)
 	if flags.gun_id and tonumber(flags.gun_id) then	
 		local se_gun = alife_object(tonumber(flags.gun_id))
 		if se_gun and IsWeapon(nil, se_gun:clsid()) and se_gun.parent_id == npc:id() then
-			printf('%s does not point to a valid gun in npc inventory, %s will choose gun from engine', flags.gun_id, npc:name())
 			local obj = level.object_by_id(tonumber(flags.gun_id))
-			if obj then return obj else
+			if obj then
+				return obj
+			else
 				printf('%s online object is not available, %s will choose gun from engine', se_gun:name(), npc:name())
 				return
 			end
+		else
+			printf('%s does not point to a valid gun in npc inventory, %s will choose gun from engine', flags.gun_id, npc:name())
+			return
 		end
 	end
 	

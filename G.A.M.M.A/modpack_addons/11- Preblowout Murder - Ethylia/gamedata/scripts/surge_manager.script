@@ -1,0 +1,1726 @@
+--------------------------------------------------------------------------------
+-- Surge manager class ---------------------------------------------------------
+-- Made by Peacemaker ----------------------------------------------------------
+-- 05.03.07 --------------------------------------------------------------------
+--------------------------------------------------------------------------------
+-- Edited for AtmosFear 3 ------------------------------------------------------
+-- by Cromm Cruac --------------------------------------------------------------
+-- 25.06.2011 ------------------------------------------------------------------
+--------------------------------------------------------------------------------
+-- Edited by Alundaio for Call of Chernobyl
+
+--[[
+	Tronex
+	2019/9/13
+	Modified for Anomaly 1.5
+--]]
+
+-------------------
+local alife, math_random, pairs, tostring = alife,  math.random, pairs, tostring
+-------------------
+
+---------------------------------------------------------------------
+-- class instance
+SurgeManager = nil
+function get_surge_manager()
+	SurgeManager = SurgeManager or CSurgeManager()
+	return SurgeManager
+end
+---------------------------------------------------------------------
+
+local a_ini = ini_file("alife.ltx")
+local normal_time_factor = a_ini:r_float_ex("alife","time_factor") or 6
+local surge_time_factor = 10
+
+local surge_shock_pp_eff 	= 1
+local earthquake_cam_eff 	= 2
+local sleep_cam_eff 		= 3
+local sleep_fade_pp_eff		= 4
+
+local prev_sec 				= -1
+local prev_game_sec 		= -1
+local currentPPEfactor 		= 0.001
+local _tmr
+
+local presurge_played		= {0, 0, 0, 0, 0, 0}
+
+--[[Amount of time before a surge in in-game seconds (6x real life seconds)
+	Note that the script updates events only once per real life second]]--
+local presurge_time			= 360
+
+local function main_loop()
+	local tg = time_global()
+	
+	if (_tmr and tg < _tmr) then 
+		return false
+	end
+	_tmr = tg + 1000
+	
+	if not (db.actor and db.actor.afterFirstUpdate) then 
+		return false
+	end
+	
+	get_surge_manager():update()
+	psi_storm_manager.get_psi_storm_manager():update()
+
+	if level.get_time_factor() ~= normal_time_factor and not is_started() and not psi_storm_manager.is_started() then
+		if is_finished() and psi_storm_manager.is_finished() then
+			level.set_time_factor(normal_time_factor)
+		end
+	end
+	
+	return false
+end
+
+local function on_level_changing()
+	local tm = task_manager.get_task_manager()
+	local task_info = tm.task_info["faction_base_defense"]
+	if (task_info and task_info.status ~= "completed" and task_info.status ~= "fail") then 
+		stop_surge()
+		tm:set_task_cancelled("faction_base_defense")
+	end
+end
+
+local function actor_on_sleep(hours)
+	get_surge_manager().time_forwarded = true
+	psi_storm_manager.get_psi_storm_manager().time_forwarded = true
+	
+	if(is_started() and level_weathers.get_weather_manager().weather_fx) then
+		level.stop_weather_fx()
+	end
+	level_weathers.get_weather_manager():forced_weather_change()
+end
+
+function on_game_start()
+	AddUniqueCall(main_loop)
+	RegisterScriptCallback("on_level_changing",on_level_changing)
+	RegisterScriptCallback("actor_on_sleep",actor_on_sleep)
+end
+	
+local enable_debug = false
+function print_dbg(fmt,...)
+	if enable_debug then
+		printf("Surge manager | " .. fmt,...)
+	end
+end
+
+local function file_exists(filename)
+    local file = io.open(filename, "r")
+    if (file) then
+        file:close()
+        return true
+    end
+    return false
+end
+
+-- ###############################################################################################
+--                                  SURGE MANAGER
+-- ###############################################################################################
+
+class "CSurgeManager"
+function CSurgeManager:__init()
+	self.ini = ini_file("misc\\surge_manager.ltx")
+	self.blowout_sounds = {	
+						begin01		=sound_object("ambient\\blowout\\blowout_begin"),
+						begin02		=sound_object("ambient\\blowout\\blowout_begin_02"),
+						impact01	=sound_object("ambient\\blowout\\blowout_impact"),
+						impact02	=sound_object("ambient\\blowout\\blowout_impact_02"),
+						wave01		=sound_object("ambient\\blowout\\blowout_wave_01"),
+						wave02		=sound_object("ambient\\blowout\\blowout_wave_02_short"),
+						wave03		=sound_object("ambient\\blowout\\blowout_wave_03_short"),
+						wave04		=sound_object("ambient\\blowout\\blowout_wave_04"),
+						body_tear	=sound_object("anomaly\\anomaly_body_tear_1"),
+						siren		=sound_object("ambient\\blowout\\blowout_siren"),
+						crow0		=sound_object("ambient\\blowout\\cut\\close"),
+						crow1		=sound_object("ambient\\blowout\\cut\\closemedium"),
+						crow2		=sound_object("ambient\\blowout\\cut\\medium"),
+						crow3		=sound_object("ambient\\blowout\\cut\\prettyfar"),
+						crow4		=sound_object("ambient\\blowout\\cut\\far"),
+						crow5		=sound_object("ambient\\blowout\\cut\\veryfar")
+					}
+	self.blowout_waves 	= {}
+	self.body_tears 	= {}
+end
+
+function CSurgeManager:initialize()
+	--[[
+	self.levels_respawn = empty_table(self.levels_respawn)
+	for level,v in pairs(level_weathers.valid_levels) do
+		self.levels_respawn[level] = false
+	end
+	--]]
+	
+	--utils_data.debug_write("CSurgeManager:initialize() start")
+	
+	self.aspectRatio = 1
+	if(device().width/device().height>(1024/768+0.01)) then
+		self.aspectRatio = 0.8
+	end
+	
+	if not (self._state_loaded) then -- because state_load called too early, we wait till actor_on_load to truly init and we do not want to overwrite loaded values
+		self.last_surge_time = game.get_game_time()
+		self.inited_time = game.get_game_time()
+		self.started = false
+		self.finished = true
+		self.game_time_factor=level.get_time_factor()
+		self.task_given = nil
+	end
+	
+	if not (self._delta) then
+		local freq = ui_options.get("alife/event/emission_frequency")
+		self._delta = math_random(math.floor(freq/2)*3600, freq*3600)
+	end
+	
+	self.hitFactor = 0
+	self.surge_time = 222
+	
+	self:init_surge_covers()
+
+	local ini = self.ini
+	self.condlist = ini:r_string_to_condlist("settings","condlist")
+	self.survive = ini:r_string_to_condlist("settings","survive")
+
+	self.surge_message = ""
+	self.surge_task_sect = ""
+	
+	--printf("level=%s   artefact_respawn_levels=%s",level.name(),m_data.artefact_respawn_levels[level.name()])
+	
+	--utils_data.debug_write("CSurgeManager:initialize() end")
+end
+
+function CSurgeManager:start(manual)
+-- manual is used to set inited_time to current in-game date
+-- sets inited_time for the surge + prepare values
+-- skip surge in special cases
+
+	--utils_data.debug_write("CSurgeManager:start()")
+	if not (self._state_loaded) then 
+		self:initialize()
+	end
+	
+	self.game_time_factor = level.get_time_factor()
+
+	local Y, M, D, h, m, s, ms = 0, 0, 0, 0, 0, 0, 0
+	Y, M, D, h, m, s, ms = self.last_surge_time:get(Y, M, D, h, m, s, ms)
+	if (manual or not self.inited_time) then
+		self.inited_time = game.get_game_time()
+	else
+		self.inited_time:set(Y, M, D, h, m, s + self._delta, ms)
+	end
+	
+	local flags = {allow = true}
+	SendScriptCallback("on_before_surge",flags)
+	
+	local level_name = level.name()
+	if (level_weathers.valid_levels[level_name] ~= true or (not ui_options.get("alife/event/emission_state")) or flags.allow == false) then
+		self:skip_surge()
+		return
+	end
+	
+	-- Generators is emission source and Deserted Hospital has nowhere to hide (almost all the map is inside anyway).
+	if (level_name == "l13_generators" or level_name == "l11_hospital" or has_alife_info("bar_arena_fight")) then
+		self.skip_message = true
+		self:skip_surge()
+		return
+	end
+	
+	local diff_sec = math.ceil(game.get_game_time():diffSec(self.inited_time)/level.get_time_factor())
+	if (diff_sec+6 > self.surge_time)then
+		self.skip_message = true
+		self:skip_surge()
+	else
+	
+		-- heli_combat flag
+		save_var(db.actor,"heli_enemy_flag",nil)
+		
+		self.started = true
+		self.finished = false
+		self.task_given = nil
+		self:finalize()
+		self.blowout_waves = empty_table(self.blowout_waves)
+		self.objects_to_kill = empty_table(self.objects_to_kill)
+		self.stages = empty_table(self.stages)
+		self.body_tears = empty_table(self.body_tears)
+		self.hitFactor=0
+		level.set_time_factor(surge_time_factor)
+		self.zombie_count = 0
+		SendScriptCallback("actor_on_interaction", "anomalies", nil, "emission_start")
+	end
+end
+
+function CSurgeManager:new_surge_time(reset)
+	if reset then
+		self.last_surge_time = game.get_game_time()
+	end
+	
+	--utils_data.debug_write("CSurgeManager:new_surge_time()")
+	
+	local freq = ui_options.get("alife/event/emission_frequency")
+	self._delta = math_random(math.floor(freq/2)*3600, freq*3600)
+
+	local g_time = game.get_game_time()
+	local psi_manager = psi_storm_manager and psi_storm_manager.get_psi_storm_manager()
+	local last_psi_storm_time = psi_manager and psi_manager.last_psi_storm_time or game.get_game_time()
+	local psi_storm_start = psi_manager and math.floor(psi_manager._delta - g_time:diffSec(last_psi_storm_time)) or 0
+	local psi_storm_end = psi_manager and math.floor(psi_manager._delta+3600 - g_time:diffSec(last_psi_storm_time)) or 0
+	local surge_start = math.floor(self._delta - g_time:diffSec(self.last_surge_time))
+	local surge_end = math.floor(self._delta+3600 - g_time:diffSec(self.last_surge_time))
+	if ((surge_end > psi_storm_start) and (surge_end < psi_storm_end)) then
+		--1h earlier
+		self._delta=self._delta-3600
+	end
+	if ((surge_start > psi_storm_start) and (surge_start < psi_storm_end)) then
+		--1h later
+		self._delta=self._delta+3600
+	end
+end
+
+function CSurgeManager:skip_surge()
+	if not (self.inited_time) then 
+		self.inited_time = game.get_game_time()
+	end
+	if not (self.last_surge_time) then 
+		self.last_surge_time = game.get_game_time()
+	end
+	local Y, M, D, h, m, s, ms = 0, 0, 0, 0, 0, 0, 0
+	Y, M, D, h, m, s, ms = self.inited_time:get(Y, M, D, h, m, s, ms)
+	self.last_surge_time:set(Y, M, D, h, m, s + self.surge_time, ms)
+
+	self:new_surge_time(false)
+
+	self.started 			= false
+	self.finished 			= true
+
+	--[[
+	self.levels_respawn = empty_table(self.levels_respawn)
+	for level,v in pairs(level_weathers.valid_levels) do
+		self.levels_respawn[level] = true
+	end
+	--]]
+
+	self.surge_message 		= ""
+	self.surge_task_sect 	= ""
+	self.task_given 		= false
+
+	self.effector_set			= false
+	self.second_message_given 	= false
+	self.ui_disabled			= false
+	self.blowout_sound			= false
+	self.wave_sound 			= false
+	prev_sec					= 0
+
+	SendScriptCallback("actor_on_interaction", "anomalies", nil, "emission_end")
+	
+	if (self.skip_message and ui_options.get("alife/event/emission_state")) then
+		news_manager.send_tip(db.actor, "st_surge_while_asleep", nil, "recent_surge", nil, nil)
+		SendScriptCallback("actor_on_interaction", "anomalies", nil, "emissions")
+		game_statistics.increment_statistic("emissions")
+		self.skip_message = nil
+		--release_body_manager.get_release_body_manager():clear(true)
+	end
+	
+	-- hide indicators
+	self:displayIndicators(0)
+
+	level.set_time_factor(self.game_time_factor)
+end
+
+function CSurgeManager:end_surge(manual)
+
+	if (self.started == true) then 
+		game_statistics.increment_statistic("emissions")
+		self:kill_all_unhided()
+		SendScriptCallback("actor_on_interaction", "anomalies", nil, "emissions")
+		SendScriptCallback("actor_on_interaction", "anomalies", nil, "emission_end")
+	end
+	
+	self.last_surge_time 	= game.get_game_time()
+	self.started 			= false
+	self.finished 			= true
+
+	self:new_surge_time(false)
+
+	self.surge_message 		= ""
+	self.surge_task_sect 	= ""
+	self.task_given 		= nil
+	
+	presurge_played = {0, 0, 0, 0, 0}
+
+	if(self.blowout_sound) then
+		xr_sound.stop_sound_looped(AC_ID, "blowout_rumble")
+	end
+	if(self.wave_sound) then
+		xr_sound.stop_sound_looped(AC_ID, "blowout_particle_wave_looped")
+	end
+	for k,wave in pairs(self.blowout_waves) do
+		if wave.effect:playing() then
+			self:kill_wave(k)
+		end
+	end
+	for k,snd in pairs(self.blowout_sounds) do
+		if snd ~= nil and snd:playing() then
+			snd:stop()
+		end
+	end
+	if(self.second_message_given) then
+		xr_sound.stop_sound_looped(AC_ID, "surge_earthquake_sound_looped")
+	end
+
+	if(manual or (self.time_forwarded and level_weathers.get_weather_manager().weather_fx)) then
+		level.stop_weather_fx()
+--		level_weathers.get_weather_manager():select_weather(true)
+		level_weathers.get_weather_manager():forced_weather_change()
+	end
+
+	self.effector_set 			= false
+	self.second_message_given 	= false
+	self.ui_disabled  			= false
+	self.blowout_sound			= false
+	self.wave_sound			= false
+	prev_sec				= 0
+	self.hitFactor=0
+
+	level.remove_pp_effector(surge_shock_pp_eff)
+	level.remove_cam_effector(earthquake_cam_eff)
+	-- hide indicators
+	self:displayIndicators(0)
+
+	level.set_time_factor(self.game_time_factor)
+
+	for k,v in pairs(db.signal_light) do
+		v:stop_light()
+		v:stop()
+	end
+end
+
+function CSurgeManager:pos_in_cover(pos,by_name)
+	if not (self.covers) then 
+		return
+	end
+	local sr
+	for name,condlist in pairs(self.covers) do 
+		--if (db.actor_inside_zones[name]) then 
+			--return true
+		--end
+		
+		sr = db.zone_by_name[name]
+		if (sr and sr:inside(pos)) then
+			if by_name then
+				return name
+			end
+			return true
+		end
+	end
+	return false
+end 
+
+function CSurgeManager:init_surge_covers() -- collect safe zones list, if not done yet
+	if (self.covers) then 
+		return 
+	end 
+	self.covers = {}
+	local ini = self.ini
+	for i = 0, ini:line_count("list")-1 do
+		temp1, id, temp2 = ini:r_line("list", i, "", "")
+		self.covers[id] = ini:r_string_to_condlist(id,"condlist") or xr_logic.parse_condlist(nil,"surge_manager","covers","true")
+	end
+end
+
+function CSurgeManager:hit_power(power,hit_type)
+	local hit_types={"burn", "shock", "chemical_burn", "radiation", "telepatic"}
+	local suit_factors={10,1,5,33,10}
+	local drug_factors={1,1,5,33,10}
+	local artefact_factors={10,5,10,10,10}
+
+	local suit_protection = db.actor:get_current_outfit_protection(hit_type)*suit_factors[hit_type+1]
+	local helmet_protection = 0
+	local helmet = db.actor:item_in_slot(12)
+	if helmet ~= nil then
+		helmet_protection = ini_sys:r_float_ex(helmet:section(),hit_types[hit_type+1].."_protection")*suit_factors[hit_type+1]
+	end
+
+	local g_time
+	-- DRUG PROTECTIONS CHECK
+	local expiration = load_var(db.actor,"drug_psy_blockade_expiration")
+	if (expiration) then
+		g_time = utils_data.CTimeToSec(game.get_game_time())
+		if g_time<expiration then
+			self.drug_telepatic_protection = ini_sys:r_float_ex("drug_psy_blockade","boost_telepat_protection")
+		else
+			self.drug_telepatic_protection = nil
+		end
+	end
+	
+	expiration = load_var(db.actor,"drug_radioprotector_expiration")
+	if (expiration) then
+		g_time = g_time or utils_data.CTimeToSec(game.get_game_time())
+		if g_time<expiration then
+			self.drug_radiation_protection = ini_sys:r_float_ex("drug_radioprotector","boost_radiation_protection")
+		else
+			self.drug_radiation_protection = nil
+		end
+	end
+	
+	expiration = load_var(db.actor,"drug_antidot_expiration")
+	if (expiration) then
+		g_time = g_time or utils_data.CTimeToSec(game.get_game_time())
+		if g_time<expiration then
+			self.drug_chemical_burn_protection = ini_sys:r_float_ex("drug_antidot","boost_chemburn_protection")
+		else
+			self.drug_chemical_burn_protection = nil
+		end
+	end
+	
+	local drug_protection = 0
+	if hit_type == 2 and self.drug_chemical_burn_protection ~= nil then
+		drug_protection=self.drug_chemical_burn_protection*drug_factors[hit_type+1]
+	elseif hit_type == 3 and self.drug_radiation_protection ~= nil then
+		drug_protection=self.drug_radiation_protection*drug_factors[hit_type+1]
+	elseif hit_type == 4 and self.drug_telepatic_protection ~= nil then
+		drug_protection=self.drug_telepatic_protection*drug_factors[hit_type+1]
+	end
+	protection = (suit_protection + helmet_protection + drug_protection)
+	if protection > 1 then
+		protection = 1
+	end
+	hit_power=power*(1-protection)
+	return hit_power
+end
+
+function CSurgeManager:start_wave(num,inited_time)
+	if inited_time==nil then
+		inited_time=prev_game_sec
+	end
+	local actor_pos=db.actor:position()
+	local effect=particles_object("crommcruac\\blowout_wave_blend")
+	local inited_pos= vector():set(actor_pos.x, actor_pos.y/2, actor_pos.z+250)
+	self.blowout_waves[num]={effect=effect,inited_time=inited_time,inited_pos=inited_pos}
+	self.blowout_waves[num].effect:play_at_pos(inited_pos)
+	if not(self.wave_sound) then
+		xr_sound.play_sound_looped(AC_ID, "blowout_particle_wave_looped")
+		xr_sound.set_volume_sound_looped(AC_ID, "blowout_particle_wave_looped", 0)
+		self.wave_sound=true
+	end
+end
+
+function CSurgeManager:finalize()
+	for k,v in pairs(self.blowout_waves) do
+		if (v.effect and v.effect:playing()) then 
+			v.effect:stop()
+		end
+	end
+	for k,v in pairs(self.body_tears) do 
+		if (v:playing()) then 
+			v:stop()
+		end
+	end
+end 
+
+function CSurgeManager:kill_wave(num)
+	if self.blowout_waves[num] then
+		self.blowout_waves[num].effect:stop_deffered()
+		self.blowout_waves[num]=nil
+	end
+end
+
+function fade(currentTime,startTime,endTime,startValue,endValue)
+	local totalFadeTime=endTime-startTime
+	local totalFadeValue=endValue-startValue
+	local elapsedFadeTime=currentTime-startTime
+	local currentValue=(totalFadeValue*elapsedFadeTime)/totalFadeTime+startValue
+	if (totalFadeValue<0) then
+		if (currentValue>startValue) then
+			currentValue=startValue
+		end
+		if (currentValue<endValue) then
+			currentValue=endValue
+		end
+	else
+		if (currentValue>endValue) then
+			currentValue=endValue
+		end
+		if (currentValue<startValue) then
+			currentValue=startValue
+		end
+	end
+	return currentValue
+end
+
+function play_sound_radius(sndobj, radius, min, max)
+	local rnd_pos = db.actor:position()
+	local rnd_angle = math.random(min, max)
+	rnd_pos.x = rnd_pos.x + (math.cos(rnd_angle) * radius)
+	rnd_pos.z = rnd_pos.z + (math.sin(rnd_angle) * radius)
+	if(sndobj:playing()) then
+		sndobj:stop()
+	end
+	sndobj:play_at_pos(db.actor, rnd_pos)
+	printf("played sound at x=%s z=%s", rnd_pos.x, rnd_pos.z)
+end
+
+----------------------------------
+--	Update
+----------------------------------
+function CSurgeManager:update()
+	--utils_data.debug_write("CSurgeManager:update()")
+
+	if not (self._state_loaded) then 
+		print_dbg('self._state_loaded is not loaded -> initialize')
+		self:initialize()
+		return
+	end 
+	
+	if not (self.first_update) then 
+		print_dbg('first update')
+		self.first_update = true
+		
+		local flags = {allow = true}
+		SendScriptCallback("on_before_surge",flags)
+	
+		-- end surge if level is not valid
+		local level_name = level.name()
+		if (level_name == "l13_generators"
+		or level_name == "l11_hospital"
+		or has_alife_info("bar_arena_fight")
+		or flags.allow == false
+		or level_weathers.valid_levels[level_name] ~= true)
+		then
+			print_dbg('level is not valid')
+			if (self.started) then
+				self:end_surge()
+			-- else
+				-- self:skip_surge()
+			end
+			return
+		end
+		
+		local diff_sec = math.ceil(game.get_game_time():diffSec(self.inited_time)/level.get_time_factor())
+		print_dbg('diff_sec 1 = %s',diff_sec)
+		if (diff_sec > self.surge_time)then
+			print_dbg('diff_sec > self.surge_time')
+			self:skip_surge()
+			return
+		end
+	end
+	
+	SetEvent("surge", "state", self.started)
+
+	if (not self.started) then
+		--print_dbg('not started')
+		local g_time = game.get_game_time()
+		if (self.time_forwarded) then
+			local diff = math.abs(self._delta - g_time:diffSec(self.last_surge_time))
+			if (diff < 3600) then
+				self._delta = 3*3600 + g_time:diffSec(self.last_surge_time)
+			end
+			self.time_forwarded = false
+			print_dbg('time forwarded')
+		end
+		
+		--Plays sound before a blowout
+		if(math.abs(self._delta - g_time:diffSec(self.last_surge_time)) < presurge_time) then
+			if(presurge_played[1] ~= true) then
+				--self.blowout_sounds["presurge"]:play(db.actor)
+				play_sound_radius(self.blowout_sounds["crow5"], 1000, 140, 220)
+				play_sound_radius(self.blowout_sounds["crow4"], 1000, 140, 220)
+				printf("Played far crows")
+				presurge_played[1] = true
+			end
+			if(math.abs(self._delta - g_time:diffSec(self.last_surge_time)) < (presurge_time - 60) and presurge_played[2] ~= true) then
+				--self.blowout_sounds["presurge"]:play(db.actor)
+				play_sound_radius(self.blowout_sounds["crow3"], 1000, 100, 260)
+				play_sound_radius(self.blowout_sounds["crow2"], 1000, 100, 260)
+				printf("Played medium crows")
+				presurge_played[2] = true
+			end
+			if(math.abs(self._delta - g_time:diffSec(self.last_surge_time)) < (presurge_time - 120) and presurge_played[3] ~= true) then
+				--self.blowout_sounds["presurge"]:play(db.actor)
+				play_sound_radius(self.blowout_sounds["crow1"], 1000, 0, 360)
+				play_sound_radius(self.blowout_sounds["crow0"], 1000, 0, 360)
+				printf("Played close crows")
+				presurge_played[3] = true
+			end
+			if(math.abs(self._delta - g_time:diffSec(self.last_surge_time)) < (presurge_time - 180) and presurge_played[4] ~= true) then
+				--self.blowout_sounds["presurge"]:play(db.actor)
+				play_sound_radius(self.blowout_sounds["crow2"], 1000, 280, 440)
+				play_sound_radius(self.blowout_sounds["crow3"], 1000, 280, 440)
+				printf("Played medium crows")
+				presurge_played[4] = true
+			end
+			if(math.abs(self._delta - g_time:diffSec(self.last_surge_time)) < (presurge_time - 240) and presurge_played[5] ~= true) then
+				--self.blowout_sounds["presurge"]:play(db.actor)
+				play_sound_radius(self.blowout_sounds["crow4"], 1000, 320, 400)
+				play_sound_radius(self.blowout_sounds["crow5"], 1000, 320, 400)
+				printf("Played far crows")
+				presurge_played[5] = true
+			end
+		end
+		--DEBUG
+		--printf("until blowout: %s", math.abs(self._delta - g_time:diffSec(self.last_surge_time)))
+		
+		-- return if next surge time hasn't been reached yet
+		if (g_time:diffSec(self.last_surge_time) < self._delta) then
+			--print_dbg('next surge time hasnt been reached yet')
+			return
+		end
+		
+		if (self.condlist and xr_logic.pick_section_from_condlist(db.actor, nil, self.condlist) == "false") then
+			return
+		end
+		
+		print_dbg('start')
+		self:start()
+		return
+	end
+	
+	local diff_sec = math.ceil(game.get_game_time():diffSec(self.inited_time)/level.get_time_factor())
+	if (diff_sec >= self.surge_time) then 
+		print_dbg('diff_sec 2 = %s', diff_sec)
+		if (load_var(db.actor,"surge_immuned",false) ~= true) then -- special surged immuned for tasks
+			self:end_surge()
+			return
+		else 
+			print_dbg('start surge')
+			self:start(true)
+		end
+	end
+	
+	local diff_game_sec = math.ceil(game.get_game_time():diffSec(self.inited_time)/2)
+	print_dbg('diff_game_sec = %s', diff_game_sec)
+------------------------------------update here--------------------------------
+
+	--printf("diff_sec = %s",diff_sec)
+	if (prev_sec ~= diff_sec) then
+		prev_sec = diff_sec
+		
+		SetEvent("surge", "time", diff_sec)
+		
+		if (not ui_options.get("alife/event/emission_state")) then
+			--printf("Surge stopped because of level!")
+			print_dbg('stop surge because option')
+			self:end_surge()
+			return
+		end
+		
+		local rnd_sound= math.random(1,4)
+		
+		-- blowout begins -----------------------------------------------------------------------------------------------------------------------------------------
+		if (diff_sec>=0 and self.stages['beginning'] ~= true) then
+			print_dbg('diff_sec>=%s | blowout begins',diff_sec)
+			if (level.get_time_hours() >= 5 and level.get_time_hours() <= 20) then
+				level.set_weather_fx("fx_blowout_day")
+			else
+				level.set_weather_fx("fx_blowout_night")
+			end
+			if (rnd_sound % 2) ~= 0 then
+				self:play_blowout_sound("begin01")
+			else
+				self:play_blowout_sound("begin02")
+			end
+			--xr_sound.set_sound_play(AC_ID, "blowout_begin")
+			self.stages['beginning']=true
+			--self.debugMessages[2]:SetText("blowout launched at: "..tostring(diff_sec).." rnd: "..tostring(rnd_sound))
+		end
+		
+		-- siren warning -----------------------------------------------------------------------------------------------------------------------------------------
+		local warn = ui_options.get("alife/event/emission_warning")
+		if (diff_sec>=25) and (self.stages['siren'] ~= true) and (warn == "siren" or warn =="radio_siren") then
+			print_dbg('diff_sec>=%s | siren warning',diff_sec)
+			self:play_siren_sound()
+			self.stages['siren']=true
+		end
+		
+		-- blowout warning -----------------------------------------------------------------------------------------------------------------------------------------
+		if (diff_sec>=30) then
+			print_dbg('diff_sec>=%s | blowout warning',diff_sec)
+			if (self.task_given ~= true) then
+				--[[if (warn=="radio" or warn =="radio_siren") then
+					local level_name = level.name()
+					if (level_name == "zaton") then
+						if not (utils_obj.npc_in_zone(db.actor,"zat_a2_sr_noweap")) then
+							xr_sound.set_sound_play(AC_ID, "zat_a2_stalker_barmen_surge_phase_1")
+						end
+					elseif (level_name == "jupiter") then
+						if not (utils_obj.npc_in_zone(db.actor,"jup_a6_sr_noweap")) then
+							xr_sound.set_sound_play(AC_ID, "jup_a6_stalker_medik_phase_1")
+						end
+					elseif (level_name == "l03_agroprom") then
+						xr_sound.set_sound_play(AC_ID, "kovalsky_surge_phase_1")
+					end
+				end]]
+				self:launch_rockets()
+
+				if (load_var(db.actor,"surge_immuned",false) ~= true) then -- special surged immuned for tasks
+					printf("opt_blowout_task",ui_options.get("alife/event/emission_task"))
+					if ui_options.get("alife/event/emission_task") then
+						self:give_surge_hide_task()
+					end
+				end
+				self.task_given = true
+				--self.debugMessages[2]:SetText("task given at: "..tostring(diff_sec))
+			end
+		end
+		
+		-- blowout impact -----------------------------------------------------------------------------------------------------------------------------------------
+		if (diff_sec>=47) and (self.stages['impact'] ~= true) then
+			print_dbg('diff_sec>=%s | blowout impact',diff_sec)
+			if (rnd_sound % 2) ~= 0 then
+				--xr_sound.set_sound_play(AC_ID, "blowout_hit_1")
+				self:play_blowout_sound("impact01")
+			else
+				self:play_blowout_sound("impact02")
+				--xr_sound.set_sound_play(AC_ID, "blowout_hit_2")
+			end
+			self.stages['impact']=true
+			--self.debugMessages[2]:SetText("impact launched at: "..tostring(diff_sec).." rnd: "..tostring(rnd_sound))
+		end
+		
+		-- start rumble -----------------------------------------------------------------------------------------------------------------------------------------
+		if (diff_sec>=50) and (self.stages['rumble']==nil) and not(self.blowout_sound) then
+			print_dbg('diff_sec>=%s | blowout rumble',diff_sec)
+			xr_sound.play_sound_looped(AC_ID, "blowout_rumble")
+			xr_sound.set_volume_sound_looped(AC_ID, "blowout_rumble", 0.25)
+			self.stages['rumble']=true
+			self.blowout_sound = true
+			--self.debugMessages[2]:SetText("rumble launched at: "..tostring(diff_sec))
+		end
+		
+		-- rumble sound fade in -----------------------------------------------------------------------------------------------------------------------------------------
+		if (diff_sec>=50) and (diff_sec<=75) and (self.stages['rumble']~=nil) and (self.blowout_sound) then
+			print_dbg('diff_sec>=%s | blowout rumble sound fade in',diff_sec)
+			xr_sound.set_volume_sound_looped(AC_ID, "blowout_rumble", fade(diff_game_sec,50*5,75*5,0.25,1))
+			--self.debugMessages[3]:SetText("rumble vol: "..tostring(fade(diff_game_sec,50*5,75*5,0.25,1)))
+		end
+		
+		-- 1st earthquake -----------------------------------------------------------------------------------------------------------------------------------------
+		if (diff_sec>=80) and (self.stages['quake20']==nil) then
+			print_dbg('diff_sec>=%s | 1st earthquake',diff_sec)
+			--self.debugMessages[2]:SetText("eathquake started at: "..tostring(diff_sec))
+			level.add_cam_effector("camera_effects\\earthquake_20.anm", earthquake_cam_eff, true, "", 0, false)
+			self.stages['quake20']=true
+			--self.debugMessages[2]:SetText("quake20 at: "..tostring(diff_sec))
+		end
+		
+		-- second message -----------------------------------------------------------------------------------------------------------------------------------------
+		if(diff_sec>=90) and not(self.second_message_given) then
+			print_dbg('diff_sec>=%s | second message',diff_sec)
+			--[[if (warn=="radio" or warn=="radio_siren") then
+				local level_name = level.name()
+				if(level_name == "zaton" and not utils_obj.npc_in_zone(db.actor,"zat_a2_sr_noweap")) then
+					xr_sound.set_sound_play(AC_ID, "zat_a2_stalker_barmen_surge_phase_2")
+				elseif(level_name == "jupiter" and not utils_obj.npc_in_zone(db.actor,"jup_a6_sr_noweap")) then
+					xr_sound.set_sound_play(AC_ID, "jup_a6_stalker_medik_phase_2")
+				elseif (level_name == "l03_agroprom") then
+					xr_sound.set_sound_play(AC_ID, "kovalsky_surge_phase_2")
+				end
+			end]]
+			self.second_message_given = true
+			--self.debugMessages[2]:SetText("second message given at: "..tostring(diff_sec))
+		end
+		
+		-- earthquakes -----------------------------------------------------------------------------------------------------------------------------------------
+		if (diff_sec>=100) and (self.stages['quake40']==nil) then
+			print_dbg('diff_sec>=%s | earthquakes quake40',diff_sec)
+			xr_sound.play_sound_looped(AC_ID, "surge_earthquake_sound_looped")
+			level.remove_cam_effector(earthquake_cam_eff)
+			level.add_cam_effector("camera_effects\\earthquake_40.anm", earthquake_cam_eff, true, "", 0, false)
+			self.stages['quake40']=true
+			--self.debugMessages[2]:SetText("quake40 at: "..tostring(diff_sec))
+		end
+		if (diff_sec>=102) and (self.stages['quake60']==nil) then
+			print_dbg('diff_sec>=%s | earthquakes quake60',diff_sec)
+			level.remove_cam_effector(earthquake_cam_eff)
+			level.add_cam_effector("camera_effects\\earthquake_60.anm", earthquake_cam_eff, true, "", 0, false)
+			self.stages['quake60']=true
+			--self.debugMessages[2]:SetText("quake60 at: "..tostring(diff_sec))
+		end
+		if (diff_sec>=104) and (self.stages['quake80']==nil) then
+			print_dbg('diff_sec>=%s | earthquakes quake80',diff_sec)
+			level.remove_cam_effector(earthquake_cam_eff)
+			level.add_cam_effector("camera_effects\\earthquake_80.anm", earthquake_cam_eff, true, "", 0, false)
+			self.stages['quake80']=true
+			--self.debugMessages[2]:SetText("quake80 at: "..tostring(diff_sec))
+		end
+		if (diff_sec>=106) and (self.stages['quake100']==nil) then
+			print_dbg('diff_sec>=%s | earthquakes quake100',diff_sec)
+			level.remove_cam_effector(earthquake_cam_eff)
+			level.add_cam_effector("camera_effects\\earthquake.anm", earthquake_cam_eff, true, "", 0, false)
+			self.stages['quake100']=true
+			--self.debugMessages[2]:SetText("quake100 at: "..tostring(diff_sec))
+		end
+		
+		if (load_var(db.actor,"surge_immuned",false) ~= true) then -- special surged immuned for tasks
+			-- 1st wave sound -----------------------------------------------------------------------------------------------------------------------------------------
+			if(diff_sec>=108) and (self.stages['1stwavesnd']==nil)  then
+				print_dbg('diff_sec>=%s | 1st wave sound',diff_sec)
+				--xr_sound.set_sound_play(AC_ID, "blowout_wave_1")
+				if rnd_sound==1 then
+					self:play_blowout_sound("wave01")
+				elseif rnd_sound==2 then
+					self:play_blowout_sound("wave02")
+				elseif rnd_sound==3 then
+					self:play_blowout_sound("wave03")
+				elseif rnd_sound==4 then
+					self:play_blowout_sound("wave04")
+				end
+				self.stages['1stwavesnd']=true
+				--self.debugMessages[2]:SetText("1st wave snd at: "..tostring(diff_sec).." rnd: "..tostring(rnd_sound))
+			end
+			-- 1st wave -----------------------------------------------------------------------------------------------------------------------------------------
+			if(diff_sec>=120) and (self.stages['1stwave']==nil)  then
+				print_dbg('diff_sec>=%s | 1st wave',diff_sec)
+				self:start_wave(1,diff_game_sec)
+				self.stages['1stwave']=true
+				--self.debugMessages[2]:SetText("1st wave at: "..tostring(diff_sec))
+			end
+			-- 2nd wave sound -----------------------------------------------------------------------------------------------------------------------------------------
+			if(diff_sec>=156) and (self.stages['2ndwavesnd']==nil)  then
+				print_dbg('diff_sec>=%s | 2nd wave sound',diff_sec)
+				--xr_sound.set_sound_play(AC_ID, "blowout_wave_1")
+				if rnd_sound==1 then
+					self:play_blowout_sound("wave01")
+				elseif rnd_sound==2 then
+					self:play_blowout_sound("wave02")
+				elseif rnd_sound==3 then
+					self:play_blowout_sound("wave03")
+				elseif rnd_sound==4 then
+					self:play_blowout_sound("wave04")
+				end
+				self.stages['2ndwavesnd']=true
+				--self.debugMessages[2]:SetText("2nd wave snd at: "..tostring(diff_sec))
+			end
+			-- 2nd wave -----------------------------------------------------------------------------------------------------------------------------------------
+			--if(diff_sec>=2) and (self.stages['2ndwave']==nil)  then
+			if(diff_sec>=168) and (self.stages['2ndwave']==nil)  then
+				print_dbg('diff_sec>=%s | 2nd wave',diff_sec)
+				self:start_wave(2,diff_game_sec)
+				self.stages['2ndwave']=true
+				--self.debugMessages[2]:SetText("2nd wave at: "..tostring(diff_sec))
+			end
+		end
+		
+		-- earthquakes fade-----------------------------------------------------------------------------------------------------------------------------------------
+		if (diff_sec>=200) and (self.stages['quake100']==true) then
+			print_dbg('diff_sec>=%s | earthquakes fade quake100',diff_sec)
+			level.remove_cam_effector(earthquake_cam_eff)
+			level.add_cam_effector("camera_effects\\earthquake_80.anm", earthquake_cam_eff, true, "", 0, false)
+			self.stages['quake100']=false
+			--self.debugMessages[2]:SetText("quake80 at: "..tostring(diff_sec))
+		end
+		if (diff_sec>=202) and (self.stages['quake80']==true) then
+			print_dbg('diff_sec>=%s | earthquakes fade quake80',diff_sec)
+			level.remove_cam_effector(earthquake_cam_eff)
+			level.add_cam_effector("camera_effects\\earthquake_60.anm", earthquake_cam_eff, true, "", 0, false)
+			self.stages['quake80']=false
+			--self.debugMessages[2]:SetText("quake60 at: "..tostring(diff_sec))
+		end
+		if (diff_sec>=206) and (self.stages['quake60']==true) then
+			print_dbg('diff_sec>=%s | earthquakes fade quake60',diff_sec)
+			level.remove_cam_effector(earthquake_cam_eff)
+			level.add_cam_effector("camera_effects\\earthquake_40.anm", earthquake_cam_eff, true, "", 0, false)
+			self.stages['quake60']=false
+			--self.debugMessages[2]:SetText("quake40 at: "..tostring(diff_sec))
+		end
+		if (diff_sec>=209) and (self.stages['quake40']==true) then
+			print_dbg('diff_sec>=%s | earthquakes fade quake40',diff_sec)
+			level.remove_cam_effector(earthquake_cam_eff)
+			level.add_cam_effector("camera_effects\\earthquake_20.anm", earthquake_cam_eff, true, "", 0, false)
+			self.stages['quake40']=false
+			--self.debugMessages[2]:SetText("quake20 at: "..tostring(diff_sec))
+		end
+		if (diff_sec>=214) and (self.stages['quake20']==true) and (self.stages['quakeended']==nil) then
+			print_dbg('diff_sec>=%s | earthquakes fade quake20',diff_sec)
+			level.remove_cam_effector(earthquake_cam_eff)
+			self.stages['quakeended']=true
+			--self.debugMessages[2]:SetText("eathquake ended at: "..tostring(diff_sec))
+		end
+		
+		-- rumble and quake sound fade out -----------------------------------------------------------------------------------------------------------------------------------------
+		if (diff_sec>=200) and (diff_sec<=214) and (self.stages['rumble']~=nil) and (self.blowout_sound) then
+			print_dbg('diff_sec>=%s | rumble and quake sound fade out',diff_sec)
+			xr_sound.set_volume_sound_looped(AC_ID, "blowout_rumble", fade(diff_game_sec,200*5,214*5,1,0))
+			xr_sound.set_volume_sound_looped(AC_ID, "surge_earthquake_sound_looped", fade(diff_game_sec,200*5,214*5,1,0))
+			--self.debugMessages[3]:SetText("rumble vol: "..tostring(fade(diff_game_sec,200*5,214*5,1,0)))
+		end
+		
+		-- rumble and quake sound stop -----------------------------------------------------------------------------------------------------------------------------------------
+		if (diff_sec>=214) and (self.stages['rumble']==true) and (self.blowout_sound) then
+			print_dbg('diff_sec>=%s | rumble and quake sound stop',diff_sec)
+			xr_sound.stop_sound_looped(AC_ID, "blowout_rumble")
+			xr_sound.stop_sound_looped(AC_ID, "surge_earthquake_sound_looped")
+			--self.debugMessages[2]:SetText("sounds stopped at: "..tostring(diff_sec))
+			self.stages['rumble']=false
+		end
+		
+		-- end message -----------------------------------------------------------------------------------------------------------------------------------------
+		if (diff_sec>=212) and (self.stages['endmessage']==nil) then
+			print_dbg('diff_sec>=%s | end message',diff_sec)
+			--[[if (level) and (warn=="radio" or warn=="radio_siren") then
+				if(level.name()=="zaton" and not utils_obj.npc_in_zone(db.actor,"zat_a2_sr_noweap")) then
+					xr_sound.set_sound_play(AC_ID, "zat_a2_stalker_barmen_after_surge")
+				elseif(level.name()=="jupiter"and not utils_obj.npc_in_zone(db.actor,"jup_a6_sr_noweap")) then
+					xr_sound.set_sound_play(AC_ID, "jup_a6_stalker_medik_after_surge")
+				elseif (level.name() == "l03_agroprom") then
+					xr_sound.set_sound_play(AC_ID, "kovalsky_after_surge")
+				end
+			end]]
+			--self.debugMessages[2]:SetText("end message at: "..tostring(diff_sec))
+			self.stages['endmessage']=true
+		end
+		
+		-- after sound -----------------------------------------------------------------------------------------------------------------------------------------
+		if(diff_sec>=220) and (self.stages['endsnd']==nil)  then
+			print_dbg('diff_sec>=%s | after sound',diff_sec)
+			xr_sound.set_sound_play(AC_ID, "blowout_hit_3")
+			self.stages['endsnd']=true
+			--self.debugMessages[2]:SetText("ending snd at: "..tostring(diff_sec))
+		end
+	end
+	
+--------------------------------- update every 2 game sec -----------------------------------
+	if (prev_game_sec ~= diff_game_sec) then
+		prev_game_sec = diff_game_sec
+		if (diff_sec < self.surge_time) then
+			print_dbg('diff_sec>=%s | effectors',diff_sec)
+			local actor_pos = db.actor:position()
+			-- hitFactor changes -----------------------------------------------------------------------------------------------------------------------------------------
+			--self.debugMessages[3]:SetText("hitFactor: "..tostring(self.hitFactor))
+			--self.debugMessages[4]:SetText("psy_health="..tostring(db.actor.psy_health))
+			--if (diff_sec>=8) and (diff_sec<210) and not(self.effector_set) then
+			if (diff_sec>=108) and (diff_sec<210) and not(self.effector_set) then
+				level.add_pp_effector("psychic.ppe", surge_shock_pp_eff, true)
+				level.set_pp_effector_factor(surge_shock_pp_eff, 0.001)
+				self.effector_set=true
+			end
+			--if (diff_sec>=8) and (diff_sec<=14) and (self.effector_set) then
+			if (diff_sec>=108) and (diff_sec<=114) and (self.effector_set) then
+				self.hitFactor=fade(diff_game_sec,8*5,14*5,0.001,1)
+			end
+			--if (diff_sec>=14) and (diff_sec<=20) and (self.effector_set) then
+			if (diff_sec>=114) and (diff_sec<=120) and (self.effector_set) then
+				self.hitFactor=fade(diff_game_sec,14*5,20*5,1,0.3)
+			end
+			if (diff_sec>=156) and (diff_sec<=162) and (self.effector_set) then
+				self.hitFactor=fade(diff_game_sec,156*5,162*5,0.3,1)
+			end
+			if (diff_sec>=162) and (diff_sec<=168) and (self.effector_set) then
+				self.hitFactor=fade(diff_game_sec,162*5,168*5,1,0.3)
+			end
+			if (diff_sec>=200) and (diff_sec<=210) and (self.effector_set) then
+				self.hitFactor=fade(diff_game_sec,200*5,210*5,0.3,0.001)
+			end
+			if (diff_sec>=210) and (self.effector_set) then
+				self.hitFactor=0
+				level.remove_pp_effector(surge_shock_pp_eff)
+				self.effector_set=false
+			end
+
+			-- setting effector
+			local PPEfactor
+			local hitPower
+			if not (GetEvent("current_safe_cover")) then
+				PPEfactor = self.hitFactor
+				hitPower = self.hitFactor/50
+				if PPEfactor < 0.001 then PPEfactor = 0.001 end
+				--self.debugMessages[6]:SetText("outside")
+			else
+				PPEfactor = 0.002
+				hitPower = 0
+				--self.debugMessages[6]:SetText("in cover")
+			end
+			currentPPEfactor = currentPPEfactor+(PPEfactor - currentPPEfactor) * 0.1
+			if (load_var(db.actor,"surge_immuned",false) ~= true) then
+				if (self.effector_set) then
+					level.set_pp_effector_factor(surge_shock_pp_eff, currentPPEfactor)
+					self:displayIndicators(currentPPEfactor)
+					if (db.actor:alive() and character_community(db.actor) ~= "actor_monolith") then
+						local h = hit()
+						h.type = hit.telepatic
+						h.power = self:hit_power(hitPower, h.type)
+						h.impulse = 0.0
+						h.direction = VEC_Z
+						h.draftsman = db.actor
+						if (self.survive and xr_logic.pick_section_from_condlist(db.actor, nil, self.survive) == "true") then
+							if(db.actor.health<=h.power) then
+								if (db.actor.health-0.05 > 0.05) then
+									h.power = 0.05
+								else
+									h.power = 0
+								end
+							end
+						end
+						print_dbg('diff_sec>=%s | hit actor',diff_sec)
+						db.actor:hit(h)
+					end
+				end
+			end
+			--self.debugMessages[5]:SetText("PPE: "..tostring(currentPPEfactor))
+			--self.debugMessages[7]:SetText("hitPower: "..tostring(hitPower))
+
+			-- Waves
+			local wavevol=0
+			local fate = ui_options.get("alife/event/emission_fate") or "kill_at_wave"
+			for k,wave in pairs(self.blowout_waves) do
+				if wave.effect:playing() then
+					local wave_pos= vector():set(actor_pos.x, actor_pos.y/2, wave.inited_pos.z-(diff_game_sec-wave.inited_time)*3)
+					wave.effect:move_to(wave_pos,VEC_ZERO)
+					local wavevoltemp = (250 - math.abs(actor_pos.z-wave_pos.z))/250
+					if (wavevoltemp > wavevol) then
+						wavevol = wavevoltemp
+					end
+
+					if wave_pos.z < actor_pos.z - 250 then
+						wave.effect:stop_deffered()
+						if (k==2) then
+							--kill all remaining npcs
+
+							if fate == "turn_to_zombie" or fate == "explode" then
+								print_dbg('diff_sec>=%s | turn_to_zombie',diff_sec)
+								self:kill_objects_at_pos(-10000,fate)
+							end
+						end
+					end
+					
+					self:kill_crows_at_pos(wave_pos.z)
+					
+					if fate == "kill_at_wave" then
+						if (prev_sec == prev_game_sec/5) then
+							print_dbg('diff_sec>=%s | kill_objects_at_pos',diff_sec)
+							self:kill_objects_at_pos(wave_pos.z,fate)
+						end
+					end
+					
+					if (fate == "turn_to_zombie" or fate == "explode") and k==2 then
+						print_dbg('diff_sec>=%s | turn_to_zombie',diff_sec)
+						self:kill_objects_at_pos(wave_pos.z, fate)
+					end
+					
+					if (wave_pos.z < actor_pos.z) then
+						if k==1
+						and not GetEvent("current_safe_cover")
+						and (character_community(db.actor) ~= "actor_monolith")
+						and (character_community(db.actor) ~= "actor_zombied")
+						then
+				            local h = hit()
+				            h.type = hit.telepatic
+				            h.power = self:hit_power(2, h.type)+0.5
+				            h.impulse = 0.0
+				            h.direction = VEC_Z
+				            h.draftsman = db.actor
+							if (xr_logic.pick_section_from_condlist(db.actor, nil, self.survive)=="true") then
+								if(db.actor.health<=h.power) then
+									if (db.actor.health-0.05 > 0.05) then
+										h.power = 0.05
+									else
+										h.power = 0
+									end
+								end
+							end
+				            if (load_var(db.actor,"surge_immuned",false) ~= true) then
+								print_dbg('diff_sec>=%s | hit actor 2',diff_sec)
+			                	db.actor:hit(h)
+			                end
+							self.stages['1stwavehit']=true;
+							--self.debugMessages[2]:SetText("first wave hit at: "..tostring(diff_sec)..' with strength: '..h.power)
+						end
+						
+						if (k==2 and self.stages['2ndwavehit']==nil) then
+							if fate=="kill_at_end" then
+								print_dbg('diff_sec>=%s | kill_at_end',diff_sec)
+								self:kill_all_unhided()
+							else
+								if (load_var(db.actor,"surge_immuned",false) ~= true) then
+									if not (level_environment.is_actor_immune()) then 
+										print_dbg('diff_sec>=%s | kill_actor_at_pos',diff_sec)
+										self:kill_actor_at_pos(wave_pos.z)
+									end
+								end
+							end
+							self.stages['2ndwavehit']=true
+							--self.debugMessages[2]:SetText("second wave hit at: "..tostring(diff_sec))
+						end
+					end
+				end
+			end
+			if (self.wave_sound) then
+				--self.debugMessages[1]:SetText("wave vol: "..tostring(wavevol))
+				xr_sound.set_volume_sound_looped(AC_ID, "blowout_particle_wave_looped", wavevol)
+			end
+		end
+	end
+end
+
+
+----------------------------------
+--	Effects
+----------------------------------
+function CSurgeManager:displayIndicators(power)
+	local hud = get_hud()
+	if not (hud) then 
+		return 
+	end
+	local indik
+	if power>=0.8 then indik="red"
+	elseif power>=0.6 then indik="orange"
+	elseif power>=0.4 then indik="yellow"
+	elseif power>=0.1 then indik="green"
+	else indik=nil end
+	local aspectRatio=""
+	if self.aspectRatio~=1 then
+		aspectRatio="_16"
+	end
+	local indikName="atm_indik_psi_"..tostring(indik)..aspectRatio
+	local currentIndikName="atm_indik_psi_"..tostring(currentIndik)..aspectRatio
+
+	--remove indik if 0
+	if not indik and currentIndik~=nil then
+		local hudIndikRem = hud:GetCustomStatic(currentIndikName)
+		if hudIndikRem then
+			hud:RemoveCustomStatic(currentIndikName)
+		end
+		currentIndik=nil
+		return
+	end
+	-- display different indik
+	if currentIndik~=indik then
+		-- first remove existing one
+		if currentIndik~=nil then
+			local hudIndik = hud:GetCustomStatic(currentIndikName)
+			if hudIndik then
+				hud:RemoveCustomStatic(currentIndikName)
+			end
+		end
+		-- now display new one
+		if indik then
+			hud:AddCustomStatic(indikName,true)
+			currentIndik=indik
+		end
+	end
+	--self.debugMessages[8]:SetText("indik="..currentIndikName)
+end
+
+function CSurgeManager:play_blowout_sound(id)
+	local snd_obj=self.blowout_sounds[id]
+	if snd_obj ~= nil and snd_obj:playing() then
+		snd_obj:stop()
+	end
+	if snd_obj ~= nil then
+		snd_obj:play(db.actor)
+		snd_obj.volume = 1
+		--self.debugMessages[12]:SetText("playing: "..tostring(id))
+	end
+end
+
+function CSurgeManager:play_siren_sound()
+	local snd_obj=self.blowout_sounds["siren"]
+	if (snd_obj == nil) then 
+		return  
+	end 
+	
+	local snd_position
+	if snd_obj:playing() then
+		snd_obj:stop()
+	end
+	if(level.name()=="zaton") then
+		snd_position= vector():set(115,8,184)
+	elseif(level.name()=="jupiter") then
+		snd_position= vector():set(-50,16,198)
+	else
+		snd_position= vector():set(147,15,-187)
+	end
+
+	snd_obj:play_at_pos(db.actor, snd_position)
+	snd_obj.volume = 1
+end
+
+function CSurgeManager:launch_rockets()
+	for k,v in pairs(db.signal_light) do
+		if not(v:is_flying()) then
+			v:launch()
+		end
+	end
+end
+
+function surge_callback()
+	level.add_cam_effector("camera_effects\\surge_01.anm", sleep_cam_eff, false, "surge_manager.surge_callback2")
+--	level.stop_weather_fx()
+--	level.change_game_time(0,0,15)
+--	level_weathers.get_weather_manager():forced_weather_change()
+end
+
+function surge_callback2()
+	xr_effects.enable_ui(db.actor, nil)
+--[[
+	level.enable_input()
+	level.show_indicators()
+	db.actor:restore_weapon()
+]]--
+end
+
+
+----------------------------------
+--	NPC fate
+----------------------------------
+function make_dead_crow(id,powr)
+	local crow = id and level.object_by_id(id)
+	if(crow and crow:alive() and powr) then
+		crow:hit(powr)
+	end
+	return true
+end
+
+function make_dead(id)
+	local obj = id and db.storage[id] and db.storage[id].object --level.object_by_id(id)
+	if (obj and obj:alive()) then
+		obj:kill(obj)
+	else
+		local se_obj = id and alife_object(id)
+		if (se_obj and se_obj:alive()) then
+			se_obj:kill()
+		end
+	end
+
+	return true
+end
+
+function CSurgeManager:kill_crows_at_pos(pos,delay) -- hit all crows if their pos is bigger than "pos"
+	local h = hit()
+	h.type = hit.fire_wound
+	h.power = 0.9
+	h.impulse = 0.0
+	h.direction = VEC_Z
+	h.draftsman = db.actor
+	for k,id in pairs(bind_crow.crow_storage) do
+		if delay then
+			CreateTimeEvent("delay_kill_crow",id,math_random(1,3),make_dead_crow,id,h)
+		else
+			local crow = level.object_by_id(id)
+			if (crow and crow:alive() and pos < crow:position().z) then
+				crow:hit(h)
+			end
+		end
+	end
+end
+
+function CSurgeManager:kill_objects_at_pos(surge_pos, fate, delay)
+	if (load_var(db.actor,"surge_immuned",false) == true) then 
+		return 
+	end
+	
+	local can_kill = (fate == "kill_at_wave") or (fate == "turn_to_zombie") or (fate == "explode") or (fate == "kill_at_end")
+	if (not can_kill) then
+		print_dbg('kill_objects_at_pos | cant kill because fate is [%s]',fate)
+		return
+	end
+	print_dbg("kill_objects_at_pos | pos: %s - fate: %s - delay: %s", surge_pos, fate, delay)
+	
+	local id, comm, npc_pos, se_npc, npc, squad, squad_id, smart, surge_smart
+	local board = SIMBOARD
+	local sim = alife()
+	for i=1, #db.OnlineStalkers do
+		id = db.OnlineStalkers[i]
+		npc = db.storage[id] and db.storage[id].object or level.object_by_id(id)
+		if npc then
+			comm = npc:character_community()
+			npc_pos = npc:position()
+			
+			if npc_pos
+			and IsStalker(npc)                         							-- must be stalker
+			and npc:alive()                            							-- must be alive
+			and (comm ~= "monolith")                   							-- not monolith (immune)
+			and (comm ~= "zombied")                    							-- not zombied (immune)
+			and (not get_object_story_id(id))          							-- not story npc
+			and ((surge_pos == false) or (surge_pos and npc_pos.z > surge_pos)) -- npc is behind emission wave
+			then
+				se_npc = sim:object(id)
+				squad_id = se_npc.group_id
+				squad = squad_id and sim:object(squad_id)
+				
+				if se_npc and squad then
+					smart = board and squad.smart_id and board.smarts[squad.smart_id] and board.smarts[squad.smart_id].smrt
+					surge_smart = smart and smart.props and (tonumber(smart.props["surge"]) > 0)
+					if not (surge_smart or self:pos_in_cover(npc_pos)) then -- if stalker is not in a safe smart or not inside
+						print_dbg('kill_objects_at_pos | kill npc [%s]',se_npc:name())
+						if (fate == "turn_to_zombie") then
+							self:turn_to_zombie(se_npc,squad)
+						elseif (fate == "explode") then
+							self:explode(se_npc,squad)
+						elseif (fate == "kill_at_wave") or (fate == "kill_at_end") then
+							if delay then
+								CreateTimeEvent("delay_kill",id,math_random(1,3),make_dead,id)
+							else
+								npc:kill(npc)
+							end
+						end
+					else
+						print_dbg('kill_objects_at_pos | cant kill npc [%s] | surge_smart: %s - in_cover: %s',se_npc:name(), surge_smart, self:pos_in_cover(npc_pos,true))
+					end
+				end
+			else
+				print_dbg('kill_objects_at_pos | cant kill npc [%s] | behind emission wave: %s',npc:name(), ((surge_pos == false) or (surge_pos and npc_pos and npc_pos.z > surge_pos)))
+			end
+		end
+	end
+end
+
+function CSurgeManager:kill_actor_at_pos(pos) -- kill player at end
+	if (load_var(db.actor,"surge_immuned",false) == true) then 
+		return 
+	end
+	if(db.actor and db.actor:alive() and db.actor:position().z>pos) then
+		if not (GetEvent("current_safe_cover")) then
+			xr_effects.disable_ui_only(db.actor, nil)
+			if (xr_logic.pick_section_from_condlist(get_story_object("actor"), nil, self.survive)~="true") then
+				local fate = ui_options.get("alife/event/emission_fate") or "kill_at_wave"
+				self:kill_objects_at_pos(false, fate, true)
+				db.actor:kill(db.actor)
+				self.ui_disabled = true
+				return
+			else
+				level.add_cam_effector("camera_effects\\surge_02.anm", sleep_cam_eff, false, "surge_manager.surge_callback")
+				level.add_pp_effector("surge_fade.ppe", sleep_fade_pp_eff, false)
+				--db.actor:change_health(-0.05)
+				self:end_surge(true)
+			end
+		end
+	end
+end
+
+function CSurgeManager:kill_all_unhided() -- called only when "kill_at_end" is active, turn to zombie + explode + kill with delay, kill actor
+	if (load_var(db.actor,"surge_immuned",false) == true) then 
+		return 
+	end
+	
+	-- delay hit for crows
+	self:kill_crows_at_pos(false,true)
+	
+	-- delay kill for online npcs
+	local fate = ui_options.get("alife/event/emission_fate") or "kill_at_wave"
+	self:kill_objects_at_pos(false, fate, true)
+
+	
+	if (level_environment.is_actor_immune()) then 
+		return 
+	end
+	
+	-- don't kill actor if he isn't on a valid level
+	local sim,gg = alife(),game_graph()
+	local actor_level = sim:level_name(gg:vertex(sim:actor().m_game_vertex_id):level_id())
+	if (self.indoor_levels and self.indoor_levels[actor_level] or level_weathers.valid_levels[actor_level] ~= true) then 
+		return 
+	end
+	
+	if (db.actor and db.actor:alive() and not GetEvent("current_safe_cover")) then
+		--[[
+		if has_alife_info("anabiotic_in_process") then
+			local counter_name = "actor_marked_by_zone_cnt"
+			local cnt_value = load_var(db.actor, counter_name, 0)
+			save_var(db.actor, counter_name, cnt_value + 1)
+		end
+		]]
+			
+		xr_effects.disable_ui_only(db.actor, nil)
+
+		
+		if (xr_logic.pick_section_from_condlist(get_story_object("actor"), nil, self.survive) ~= "true") then
+			local fate = ui_options.get("alife/event/emission_fate") or "kill_at_wave"
+			self:kill_objects_at_pos(false, fate, true)
+			db.actor:kill(db.actor)
+			
+			return
+		else
+			level.add_cam_effector("camera_effects\\surge_02.anm", sleep_cam_eff, false, "surge_manager.surge_callback")
+			level.add_pp_effector("surge_fade.ppe", sleep_fade_pp_eff, false)
+			--db.actor.health = db.actor.health-0.05
+		end
+	end
+end
+
+function CSurgeManager:turn_to_zombie(se_obj,squad)
+	if not (squad) then
+		se_obj:kill()
+		return 
+	end
+	
+	self.zombie_count = self.zombie_count and self.zombie_count + 1 or 0
+	if (self.zombie_count > 12) then
+		se_obj:kill()
+		return
+	end
+	
+	local zombie_type
+	local section_number = string.sub(se_obj:section_name(), -1)
+	if section_number=="4" then
+		zombie_type="sim_default_zombied_4"
+	elseif section_number=="3" then
+		zombie_type="sim_default_zombied_3"
+	elseif section_number=="2" or section_number=="1" then
+		zombie_type="sim_default_zombied_2"
+	else
+		zombie_type="sim_default_zombied_1"
+	end
+	
+	squad:remove_npc(se_obj.id, true)
+	alife_create(zombie_type,se_obj.position,se_obj.m_level_vertex_id,se_obj.m_game_vertex_id)
+end
+
+function CSurgeManager:explode(se_obj,squad)
+	if not (squad) then 
+		se_obj:kill()
+		return 
+	end
+
+	-- play body tear and scary sound
+	self.body_tears[se_obj.id]=particles_object("anomaly2\\body_tear_0"..math.random(1,2))
+	self.body_tears[se_obj.id]:play_at_pos(se_obj.position)
+
+	local snd_obj = self.blowout_sounds["body_tear"]
+	if (snd_obj) then
+		if (snd_obj:playing()) then
+			snd_obj:stop()
+		end
+
+		snd_obj:play_at_pos(db.actor, se_obj.position)
+		snd_obj.volume = 1
+	end
+	
+	squad:remove_npc(se_obj.id, true)
+end
+
+
+----------------------------------
+--	Task
+----------------------------------
+function CSurgeManager:give_surge_hide_task()
+	if (self.surge_message ~= "empty") then
+		local mess = ""
+		if (self.surge_message == "") then
+			local time = 0
+			mess = game.translate_string("hide_from_surge_message")
+		else
+			mess = game.translate_string(self.surge_message)
+		end
+	end
+	if (self.surge_task_sect ~= "empty") then
+		if (self.surge_task_sect == "") then
+			task_manager.get_task_manager():give_task("hide_from_surge")
+		else
+			task_manager.get_task_manager():give_task(self.surge_task_sect)
+		end
+	end
+end
+
+function get_task_descr()
+	if GetEvent("current_safe_cover")  then
+		return game.translate_string("hide_from_surge_descr_2_a")
+	end
+	
+	return game.translate_string("hide_from_surge_descr_1_a")
+end
+
+function get_task_target()
+	if GetEvent("current_safe_cover") then
+		return nil
+	end
+	
+	return GetEvent("nearest_safe_cover")
+end
+
+function set_surge_task(tsk)
+	get_surge_manager().surge_task_sect = tsk
+end
+
+
+----------------------------------
+--	Data management
+----------------------------------
+function actor_on_save(binder,packet)
+	if (USE_MARSHAL) then 
+		return 
+	end 
+	-- initialize to set default values if not loaded
+	local mgr = SurgeManager
+	if not (mgr._state_loaded) then 
+		mgr:initialize()
+		mgr._state_loaded = true
+	end
+	set_save_marker(packet, "save", false, "SurgeHide")
+
+	utils_data.w_stpk(packet,"bool",mgr.finished,"CSurgeManager:finished")
+	utils_data.w_stpk(packet,"bool",mgr.started,"CSurgeManager:started")
+	utils_data.w_stpk(packet,"CTime",mgr.last_surge_time,"CSurgeManager:last_surge_time")
+
+	if(mgr.started) then
+		utils_data.w_stpk(packet,"CTime",mgr.inited_time,"CSurgeManager:inited_time")
+		utils_data.w_stpk(packet,"bool",mgr.task_given,"CSurgeManager:task_given")
+		utils_data.w_stpk(packet,"bool",mgr.effector_set,"CSurgeManager:effector_set")
+		utils_data.w_stpk(packet,"bool",mgr.second_message_given,"CSurgeManager:second_message_given")
+		utils_data.w_stpk(packet,"bool",mgr.ui_disabled,"CSurgeManager:ui_disabled")
+		utils_data.w_stpk(packet,"bool",mgr.blowout_sound,"CSurgeManager:blowout_sound")
+
+		--utils_data.w_stpk(packet,"stringZ",mgr.surge_message,"CSurgeManager:surge_message")
+		--utils_data.w_stpk(packet,"stringZ",mgr.surge_task_sect,"CSurgeManager:surge_task_sect")
+
+		utils_data.w_stpk(packet,"u32",mgr.game_time_factor,"CSurgeManager:game_time_factor")
+	end
+	utils_data.w_stpk(packet,"u32",mgr._delta,"CSurgeManager:_delta")
+
+	set_save_marker(packet, "save", true, "SurgeHide")
+end 
+
+function actor_on_load(binder,packet)
+	--printf("actor on load")
+	local mgr = get_surge_manager()
+	if not (mgr._state_loaded) then 
+		mgr:initialize()
+		mgr._state_loaded = true
+	end
+	if (USE_MARSHAL) then 
+		return 
+	end 
+	set_save_marker(packet, "load", false, "SurgeHide")
+	mgr.finished = packet:r_bool()
+	mgr.started = packet:r_bool()
+
+	mgr.last_surge_time = utils_data.r_CTime(packet,"surge_manager") or game.get_game_time()
+	if(mgr.started) then
+		mgr.inited_time = utils_data.r_CTime(packet,"surge_manager") or game.get_game_time()
+		mgr.task_given = packet:r_bool()
+		mgr.effector_set = packet:r_bool()
+		mgr.second_message_given = packet:r_bool()
+		mgr.ui_disabled = packet:r_bool()
+		mgr.blowout_sound = packet:r_bool()
+
+		--mgr.surge_message = packet:r_stringZ()
+		--mgr.surge_task_sect = packet:r_stringZ()
+		mgr.game_time_factor = packet:r_u32()
+		mgr:finalize()
+		mgr.blowout_waves = empty_table(mgr.blowout_waves)
+		mgr.objects_to_kill = empty_table(mgr.objects_to_kill)
+		mgr.stages = empty_table(mgr.stages)
+		mgr.body_tears = empty_table(mgr.body_tears)
+	end
+	mgr._delta = packet:r_u32()
+	set_save_marker(packet, "load", true, "SurgeHide")
+end
+
+function save_state(m_data)
+	--utils_data.debug_write("SurgeManager:save_state BEFORE")
+	m_data.SurgeManager = {}
+
+	local mgr = get_surge_manager()
+	if not (mgr._state_loaded) then 
+		mgr:initialize()
+		mgr._state_loaded = true
+	end
+	
+	m_data.SurgeManager.finished = mgr.finished == nil and true or mgr.finished
+	m_data.SurgeManager.started = mgr.started == nil and false or mgr.started
+	m_data.SurgeManager.last_surge_time = mgr.last_surge_time and utils_data.CTime_to_table(mgr.last_surge_time) or game.get_game_time()
+
+	if(mgr.started) then
+		m_data.SurgeManager.inited_time = utils_data.CTime_to_table(mgr.inited_time) or game.get_game_time()
+		--m_data.SurgeManager.levels_respawn = mgr.levels_respawn
+		m_data.SurgeManager.task_given = mgr.task_given
+		m_data.SurgeManager.effector_set = mgr.effector_set
+		m_data.SurgeManager.second_message_given = mgr.second_message_given
+		m_data.SurgeManager.ui_disabled = mgr.ui_disabled
+		m_data.SurgeManager.blowout_sound = mgr.blowout_sound
+		m_data.SurgeManager.game_time_factor = mgr.game_time_factor
+	end
+	m_data.SurgeManager._delta = mgr._delta
+	--utils_data.debug_write("SurgeManager:save_state AFTER")
+end 
+
+function load_state(m_data)
+	if not (m_data.SurgeManager) then 
+		return
+	end
+	--utils_data.debug_write("SurgeManager:load_state BEFORE")
+	local mgr = get_surge_manager()
+	mgr:initialize()
+	mgr.finished = m_data.SurgeManager.finished
+	mgr.started = m_data.SurgeManager.started
+	mgr.last_surge_time = m_data.SurgeManager.last_surge_time and utils_data.CTime_from_table(m_data.SurgeManager.last_surge_time) or game.get_game_time()
+	if (mgr.started == true and mgr.finished == false) then
+		mgr.inited_time = m_data.SurgeManager.inited_time and utils_data.CTime_from_table(m_data.SurgeManager.inited_time) or game.get_game_time()
+		mgr.task_given = m_data.SurgeManager.task_given or false
+		mgr.effector_set = m_data.SurgeManager.effector_set or false
+		mgr.second_message_given = m_data.SurgeManager.second_message_given or false
+		mgr.ui_disabled = m_data.SurgeManager.ui_disabled or false
+		mgr.blowout_sound = m_data.SurgeManager.blowout_sound or false
+		mgr.game_time_factor = m_data.SurgeManager.game_time_factor or level.get_time_factor()
+		mgr:finalize()
+		mgr.blowout_waves = empty_table(mgr.blowout_waves)
+		mgr.objects_to_kill = empty_table(mgr.objects_to_kill)
+		mgr.stages = empty_table(mgr.stages)
+		mgr.body_tears = empty_table(mgr.body_tears)
+	else 
+		mgr.started = false
+		mgr.finished = true
+	end
+	mgr._delta = m_data.SurgeManager._delta
+	mgr._state_loaded = true
+	
+	m_data.SurgeManager = nil
+	--utils_data.debug_write("SurgeManager:load_state BEFORE")
+end
+
+
+----------------------------------
+--	Utilities
+----------------------------------
+function start_surge(p)
+	get_surge_manager():start(true)
+end
+
+function stop_surge()
+	if(get_surge_manager().started) then
+		get_surge_manager():end_surge(true)
+	end
+end
+
+function is_started()
+	return get_surge_manager().started
+end
+
+function is_finished()
+	return not get_surge_manager().started
+end
+
+function is_loaded()
+	return get_surge_manager()._state_loaded == true
+end
+
+
+function actor_in_cover()
+	return GetEvent("current_safe_cover") and true or false
+end
+
+function npc_in_cover(npc)
+	return get_surge_manager():pos_in_cover(npc:position())
+end
+
+function job_in_surge_cover(se_obj,job)
+	if not (job.alife_task) then 
+		return false 
+	end 
+	return get_surge_manager():pos_in_cover(job.alife_task:position())
+end
+
+
+function set_surge_message(mess)
+	get_surge_manager().surge_message = mess
+end
+
+function is_killing_all()
+	local mgr = get_surge_manager()
+	if(mgr.started and mgr.ui_disabled) then
+		return true
+	end
+	return false
+end
+
+function sound_started()
+	return get_surge_manager().started and get_surge_manager().blowout_sound
+end
