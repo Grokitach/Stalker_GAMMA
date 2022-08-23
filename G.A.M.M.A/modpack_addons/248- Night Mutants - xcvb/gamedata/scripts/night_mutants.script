@@ -1,0 +1,201 @@
+--	picks a random squad from "squad_descr_night_mutants.ltx" every "spawn_time_interval" game minutes
+--	spawns on smart terrains available for mutants and if current population of smart is 0 or if no default night mutants are on this smart online
+
+local spawn_time_interval = 45	-- game minutes
+local safe_radius = 75					-- no spawn in this player's radius
+
+local night_start = 20					-- time at which mutants start to spawn
+local night_end = 5						-- deletes all mutants at this time
+
+local squads_to_spawn = {}
+local spawned_mutants = {}
+local available_smart_terrains = {}
+local ctime_to_t = utils_data.CTime_to_table
+local t_to_ctime = utils_data.CTime_from_table
+local xspawn_time
+local debugx = false
+
+---------------------------------------------------------------------------------------------------
+local tmr
+function try_to_spawn()
+	local tg = time_global()
+	if (tmr and tg < tmr) then return end
+	tmr = tg + 30000
+
+	if not is_night() then
+		if is_not_empty(spawned_mutants) then
+			delete_mutants()
+			empty_table(spawned_mutants)
+			xspawn_time = nil
+		end
+		return
+	end
+
+	local cur_time = game.get_game_time()
+	if not xspawn_time then
+		xspawn_time = ctime_to_t(cur_time)
+	end
+
+	if cur_time:diffSec(t_to_ctime(xspawn_time)) > (spawn_time_interval * 60) then
+		xspawn_time = ctime_to_t(cur_time)
+		spawn_mutants()
+	end
+
+end
+
+function spawn_mutants()
+	for level_name, t in pairs(available_smart_terrains) do
+		local random_smart_id = t[math.random(1, #t)]
+		spawned_mutants[level_name] = spawned_mutants[level_name] or {}
+
+		local simboard_t = SIMBOARD.smarts[random_smart_id]
+		local smart = simboard_t and simboard_t.smrt
+
+		if smart then
+			local smart_squads = simboard_t.squads
+			local smart_cur_pop = simboard_t.population
+			local smart_max_pop = smart.max_population
+
+		-- smart is empty
+			local allow_pop_spawn = smart_cur_pop < smart_max_pop
+
+			pr("----------------------------------------------------")
+			local smart_name = smart:name() or smart:section_name() or "<empty>"
+			pr("1test smart_id: %s || smart_name: %s || max pop: %s || current pop: %s", random_smart_id, smart_name, smart_max_pop, smart_cur_pop)
+
+		-- if at least one night squad is already on this smart
+			local night_squad_on_smart = false
+			for squad_id, _ in pairs(smart_squads) do
+				local sq = alife_object(squad_id)
+				if sq and (sq.player_id == "monster_predatory_night" or sq.player_id == "monster_zombied_night") then
+					pr("squad_id is NIGHT squad: %s", squad_id)
+					night_squad_on_smart = true
+					break
+				end
+			end
+
+			-- spawn squad
+			if allow_pop_spawn and (not night_squad_on_smart) and se_obj_outside_spawn_radius(smart) then
+				local squad_sec = is_not_empty(squads_to_spawn) and squads_to_spawn[math.random(1, #squads_to_spawn)]
+				local squad = squad_sec and SIMBOARD:create_squad(smart, squad_sec)
+				-- save squad id
+				if squad then
+					table.insert(spawned_mutants[level_name], squad.id)
+					-- test
+					pr("- spawned level: %s || smart: %s || squad_id: %s || sec: %s", level_name, smart_name, squad.id, squad_sec)
+					pr("2test smart_id: %s || current pop: %s", random_smart_id, SIMBOARD.smarts[random_smart_id] and SIMBOARD.smarts[random_smart_id].population)
+					--------------
+				end
+			end
+
+		end
+
+	end
+
+end
+
+function delete_mutants()
+	for level_name, t in pairs(spawned_mutants) do
+		for idx, squad_id in ipairs(t) do
+			local squad = alife_object(squad_id)
+			if squad then
+				pr("squad id: %s deleted", squad_id)
+				squad:remove_squad()
+			end
+		end
+	end
+
+end
+
+function server_entity_on_unregister(obj)
+	for level_name, t in pairs(spawned_mutants) do
+		for idx, squad_id in ipairs(t) do
+			if obj.id == squad_id then
+				pr("removing squad_id: %s from table", squad_id)
+				table.remove(spawned_mutants[level_name], idx)
+			end
+		end
+	end
+
+end
+
+---------------------------------------------------------------------------------------------------
+function save_mutant_smarts()
+	-- save smarts that has props of  "sim_avail" = true and "monster" > 0
+	for i = 1, 65534 do
+		local smart = alife_object(i)
+		if smart and (smart:clsid() == clsid.smart_terrain) and (simulation_objects.available_by_id[smart.id] and simulation_objects.available_by_id[smart.id] == true) and (smart.props["monster"] and smart.props["monster"] > 0) then
+			local smart_level_name = get_se_obj_level_name(smart)
+			available_smart_terrains[smart_level_name] = available_smart_terrains[smart_level_name] or {}
+			table.insert(available_smart_terrains[smart_level_name], smart.id)
+		end
+	end
+
+	-- collect and add section names
+	ini_sys:section_for_each(function(sec)
+		local night_mutant = ini_sys:r_bool_ex(sec, "night_mutant")
+		if night_mutant then
+			table.insert(squads_to_spawn, sec)
+		end
+	end)
+
+	-- test
+	for i = 1, #squads_to_spawn do
+		pr("[%s] = %s", i, squads_to_spawn[i])
+	end
+
+end
+
+function se_obj_outside_spawn_radius(se_obj)
+	if not se_obj then
+		return false
+	end
+
+	local on_same_level = simulation_objects.is_on_the_same_level(alife():actor(), se_obj)
+	if not on_same_level then
+		return true
+	end
+
+	local ac_pos = db.actor:position()
+	local se_obj_pos = se_obj.position
+	local outside_radius = ac_pos:distance_to_xz(se_obj_pos) > safe_radius
+
+	return outside_radius
+end
+
+function is_night()
+	local cur_hour = level.get_time_hours() + level.get_time_minutes() / 60
+
+	return (cur_hour > night_start) or (cur_hour < night_end)
+end
+
+function get_se_obj_level_name(se_obj)
+	local target_level_id = game_graph():vertex(se_obj.m_game_vertex_id):level_id()
+	local target_level_name = alife():level_name(target_level_id)
+
+	return target_level_name
+end
+
+function pr(...)
+	if not debugx then return end
+	printf(...)
+end
+
+function save_state(m_data)
+    m_data.spawned_mutants = spawned_mutants
+	m_data.xspawn_time = xspawn_time
+end
+
+function load_state(m_data)
+	xspawn_time = xspawn_time or nil
+    spawned_mutants = m_data.spawned_mutants or {}
+end
+
+---------------------------------------------------------------------------------------------------
+function on_game_start()
+	RegisterScriptCallback("actor_on_update", try_to_spawn)
+	RegisterScriptCallback("server_entity_on_unregister", server_entity_on_unregister)
+	RegisterScriptCallback("actor_on_first_update", save_mutant_smarts)
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
+end
