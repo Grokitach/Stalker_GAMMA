@@ -1,191 +1,199 @@
--- add array via ltx with weapon names to ignore selected weapons from lowering
+-- add array via ltx with weapon nmes to ignore selected weapons from lowering
 
 local lower_weapon_sprint_status = false
 local lower_weapon_sprint_safe_mode_active = false
 local lower_weapon_sprint_aim = false
 local lower_weapon_sprint_fire = false
 local lowered_sprint_equip_weapon = false
-local exclude = {'wpn_mosin', 'wpn_mp412', 'wpn_ru556'}
+local exclude = {}
 
-local function is_excluded (exlude, val)
-    for index, value in ipairs(tab) do
-        if obj.get_name() == val then
-            return true
-        end
-    end
+exclude["wpn_mosin"] = 1
+exclude["wpn_mp412"] = 2
+exclude["wpn_m4_ru556"] = 3
+exclude["wpn_howa20"] = 4
 
-    return false
+
+local function is_excluded(nme)
+	for k, v in pairs(exclude) do 
+		--printe(k, v)
+		--printe(nme)
+		if exclude[nme] then
+			--printe('excluded')
+			return true
+		else
+			--printe('not excluded')
+			return false
+		end
+    end   
 end
 
-if is_excluded == false then
-	-- TimeEvents
-	local function lower_sprint_delay_fire_func()
-		level.press_action(bind_to_dik(key_bindings.kWPN_FIRE))
-		return true
-	end
+-- TimeEvents
+local function lower_sprint_delay_fire_func()
+	level.press_action(bind_to_dik(key_bindings.kWPN_FIRE))
+	return true
+end
 
-	local function lower_sprint_delay_toggle_aim_func()
-		if not (axr_main.weapon_is_zoomed) then
-			level.press_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+local function lower_sprint_delay_toggle_aim_func()
+	if not (axr_main.weapon_is_zoomed) then
+		level.press_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+	end
+	return true
+end
+
+local function lower_sprint_delay_safemode_func()
+	if (game.actor_weapon_lowered()) then
+		lower_weapon_sprint_safe_mode_active = true
+	end
+	return true
+end
+
+local function lowered_sprint_delay_previous_weapon_func()
+	lowered_sprint_equip_weapon = false
+	return true
+end
+
+-- Actor On Update(Every tick)
+local function actor_on_update()
+
+	-- Prevent quick aim when 
+	local wpn = db.actor:active_item()
+	local is_weapon = wpn and IsWeapon(wpn) or false
+	if (is_weapon) then
+		local state = wpn:get_state()
+		if state == 3 then
+			lowered_sprint_equip_weapon = true
+			CreateTimeEvent(0, "lowered_sprint_delay_previous_weapon", 0.5, lowered_sprint_delay_previous_weapon_func)
+			
+			wpn = nil
+			return true
 		end
-		return true
+	else
+		
 	end
-
-	local function lower_sprint_delay_safemode_func()
-		if (game.actor_weapon_lowered()) then
-			lower_weapon_sprint_safe_mode_active = true
-		end
-		return true
-	end
-
-	local function lowered_sprint_delay_previous_weapon_func()
-		lowered_sprint_equip_weapon = false
-		return true
-	end
-
-	-- Actor On Update(Every tick)
-	local function actor_on_update()
-
-		-- Prevent quick aim when 
-		local wpn = db.actor:active_item()
-		local is_weapon = wpn and IsWeapon(wpn) or false
+	
+	if lower_weapon_sprint_fire == true and actor_menu.last_mode == 0 then
 		if (is_weapon) then
 			local state = wpn:get_state()
-			if state == 3 then
-				lowered_sprint_equip_weapon = true
-				CreateTimeEvent(0, "lowered_sprint_delay_previous_weapon", 0.5, lowered_sprint_delay_previous_weapon_func)
-				
-				wpn = nil
-				return true
-			end
-		else
-			
-		end
-		
-		if lower_weapon_sprint_fire == true and actor_menu.last_mode == 0 then
-			if (is_weapon) then
-				local state = wpn:get_state()
 
-				if state == 0 then
-					if not (SYS_GetParam(0,wpn:section(),"kind") == "w_melee") then
-						wpn:switch_state(0)
-						CreateTimeEvent(0, "lower_sprint_delay_fire", 0, lower_sprint_delay_fire_func)
-					else
-						if not (state == 5) then
-							wpn:switch_state(0)
-						end
-					end
-					lower_weapon_sprint_fire = false
-				end
-			end
-			wpn = nil
-			return true
-		end
-		
-		if lower_weapon_sprint_aim == true and actor_menu.last_mode == 0 then
-			if (is_weapon) then
-				local state = wpn:get_state()
-
-				if state == 0 then
+			if state == 0 then
+				if not (SYS_GetParam(0,wpn:section(),"kind") == "w_melee") then
 					wpn:switch_state(0)
-				end
-
-				if lowered_sprint_equip_weapon == false then
-					if not (axr_main.weapon_is_zoomed) and game.actor_weapon_lowered() then
-						CreateTimeEvent(0, "lower_sprint_delay_toggle_aim", 0, lower_sprint_delay_toggle_aim_func)
-					else
-						lower_weapon_sprint_aim = false
+					CreateTimeEvent(0, "lower_sprint_delay_fire", 0, lower_sprint_delay_fire_func)
+				else
+					if not (state == 5) then
+						wpn:switch_state(0)
 					end
 				end
+				lower_weapon_sprint_fire = false
 			end
-			wpn = nil
-			return true
 		end
-		
-		-- Prevent weapon from raising after weapon has already been lowered manually
-		if (lower_weapon_sprint_safe_mode_active == true and game.actor_weapon_lowered()) then
-			wpn = nil
-			return true
-		else
-			lower_weapon_sprint_safe_mode_active = false
-		end
-			
-		if not (IsMoveState("mcFall") or IsMoveState("mcJump") or IsMoveState("mcLanding")) and lower_weapon_sprint_aim == false then
-			if IsMoveState("mcSprint") then
-				if (wpn) then
-					local can_be_lowered = wpn and IsWeapon(wpn) and ini_sys:r_bool_ex(wpn:section(), "can_be_lowered", false) or false
-					local state = wpn:get_state()
-					if (can_be_lowered and not(state == 0 or state == 1)) then can_be_lowered = false end
-					
-					if (can_be_lowered) then
-						if (not game.actor_weapon_lowered()) then
-							game.actor_lower_weapon(true)
-						end
-					end
-				end
-				lower_weapon_sprint_status = true
-			else 
-				if (wpn) then
-					local can_be_lowered = wpn and IsWeapon(wpn) and ini_sys:r_bool_ex(wpn:section(), "can_be_lowered", false) or false
-					local state = wpn:get_state()
-					if (can_be_lowered and not(state == 0 or state == 1)) then can_be_lowered = false end
-						
-					if (can_be_lowered) then
-						if (game.actor_weapon_lowered()) then
-							if lower_weapon_sprint_status == true then
-								game.actor_lower_weapon(false)
-								wpn:switch_state(0)
-							end
-						else 
-							lower_weapon_sprint_status = false
-						end
-					end
+		wpn = nil
+		return true
+	end
+	
+	if lower_weapon_sprint_aim == true and actor_menu.last_mode == 0 then
+		if (is_weapon) then
+			local state = wpn:get_state()
+
+			if state == 0 then
+				wpn:switch_state(0)
+			end
+
+			if lowered_sprint_equip_weapon == false then
+				if not (axr_main.weapon_is_zoomed) and game.actor_weapon_lowered() then
+					CreateTimeEvent(0, "lower_sprint_delay_toggle_aim", 0, lower_sprint_delay_toggle_aim_func)
+				else
+					lower_weapon_sprint_aim = false
 				end
 			end
 		end
 		wpn = nil
+		return true
 	end
-
-	RegisterScriptCallback("actor_on_update",actor_on_update)
-
-
-	-- Key Presses
-	local function on_key_press(key)
-		-- allow fire on sprint
-		if (key == bind_to_dik(key_bindings.kWPN_FIRE)) then
-			if IsMoveState("mcSprint") and lowered_sprint_equip_weapon == false and game.actor_weapon_lowered() then
-				if (actor_menu.last_mode == 0) and (pda.dialog_closed == true) and (not Check_UI()) and (not db.actor:has_info("ui_pda")) then
-					lower_weapon_sprint_fire = true
+	
+	-- Prevent weapon from raising after weapon has already been lowered manually
+	if (lower_weapon_sprint_safe_mode_active == true and game.actor_weapon_lowered()) then
+		wpn = nil
+		return true
+	else
+		lower_weapon_sprint_safe_mode_active = false
+	end
+		
+	if not (IsMoveState("mcFall") or IsMoveState("mcJump") or IsMoveState("mcLanding")) and lower_weapon_sprint_aim == false then
+		if IsMoveState("mcSprint") then
+			if (wpn) and not is_excluded(wpn:section()) == true then
+				local can_be_lowered = wpn and IsWeapon(wpn) and ini_sys:r_bool_ex(wpn:section(), "can_be_lowered", false) or false
+				local state = wpn:get_state()
+				if (can_be_lowered and not(state == 0 or state == 1)) then can_be_lowered = false end
+				
+				if (can_be_lowered) then
+					if (not game.actor_weapon_lowered()) then
+						game.actor_lower_weapon(true)
+					end
+				end
+			end
+			lower_weapon_sprint_status = true
+		else 
+			if (wpn) and not is_excluded(wpn:section()) == true then
+				local can_be_lowered = wpn and IsWeapon(wpn) and ini_sys:r_bool_ex(wpn:section(), "can_be_lowered", false) or false
+				local state = wpn:get_state()
+				if (can_be_lowered and not(state == 0 or state == 1)) then can_be_lowered = false end
+					
+				if (can_be_lowered) then
+					if (game.actor_weapon_lowered()) then
+						if lower_weapon_sprint_status == true then
+							game.actor_lower_weapon(false)
+							wpn:switch_state(0)
+						end
+					else 
+						lower_weapon_sprint_status = false
+					end
 				end
 			end
 		end
-		
-		-- Prevent ignore aim when weapon is lowering
-		if (key == bind_to_dik(key_bindings.kWPN_ZOOM)) then
-			if IsMoveState("mcSprint") and lowered_sprint_equip_weapon == false and game.actor_weapon_lowered() then
-				if (actor_menu.last_mode == 0) and (pda.dialog_closed == true) and (not Check_UI()) and (not db.actor:has_info("ui_pda")) then
-					lower_weapon_sprint_aim = true
-				end
-			end
-		end
-		
-		if (key == bind_to_dik(key_bindings.kSAFEMODE)) then
-			CreateTimeEvent(0, "lower_sprint_delay_safemode", 0, lower_sprint_delay_safemode_func)
-		end
 	end
-
-	RegisterScriptCallback("on_key_press",on_key_press)
-
-
-	-- Key Releases
-	local function on_key_release(key)
-		-- Prevent ignore aim when weapon is lowering
-		if (key == bind_to_dik(key_bindings.kWPN_ZOOM)) then
-			if not (ui_options.get("control/general/aim_toggle")) then
-				lower_weapon_sprint_aim = false
-			end
-		end
-	end
-	RegisterScriptCallback("on_key_release",on_key_release)
-else
+	wpn = nil
 end
+
+RegisterScriptCallback("actor_on_update",actor_on_update)
+
+
+-- Key Presses
+local function on_key_press(key)
+	-- allow fire on sprint
+	if (key == bind_to_dik(key_bindings.kWPN_FIRE)) then
+		if IsMoveState("mcSprint") and lowered_sprint_equip_weapon == false and game.actor_weapon_lowered() then
+			if (actor_menu.last_mode == 0) and (pda.dialog_closed == true) and (not Check_UI()) and (not db.actor:has_info("ui_pda")) then
+				lower_weapon_sprint_fire = true
+			end
+		end
+	end
+	
+	-- Prevent ignore aim when weapon is lowering
+	if (key == bind_to_dik(key_bindings.kWPN_ZOOM)) then
+		if IsMoveState("mcSprint") and lowered_sprint_equip_weapon == false and game.actor_weapon_lowered() then
+			if (actor_menu.last_mode == 0) and (pda.dialog_closed == true) and (not Check_UI()) and (not db.actor:has_info("ui_pda")) then
+				lower_weapon_sprint_aim = true
+			end
+		end
+	end
+	
+	if (key == bind_to_dik(key_bindings.kSAFEMODE)) then
+		CreateTimeEvent(0, "lower_sprint_delay_safemode", 0, lower_sprint_delay_safemode_func)
+	end
+end
+
+RegisterScriptCallback("on_key_press",on_key_press)
+
+
+-- Key Releases
+local function on_key_release(key)
+	-- Prevent ignore aim when weapon is lowering
+	if (key == bind_to_dik(key_bindings.kWPN_ZOOM)) then
+		if not (ui_options.get("control/general/aim_toggle")) then
+			lower_weapon_sprint_aim = false
+		end
+	end
+end
+RegisterScriptCallback("on_key_release",on_key_release)
+
