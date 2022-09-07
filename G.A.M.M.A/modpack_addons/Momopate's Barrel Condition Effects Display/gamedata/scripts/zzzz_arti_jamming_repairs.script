@@ -543,9 +543,9 @@ local clr_w	 = utils_xml.get_color("d_white")
 
 function process_part(name, condition)
 	local severity = condition == -1 and "missing" or math.floor(condition / 20)
-	local clr = clr_o
-	if condition > 79 then clr = clr_g
-	elseif condition > 59 then clr = clr_y 
+	local clr = clr_r
+	if condition >= 60 then clr = clr_g
+	elseif condition > 20 then clr = clr_o 
 	elseif condition == -1 then clr = clr_r end
 	local part_name = ""
 	if unique_mapping[name] then
@@ -725,11 +725,31 @@ end
 
 -- custom parts replacement shit
 
-function name_fieldstrip(obj)
+function name_fieldstrip(obj, bag, mode)
+	local mode = {
+		["inventory"] = true,
+		["loot"] = true,
+	}
+	local bag = {
+		["actor_equ"] = true,
+		["actor_belt"] = true,
+		["actor_bag"] = true,
+		["npc_bag"] = true,
+	}
 	return gc("st_field_strip")
 end
 
-function has_parts_fieldstrip(wpn)
+function has_parts_fieldstrip(wpn, bag, mode)
+	local mode = {
+		["inventory"] = true,
+		["loot"] = true,
+	}
+	local bag = {
+		["actor_equ"] = true,
+		["actor_belt"] = true,
+		["actor_bag"] = true,
+		["npc_bag"] = true,
+	}
 	if not has_parts(wpn) then return false end
 	local parts = item_parts.get_parts_con(wpn, nil, true)
 	local has_parts = false
@@ -761,8 +781,17 @@ function remove_name(name)
 end
 
 local fs_gui
-function init_fieldstrip_menu(obj)
-	
+function init_fieldstrip_menu(obj, bag, mode)
+	local mode = {
+		["inventory"] = true,
+		["loot"] = true,
+	}
+	local bag = {
+		["actor_equ"] = true,
+		["actor_belt"] = true,
+		["actor_bag"] = true,
+		["npc_bag"] = true,
+	}
 
 
 	local context_str = {}
@@ -845,6 +874,6 @@ end
 function on_game_start()
 	
 	disassembly_chance  = ini_parts:r_float_ex("settings","disassembly_chance") or 40
-	custom_functor_autoinject.add_functor("arti_fieldstrip", has_parts_fieldstrip, name_fieldstrip, nil, init_fieldstrip_menu, false)
+	custom_functor_autoinject.add_functor("arti_fieldstrip", has_parts_fieldstrip, name_fieldstrip, nil, init_fieldstrip_menu, true)
 	custom_functor_autoinject.add_functor("arti_maintain", check_maintain, name_maintain, nil, init_maintenance_menu, false)
 end

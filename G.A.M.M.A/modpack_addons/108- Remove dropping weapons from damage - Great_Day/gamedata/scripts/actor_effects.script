@@ -1,0 +1,1896 @@
+
+local ini_eff = ini_file("plugins\\actor_effects.ltx")
+local snd_cam = sound_object([[interface\inv_camera]])
+
+local device = device
+local string = string
+local math = math
+
+local last_slot = 0
+local last_det = 0
+local weapon_hidden = 0
+local cam_dist = 0
+local can_shoot = true
+local autohide = ui_options.get("video/hud/autohide_stamina_bar")
+
+local RENDERER = get_console_cmd(0,"renderer")
+local STATIC_LIGHT = 'renderer_r1'
+local IS_R1 = (RENDERER == STATIC_LIGHT)
+local STATIC_VINGETTE = false -- for +R2 - if true, it will draw vingette instead of relying on r2_mask_control
+local STATIC_MASK = true -- For R1 - if true, it will ignore distortion shader and use old mask overlay
+
+local detector_was_active = false
+
+local allow_states = {
+	[0] = true, -- Idle
+	[4] = true, -- Bore
+	[9] = true  -- Empty
+}
+	
+local opt = {}
+function init_settings()
+	local n = 0
+	local tbl = {}
+	
+	opt.radiation_ppe_threshold = ini_eff:r_float_ex("settings","radiation_ppe_threshold") or 0.45
+	opt.cam_dist = ini_eff:r_float_ex("settings","cam_dist") or 4
+	
+	opt.speed = {}
+	n = ini_eff:line_count("settings_speed")
+	for i=0,n-1 do
+		local result, id, value	= ini_eff:r_line_ex("settings_speed",i,"","")
+		if id and value then
+			opt.speed[id] = tonumber(value)
+		end
+	end
+	
+	opt.health = {}
+	opt.health.level1 = ini_eff:r_float_ex("settings_health","level1")
+	opt.health.level2 = ini_eff:r_float_ex("settings_health","level2")
+	opt.health.little_delta = ini_eff:r_float_ex("settings_health","little_delta")
+	opt.health.little_ppe = ini_eff:r_string_ex("settings_health","little_ppe")  or "amk_shoot.ppe"
+	opt.health.middle_delta = ini_eff:r_float_ex("settings_health","middle_delta")
+	opt.health.middle_anm = parse_list(ini_eff,"settings_health","middle_anm")
+	opt.health.middle_snd = parse_list(ini_eff,"settings_health","middle_snd")
+	opt.health.huge_delta = ini_eff:r_float_ex("settings_health","huge_delta")
+	opt.health.huge_ppe = ini_eff:r_string_ex("settings_health","huge_ppe") or "total_recall.ppe"
+	opt.health.huge_anm = parse_list(ini_eff,"settings_health","huge_anm")
+	opt.health.huge_snd = parse_list(ini_eff,"settings_health","huge_snd")
+	opt.health.drop_wnp_prob = ini_eff:r_float_ex("settings_health","drop_wnp_prob")
+	opt.health.no_drop_wnp = parse_list(ini_eff,"settings_health","no_drop_wnp",true)
+	opt.health.injury_snd = {}
+	local injury_snd = parse_list(ini_eff,"settings_health","injury_snd")
+	for i=1,#injury_snd do
+		for k,v in string.gmatch(injury_snd[i], "([%w_%-%s%.]+)=([%w_%-%s%.]+)") do
+			opt.health.injury_snd[k] = tonumber(v)
+		end
+	end
+	
+	opt.helmets = {}
+	n = ini_eff:line_count("settings_helm")
+	for i=0,n-1 do
+		local result, id, value	= ini_eff:r_line_ex("settings_helm",i,"","")
+		if id and value then
+			empty_table(tbl)
+			tbl = parse_list(ini_eff,"settings_helm",id)
+			
+			opt.helmets[id] = {}
+			opt.helmets[id].hud = tbl[1] or "hud_gas"
+			opt.helmets[id].breakable = (tbl[2] == "true") and true or false
+			opt.helmets[id].blurs = tbl[3] and tonumber(tbl[3]) or 2.5
+			opt.helmets[id].respi = (tbl[4] == "true") and true or false
+		end
+	end
+	
+	opt.helmets_vingette = {}
+	n = ini_eff:line_count("settings_helm_vingette")
+	for i=0,n-1 do
+		local result, id, value	= ini_eff:r_line_ex("settings_helm_vingette",i,"","")
+		if id and value then
+			opt.helmets_vingette[id] = tonumber(value)
+		end
+	end
+	
+	opt.helmets_reflect = {}
+	n = ini_eff:line_count("settings_helm_reflection")
+	for i=0,n-1 do
+		local result, id, value	= ini_eff:r_line_ex("settings_helm_reflection",i,"","")
+		if id then
+			opt.helmets_reflect[id] = true
+		end
+	end
+	
+	opt.helmets_con = {}
+	n = ini_eff:line_count("settings_helm_con")
+	for i=0,n-1 do
+		local result, id, value	= ini_eff:r_line_ex("settings_helm_con",i,"","")
+		if id and value then
+			empty_table(tbl)
+			tbl = parse_list(ini_eff,"settings_helm_con",id)
+			
+			opt.helmets_con[id] = {}
+			opt.helmets_con[id].con = tbl[1] and tonumber(tbl[1]) or 0
+			opt.helmets_con[id].hud = tbl[2]
+			opt.helmets_con[id].fx = tbl[3] and tonumber(tbl[3]) or 0
+		end
+	end
+end
+function init_main_settings()
+	opt.enable_animations          = ui_options.get("video/player/animations")
+	opt.enable_shoot_effects       = ui_options.get("video/player/shoot_effects")
+	opt.enable_mask_hud            = ui_options.get("video/player/mask_hud")
+	opt.enable_breathing_sound     = ui_options.get("sound/environment/breathing_sound")
+	opt.enable_breathing_fog       = ui_options.get("video/player/breathing_fog")
+	opt.enable_radiation_effect    = ui_options.get("video/player/radiation_effect")
+	opt.enable_blood_splash        = ui_options.get("video/player/blood_splash")
+	opt.enable_bleed_effect        = ui_options.get("video/player/bleed_effect")
+	opt.enable_hit_impact_effect   = true --axr_main.config:r_value("mm_fx_options","enable_hit_impact_effect",1,true)
+	opt.enable_item_swap_animation = ui_options.get("video/player/item_swap_animation")
+	opt.enable_visor_reflection    = ui_options.get("video/player/visor_reflection")
+end
+
+local wpn_fx = {}
+local function parse_anims(sec)
+	local sec_p = ini_sys:r_string_ex(sec,"parent_section") or sec
+	
+	if wpn_fx[sec_p] and (sec ~= sec_p) then
+		wpn_fx[sec] = wpn_fx[sec_p]
+		
+	elseif ini_eff:section_exist(sec_p) then
+		local tbl = {}
+		
+		-- parse strength
+		tbl.s = {}
+		local s = ini_eff:r_string_ex(sec_p,"s")
+		local _s = str_explode(s,",")
+		for i=1,#_s do
+			tbl.s[#tbl.s + 1] = tonumber(_s[i])
+		end
+		
+		-- parse strength randomizer
+		tbl.r = ini_eff:r_float_ex(sec_p,"r")
+		
+		-- parse anm
+		tbl.e = {}
+		local e = ini_eff:r_string_ex(sec_p,"e")
+		local _e = str_explode(e,",")
+		for i=1,#_e do
+			local __e = str_explode(_e[i],":")
+			for j=1,#__e do
+				__e[j] = tonumber(__e[j])
+			end
+			tbl.e[#tbl.e + 1] = __e
+		end
+		
+		-- parse ppe
+		tbl.p = {}
+		local p = ini_eff:r_string_ex(sec_p,"p")
+		if p and p ~= "" then
+			for k,v in string.gmatch(p, "([%w_%-%s%.]+)=([%w_%-%s%.]+)") do
+				tbl.p[k] = tonumber(v)
+			end
+		end
+		
+		if (not wpn_fx[sec_p]) and (sec ~= sec_p) then
+			wpn_fx[sec_p] = tbl
+		end
+		
+		wpn_fx[sec] = tbl
+		--utils_data.print_table(wpn_fx[sec])
+		
+	else
+		wpn_fx[sec] = true
+		--printf("not recoil effect for [%s]", sec)
+	end
+end
+
+
+--------------------------------------------------------------
+-- Trigger
+--------------------------------------------------------------
+local torch_anm_state = 0
+local torch_anm_start = 0
+local torch_anm_time = 0
+local torch_anm_state_dbg = 0
+local mc_anm_state = 0
+local mc_anm_start = 0
+local mc_anm_time_1 = 0
+local mc_anm_time_2 = 0
+local mc_anm_state_dbg = 0
+local torch_anm_sec = "anim_headlamp"
+local mc_anm_sec = "anim_mask_clean"
+local snd_headlamp = sound_object('interface\\inv_torch')
+local snd_gasmask = sound_object('interface\\inv_mask_clean_3')
+local hqt_hide_anm_speed = 3.5 -- Weapon hide speed
+local hqt_grenade_slot = 4
+local hqt_last_slot
+local hqt_state = 0
+local hide_hand_speed = 1.5
+
+function allow_animation()
+	return (torch_anm_state == 0 and mc_anm_state == 0 and hqt_state == 0 and game.hud_motion_allowed() and (not game.only_movekeys_allowed()) and actor_menu.get_last_mode() == 0 and (not IsMoveState("mcClimb")))
+end
+
+local lowered_anm_kinds = {
+	["w_sniper"] 	= true,
+	["w_rifle"] 	= true,
+	["w_smg"]	    = true,
+	["w_shotgun"] 	= true,
+}
+
+local lowered_anm_classes = {
+	["WP_VAL"] 		= true,
+	["WP_AK74"] 	= true,
+	["WP_LR300"] 	= true,
+	["WP_BM16"] 	= true,
+	["WP_SVD"] 		= true,
+	["WP_SVU"]		= true,
+	["WP_GROZA"] 	= true,
+	["WP_ASHTG"] 	= true,
+	["WP_ASHTG"] 	= true,
+	["WP_SHOTG"] 	= true,
+	["WP_RG6"] 		= true,
+	["WP_RPG7"] 	= true,
+	["D_PDA"]		= true,
+}
+
+function Hit_TorchToggle()
+
+	-- Check if headlamp is equipped. No need for battery check
+	if (not allow_animation()) or (not item_device.can_toggle_torch()) then
+		return
+	end
+	
+	local weapon_zoomed = axr_main.weapon_is_zoomed and (not (IsPistol(db.actor:active_item(),nil)) or db.actor:active_detector())
+	local det_active = db.actor:active_detector() or nil
+	local det_hide_time = 0
+	local new_speed = 0
+	local anm_name = "script\\headlamp.anm"
+	local anm_additional_length = 0.45
+	
+	if (db.actor:active_item()) then
+		local itm = db.actor:active_item()
+		local hud = ini_sys:r_string_ex(itm:section(),"hud") or "hud_base"
+		local name = ini_sys:r_string_ex(hud,"gasmask_anm")
+		if (name) then
+			anm_name = name
+		else
+			local kind = ini_sys:r_string_ex(itm:section(),"kind") or nil
+			local class = ini_sys:r_string_ex(itm:section(),"class") or nil
+			if ((kind and lowered_anm_kinds[kind]) or (class and lowered_anm_classes[class])) then
+				anm_name = "script\\lower.anm"
+				anm_additional_length = 0.8
+			end
+		end
+		
+		if (not det_active and weapon_zoomed) then
+			if (get_console():get_bool("wpn_aim_toggle")) then
+				level.press_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+			else
+				level.release_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+			end
+		end
+	end
+	
+	if (det_active) then
+		if (weapon_zoomed) then
+			det_active:switch_state(2)
+			det_hide_time = (det_active:play_hud_motion("anm_zoom_hide_fast", true, 3, 1, 0) / 1000)
+			
+			if (get_console():get_bool("wpn_aim_toggle")) then
+				level.press_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+			else
+				level.release_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+			end
+		else
+			det_hide_time = (det_active:play_hud_motion("anm_hide_fast", true, 3, 2, 0) / 1000) + 0.1
+		end
+		
+		if (det_hide_time == 0) then 
+			det_hide_time = (det_active:play_hud_motion("anm_hide", true, 3, 3.5, 0) / 1000) + 0.1
+		end
+		
+		game.play_hud_anm(anm_name, 0, 0.25, 1, false)
+	end
+	
+	local function torch_toggle_anim_fast()
+		local time_g = time_global()
+		
+		if (torch_anm_state == 1) then
+			game.play_hud_motion(1, torch_anm_sec, "anm_switch", true, 0.75)
+			level.add_cam_effector("camera_effects\\headlamp\\headlamp.anm", 7539, false, "", 0, false)
+			torch_anm_start = time_g
+			torch_anm_state = 2
+			
+		elseif (torch_anm_state == 2) and (time_g > torch_anm_start + torch_anm_time - 350) then
+			snd_headlamp:play(db.actor,0,sound_object.s2d)
+			item_device.toggle_torch()
+			torch_anm_state = 3
+			
+		elseif (torch_anm_state == 3) and (time_g > torch_anm_start + torch_anm_time + 1) then
+			torch_anm_state = 0
+			torch_anm_start = 0
+			torch_anm_state_dbg = 0
+			game.only_allow_movekeys(false)
+			game.set_actor_allow_ladder(true)
+			RemoveTimeEvent(0, "play_torch_toggle")
+		end
+		
+		if DEV_DEBUG and (torch_anm_state_dbg ~= torch_anm_state) then
+			torch_anm_state_dbg = torch_anm_state
+			--printf("- Torch animation | state reached: %s - time: %s", torch_anm_state, time_g)
+		end
+		
+		return false
+	end
+	
+	local function torch_toggle_anim()
+		local time_g = time_global()
+		
+		if (torch_anm_state == 1) then
+			if (det_active) then
+				det_active:switch_state(3)
+				db.actor:force_hide_detector()
+			else
+				game.play_hud_anm(anm_name, 0, 1, 1, false)
+			end
+				
+			game.play_hud_motion(1, mc_anm_sec, "anm_hide_hand", true, hide_hand_speed)
+			new_speed = game.set_hud_anm_time(anm_name, ((torch_anm_time + mc_anm_time_1) / 1000) + anm_additional_length)
+			torch_anm_start = time_g
+			torch_anm_state = 2
+			
+		elseif (torch_anm_state == 2) and (time_g > torch_anm_start + mc_anm_time_1 - 10) then
+			game.play_hud_motion(1, torch_anm_sec, "anm_switch", true, 1)
+			level.add_cam_effector("camera_effects\\headlamp\\headlamp.anm", 7539, false, "", 0, false)
+			torch_anm_state = 3
+			
+		elseif (torch_anm_state == 3) and (time_g > torch_anm_start + mc_anm_time_1 + torch_anm_time - 550) then
+			snd_headlamp:play(db.actor,0,sound_object.s2d)
+			item_device.toggle_torch()
+			torch_anm_state = 4
+			
+		elseif (torch_anm_state == 4) and (time_g > torch_anm_start + mc_anm_time_1 + torch_anm_time + 15) then
+			if (new_speed) then game.play_hud_anm(anm_name, 2, new_speed, 1, false, true) end
+			if (det_active) then db.actor:show_detector(true) end
+			torch_anm_state = 5
+			
+		elseif (torch_anm_state == 5) and (time_g > torch_anm_start + mc_anm_time_1 + torch_anm_time + (anm_additional_length * 1000 + 100)) then
+			torch_anm_state = 0
+			torch_anm_start = 0
+			torch_anm_state_dbg = 0
+			game.only_allow_movekeys(false)
+			game.set_actor_allow_ladder(true)
+			RemoveTimeEvent(0, "play_torch_toggle")
+		end
+		
+		if DEV_DEBUG and (torch_anm_state_dbg ~= torch_anm_state) then
+			torch_anm_state_dbg = torch_anm_state
+			--printf("- Torch animation | state reached: %s - time: %s", torch_anm_state, time_g)
+		end
+		
+		return false
+	end
+	
+	torch_anm_state = 1
+	game.only_allow_movekeys(true)
+	game.set_actor_allow_ladder(false)
+	
+	if (not db.actor:active_item() and not det_active) then
+		CreateTimeEvent(0, "play_torch_toggle", det_hide_time, torch_toggle_anim_fast)
+	else
+		CreateTimeEvent(0, "play_torch_toggle", det_hide_time, torch_toggle_anim)
+	end
+end
+
+function Hit_MaskCleaning()
+	
+	-- Check if mask overlay is ON
+	if (not allow_animation()) or (not is_mask_on()) then
+		return
+	end
+	
+	local weapon_zoomed = axr_main.weapon_is_zoomed and (not (IsPistol(db.actor:active_item(),nil)) or db.actor:active_detector())
+	local det_active = db.actor:active_detector() or nil
+	local det_hide_time = 0
+	local new_speed = 0
+	local anm_name = "script\\gasmask.anm"
+	local anm_additional_length = 0.45
+	
+	if (db.actor:active_item()) then
+		local itm = db.actor:active_item()
+		local hud = ini_sys:r_string_ex(itm:section(),"hud") or "hud_base"
+		local name = ini_sys:r_string_ex(hud,"gasmask_anm")
+		if (name) then
+			anm_name = name
+		else
+			local kind = ini_sys:r_string_ex(itm:section(),"kind") or nil
+			local class = ini_sys:r_string_ex(itm:section(),"class") or nil
+			if ((kind and lowered_anm_kinds[kind]) or (class and lowered_anm_classes[class])) then
+				anm_name = "script\\lower.anm"
+				anm_additional_length = 0.75
+			end
+		end
+		
+		if (not det_active and weapon_zoomed) then
+			if (get_console():get_bool("wpn_aim_toggle")) then
+				level.press_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+			else
+				level.release_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+			end
+		end
+	end
+	
+	if (det_active) then
+		if (weapon_zoomed) then
+			det_active:switch_state(2)
+			det_hide_time = (det_active:play_hud_motion("anm_zoom_hide_fast", true, 3, 1, 0) / 1000)
+			
+			if (get_console():get_bool("wpn_aim_toggle")) then
+				level.press_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+			else
+				level.release_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+			end
+		else
+			det_hide_time = (det_active:play_hud_motion("anm_hide_fast", true, 3, 2, 0) / 1000) + 0.1
+		end
+		
+		if (det_hide_time == 0) then 
+			det_hide_time = (det_active:play_hud_motion("anm_hide", true, 3, 3.5, 0) / 1000) + 0.1
+		end
+		
+		game.play_hud_anm(anm_name, 0, 0.25, 1, false)
+	end
+	
+	local function mask_cleaning_anim_fast()
+		local time_g = time_global()
+		
+		if (mc_anm_state == 1) then
+			game.play_hud_motion(1, mc_anm_sec, "anm_wipe", false, 1)
+			snd_gasmask:play(db.actor,0,sound_object.s2d)
+			level.add_cam_effector("camera_effects\\weapon\\gasmask_swipe1.anm", 7538, false, "", 0, false)
+			mc_anm_start = time_g
+			mc_anm_state = 2
+			
+		elseif (mc_anm_state == 2) and (time_g > mc_anm_start + mc_anm_time_2 - 400) then
+			level_environment.droplets_reset()
+			mc_anm_state = 3
+			
+		elseif (mc_anm_state == 3) and (time_g > mc_anm_start + mc_anm_time_2 + 1) then
+			mc_anm_state = 0
+			mc_anm_start = 0
+			mc_anm_state_dbg = 0
+			game.only_allow_movekeys(false)
+			game.set_actor_allow_ladder(true)
+			RemoveTimeEvent(0, "play_mask_cleaning")
+			
+		end
+		
+		if DEV_DEBUG and (mc_anm_state_dbg ~= mc_anm_state) then
+			mc_anm_state_dbg = mc_anm_state
+			--printf("- Gasmask wipe animation | state reached: %s - time: %s", mc_anm_state, time_g)
+		end
+		
+		return false
+	end
+	
+	local function mask_cleaning_anim()
+		local time_g = time_global()
+		
+		if (mc_anm_state == 1) then
+			if (det_active) then
+				det_active:switch_state(3)
+				db.actor:force_hide_detector()
+			else
+				game.play_hud_anm(anm_name, 0, 1, 1, false)
+			end
+			
+			game.play_hud_motion(1, mc_anm_sec, "anm_hide_hand", true, hide_hand_speed)
+			new_speed = game.set_hud_anm_time(anm_name, ((mc_anm_time_1 + mc_anm_time_2) / 1000) + anm_additional_length)
+			mc_anm_start = time_g
+			mc_anm_state = 2
+			
+		elseif (mc_anm_state == 2) and (time_g > mc_anm_start + mc_anm_time_1 - 10) then
+			game.play_hud_motion(1, mc_anm_sec, "anm_wipe", false, 1)
+			snd_gasmask:play(db.actor,0,sound_object.s2d)
+			level.add_cam_effector("camera_effects\\weapon\\gasmask_swipe1.anm", 7538, false, "", 0, false)
+			mc_anm_state = 3
+			
+		elseif (mc_anm_state == 3) and (time_g > mc_anm_start + mc_anm_time_1 + mc_anm_time_2 - 400) then
+			level_environment.droplets_reset()
+			mc_anm_state = 4
+			
+		elseif (mc_anm_state == 4) and (time_g > mc_anm_start + mc_anm_time_1 + mc_anm_time_2 + 15) then
+			if (new_speed) then game.play_hud_anm(anm_name, 2, new_speed, 1, false, true) end
+			if (det_active) then db.actor:show_detector(true) end
+			mc_anm_state = 5
+			
+		elseif (mc_anm_state == 5) and (time_g > mc_anm_start + mc_anm_time_1 + mc_anm_time_2 + (anm_additional_length * 1000 + 100)) then
+			mc_anm_state = 0
+			mc_anm_start = 0
+			mc_anm_state_dbg = 0
+			game.only_allow_movekeys(false)
+			game.set_actor_allow_ladder(true)
+			RemoveTimeEvent(0, "play_mask_cleaning")
+		end
+		
+		if DEV_DEBUG and (mc_anm_state_dbg ~= mc_anm_state) then
+			mc_anm_state_dbg = mc_anm_state
+			--printf("- Gasmask wipe animation | state reached: %s - time: %s", mc_anm_state, time_g)
+		end
+		
+		return false
+	end
+	
+	mc_anm_state = 1
+	game.only_allow_movekeys(true)
+	game.set_actor_allow_ladder(false)
+	
+	if (not db.actor:active_item() and not det_active) then
+		CreateTimeEvent(0, "play_mask_cleaning", det_hide_time, mask_cleaning_anim_fast)
+	else
+		CreateTimeEvent(0, "play_mask_cleaning", det_hide_time, mask_cleaning_anim)
+	end
+end
+
+function Hit_GrenadeQuickthrow() -- Rezy
+	if (not allow_animation())
+	or (not db.actor:item_in_slot(hqt_grenade_slot))
+	or db.actor:get_current_holder() ~= nil
+	then 
+		return 
+	end
+	
+	local weapon_zoomed = axr_main.weapon_is_zoomed and (not (IsPistol(db.actor:active_item(),nil)) or db.actor:active_detector())
+	local firekey = bind_to_dik(key_bindings.kWPN_FIRE)
+	local switch_delay = 0
+	local wpn
+	local det_active = db.actor:active_detector() or nil
+	
+	hqt_last_slot = db.actor:active_slot()
+	
+	if (weapon_zoomed) then
+		if (get_console():get_bool("wpn_aim_toggle")) then
+			level.press_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+		else
+			level.release_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+		end
+	end
+	
+	if (hqt_last_slot == hqt_grenade_slot) then
+		level.press_action(firekey)
+		return
+	elseif (hqt_last_slot ~= 0) then
+		wpn = db.actor:active_item()
+		if wpn then
+			local state = wpn:get_state()
+			if (state ~= 0 and state ~= 1 and state ~= 2) then return end
+			switch_delay = (wpn:play_hud_motion("anm_hide", true, 3, hqt_hide_anm_speed, 0) / 1000)
+		end
+	end
+	
+	if (det_active) then
+		local det_hide_time = (det_active:play_hud_motion("anm_hide_fast", true, 3, 2, 0) / 1000)
+		
+		if (det_hide_time == 0) then det_hide_time = (det_active:play_hud_motion("anm_hide", true, 3, hqt_hide_anm_speed, 0) / 1000) end
+		
+		if (det_hide_time > switch_delay) then switch_delay = det_hide_time end
+	end
+	
+	local function switch_to_throw()
+		
+		local grn = db.actor:item_in_slot(hqt_grenade_slot)
+		if (not grn) then
+			game.only_allow_movekeys(false)
+			game.set_actor_allow_ladder(true)
+			hqt_state = 0
+			if (db.actor:active_slot() ~= hqt_last_slot) then
+				db.actor:activate_slot(hqt_last_slot)
+			end
+			return true
+		end
+		
+		if hqt_state == 1 then
+			if det_active then 
+				det_active:switch_state(3)
+				db.actor:force_hide_detector()
+			end
+			db.actor:activate_slot(hqt_grenade_slot)
+			if wpn then wpn:switch_state(3) end
+			hqt_state = 2	
+		elseif hqt_state == 2 and db.actor:active_slot() == hqt_grenade_slot then
+			grn:switch_state(0)
+			hqt_state = 3
+		elseif hqt_state == 3 and grn:get_state() == 0 then
+			level.press_action(firekey)
+			hqt_state = 4
+		elseif hqt_state == 4 and (grn:get_state() == 1 or grn:get_state() == 2) then
+			grn:switch_state(3)
+			hqt_state = 5
+		elseif hqt_state == 5 then
+			if (db.actor:active_slot() ~= hqt_last_slot) then
+				db.actor:activate_slot(hqt_last_slot)
+				if grn then grn:switch_state(3) end
+			end
+			
+			if (det_active) then
+				db.actor:show_detector(true)
+				det_active:switch_state(1)
+			end
+			
+			game.only_allow_movekeys(false)
+			game.set_actor_allow_ladder(true)
+			hqt_state = 0
+			return true 
+		end
+	end
+	
+	hqt_state = 1
+	
+	game.only_allow_movekeys(true)
+	game.set_actor_allow_ladder(false)
+	
+	CreateTimeEvent(0, "switch_to_throw", switch_delay, switch_to_throw)
+end
+
+-- This should fix being stuck if a burer attacks you during grenade quickthrow 
+local function burer_on_before_weapon_drop(burer,wpn,flags)
+	if (hqt_state ~= 0) then
+		flags.ret_value = false 
+	end
+end
+
+--------------------------------------------------------------
+-- Update
+--------------------------------------------------------------
+local swap_last_id = nil
+local swap_last_det_st = nil
+local swap_last_wep_st = nil
+local weapon_classes = {
+	["D_PDA"]		= "low",
+	["II_BOLT"]		= "low",
+	["WP_KNIFE"] 	= "low",
+	["WP_BINOC"] 	= "low",
+	["G_F1"] 		= "low",
+	["G_F1_S"]		= "low",
+	["G_RGD5_S"] 	= "low",
+	["WP_PM"] 		= "low",
+	["WP_HPSA"] 	= "low",
+	["WP_USP45"] 	= "low",
+	["WP_VAL"] 		= "med",
+	["WP_AK74"] 	= "med",
+	["WP_LR300"] 	= "med",
+	["WP_BM16"] 	= "med",
+	["WP_SVD"] 		= "med",
+	["WP_SVU"]		= "med",
+	["WP_GROZA"] 	= "med",
+	["WP_ASHTG"] 	= "med",
+	["WP_ASHTG"] 	= "med",
+	["WP_SHOTG"] 	= "med",
+	["WP_RG6"] 		= "strong",
+	["WP_RPG7"] 	= "strong"
+}
+function Update_ItemSwap(actor)
+	if (not opt.enable_item_swap_animation) then
+		return
+	end
+	
+	--
+	local detector = actor:active_detector()
+	if detector then
+		local det_state = detector:get_state()
+		if (not swap_last_det_st) then swap_last_det_st = det_state end
+		if (det_state ~= swap_last_det_st) then
+			if (det_state ==1) or (det_state == 2) then
+				local rand = math.random(1,4)
+				level.add_cam_effector("camera_effects\\switch\\low" .. rand .. ".anm", 23233, false, '', 0, false)
+			end
+			swap_last_det_st = det_state
+		end
+	end
+	--
+	
+	local wpn = actor:active_item()
+	if wpn then
+		local wpn_id = wpn:id()
+		if (not swap_last_id) then swap_last_id = wpn_id end
+		
+		--local se_wpn = alife_object(wpn_id)
+		local wpn_class = ini_sys:r_string(wpn:section(), "class")
+		
+		if weapon_classes[wpn_class] then
+			local effect_type = weapon_classes[wpn_class]
+			local state = wpn:get_state()
+			if not swap_last_wep_st then swap_last_wep_st = state end
+			if state ~= swap_last_wep_st then
+				if (state == 1) or (state == 2) then
+					local rand = math.random(1,4)
+					level.add_cam_effector("camera_effects\\switch\\" .. effect_type .. rand .. ".anm", 23232, false, '', 0, false)
+				end
+				swap_last_wep_st = state
+			end
+			swap_last_id = wpn_id
+		end
+	else
+		swap_last_id = 0
+	end
+end
+
+local function actor_on_weapon_lower(wpn)
+	if wpn then
+		local rand = math.random(1,4)
+		level.add_cam_effector("camera_effects\\switch\\low" .. rand .. ".anm", 23231, false, '')
+	end
+end
+
+local function actor_on_weapon_raise(wpn)
+	if wpn then
+		local rand = math.random(1,4)
+		level.add_cam_effector("camera_effects\\switch\\low" .. rand .. ".anm", 23231, false, '')
+	end
+end
+
+local time_disabled = 0
+local animation_start = false
+local item_in_use = {}
+local item_not_in_use = true
+function Update_Animations(actor)
+	if item_not_in_use then
+		return
+	end
+	
+	local in_use = 0
+	for tg_m, t in pairs(item_in_use) do
+		in_use = in_use + 1
+		local remov = true
+		local tg = time_global() - tonumber(tg_m)
+		
+		-- time frame of an action has been reached -> excute then clear action
+		for milli, action in pairs(t) do
+			remov = false
+			if (tg > milli) then
+				assert(loadstring(action))()
+				item_in_use[tg_m][milli] = nil
+				--actor:give_game_news(tostring(tg), action, "ui_iconsTotal_grouping", 0, 5000, 0)
+			end
+		end
+		
+		-- no action is left? -> clear the fx from the table
+		if remov then
+			in_use = in_use - 1
+			item_in_use[tg_m] = nil
+		end
+	end
+	item_not_in_use = (in_use == 0)
+end
+
+
+local rad_removed
+function Update_Rad(actor)
+	if (not opt.enable_radiation_effect) then
+		if (not rad_removed) then
+			rad_removed = true
+			level.remove_pp_effector(2020)
+		end
+		return
+	end
+	rad_removed = false
+	
+	local radiation = actor.radiation
+	if (radiation > 0) then
+		if (radiation > opt.radiation_ppe_threshold) then
+			level.add_pp_effector("radiation.ppe", 2020, true)
+		else
+			level.remove_pp_effector(2020)
+		end
+		level.set_pp_effector_factor(2020, radiation)
+		if (math.random() < radiation) then
+			radiation = (radiation > 0.5) and (math.random() < radiation/1.3) and "click3" or math.random(8)
+			local snd = sound_object("detectors\\geiger_" .. radiation)
+			snd:play(actor, 0, sound_object.s2d)
+		end
+	end
+end
+
+
+local curr_hud
+local helm_con
+local helm_fog = 0
+local helm_hud_pre = ""
+local helm_curr
+local helm_off = false
+local helm_respi_state = false
+local helm_removed
+local helm_fx = {0.0,0.0,0.0,0.0} -- Shaders
+local helm_fx_old = {false,false,false,false}
+local helm_r1_vingette = "hud_vingette"
+function Update_Mask(actor)
+	if (not opt.enable_mask_hud) then
+		if (not helm_removed) then
+			helm_removed = true
+			exec_console_cmd("r2_mask_control 0.0,0.0,0.0,0.0")
+			HUD_mask(false, false, false)
+		end
+		return
+	end
+	helm_removed = false
+
+	helm_fx[1] = 0.0
+	helm_fx[2] = 0.0
+	helm_fx[3] = 0.0
+	helm_fx[4] = 0.0
+	local helm_hud, helm_name, helm_respi
+	
+	-- Get helmet hud info
+	local helmet = actor:alive() and (actor:item_in_slot(12) or actor:get_current_outfit())
+	if helmet and (not helm_off) then
+		local sec = helmet:section()
+		if opt.helmets[sec] then
+			helm_con = "blue1"
+			
+			if (opt.helmets[sec].breakable) then
+				local cond = helmet:condition()
+				for i=1,10 do
+					local idx = "_" .. tostring(i)
+					if (opt.helmets_con[idx].con < cond) then
+						helm_con = opt.helmets_con[idx].hud
+						helm_fx[1] = opt.helmets_con[idx].fx
+						break
+					end
+				end
+			end
+			helm_hud_pre = STATIC_MASK and opt.helmets[sec].hud or "hud_gas"
+			helm_fog = opt.helmets[sec].blurs
+			helm_hud = helm_hud_pre .. "_" .. helm_con
+			helm_respi = opt.helmets[sec].respi
+			helm_name = helmet:name()
+			
+			helm_fx[2] = opt.helmets_vingette[helm_hud_pre] or 0.0
+			helm_fx[3] = opt.enable_visor_reflection and opt.helmets_reflect[helm_hud_pre] and 1.0 or 0.0
+			helm_fx[4] = 1.0
+		end
+	end
+	
+	-- Set mask HUD on/off
+	if helm_off then
+		helm_fx[1] = 0.0
+		helm_fx[2] = 0.0
+		helm_fx[3] = 0.0
+		helm_fx[4] = 0.0
+		HUD_mask(false, false, false)
+	else
+		HUD_mask(helm_hud, helm_name, helm_respi)
+	end
+	
+	-- Set distortion, vingette, reflection effect for +R2
+	if (not IS_R1) and ((helm_fx[1] ~= helm_fx_old[1]) or (helm_fx[2] ~= helm_fx_old[2]) or (helm_fx[3] ~= helm_fx_old[3]) or (helm_fx[4] ~= helm_fx_old[4])) then
+		helm_fx_old[1] = helm_fx[1]
+		helm_fx_old[2] = helm_fx[2]
+		helm_fx_old[3] = helm_fx[3]
+		helm_fx_old[4] = helm_fx[4]
+		exec_console_cmd("r2_mask_control " .. tostring(helm_fx[1]) .. "," .. tostring(helm_fx[2]) .. "," .. tostring(helm_fx[3]) .. "," .. tostring(helm_fx[4]))
+	end
+end
+
+
+local fog_removed
+function Update_Fog(actor)
+	if (not opt.enable_breathing_fog) then
+		if (not fog_removed) then
+			fog_removed = true
+			HUD_fog(false)
+		end
+		return
+	end
+	fog_removed = false
+	
+	if curr_hud and (helm_fog > 0) and not string.find(curr_hud,"_red3") then
+		local stretchy = 0.65/(math.floor(device().height/device().width*1000)/1000)
+		if (stretchy < 1) then
+			stretchy = 1
+		end
+		local rect = {x = 0, y = -(stretchy-1)*300, w = 1024, h = 768*stretchy}
+		HUD_fog(true, actor, rect)
+	else
+		HUD_fog(false)
+	end
+end
+
+local health_play = 0
+local snd_tg = 0
+local actor_speed = {x=0, y=0, z=0}
+local actor_speed_time = 0
+function Update_Breathing(actor)
+	if (not opt.enable_breathing_sound) then
+		return
+	end
+	
+	--local cam_dist = actor:bone_position("bip01_head"):distance_to_sqr(device().cam_pos)
+	local pos = actor:position()
+	local speed = (pos.x - actor_speed.x)^2 + (pos.y - actor_speed.y)^2 + (pos.z - actor_speed.z)^2
+	actor_speed.x = pos.x
+	actor_speed.y = pos.y
+	actor_speed.z = pos.z
+
+	if (speed > opt.speed.mini) then
+		actor_speed_time = actor_speed_time + opt.speed.inc
+	elseif actor_speed_time > opt.speed.dec then
+		actor_speed_time = actor_speed_time - opt.speed.dec
+	end
+	actor_speed_time = math.min(32, actor_speed_time + actor.bleeding * opt.speed.k_bleed)
+
+	if is_respi_on() then
+		play_sound_breath_mask(actor)
+	else
+		play_sound_breath(actor)
+	end
+end
+
+
+local bleed_set = false
+local bleed_rad_eff = false
+local bleed_1_tg = 0
+local bleed_2 = false
+local bleed_removed
+function Update_Bleeding(actor)
+	if (not opt.enable_bleed_effect) then
+		if (not bleed_removed) then
+			bleed_removed = true
+			level.remove_pp_effector(2012)
+			level.remove_pp_effector(2013)
+			level.remove_pp_effector(2015)
+		end
+		return
+	end
+	bleed_removed = false
+	
+	if (actor.health < 0.21) and (bleed_set ~= true) then
+		level.add_pp_effector("alcohol.ppe",2012,true)
+		bleed_set = true
+	end
+	if (actor.health > 0.20) and (bleed_set ~= false) then
+		level.remove_pp_effector(2012)
+		bleed_set = false
+	end
+	if (actor.radiation > 0.3) and (bleed_rad_eff ~= true) then
+		level.add_pp_effector("alcohol.ppe",2013,true)
+		bleed_rad_eff = true
+	end
+	if (actor.radiation == 0) and (bleed_rad_eff ~= false) then
+		level.remove_pp_effector(2013)
+		bleed_rad_eff = false
+	end
+	if (actor.bleeding > 0.5) and (actor.health < 0.2) and bleed_1_tg < time_global() then
+		level.add_pp_effector("deimos1.ppe",2014,false)
+		bleed_1_tg = time_global() + math.random(4000,10000)
+	end
+	if (actor.bleeding > 0.5) and (actor.power < 0.25) and (bleed_2 ~= true) then
+		level.add_cam_effector("camera_effects\\pripyat_horror.anm",1001,false, "")
+		level.add_pp_effector("snd_shock.ppe",2015,true)
+		bleed_2 = true
+	end
+	if (actor.bleeding < 0.2) or (actor.power > 0.7) and (bleed_2 ~= false) then
+		level.remove_pp_effector(2015)
+		bleed_2 = false
+	end
+end
+
+
+local actor_last_health = 0
+local blood_tg = 0
+local blood_tg_b = 0
+local blood_state = "no"
+local blood_count = 0
+function Update_Blood(actor)
+	local hud = get_hud()
+	if opt.enable_blood_splash and actor:alive() and (not ui_disabled) then
+		local current_health = math.floor(actor.health*100)
+		local tg = time_global()
+		if (tg > blood_tg) then
+			if (blood_state == "stopit") then
+				if hud:GetCustomStatic("hud_blood" .. blood_count) then
+					hud:RemoveCustomStatic("hud_blood" .. blood_count)
+				end
+				blood_count = blood_count - 1
+				if (blood_count == 0) then
+					blood_state = "no"
+				end
+				blood_tg = time_global()+110
+			else
+				if (actor_last_health ~= 0) and (actor_last_health > current_health) and (actor.radiation < 0.12) then
+					if (current_health < math.random(100)) then
+						blood_state = "yes"
+					end
+					level.add_pp_effector("bloody.ppe",2010,false)
+				end
+				if (blood_state == "yes") then
+					blood_tg = time_global() + math.random(500,2000)
+				else
+					blood_tg = time_global() + math.random(2000,5000)
+				end
+				actor_last_health = current_health
+			end
+		end			
+		if (tg > blood_tg_b) and (blood_state == "yes") then
+			blood_tg_b = time_global() + 130
+			blood_count = blood_count + 1
+			hud:AddCustomStatic("hud_blood" .. blood_count)
+			if (blood_count == 4) then
+				blood_state = "stopit"
+			end
+		end
+	else
+		for i=1,4 do
+			if hud:GetCustomStatic("hud_blood" .. i) then
+				hud:RemoveCustomStatic("hud_blood" .. i)
+			end
+		end
+	end
+end
+
+
+local prev_health = 0
+local impact_snd, impact_cam
+local impact_removed
+function Update_Impact(actor)
+	if (not opt.enable_hit_impact_effect) then
+		if (not impact_removed) then
+			impact_removed = true
+			level.remove_pp_effector(2011)
+			level.remove_pp_effector(2016)
+		end
+		return
+	end
+	impact_removed = false
+	
+	if (prev_health > (actor.health + 0.05)) then
+		level.add_pp_effector(opt.health.little_ppe ,2011, false)
+		level.set_pp_effector_factor(2011,(prev_health - actor.health)*100)
+		if (prev_health > (actor.health + 0.2)) then
+			if (prev_health > (actor.health + 0.5)) then
+				level.add_pp_effector(opt.health.huge_ppe, 2016, false)
+				level.set_pp_effector_factor(2016,(prev_health - actor.health)*100)
+				impact_cam = opt.health.huge_anm
+				impact_snd = opt.health.huge_snd
+			else
+				impact_cam = opt.health.middle_anm
+				impact_snd = opt.health.middle_snd
+			end
+			
+			-- play impact cam effect
+			if (#impact_cam > 0) and (not shott) then
+				level.add_cam_effector("camera_effects\\" .. impact_cam[math.random(#impact_cam)] .. ".anm", 999, false, "", 0, false)
+			end
+			
+			-- play impact sound effect
+			if (#impact_snd > 0) then
+				local snd_obj = sound_object("actor\\" .. impact_snd[math.random(#impact_snd)])
+				snd_obj:play(actor,0,sound_object.s2d)
+			end
+			
+			-- drop player's active item
+			--[[if (math.random() < (prev_health - actor.health)/2.5) then
+				local active_item = actor:active_item()
+				if active_item and (not opt.health.no_drop_wnp[active_item:section()]) then
+					actor:drop_item(active_item)
+				end
+			end--]]
+		end
+	end
+	
+	prev_health = actor.health
+end
+
+--[[
+local ammo_current = -1
+function Update_Shooting(actor)
+	if (not opt.enable_shoot_effects) then
+		return
+	end
+	
+	local active_item = actor:active_item()
+	local wpn = utils_item.item_is_fa(active_item) and active_item
+	if wpn then
+		local sec = wpn:section()
+		
+		if (not wpn_fx[sec]) then
+			parse_anims(sec)
+		end
+		
+		if (wpn_fx[sec] == true) then
+			return
+		end
+		
+		local ammo_in_mag =  wpn:get_ammo_in_magazine()
+		if (ammo_current ~= ammo_in_mag) and (wpn:get_state() == 5) then
+			shoot_effect(sec)
+			ammo_current = ammo_in_mag
+		end
+	end
+end
+--]]
+
+function Update_Shooting(obj, wpn, ammo_elapsed, grenade_elapsed, ammo_type, grenade_type)
+	if (obj:id() ~= AC_ID) then
+		return
+	end
+	
+	if (not opt.enable_shoot_effects) then
+		return
+	end
+	
+	local wpn_obj = utils_item.item_is_fa(wpn) and wpn
+	if wpn_obj then
+		local sec = wpn_obj:section()
+		
+		if (not wpn_fx[sec]) then
+			parse_anims(sec)
+		end
+		
+		if (wpn_fx[sec] == true) then
+			return
+		end
+		
+		shoot_effect(sec)
+		
+		--printf("Shooting effect played for [%s]", sec)
+	end
+end
+
+
+
+local bar_hp_check = true
+local bar_hp_old = true
+local bar_hp_new = true
+local bar_hp_first = true
+local bar_hp_trigger = 0.95
+function Update_HealthHUD(actor)
+	-- Autohide disabled
+	if (not autohide) then
+		if bar_hp_check then
+			bar_hp_check = false
+			local maingameui = ActorMenu.get_maingame()
+			if (maingameui and maingameui.m_ui_hud_states) then
+				maingameui.m_ui_hud_states.m_ui_health_bar_show = true
+			end
+		end
+		return
+		
+	elseif bar_hp_first then
+		bar_hp_first = false
+		local maingameui = ActorMenu.get_maingame()
+		if (maingameui and maingameui.m_ui_hud_states) then
+			maingameui.m_ui_hud_states.m_ui_health_bar_show = true
+		end
+		
+	else
+		bar_hp_new = true --(actor.health < bar_hp_trigger)
+		if (bar_hp_old ~= bar_hp_new) then
+			local maingameui = ActorMenu.get_maingame()
+			if (maingameui and maingameui.m_ui_hud_states) then
+				maingameui.m_ui_hud_states.m_ui_health_bar_show = bar_hp_new
+			end
+		end
+	end
+end
+
+local bar_pwr_check = true
+local bar_pwr_old = true
+local bar_pwr_new = true
+local bar_pwr_first = true
+local bar_pwr_trigger = 0.95
+function Update_StaminaHUD(actor)
+	-- Autohide disabled
+	if (not autohide) then
+		if bar_pwr_check then
+			bar_pwr_check = false
+			local maingameui = ActorMenu.get_maingame()
+			if (maingameui and maingameui.m_ui_hud_states) then
+				maingameui.m_ui_hud_states.m_ui_stamina_bar_show = true
+			end
+		end
+		return
+		
+	elseif bar_pwr_first then
+		bar_pwr_first = false
+		local maingameui = ActorMenu.get_maingame()
+		if (maingameui and maingameui.m_ui_hud_states) then
+			maingameui.m_ui_hud_states.m_ui_stamina_bar_show = true
+		end
+		
+	else
+		bar_pwr_new = (actor.power < bar_pwr_trigger)
+		if (bar_pwr_old ~= bar_pwr_new) then
+			bar_pwr_old = bar_pwr_new
+			local maingameui = ActorMenu.get_maingame()
+			if (maingameui and maingameui.m_ui_hud_states) then
+				maingameui.m_ui_hud_states.m_ui_stamina_bar_show = bar_pwr_new
+			end
+		end
+	end
+end
+
+
+--------------------------------------------------------------
+-- HUD
+--------------------------------------------------------------
+local fogs
+local fog_val = 0 -- level of fogging from 0 to 1
+local fog_tg = 0 -- last update time
+local fog_cycle = 0 -- start time of the last breath cycle (exhale)
+local fog_last_phase = 0
+local zbias = Frect():set(0,0,1024,1024)
+function HUD_fog(enabled, actor, rect)
+	local hud = get_hud()
+	
+	-- Gather breathing fog textures for the first time if they not defined
+	if (not fogs) then
+		fogs = {}
+		for i=1,4 do
+			local pht = {}
+			for ii = 1,10 do
+				local static = "hud_blur" .. i .. "_" .. ii
+				hud:AddCustomStatic(static)
+				pht[ii] = hud:GetCustomStatic(static):wnd()
+			end
+			fogs[i] = pht
+		end
+	end
+	
+	-- Gather breathing fog for the first time if it's not defined
+	if (not enabled) then
+		for i,t in ipairs(fogs) do
+			for ii,st in ipairs(t) do
+				st:SetWndRect(Frect():set(0,0,0,0))
+			end
+		end
+		fog_val = 0
+		fog_cycle = time_global()
+		fog_last_phase = 0
+		return
+	end
+	
+	-- Cycles depending on the power of breathing: 0->1->0 0->1->2->4->5->0 0->1->2->3->4->5->0 5->4->3->4->5 4->3->4
+	local power = actor.power
+	local period = 1.0 + (power * power * 1.0) -- current respiratory rate from 30 to 120 cycles per minute
+	local expirt = 0.3
+	local delta = (time_global() - fog_tg)/1000 -- delta in seconds
+	local phase = (time_global() - fog_cycle)/1000 -- phase of the respiratory cycle in seconds.
+	fog_tg = time_global()
+	if phase > period then
+		phase = phase%period
+		fog_cycle = fog_tg-phase*1000
+	end
+	if (fog_last_phase > phase) then
+		fog_last_phase = 0
+	end
+	local blurdelta = delta * -0.7 -- ventilation operation
+	if (fog_last_phase < expirt) and (phase < expirt) then
+		blurdelta = blurdelta + (phase - fog_last_phase)*helm_fog
+	elseif (fog_last_phase < expirt) then
+		blurdelta = blurdelta + (expirt - fog_last_phase)*helm_fog
+	end
+	fog_last_phase = phase
+	fog_val = fog_val + blurdelta
+	if (fog_val > 0.999) then
+		fog_val = 0.999
+	elseif (fog_val < 0) then
+		fog_val = 0
+	end
+	local tm = math.floor(fog_val*3)
+	local tmn = (tm+1)
+	local v = fog_val*3-math.floor(fog_val*3)
+	v = 1-v
+	local v1 = 1-v
+	local n1 = math.ceil(v*10)
+	local n2 = math.ceil(v1*10)
+	for i=1,4 do
+		for ii=1,10 do
+			if (i == tm and ii == n1) then
+				fogs[tm][n1]:SetWndRect(Frect():set(rect.x, rect.y, rect.w, rect.h))
+				fogs[tm][n1]:SetTextureRect(Frect():set(zbias.x1/4, zbias.y1/4, zbias.x2/4, zbias.y2/4))
+			elseif (i == tmn and ii == n2) then
+				fogs[tmn][n2]:SetWndRect(Frect():set(rect.x, rect.y, rect.w, rect.h))
+				fogs[tmn][n2]:SetTextureRect(Frect():set(zbias.x1/4, zbias.y1/4, zbias.x2/4, zbias.y2/4))
+			else
+				fogs[i][ii]:SetWndRect(Frect():set(0,0,0,0))
+			end
+		end
+	end
+end
+
+
+local mask_first_try = true
+function HUD_mask(helm_hud, helm_name, helm_respi)
+	local hud = get_hud()
+	local actor_pos = db.actor:bone_position("bip01_head")
+	
+	if (not helm_hud) or (cam_dist > opt.cam_dist) then
+		if IS_R1 then -- Distortion/Mask UI
+			local wchud = hud:GetCustomStatic(curr_hud)
+			if wchud then
+				hud:RemoveCustomStatic(curr_hud)
+			end
+		end
+		
+		if (IS_R1 and (not STATIC_MASK)) or STATIC_VINGETTE then -- Vingette
+			local wchud = hud:GetCustomStatic(helm_r1_vingette)
+			if wchud then
+				hud:RemoveCustomStatic(helm_r1_vingette)
+			end
+		end
+		curr_hud = nil
+		mask_first_try = true
+		helm_respi_state = false
+	
+	elseif (helm_hud ~= curr_hud) then
+		if IS_R1 then -- Distortion/Mask UI
+			if curr_hud then
+				hud:RemoveCustomStatic(curr_hud)
+			end
+			
+			hud:AddCustomStatic(helm_hud)
+		end
+		
+		if (IS_R1 and (not STATIC_MASK)) or STATIC_VINGETTE then -- Vingette
+			local wchud = hud:GetCustomStatic(helm_r1_vingette)
+			if (not wchud) then
+				hud:AddCustomStatic(helm_r1_vingette)
+			end
+		end
+		
+		if string.find(helm_hud, helm_hud_pre) then
+			if (not mask_first_try) and (helm_con ~= "blue2") and (helm_con ~= "blue1") and (helm_name == helm_curr) then
+				local snd_obj = sound_object("material\\glass\\glass_fall03hl")
+				snd_obj:play(db.actor,0,sound_object.s2d)
+			end
+			if mask_first_try then
+				mask_first_try = false
+			end
+		end
+		
+		helm_curr = helm_name
+		curr_hud = helm_hud
+		helm_respi_state = helm_respi
+	end
+end
+
+
+--------------------------------------------------------------
+-- Utilities
+--------------------------------------------------------------
+function play_item_fx(name)
+	if (not opt.enable_animations) then
+		return
+	end
+	
+	if (not ini_eff:section_exist(tostring(name) or 'INVALID_ARG')) then
+		printf("~WARNING actor_effects.play_item_fx | item animation [%s] doesn't exist!", name)
+		return 
+		
+	end
+	
+	if (time_global() > time_disabled) and animation_start then
+		local tg = tostring(time_global())
+		item_not_in_use = false
+		item_in_use[tg] = {}
+		
+		local n = ini_eff:line_count(name)
+		for i=0,n-1 do
+			local result, id, value	= ini_eff:r_line_ex(name,i,"","")
+			id = id and tonumber(id)
+			if id and value then
+				item_in_use[tg][id] = value
+			end
+		end
+	end
+end
+
+function play_continuous_effect(period)
+
+	--if (not opt.enable_animations) then return end
+
+	local tot = 0
+	local one_p = 5600 --3801
+	local num = math.ceil(period/one_p)
+		
+	if (time_global() > time_disabled) then
+		local tg = tostring(time_global())
+		item_not_in_use = false
+		item_in_use[tg] = {}
+		item_in_use[tg][0] = "actor_effects.use_weapon(0)"
+		item_in_use[tg][1] = "xr_effects.disable_ui_inventory(db.actor, nil)"
+		item_in_use[tg][2] = "xr_effects.disable_ui_lite_with_imput(db.actor, nil)"
+		item_in_use[tg][550] = "level.add_cam_effector('camera_effects\\\\item_use.anm', 8053, false,'')"
+		tot = 550
+		for i=1,num-1 do
+			tot = tot + one_p
+			item_in_use[tg][tot] = "level.add_cam_effector('camera_effects\\\\item_use.anm', 8053, false,'')"
+		end
+		tot = tot + one_p
+		item_in_use[tg][tot] = "xr_effects.enable_ui_lite(db.actor, nil)"
+		item_in_use[tg][tot + 1399] = "xr_effects.enable_imput(db.actor, nil)"
+		item_in_use[tg][tot + 1999] = "actor_effects.use_weapon(1)"
+	end
+end
+
+local breath_sound = 0
+local gas_play = 0
+function play_sound_breath_mask(actor)
+	local tg = time_global()
+	if (tg > snd_tg) then
+		gas_play = gas_play + 1
+		if (gas_play > 8) then
+			gas_play = 1
+		end
+		breath_sound = sound_object("actor\\gas_breath_" .. tostring((actor.health > 0.2) and math.ceil((1.01 - actor.power)*3 + actor_speed_time/8) or 8) .. "_" .. gas_play)
+		snd_tg = tg + breath_sound:length()*1.25
+		breath_sound:play(actor, 0, sound_object.s2d)
+		breath_sound.volume = (cam_dist > opt.cam_dist) and 0 or (1 - cam_dist/opt.cam_dist) * 0.5
+	end
+end
+
+local run_play = 0
+function play_sound_breath(actor)
+	local tg = time_global()
+	local health = actor.health
+
+	if (tg < snd_tg) or (health < 0) then
+		return
+	end
+
+	if (health > opt.health.level2) then
+		if (actor_speed_time > opt.speed.time_mini) or (actor.power < opt.speed.stamina) or (run_play == 1) then
+			run_play = run_play + 1
+			if (run_play > 2) then
+				run_play = 1
+			end
+			breath_sound = sound_object("actor\\run_" .. math.ceil(3*actor_speed_time/44) .. "_" .. run_play)
+			breath_sound:play(actor, 0, sound_object.s2d)
+			breath_sound.volume = (cam_dist > opt.cam_dist) and 0 or (1 - cam_dist/opt.cam_dist)
+			snd_tg = tg+breath_sound:length()*1.15
+		else
+			run_play = 2
+		end
+		return
+	end
+
+	if (health <= opt.health.level1) then
+		health = 1
+		if (math.random() < 0.1) then
+			health_play = 0
+		else
+			health_play = health_play + 1
+			if (health_play > 4) then
+				health_play = 1
+			end
+		end
+	else
+		health = 2
+		health_play = health_play+1
+		if (health_play > 4) then
+			health_play = 1
+		end
+	end
+	
+	snd_tg = tg + (opt.health.injury_snd["_"..health.."_"..health_play] or 4000)
+	breath_sound = sound_object("actor\\health_" .. health .. "_" .. health_play)
+	breath_sound:play(actor, 0, sound_object.s2d)
+	breath_sound.volume = (cam_dist > opt.cam_dist) and 0 or (1 - cam_dist/opt.cam_dist)
+end
+
+
+local shotc = 1
+local shott = 0
+local fov_r = 1
+function shoot_effect(sect)
+	--printf("-SHOOT")
+
+	if shott and (shott < time_global()) then
+		shotc = 1
+		shott = nil
+	end
+
+	local anims = {}
+	local s = wpn_fx[sect].s
+	local sc = #s
+
+	if sc > 1 then
+		if wpn_fx[sect].r == 1 then
+			s = s[math.random(#s)]
+		elseif wpn_fx[sect].r == 2 then
+			if shotc == 1 then
+				s = s[1]
+			else
+				s = s[math.random(2,#s)]
+			end
+		else
+			sc = shotc <= sc and shotc or (sc > 2 and math.random(sc-1,sc)) or sc
+			s = s[sc]
+		end
+	else
+		s = s[1]
+	end
+--	local cnt, r = math.modf(s*fov_r)
+--	if r ~=0 then
+--		s = math.max(1, cnt - 1)
+--	end
+	for i,v in pairs(wpn_fx[sect].e) do
+		local cnt,r = math.modf(v[1]*fov_r)
+		if r ~= 0 and cnt > 4 then --fmb
+			cnt = cnt-cnt*math.random(0,r*100)/100 --fmb
+			cnt,r = math.modf(cnt)
+		end
+
+		if r ~= 0 and math.random() < r then
+			cnt = cnt+1
+		end
+
+		if cnt > 0 then
+			table.insert(anims,{e = i,d = v[2] or math.random(0,1),c = cnt})
+		end
+	end
+	for i,a in ipairs(anims) do
+		local n = string.format([[shoot\s%s_e%s_%s.anm]],s,a.e,a.d)
+		for ii=1,a.c do
+			level.add_cam_effector(n,math.random(5000,8000),false,"")
+		end
+	end
+	for k,v in pairs(wpn_fx[sect].p) do
+		local eid = math.random(5000,8000)
+		level.add_pp_effector(string.format([[shoot\%s_s%s.ppe]],k,s), eid, false)
+		if v > 0 then
+			level.set_pp_effector_factor(eid,v)
+		end
+	end
+	shotc = shotc+1
+	shott = time_global()+100
+end
+
+
+function switch_helm()
+	helm_off = not helm_off
+end
+
+function is_respi_on()
+	return helm_respi_state
+end
+
+function is_mask_on()
+	return curr_hud
+end
+
+function is_animations_on()
+	return opt.enable_animations
+end
+
+function set_animations(state)
+	opt.enable_animations = state and true or false
+end
+
+function clear_mask_hud()
+	HUD_mask(false, false, false)
+end
+
+function reset_idle_anim(wpn, empty)
+	if wpn then 
+		wpn:switch_state(0)
+	end
+	
+	-- TODO: rebind keys
+	can_shoot = true
+	return true 
+end
+
+function actor_can_shoot(state)
+	can_shoot = state
+end
+
+function disable_effects_timer(n)
+	time_disabled = time_global() + n
+end
+
+function use_helmet()
+	switch_helm()
+end
+
+function use_weapon(f)
+	local hidden = weapon_hidden
+	weapon_hidden = weapon_hidden + f * 2 - 1
+	if weapon_hidden == 0 then
+		db.actor:restore_weapon()
+	elseif hidden == 0 then
+		db.actor:hide_weapon()
+	end
+end
+
+function toggle_active_slot(f)
+	if (f == 0) then
+		last_slot = db.actor:active_slot()
+		db.actor:activate_slot(0)
+	else
+		db.actor:activate_slot(last_slot)
+	end
+end
+
+function toggle_hud_autohide(state)
+	autohide = state
+	bar_hp_check = true
+	bar_pwr_check = true
+end
+
+
+--------------------------------------------------------------
+-- Callbacks
+--------------------------------------------------------------
+local tg_acon = 0
+local tg_acon_step = 180
+local tg_hud = 50
+local tg_hud_step = 120
+local tg_bleed = 100
+local tg_bleed_step = 400
+local function actor_on_update()
+	local actor = db.actor
+	if (not actor) then
+		return
+	end
+	
+	local tg = time_global()
+	cam_dist = actor:bone_position("bip01_head"):distance_to_sqr(device().cam_pos)
+	
+	if (tg > tg_bleed) then
+		tg_bleed = tg + tg_bleed_step
+		Update_Bleeding(actor)
+	end
+	
+	if (tg > tg_acon) then
+		tg_acon = tg + tg_acon_step
+	
+		Update_Breathing(actor)
+		Update_Rad(actor)
+	end
+	
+	if (tg > tg_hud) then
+		tg_hud = tg + tg_hud_step
+		Update_Blood(actor)
+		Update_Mask(actor)
+	end
+	
+	Update_Fog(actor)
+	
+	Update_Impact(actor)
+	Update_ItemSwap(actor)
+	Update_Animations(actor)
+	--Update_Shooting(actor)
+	Update_HealthHUD(actor)
+	Update_StaminaHUD(actor)
+end
+
+local function on_key_release(key)
+	animation_start = true
+	local bind = dik_to_bind(key)
+	
+	-- Clean Mask
+	if (bind == key_bindings.kCAM_ZOOM_IN) then
+		Hit_MaskCleaning()
+		
+	-- Toggle Torch
+	elseif (bind == key_bindings.kTORCH) then
+		Hit_TorchToggle()
+		
+	-- Grenade Quickthrow
+	elseif (bind == key_bindings.kCUSTOM19) then
+		Hit_GrenadeQuickthrow()
+		
+	-- Toggle HUD
+	elseif (bind == key_bindings.kCUSTOM6) then
+		local val = not (get_console_cmd(1,"hud_draw"))
+		local toggl = val and "on" or "off"
+		exec_console_cmd("hud_draw " .. toggl)
+	
+	-- Toggle item animations
+	elseif (bind == key_bindings.kCAM_ZOOM_OUT) then
+		local old_state = opt.enable_animations and true or false
+		local new_state = not old_state
+		
+		ui_options.set("video/player/animations", new_state)
+		opt.enable_animations = new_state
+		
+		if new_state then
+			xr_sound.set_sound_play(AC_ID, "pda_tips")
+		else
+			xr_sound.set_sound_play(AC_ID, "pda_alarm")
+		end
+		
+		local str = new_state and "st_toggle_animation_on" or "st_toggle_animation_off"
+		actor_menu.set_msg(2, game.translate_string(str))
+		
+	-- Screenshot
+	elseif (bind == key_bindings.kSCREENSHOT) then
+		snd_cam:play(db.actor,0,sound_object.s2d)
+		
+	-- PDA Map
+	elseif (bind == key_bindings.kCUSTOM20) then
+		local pda_menu = ActorMenu.get_pda_menu()
+		local pda3d = get_console_cmd(1,"g_3d_pda")
+		if not (pda_menu:IsShown()) and db.actor:item_in_slot(8) then
+			if (pda3d) then
+				db.actor:activate_slot(8)
+			else
+				pda_menu:ShowDialog(true)
+			end
+			
+			pda_menu:SetActiveSubdialog("eptTasks")
+		elseif (pda_menu:IsShown()) then
+			if (pda3d) then
+				db.actor:activate_slot(0)
+			else
+				pda_menu:HideDialog()
+			end
+		end
+	end
+end
+
+local ruck_last_outfit = -1
+local ruck_last_helmet = -1
+local ruck_last_backpack = -1
+local function actor_item_to_ruck(obj)
+	local id = obj:id()
+	local play_anm = false
+	
+	if (id == ruck_last_outfit) then
+		ruck_last_outfit = -1
+		play_anm = true
+	elseif (id == ruck_last_helmet) then
+		ruck_last_helmet = -1
+		play_anm = true
+	elseif (id == ruck_last_backpack) then
+		ruck_last_backpack = -1
+		play_anm = true
+	end
+	
+	if play_anm and (not has_alife_info("BAR_ARENA_FIGHT")) then
+		if IsOutfit(obj) then
+			play_item_fx("outfit")
+		elseif IsHeadgear(obj) then
+			play_item_fx("helm")
+		elseif IsItem("backpack", nil, obj) then
+			play_item_fx("outfit")
+		end
+	end
+end
+
+local function actor_item_to_slot(obj)
+	if (not has_alife_info("BAR_ARENA_FIGHT")) then
+		if IsOutfit(obj) then
+			ruck_last_backpack = obj:id()
+			play_item_fx("outfit")
+		elseif IsHeadgear(obj) then
+			ruck_last_backpack = obj:id()
+			play_item_fx("helm")
+		elseif IsItem("backpack", nil, obj) then
+			ruck_last_backpack = obj:id()
+			play_item_fx("outfit")
+		elseif opt.enable_animations then
+			local rand = math.random(1,4)
+			level.add_cam_effector("camera_effects\\switch\\low" .. rand .. ".anm", 23234, false,'', 0, false)
+		end
+	end
+end
+
+local function actor_on_item_use(obj)
+	play_item_fx(obj:section())
+end
+
+local last_wpn_snd_empty = {nil, "$no_sound", 1}
+local tg_snd_empty = 0
+local critical_wpn_con = 0.014
+local delay_snd_empty = 300 -- ms
+local function actor_on_weapon_before_fire(flags)
+	local tg = time_global()
+
+	local obj_wpn = db.actor:active_item()
+	if obj_wpn and IsWeapon(obj_wpn) and (not IsMelee(obj_wpn)) then
+		local con = obj_wpn:condition()
+		if (con <= critical_wpn_con) then
+			local sec = obj_wpn:section()
+			
+			-- Cache
+			if (sec ~= last_wpn_snd_empty[1]) then
+				-- Reset
+				last_wpn_snd_empty[1] = sec
+				last_wpn_snd_empty[2] = "$no_sound"
+				last_wpn_snd_empty[3] = 1
+				
+				-- Get empty sound
+				local snd = ini_sys:r_string_ex(sec,"snd_empty")
+				if snd and (snd ~= "") then
+					snd = str_explode(snd,",")
+					last_wpn_snd_empty[2] = snd[1]
+					last_wpn_snd_empty[3] = snd[2] or 1
+				end
+			end
+			
+			-- Play empty clip sound
+			if (last_wpn_snd_empty[2] ~= "$no_sound") and (tg > tg_snd_empty) then
+				utils_obj.play_sound( last_wpn_snd_empty[2], last_wpn_snd_empty[3] or 1 )
+				tg_snd_empty = tg + delay_snd_empty
+			end
+			
+			-- Don't shoot
+			flags.ret_value = false
+		end
+	end
+	
+	if (not can_shoot) then
+		flags.ret_value = false
+	end
+end
+
+local function actor_on_first_update()
+	-- Enable mini-map
+	minimap_enabled = ui_options.get("video/hud/show_minimap")
+	local maingameui = ActorMenu.get_maingame()
+	if (maingameui and maingameui.UIZoneMap) then
+		maingameui.UIZoneMap.disabled = not minimap_enabled
+		maingameui.UIMotionIcon:Show(maingameui.UIZoneMap.disabled == false)
+	end
+	
+	init_main_settings()
+	--disable_effects_timer(5000)
+	if db.actor then
+		ruck_last_outfit = db.actor:item_in_slot(7) and db.actor:item_in_slot(7):id() or -1
+		ruck_last_helmet = db.actor:item_in_slot(12) and db.actor:item_in_slot(12):id() or -1
+		ruck_last_backpack = db.actor:item_in_slot(13) and db.actor:item_in_slot(13):id() or -1
+		
+		if (detector_was_active) then
+			db.actor:show_detector()
+		end
+	end
+	
+	--utils_data.print_table(opt)
+	
+	--Animation stuff
+	game.only_allow_movekeys(false)
+	game.set_actor_allow_ladder(true)
+	game.stop_all_hud_anms()
+	game.stop_hud_motion()
+	
+	mc_anm_time_1 = game.get_motion_length(mc_anm_sec, "anm_hide_hand", hide_hand_speed)
+	mc_anm_time_2 = game.get_motion_length(mc_anm_sec, "anm_wipe", 1)
+	torch_anm_time = game.get_motion_length(torch_anm_sec, "anm_switch", 1)
+end
+
+local function save_state(m_data)
+
+	if (not db.actor) then
+		return
+	end
+
+	m_data.detector_was_active = db.actor:active_detector() and true or false
+end
+
+local function load_state(m_data)
+	
+	detector_was_active = m_data.detector_was_active
+end
+
+function on_game_start()
+	init_settings()
+
+	RegisterScriptCallback("on_key_release",on_key_release)
+	RegisterScriptCallback("actor_item_to_slot",actor_item_to_slot)
+	RegisterScriptCallback("actor_item_to_ruck",actor_item_to_ruck)
+	RegisterScriptCallback("actor_on_item_drop",actor_item_to_ruck)
+	RegisterScriptCallback("actor_on_item_use",actor_on_item_use)
+	RegisterScriptCallback("actor_on_weapon_before_fire",actor_on_weapon_before_fire)
+	RegisterScriptCallback("actor_on_weapon_lower",actor_on_weapon_lower)
+	RegisterScriptCallback("actor_on_weapon_raise",actor_on_weapon_raise)
+	RegisterScriptCallback("actor_on_update",actor_on_update)
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
+	RegisterScriptCallback("actor_on_weapon_fired",Update_Shooting)
+	RegisterScriptCallback("burer_on_before_weapon_drop",burer_on_before_weapon_drop)
+	RegisterScriptCallback("on_option_change",init_main_settings)
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+end 
