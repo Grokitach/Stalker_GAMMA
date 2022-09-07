@@ -1,13 +1,14 @@
 /**
- * @ Version: SCREEN SPACE SHADERS - UPDATE 8
+ * @ Version: SCREEN SPACE SHADERS - UPDATE 10
  * @ Description: Main file
- * @ Modified time: 2022-07-14 16:46
+ * @ Modified time: 2022-08-21 21:10
  * @ Author: https://www.moddb.com/members/ascii1457
  * @ Mod: https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders
  */
 
 #define SSFX_READY
 
+#include "screenspace_common_noise.h"
 #include "common.h"
 #include "hmodel.h"
 
@@ -44,7 +45,7 @@ float2 SSFX_view_to_uv(float3 Pos)
 float SSFX_calc_SSR_fade(float2 tc, float start, float end)
 {
 	// Vectical fade
-	float ray_fade = saturate(tc.y * 2.0f);	
+	float ray_fade = saturate(tc.y * 5.0f);
 	
 	// Horizontal fade
 	float2 calc_edges = smoothstep(start, end, float2(tc.x, 1.0f - tc.x));
@@ -117,7 +118,7 @@ float3 SSFX_ray_intersect(RayTrace Ray, uint iSample)
 	float depth_ray = (Ray.z_start * Ray.z_end) / lerp(Ray.z_end, Ray.z_start, alpha);
 	float depth_scene = SSFX_get_depth(Ray.r_pos, iSample);
 	
-	return float3(depth_ray - depth_scene, depth_scene, len);
+	return float3(depth_ray.x - depth_scene, depth_scene, len);
 }
 
 // Half-way scene lighting
