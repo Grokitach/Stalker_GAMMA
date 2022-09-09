@@ -1,2162 +1,2708 @@
+-- ============================================================
+--
+-- Script Functions for Task Dialogs  (dialogs.script)
+--	CoC 1.4.22 - DoctorX Questlines 1.24
+--
+--	Modified by: DoctorX, av661194
+--	Last revised: February 16, 2017
+--
+-- ============================================================
 
---[[
-
-	Tronex
-	2021/3/1
-	Dialog UI
-
-	Features:
-		- dialog system remade in LUA, full user access
-		- support for passing custom function parameters in XML dialog files (Ex: dialog_manager.init_new_dialog(true,meme,4) )
-			(params can be boolean/number/string, they will be converted to their proper types automatically on lua side)
-			Note: nil parameter will be passed as false for technical reasons
-		- no crash on missing nodes, you get a warning message in log
-		- validate functionality that will automatically tells you if there are missing nodes
-		- ability to reload dialog and character tables on the fly, your recent changes in xml files will be taken into account upon reloading
-			use the debug_key to reload the tables, "enable_debug_key" must be set to true
-		- New dialog property: <run_once> for dialogs that should be said once and never repeated again.
-			This makes it easier than using the old method of info portion to do the job
-			<run_once/> will mark dialog as completed once it reach the last phrase automatically
-			<run_once>3</run_once> will mark dialog as completed once it passes phrase with id "3", you can set it at any phrase of your choice
-		- ability to show relocated items as icons instead of lengthy texts, like in inventory
-		- ability to inject dialogs to an NPC with specific ID
-		
-	See how XML dialog is converted to a table inside "dialog_list" down below, which can help you modifying parsed dialogs directly from scripts
---]]
-
-local enable_feature = true
-local enable_debug = false
-local enable_debug_key = false
-local enable_debug_clear_log = true
-local debug_key = DIK_keys.DIK_HOME
-
-local max_partner_distance = 2.5 --[meters]
-local default_start_dialog = "hello_dialog"
-local default_actor_dialog = "actor_break_dialog"
-local special_characters = {
-	["m_trader"] = "esc_2_12_stalker_trader",
-	["m_lesnik"] = "red_forester_tech",
-	["zat_a2_stalker_nimble"] = "esc_2_12_stalker_nimble",
-}
-
-local engine_start_dialog = {} -- has highest priority for start dialogs, controlled by meet logic
-character_id_list         = {} -- list of start/actor dialogs to an NPC with specific id, can be set to override (character_list)
-character_list            = {} -- list of start/actor dialogs to a character (character_desc xml files)
-dialog_list               = {} -- dialogs table (dialog xml files)
-dialog_finished           = {} -- dialogs included here won't be repeated, loaded/saved by m_data
-
-local talk_captured = false
-
-local table_insert = table.insert
-local string_find = string.find
-local string_gsub = string.gsub
-local pairs = pairs
-local ipairs = ipairs
-local tostring = tostring
-
-local function parse_custom_func(str, no_brackets)
-	-- Convert string: "{=file.func(param1:param2:param3:...)}" --> {file, func, param1, param2, param3, ...}
-	
-	if (type(str) ~= "string") then
-		callstack()
-	end
-	
-	-- Extract script, function, parameters list
-	local _,__,sf,s,f,p
-	if (not no_brackets) then
-		_,__,str = string_find(str,"%((.*)%)")
-	end
-	
-	if string_find(str,"%((.*)%)") then
-		_,__,sf,p = string_find(str,"(.*)%((.*)%)")
-		
-		if string_find(str,"%.") then
-			_,__,s,f = string_find(sf,"(.*)%.(.*)")
-		else
-			f = sf
-		end
-	else
-		sf = str
-		if string_find(str,"%.") then
-			_,__,s,f = string_find(sf,"(.*)%.(.*)")
-		else
-			f = sf
-		end
-	end
-
-	if not (f and f ~= "") then
-		printe("ERROR parse_custom_func: %s | func name is wrong", str)
-		return {}
-	end
-	
-	-- Extract parameters one by one
-	if p and p ~= "" then
-		p = string_gsub(p,"\"","") -- remove quotes
-		p = string_gsub(p,"'","") -- remove quotes
-		p = str_explode(p,",")	
-		
-		for i=1,#p do
-			if string_find(p[i],"%(") or string_find(p[i],"%)") then printe("ERROR parse_custom_func: %s | func name is wrong: %s", p[i]) end
-			
-			if (p[i] == "true") then
-				p[i] = true
-			elseif (p[i] == "false") or (p[i] == "nil") then
-				p[i] = false
-			elseif tonumber(p[i]) then
-				p[i] = tonumber(p[i])
-			end
-		end
-	end
-
-	local t = { s , f }
-	if p and (type(p) == "table") then
-		for i=1,#p do
-			t[#t+1] = p[i]
-		end
-	end
-	
-	return t
-end
-
-local function on_key_release(key)
-	if db.actor and db.actor:alive() then
-		local bind = dik_to_bind(key)
-		if (bind == key_bindings.kUSE) then
-			local npc = level.get_target_obj() or nil
-			if npc then
-				if IsStalker(npc) or special_characters[npc:section()] then
-					if npc:alive() and (npc:id() == talk_captured) and (distance_between(npc, db.actor) <= max_partner_distance) then
-						npc:enable_talk()
-						talk_captured = false
-						start(npc)
-					end
-				end
-			end
-			
-		elseif enable_debug_key and key == debug_key then
-			if GUI and GUI:IsShown() then
-				GUI:Close()
-			end
-			
-			prepare_dialog_table()
-			prepare_character_table()
-			
-			printf("------------------------------------------------")
-			printf("- UIDialog: Reloaded dialog and character tables")
-			printf("------------------------------------------------")
-		end
-	end
-end
-
-local function on_key_press(key)
-	if db.actor and db.actor:alive() then
-		local bind = dik_to_bind(key)
-		if (bind == key_bindings.kUSE) then
-			local npc = level.get_target_obj() or nil
-			if npc then
-				if IsStalker(npc) or special_characters[npc:section()] then
-					if npc:alive() and npc:is_talk_enabled() then
-						npc:disable_talk()
-						talk_captured = npc:id()
-					end
-				end
-			end
-		end
-	end
-end
-
-local function load_state(m_data)
-	dialog_finished = m_data.dialog_finished or {}
-end
-
-local function save_state(m_data)
-	m_data.dialog_finished = dialog_finished
-end
+local goodwill_trust_limit = 200
 
 
-function on_game_start()
-	if enable_feature then
-		RegisterScriptCallback("on_key_release",on_key_release)
-		RegisterScriptCallback("on_key_press",on_key_press)
-		RegisterScriptCallback("save_state",save_state)
-		RegisterScriptCallback("load_state",load_state)
-
-		prepare_dialog_table()
-		prepare_character_table()
-		overrides_2()
-	end
-end
-
-----------------------------------------------------------------------
--- instances, don't touch
-GUI = nil 
-local dialog_script = nil
-
-function start(npc, distant, name, icon)
-	if (not npc) then
-		printf("!ERROR dialog | no game object passed!")
-		return
-	end
-	
-	local hud = get_hud()
-	if (hud) then
-		hide_hud_inventory()
-	end
-	
-	if enable_debug then
-		printf("dialog -> starting chat with [%s]", npc:name())
-	end
-	
-	if (not GUI) then
-		GUI = UIDialog()
-	end
-	
-	if (GUI) and (not GUI:IsShown()) then
-		GUI:Reset(npc, distant, name, icon)
-		GUI:ShowDialog(true)
-		
-		Register_UI("Dialog",script_name())
-
-		-- Needed for now to simulate engine functionality in calling this, called after GUI showing
-		actor_menu.actor_menu_mode(10)
-		pda.actor_menu_mode(10)				 
-	end
-end
-
-----------------------------------------------------------------------
--- Support
-----------------------------------------------------------------------
--- Inject a dialog table into dialogs list
-function add_dialog(name, dl)
--- add new dialog to the dialogs table
-	dialog_list[name] = dl
-end
-function add_script_dialog(p_id,id,phrase_id,cond,act)
--- to use by other scripts for scripted dialog (init_func)
-
-	if (not dialog_script) then
-		dialog_script = DialogScripted()
-	end
-
-	local phrase = dialog_script:AddPhrase(phrase_id,tostring(id),tostring(p_id),-10000)
-	if not ( phrase ) then
-		return
-	end
-
-	local phrase_script = phrase:GetPhraseScript()
-	if ( cond ) then
-		if ( type(cond) == "table" ) then
-			for key, value in pairs(cond) do
-				phrase_script:AddPrecondition(value)
-			end
-		else
-			phrase_script:AddPrecondition(cond)
-		end
-	end
-
-	if ( act ) then
-		if ( type(act) == "table" ) then
-			for key, value in pairs(act) do
-				phrase_script:AddAction(value)
-			end
-		else
-			phrase_script:AddAction(act)
-		end
-	end
-	
-	if (phrase_id and string.find(phrase_id,"%.")) then
-		phrase_script:SetScriptText(phrase_id)
-	end
-	
-	return phrase_script
-end
-
--- Add/Remove/Check dialog for a character (by name)
-function char_add_dialog(name, dialog, typ, order)
-	-- this function adds new dialog to a character
--- name: character section as it's defined in character_desc (don't add default_* as it's seen in files, Ex: use sim_default_csky_1 instead of sim_default_csky_1_default_3)
--- dialog: name of dialog you want to add to the character
--- typ: [boolean] true: start_dialog | false: actor_dialog
--- order: [number] order of the added dialog inside dialog list for the character (Ex: typ (false) order (3) means that it will be the 3rd actor_dialog available by said character)
-
-	if (not character_list[name]) then character_list[name] = {} end
-	
-	if typ then
-		if (not character_list[name].start_dialog) then character_list[name].start_dialog = {} end
-		local c = #character_list[name].start_dialog
-		if order and c > order then
-			table_insert( character_list[name].start_dialog , order, {dialog} )
-		else
-			table_insert( character_list[name].start_dialog , {dialog} )
-		end
-	else
-		if (not character_list[name].actor_dialog) then character_list[name].actor_dialog = {} end
-		local c = #character_list[name].actor_dialog
-		if order and c > order then
-			table_insert( character_list[name].actor_dialog , order, {dialog} )
-		else
-			table_insert( character_list[name].actor_dialog , {dialog} )
-		end
-	end
-end
-function char_remove_dialog(name, dialog, typ)
-	-- this function removes dialog from a character
--- name: character section as it's defined in character_desc (don't add default_* as it's seen in files, Ex: use sim_default_csky_1 instead of sim_default_csky_1_default_3)
--- dialog: name of dialog you want to remove from character dialogs
--- typ: [boolean] true: start_dialog | false: actor_dialog
-
-	local dls
-	if typ then
-		dls = character_list[name] and character_list[name].start_dialog
-	else
-		dls = character_list[name] and character_list[name].actor_dialog
-	end
-	
-	if (not dls) then
-		return
-	end
-	
-	for i,d in ipairs(dls) do
-		for j,n in ipairs(d) do
-			if (n == dialog) then
-				d[j] = nil
-				if #d == 0 then
-					dls[i] = nil
-				end
-			end
-		end
-	end
-end
-function char_has_dialog(name, dialog, typ)
-	-- this function returns true if a dialog exists for a character
--- name: character section as it's defined in character_desc (don't add default_* as it's seen in files, Ex: use sim_default_csky_1 instead of sim_default_csky_1_default_3)
--- dialog: name of dialog you want to remove from character dialogs
--- typ: [boolean] true: start_dialog | false: actor_dialog
-
-	local dls
-	if typ then
-		dls = character_list[name] and character_list[name].start_dialog
-	else
-		dls = character_list[name] and character_list[name].actor_dialog
-	end
-	
-	if (not dls) then
-		return false
-	end
-	
-	for i,d in ipairs(dls) do
-		for j,n in ipairs(d) do
-			if (n == dialog) then
-				return true
-			end
-		end
+function can_do_task_mysteries_of_the_zone(a,b)
+	-- Only give the story quests to factions in this table.
+	local actor_comm = character_community(db.actor):sub(7)
+	local story_factions = {
+		["csky"] = true,
+		["dolg"] = true,
+		["ecolog"] = true,
+		["freedom"] = true,
+		["killer"] = true,
+		["stalker"] = true,
+	}
+	if actor_comm and story_factions[actor_comm] and (not has_alife_info("story_mode_disabled")) then
+		return true
 	end
 	return false
 end
 
--- Add/Remove/Check dialog for an object (by ID)
-function npc_add_dialogs(id, start_dialogs, start_override, actor_dialogs, actor_override)
--- use this function to inject a list of start/actor dialogs to an NPC with specific ID
--- Example: dialog_manager.npc_add_dialogs(3024, {"hello","start_1"}, true, {"dialog_breaker"}, false)
-
-	-- id: character's id
-	-- start_dialogs table contains start dialogs to insert
-	-- actor_dialogs table contains actor dialogs to insert
-	-- start_override: (true) to override default start dialogs, (false) to add them to the rest of start dialogs the NPC originally has
-	-- actor_override: (true) to override default actor dialogs, (false) to add them to the rest of actor dialogs the NPC originally has
-	
-	-- NOTE: without using npc_remove_dialogs function first, dialogs previously injected to npc will stack on the new ones
-	-- NOTE: without using override params, dialogs added this way will appear "before" any dialogs the NPC originally has
-	
-	if start_dialogs then
-		for i,dialog in ipairs(start_dialogs) do
-			npc_add_dialog(id, dialog, true)
-		end
-		npc_override_dialog(id, true, start_override)
-	end
-	
-	if actor_dialogs then
-		for i,dialog in ipairs(actor_dialogs) do
-			npc_add_dialog(id, dialog, false)
-		end
-		npc_override_dialog(id, false, actor_override)
-	end
+function give_task_mysteries_of_the_zone(a,b)
+	task_manager.get_task_manager():give_task("mar_find_doctor_task")
 end
-function npc_add_dialog(id, dialog, typ)
-	-- this function adds new dialog to a character with specific ID
--- id: character's id
--- dialog: name of dialog you want to add to the character
--- typ: [boolean] true: start_dialog | false: actor_dialog
 
-	if (not character_id_list[id]) then character_id_list[id] = {} end
-	
-	if typ then
-		if (not character_id_list[id].start_dialog) then character_id_list[id].start_dialog = {} end
-		table_insert( character_id_list[id].start_dialog , {dialog} )
-	else
-		if (not character_id_list[id].actor_dialog) then character_id_list[id].actor_dialog = {} end
-		table_insert( character_id_list[id].actor_dialog , {dialog} )
-	end
-end
-function npc_remove_dialog(id, dialog, typ)
-	-- this function removes dialog from a character
--- id: character's id
--- dialog: name of dialog you want to remove from character dialogs
--- typ: [boolean] true: start_dialog | false: actor_dialog
-
-	local dls
-	if typ then
-		dls = character_id_list[id] and character_id_list[id].start_dialog
-	else
-		dls = character_id_list[id] and character_id_list[id].actor_dialog
-	end
-	
-	if (not dls) then
-		return
-	end
-	
-	for i,d in ipairs(dls) do
-		for j,n in ipairs(d) do
-			if (n == dialog) then
-				d[j] = nil
-				if #d == 0 then
-					dls[i] = nil
-				end
-			end
-		end
-	end
-end
-function npc_remove_dialogs(id)
-	-- to remove added dialog list to character by specific id
-	character_id_list[id] = nil
-end
-function npc_has_dialog(id, dialog, typ)
-	-- this function returns true if a dialog exists for a character with specific id
--- id: character's id
--- dialog: name of dialog you want to know if character has
--- typ: [boolean] true: start_dialog | false: actor_dialog
-
-	local dls
-	if typ then
-		dls = character_id_list[id] and character_id_list[id].start_dialog
-	else
-		dls = character_id_list[id] and character_id_list[id].actor_dialog
-	end
-	
-	if (not dls) then
+function warfare_disabled(a,b)
+	if _G.WARFARE then
 		return false
 	end
-	
-	for i,d in ipairs(dls) do
-		for j,n in ipairs(d) do
-			if (n == dialog) then
-				return true
-			end
+	return true
+end
+
+-------------------------------------------
+-- Task stacking check
+-------------------------------------------
+local mark_task_per_npc = {}
+function get_npc_task_limit()
+	return tonumber(ui_options.get("gameplay/general/max_tasks") or 2)
+end
+
+function has_tasks_by_npc(a,b)
+	local npc = who_is_npc(a, b)
+	axr_task_manager.generate_ongoing_tasks(npc,nil)
+	return axr_task_manager.ongoing_tasks[npc:id()] and (#axr_task_manager.ongoing_tasks[npc:id()] >= get_npc_task_limit()) or false
+end
+
+function not_has_tasks_by_npc(a,b)
+	return (not has_tasks_by_npc(a,b))
+end
+
+function confirm_task_stack(a,b)
+	local npc = who_is_npc(a, b)
+	mark_task_per_npc[npc:id()] = true
+end
+
+function clear_task_stack(a,b)
+	local npc = who_is_npc(a, b)
+	mark_task_per_npc[npc:id()] = nil
+end
+
+function check_task_stack(a,b)
+	local npc = who_is_npc(a, b)
+	if not_has_tasks_by_npc(a,b) then
+		mark_task_per_npc[npc:id()] = nil
+	end
+	return (mark_task_per_npc[npc:id()] ~= true)
+end
+
+
+-- Global var to store last available task id:
+last_task_id = nil
+
+-- Determine if actor has npc task:
+function drx_sl_dont_has_npc_task( a, b )
+
+	local npc = who_is_npc(a, b)
+	local se_obj = npc and alife( ):object( npc:id( ) )
+	local giver_id = se_obj and (se_obj.group_id ~= 65535 and se_obj.group_id or se_obj.id)
+	if not ( giver_id ) then
+		return false
+	end
+	if ( load_var( db.actor, ("drx_sl_task_giver_" .. giver_id), 0 ) > 0 ) then
+		return false
+	end
+
+	return true
+
+end
+
+-- Determine if actor is same faction as npc (true faction):
+function drx_sl_actor_can_change_this_faction( a, b )
+
+	-- Get npc faction:
+	local npc = who_is_npc( a, b )
+	local npc_faction = character_community( npc )
+
+	-- Special check for Traders
+	if ( npc_faction == "trader" ) then
+		local se_squad = get_object_squad(npc)
+		npc_faction = se_squad and se_squad.player_id or npc_faction
+		if ( npc_faction == "trader" ) then
+			npc_faction = "stalker"
 		end
 	end
+
+	-- Get player faction:
+	local actor_faction = get_actor_true_community()
+	
+	-- Check if factions are same, or enemies (disguise case)
+	if ( actor_faction == npc_faction ) or game_relations.is_factions_enemies( actor_faction , npc_faction ) then
+		return false
+	else
+		return true
+	end
+
+end
+
+-- Determine if actor has completed current storyline task:
+function drx_sl_actor_has_finished_task( a, b )
+
+	local npc = who_is_npc( a, b )
+
+	local tsk = axr_task_manager and axr_task_manager.drx_sl_get_finished_task( npc )
+	if ( tsk == nil ) then
+		return false
+	end
+
+	return true
+
+end
+
+-- Determine if actor has completed change factions task:
+function drx_sl_actor_has_finished_cf_task( a, b )
+
+	local npc = who_is_npc( a, b )
+
+	local tsk = axr_task_manager and axr_task_manager.drx_sl_get_finished_cf_task( npc )
+	if ( tsk == nil ) then
+		return false
+	end
+
+	return true
+
+end
+
+-- Determine if end game task has been reached or should be given:
+function drx_sl_is_endgame( a, b )
+
+	if ( (load_var( db.actor, "drx_sl_current_task_number", 1 ) >= load_var( db.actor, "drx_sl_total_task_number", 1 )) and (has_alife_info( "bar_deactivate_radar_done" )) ) then
+		return true
+	end
+
 	return false
-end
-function npc_override_dialog(id, typ, state)
-	-- use this function to mark dialogs added to specific character id in order to:
-	--	1. completely override old dialog and only show the added ones
-	--	2. include them with the rest of normal dialogs
--- id: character's id
--- state: [boolean] true: override | false: inclusion
--- typ: [boolean] true: start_dialog | false: actor_dialog
 
-	if (not character_id_list[id]) then character_id_list[id] = {} end
-	if state then
-		if typ then
-			character_id_list[id].override_start_dialog = true
-		else
-			character_id_list[id].override_actor_dialog = true
-		end
-	else
-		if typ then
-			character_id_list[id].override_start_dialog = nil
-		else
-			character_id_list[id].override_actor_dialog = nil
-		end
-	end
 end
 
--- Show other things on dialog UI, like info box or items list
-function show_info(caption, context, icon, element, delay, sound)
-	if not (GUI and GUI:IsShown()) then
-		return false
+-- Determine if end game task has been reached or should be given:
+function drx_sl_is_not_endgame( a, b )
+	return not drx_sl_is_endgame( )
+end
+
+-- Initiate storyline task:
+function drx_sl_text_honcho_has_storyline_task_to_give( a, b )
+
+	local npc = who_is_npc( a, b )
+	local task_section = axr_task_manager and axr_task_manager.drx_sl_generate_random_sl_task( npc )
+	last_task_id = task_section
+	
+	-- Tronex, fix for task with info
+	if last_task_id then
+		axr_task_manager.trigger_job_func(last_task_id)
+		axr_task_manager.trigger_fetch_func(last_task_id)
 	end
 	
-	table.insert(GUI.info_queue , { element=element , caption=caption , context=context , icon=icon , moment= (time_global() + (delay or 0)) , sound=sound })
+	return game.translate_string( task_section and axr_task_manager.get_task_job_description( task_section ) or "st_no_available_task" )
+
+end
+
+-- Initiate mechanic task:
+function drx_sl_text_mechanic_has_ordered_task_to_give( a, b )
+
+	local npc = who_is_npc( a, b )
+	local task_section = axr_task_manager and axr_task_manager.drx_sl_get_mechanic_task( npc )
+	last_task_id = task_section
+	
+	-- Tronex, fix for task with info
+	if last_task_id then
+		axr_task_manager.trigger_job_func(last_task_id)
+		axr_task_manager.trigger_fetch_func(last_task_id)
+	end
+	
+	return game.translate_string( task_section and axr_task_manager.get_task_job_description( task_section ) or "st_no_available_task" )
+
+end
+
+-- Initiate a change factions task:
+function drx_sl_text_npc_has_change_factions_task_to_give( a, b )
+
+	local npc = who_is_npc( a, b )
+	local task_section = axr_task_manager and axr_task_manager.drx_sl_generate_change_factions_task( npc )
+	last_task_id = task_section
+	return game.translate_string( task_section and axr_task_manager.get_task_job_description( task_section ) or "st_no_available_task" )
+
+end
+
+-- Fetch storyline task text:
+function drx_sl_text_fetch_task( a, b )
+
+	axr_task_manager.trigger_fetch_func( last_task_id )
+
+	local text = game.translate_string( last_task_id and axr_task_manager.get_fetch_task_description( last_task_id ) or "st_about_fetch_task_default" )
+
+	return string.format( text, _FETCH_TEXT or "" ) or ""
+
+end
+
+-- End of storyline task text:
+function drx_sl_text_task_finish( a, b )
+
+	local npc = who_is_npc( a, b )
+
+	local task_section = axr_task_manager and axr_task_manager.drx_sl_get_finished_task( npc )
+	return game.translate_string( task_section and axr_task_manager.get_task_complete_text( task_section ) or ("st_default_task_finished_" .. math.random( 1, 3 )) )
+
+end
+
+-- End of change factions task text:
+function drx_sl_text_cf_task_finish( a, b )
+
+	local npc = who_is_npc( a, b )
+
+	local task_section = axr_task_manager and axr_task_manager.drx_sl_get_finished_cf_task( npc )
+	return game.translate_string( task_section and axr_task_manager.get_task_complete_text( task_section ) or ("st_default_task_finished_" .. math.random( 1, 3 )) )
+
+end
+
+-- End of game text:
+function drx_sl_text_end_game( a, b )
+
+	local npc = who_is_npc( a, b )
+
+	local text_list = {}
+	local i = 1
+	while ( true ) do
+		local text_id = (load_var( db.actor, "drx_sl_start_task", "" ) .. "_endgame_" .. i)
+		local end_game_text = game.translate_string( text_id )
+		if ( end_game_text and end_game_text ~= "" and end_game_text ~= ("_endgame_" .. i) and end_game_text ~= text_id ) then
+			table.insert( text_list, end_game_text )
+		else
+			break
+		end
+		i = (i + 1)
+	end
+
+	if ( #text_list < 1 ) then
+		return game.translate_string( "drx_sl_default_endgame" )
+	end
+
+	return text_list[math.random( 1, #text_list )]
+
+end
+
+-- Set current storyline task to complete:
+function drx_sl_set_finished_task_complete( a, b )
+
+	-- Set current task to complete:
+	local npc = who_is_npc( a, b )
+	axr_task_manager.drx_sl_set_finished_task_complete( npc )
+
+	-- Give actor meet next honcho task:
+	xr_effects.drx_sl_meet_random_honcho( )
+
+end
+
+-- Set current storyline task to complete:
+function drx_sl_set_finished_task_complete_endgame( a, b )
+
+	-- Set current task to complete:
+	local npc = who_is_npc( a, b )
+	axr_task_manager.drx_sl_set_finished_task_complete( npc )
+
+	-- Give actor end game task:
+	xr_effects.drx_sl_find_wish_granter( )
+
+end
+
+-- Set current change faction task to complete:
+function drx_sl_set_finished_cf_task_complete( a, b )
+
+	-- Set current task to complete:
+	local npc = who_is_npc( a, b )
+	axr_task_manager.drx_sl_set_finished_cf_task_complete( npc )
+
+end
+
+-- Determine whether or not a npc has an available task:
+function npc_has_ordered_task_to_give( a, b )
+
+	local npc = who_is_npc( a, b )
+	return last_task_id ~= nil or false
+
+end
+
+-- Text to display when a npc has a task to give:
+function text_npc_has_ordered_task_to_give( a, b )
+
+	local npc = who_is_npc( a, b )
+	local task_section = axr_task_manager and axr_task_manager.get_first_available_task( npc )
+	last_task_id = task_section
+	return game.translate_string( task_section and axr_task_manager.get_task_job_description( task_section ) or "st_no_available_task" )
+
+end
+
+-- Text to display when a npc has a simulation task to give:
+function text_sim_npc_has_ordered_task_to_give( a, b )
+
+	local npc = who_is_npc( a, b )
+	local task_section = axr_task_manager and axr_task_manager.get_first_available_task( npc, nil, true )
+	last_task_id = task_section
+	return game.translate_string( task_section and axr_task_manager.get_task_job_description( task_section ) or "st_no_available_task" )
+
+end
+
+-- Text to display when a task is finished:
+function text_task_finish( a, b )
+
+	local npc = who_is_npc( a, b )
+	local task_section = axr_task_manager and axr_task_manager.get_first_finished_task( npc )
+	return game.translate_string( task_section and axr_task_manager.get_task_complete_text( task_section ) or "st_default_task_finished_" .. math.random( 1, 3 ) )
+
+end
+
+-- Text to display when a simulation task is finished:
+function text_sim_task_finish( a, b )
+
+	local npc = who_is_npc( a, b )
+	local task_section = axr_task_manager and axr_task_manager.get_first_finished_task( npc, true )
+	return game.translate_string( task_section and axr_task_manager.get_task_complete_text( task_section ) or "st_default_task_finished_" .. math.random( 1, 3 ) )
+
+end
+
+-- Determine whether or not the task is a fetch task:
+function task_is_fetch_task( a, b )
+
+	local npc = who_is_npc( a, b )
+	local task_id = last_task_id  --axr_task_manager.get_first_available_task(npc)
+	if not ( task_id ) then
+		return false
+	end
+	return axr_task_manager.get_fetch_task_description( task_id ) ~= nil
+
+end
+
+-- Determine whether or not the task is a fetch task:
+function not_task_is_fetch_task( a, b )
+
+	return not task_is_fetch_task( a, b )
+
+end
+
+-- Clear skipped tasks:
+function npc_clear_skipped_tasks( a, b )
+
+	if ( axr_task_manager ) then
+		axr_task_manager.clear_skipped_tasks( )
+	end
+
+end
+
+-- Determine if the actor has a PDA:
+function condition_actor_has_pda( a, b )
+
+	return db.actor:object( "itm_pda_common") or db.actor:object( "itm_pda_uncommon" ) or db.actor:object( "itm_pda_rare" ) or false
+
+end
+
+-- Check if actor has finished task:
+function actor_has_finished_ordered_task( a, b )
+
+	local npc = who_is_npc( a, b )
+	local tsk = axr_task_manager and axr_task_manager.get_first_finished_task( npc )
+	if ( tsk == nil ) then
+		return false
+	end
 	return true
-end
-function show_relocated_item(typ, item, amount)
--- To show item icon on dialog by relocate item functions. No dialog means show them as news
--- Dialog UI waits half a second to show the items, so when relocating happens in sequence, all of them will show up in the same in/out list
 
-	if db.actor == nil then return false end
-	if not (item and ini_sys:section_exist(item)) then 
-		printe("!ERROR: relocate_item - section %s does not exist",item)
-		return false
-	end
-	
-	-- Talking -> Showcase
-	if GUI and GUI:IsShown() then
-		amount = amount or 1
-		if (typ == "in") then
-			local c = #GUI.item_listing.inv_in + 1
-			for i=c,c+(amount-1) do
-				GUI.item_listing.inv_in[i] = item
-				GUI.item_listing.trigger = time_global()
-			end
-		else
-			local c = #GUI.item_listing.inv_out + 1
-			for i=c,c+(amount-1) do
-				GUI.item_listing.inv_out[i] = item
-				GUI.item_listing.trigger = time_global()
-			end
-		end
-		
-	-- Not talking -> News
-	else
-		amount = amount or 1
-		local news_text = item and ui_item.get_sec_name(item) or ""
-		local news_caption = (typ == "in") and "general_in_item" or "general_out_item"
-		local news_ico = (typ == "in") and "ui_inGame2_Predmet_poluchen" or "ui_inGame2_Predmet_otdan"
-		if (amount > 1) then
-			news_text = news_text .. " x" .. amount
-		end
-		
-		db.actor:give_game_news( game.translate_string(news_caption), news_text, news_ico, 0, 3000)
-	end
-end
-function show_relocated_item_list(typ, item_list)
--- To show item list icons on dialog. item_list is a table that contains item sections
-	if not (db.actor and item_list) then
-		return
-	end
-	
-	-- Talking -> Showcase
-	if not (GUI and GUI:IsShown()) then
-		return false
-	end
-	
-	-- Talking -> Showcase
-	if (typ == "in") then
-		GUI.item_listing.inv_in = item_list
-	else
-		GUI.item_listing.inv_out = item_list
-	end
-	GUI.item_listing.trigger = time_global()
 end
 
+-- Check if actor has finished task:
+function actor_has_not_finished_ordered_task( a, b )
 
-----------------------------------------------------------------------
--- UI
-----------------------------------------------------------------------
-class "UIDialog" (CUIScriptWnd)
+	return not actor_has_finished_ordered_task( a, b )
 
-function UIDialog:__init() super()
-	self.ID            = false
-	self.sec           = false
-	self.name          = false
-	self.icon          = false
-	self.dialogs       = {}
-	self.character     = {}
-	self.start_dialogs = {}
-
-	self.face_to_face  = true
-	self.is_npc        = false
-	self.offline       = false
-	self.pos           = false
-	
-	self.D             = false
-	self.N             = false
-	self.Q             = {}
-	self.Q_all		   = {}
-	self.QW            = false
-
-	self.tg_npc        = 0
-	self.tg_npc_rate   = 1000
-	self.tg_up         = 0
-	self.tg_up_rate    = 1000
-	
-	self.item_boxes    = {}
-	self.item_listing  = { delay= 500 , trigger= false, inv_in= {} , inv_out= {} }
-	self.info_queue    = {}
-
-	self:InitControls()
 end
 
-function UIDialog:__finalize()
+-- Check if actor has finished task:
+function actor_sim_has_finished_ordered_task( a, b )
+
+	local npc = who_is_npc( a, b )
+	return axr_task_manager and axr_task_manager.get_first_finished_task( npc, true ) ~= nil or false
+
 end
 
-function UIDialog:InitControls()
-	self:SetWndRect			(Frect():set(0,0,1024,768))
-	self:SetAutoDelete(true)
-	
-	self.xml				= CScriptXmlInit()
-	local xml = self.xml
-	xml:ParseFile			("talk.xml")
+-- Check if actor has finished task:
+function actor_sim_has_not_finished_ordered_task( a, b )
 
-	self.dialog					= xml:InitStatic("main", self)
-	self.answers_list 			= xml:InitScrollView("answers_list", self.dialog)
-	self.questions_list 		= xml:InitScrollView("questions_list", self.dialog)
-	self.item_info 				= utils_ui.UIInfoItem(self, 1000)
-	
-	self.ele_q = {}
+	return not actor_sim_has_finished_ordered_task( a, b )
+
 end
 
-function UIDialog:Reset(npc, distant, name, icon)
-	self:Print("$", "", "Reset for: %s", npc:name())
-	
-	if enable_debug and enable_debug_clear_log then
-		get_console():execute("clear_log")
-	end
+-- Set current simulation task to complete:
+function npc_sim_set_finished_task_complete( a, b )
 
-	-- main data
-	empty_table(self.character)
-	empty_table(self.dialogs)
-	empty_table(self.info_queue)
+	local npc = who_is_npc( a, b )
+	axr_task_manager.set_finished_task_complete( npc, true )
 
-	self.offline = (type(npc.id) == "number")
-	self.is_npc = IsStalker(npc)
-	self.face_to_face = (not self.offline) and (distant ~= true) and true or false
-	
-	self.ID = self.offline and npc.id or npc:id()
-	self.sec = self.offline and npc:section_name() or npc:section()
-	self.name = name or false
-	self.icon = icon or false
-	
-	-- special case for Sid
-	if special_characters[self.sec] then
-		self.sec = special_characters[self.sec]
-		self.is_npc = true
-	end
-	
-	-- look at NPC
-	if self.face_to_face and self.is_npc then
-		self.pos = npc:bone_position("bip01_head")
-		db.actor:actor_look_at_point(self.pos)
-	end
-	
-	self.answers_list:Clear()
-	self.questions_list:Clear()
-	for i,b in ipairs(self.item_boxes) do
-		b.active = false
-	end
-	
-	-- Preparing character dialogs
-	local dls = character_list[self.sec]
-	local dls_id = character_id_list[self.ID]
-	
-	-- start dialogs
-	if dls_id and dls_id.start_dialog then
-		self.character.start_dialog = dup_table(dls_id.start_dialog)
-	else
-		self.character.start_dialog = {}
-	end
-	if dls and dls.start_dialog and (not (dls_id and dls_id.override_start_dialog)) then
-		for i,d in ipairs(dls.start_dialog) do
-			table_insert( self.character.start_dialog , d )
-		end
-	end
-	if is_empty(self.character.start_dialog) then
-		self.character.start_dialog = default_start_dialog and {{ default_start_dialog }}
-	end
-	
-	-- dialog dialogs
-	if dls_id and dls_id.actor_dialog then
-		self.character.actor_dialog = dup_table(dls_id.actor_dialog)
-	else
-		self.character.actor_dialog = {}
-	end
-	if dls and dls.actor_dialog and (not (dls_id and dls_id.override_actor_dialog)) then
-		for i,d in ipairs(dls.actor_dialog) do
-			table_insert( self.character.actor_dialog , d )
-		end
-	end
-	if is_empty(self.character.actor_dialog) then
-		self.character.actor_dialog = default_actor_dialog and {{ default_actor_dialog }}
-	end
-	
-	-- management data
-	self.queue = false
-	self.D = false
-	self.N = false
-	self.Q = {}
-	
-	-- can't continue without character dialogs
-	if (not self.character) then
-		self:Close()
-	end
-	
-	self:Move_Start()
 end
 
-function UIDialog:Update()
-	CUIScriptWnd.Update(self)
-	
-	-- Queue Conversation
-	if self.queue then
-		local valid = type(self.queue) == "table"
-		self:Print("$", "", "Shift queue to phrase")
-		
-		local dialog    = valid and self.queue[1]
-		local node_last = valid and self.queue[2]
-		local node_now  = valid and self.queue[3]
-		local who       = valid and self.queue[4]
-		self.queue = nil
-		if valid then
-			self:Move_Phrase(dialog, node_last, node_now, who)
-		end
-		
-	elseif (self.queue == false) then
-		self:Print("$", "", "Shift queue to main", valid)
-		self.queue = nil
-		self:Move_Main()
-	end
-	
+-- Give player storyline task:
+function drx_sl_give_sl_task( a, b )
 
----------------------------------
-	local tg = time_global()
----------------------------------
-	
-	-- Capture item list to show on dialog
-	if self.item_listing.trigger and (tg - self.item_listing.trigger > self.item_listing.delay) then
-		self.item_listing.trigger = false
-		
-		if is_not_empty(self.item_listing.inv_out) then
-			self:Show_Relocated_Items("out", self.item_listing.inv_out)
-			empty_table(self.item_listing.inv_out)
-		end
-		if is_not_empty(self.item_listing.inv_in) then
-			self:Show_Relocated_Items("in", self.item_listing.inv_in)
-			empty_table(self.item_listing.inv_in)
-		end
+	disable_info( ("drx_sl_meet_honcho_" .. load_var( db.actor, "drx_sl_current_honcho", "" )) )
+	local npc = who_is_npc( a, b )
+	local task_section = axr_task_manager and axr_task_manager.drx_sl_generate_random_sl_task( npc, nil, true )
+	while last_task_id and task_section ~= nil and task_section ~= last_task_id do
+		task_section = axr_task_manager.drx_sl_generate_random_sl_task( npc, true, true )
 	end
-	
-	-- Send info from queue
-	for i,info in ipairs(self.info_queue) do
-		if (tg >= info.moment) then
-			self:Show_Answer(info.caption, info.context, info.icon, info.element, info.sound)
-			table.remove(self.info_queue, i)
+
+	if ( last_task_id ) then
+		printf( ("DRX SL storyline task started: " .. last_task_id) )
+		local se_obj = npc and alife( ):object( npc:id( ) )
+		local giver_id = se_obj and (se_obj.group_id ~= 65535 and se_obj.group_id or se_obj.id)
+		save_var( db.actor, "drx_sl_current_task", last_task_id )
+		task_manager.get_task_manager( ):give_task( last_task_id, giver_id )
+
+		-- Register current task giver:
+		if ( (not string.find( "meet_task", last_task_id )) and (not string.find( "find_wish_granter", last_task_id )) ) then
+			local giver_task_count = (load_var( db.actor, ("drx_sl_task_giver_" .. giver_id), 0 ) + 1)
+			save_var( db.actor, ("drx_sl_task_giver_" .. giver_id), giver_task_count )
+			printf( ("DRX SL: drx_sl_task_giver_" .. giver_id .. " registered (" .. giver_task_count .. " outstanding)") )
 		end
+
+		last_task_id = nil
+
 	end
-	
-	-- Updating item info box
-	local found_cell = false
-	for i,b in ipairs(self.item_boxes) do
-		if b.active then
-			found_cell = found_cell or b.CC:Update(self.item_info)
+
+end
+
+-- Give player change factions task:
+function drx_sl_give_cf_task( a, b )
+
+	local npc = who_is_npc( a, b )
+	local task_section = axr_task_manager and axr_task_manager.drx_sl_generate_change_factions_task( npc, nil, true )
+	while last_task_id and task_section ~= nil and task_section ~= last_task_id do
+		task_section = axr_task_manager.drx_sl_generate_change_factions_task( npc, true, true )
+	end
+
+	if ( last_task_id ) then
+		printf( ("DRX SL change factions task started: " .. last_task_id) )
+		local se_obj = npc and alife( ):object( npc:id( ) )
+		local giver_id = se_obj and (se_obj.group_id ~= 65535 and se_obj.group_id or se_obj.id)
+		task_manager.get_task_manager( ):give_task( last_task_id, giver_id )
+
+		-- Register current task giver:
+		local giver_task_count = (load_var( db.actor, ("drx_sl_task_giver_" .. giver_id), 0 ) + 1)
+		save_var( db.actor, ("drx_sl_task_giver_" .. giver_id), giver_task_count )
+		printf( ("DRX SL: drx_sl_task_giver_" .. giver_id .. " registered (" .. giver_task_count .. " outstanding)") )
+
+		last_task_id = nil
+
+	end
+
+end
+
+-- Give the player the current dynamic task:
+function drx_sl_give_mechanic_task( a, b )
+
+	local npc = who_is_npc( a, b )
+	local task_section = axr_task_manager and axr_task_manager.drx_sl_get_mechanic_task( npc, nil, true )
+	while last_task_id and task_section ~= nil and task_section ~= last_task_id do
+		task_section = axr_task_manager.drx_sl_get_mechanic_task( npc, true, true )
+	end
+
+	if ( last_task_id ) then
+		printf( ("DRX SL mechanic task started: " .. last_task_id) )
+		local se_obj = npc and alife( ):object( npc:id( ) )
+		local giver_id = se_obj and (se_obj.group_id ~= 65535 and se_obj.group_id or se_obj.id)
+		task_manager.get_task_manager( ):give_task( last_task_id, giver_id )
+		local giver_task_count = (load_var( db.actor, ("drx_sl_task_giver_" .. giver_id), 0 ) + 1)
+		save_var( db.actor, ("drx_sl_task_giver_" .. giver_id), giver_task_count )
+		printf( ("DRX SL: drx_sl_task_giver_" .. giver_id .. " registered (" .. giver_task_count .. " outstanding)") )
+		last_task_id = nil
+	end
+
+end
+
+-- Give the player the current dynamic task:
+function npc_give_last_task_id( a, b )
+
+	local npc = who_is_npc( a, b )
+	local task_section = axr_task_manager and axr_task_manager.get_first_available_task( npc, nil, true )
+	while last_task_id and task_section ~= nil and task_section ~= last_task_id do
+		task_section = axr_task_manager.get_first_available_task( npc, true, true )
+	end
+
+	if ( last_task_id ) then
+		printf( ("DRX SL dynamic task started: " .. last_task_id) )
+		local se_obj = npc and alife( ):object( npc:id( ) )
+		local giver_id = se_obj and (se_obj.group_id ~= 65535 and se_obj.group_id or se_obj.id)
+		task_manager.get_task_manager( ):give_task( last_task_id, giver_id )
+		local giver_task_count = (load_var( db.actor, ("drx_sl_task_giver_" .. giver_id), 0 ) + 1)
+		save_var( db.actor, ("drx_sl_task_giver_" .. giver_id), giver_task_count )
+		printf( ("DRX SL: drx_sl_task_giver_" .. giver_id .. " registered (" .. giver_task_count .. " outstanding)") )
+		last_task_id = nil
+	end
+
+end
+
+-- Give the player the current simulation task:
+function npc_sim_give_last_task_id( a, b )
+
+	local npc = who_is_npc( a, b )
+	local task_section = axr_task_manager and axr_task_manager.get_first_available_task( npc, nil, true )
+	while last_task_id and task_section ~= nil and task_section ~= last_task_id do
+		task_section = axr_task_manager.get_first_available_task( npc, true, true )
+	end
+
+	if ( last_task_id ) then
+
+		-- Give player task:
+		printf( ("DRX SL simulation task started: " .. last_task_id) )
+		local se_obj = npc and alife( ):object( npc:id( ) )
+		local giver_id = se_obj and (se_obj.group_id ~= 65535 and se_obj.group_id or se_obj.id)
+		task_manager.get_task_manager( ):give_task( last_task_id, giver_id )
+		last_task_id = nil
+
+		-- Register task giver:
+		local giver_task_count = (load_var( db.actor, ("drx_sl_task_giver_" .. giver_id), 0 ) + 1)
+		save_var( db.actor, ("drx_sl_task_giver_" .. giver_id), giver_task_count )
+		printf( ("DRX SL: drx_sl_task_giver_" .. giver_id .. " registered (" .. giver_task_count .. " outstanding)") )
+
+		-- Register hostage task giver:
+		if ( load_var( db.actor, "drx_sl_hostage_giver_needed", false ) ) then
+			save_var( db.actor, ("drx_sl_hostage_giver_" .. giver_id), true )
+			save_var( db.actor, "drx_sl_hostage_giver_needed", false )
+			printf( ("DRX SL: drx_sl_hostage_giver_" .. giver_id .. " registered") )
 		end
+
 	end
-	if (not found_cell) then
-		self.item_info:Update()
-	end
-	
----------------------------------	
-	-- Updating NPC
-	if (tg > self.tg_npc) then
-		self.tg_npc = tg + self.tg_npc_rate
-		
-	---------------------------------
-		-- Close dialog if NPC doesn't exist
-		local npc = self:Get_NPC()
-		if (not npc) then
-			self:Close()
+
+end
+
+-- Give the player the first available dynamic task:
+function npc_give_first_available_task( a, b )
+
+	if ( axr_task_manager ) then
+		local npc = who_is_npc( a, b )
+		local task_id = axr_task_manager.npc_give_first_available_ordered_task( npc )
+		if ( not task_id ) then
 			return
 		end
-		
-		-- Keep looking at NPC, move cam if NPC moved
-		if self.face_to_face and self.is_npc then
-			local pos = npc:bone_position("bip01_head")
-			if (self.pos:distance_to(pos) > 0.5) then
-				self.pos = pos
-				db.actor:actor_look_at_point(self.pos)
-			end
-		end
-		
-		-- Close dialog if NPC is dead
-		if self.is_npc and (not npc:alive()) then
-			self:Close()
-			return
-		end
-		
-		-- Close dialog if NPC is far
-		if self.face_to_face and (distance_between(npc, db.actor) > max_partner_distance) then
-			self:Close()
-			return
-		end
+		printf( ("DRX SL dynamic task started: " .. task_id) )
+		local se_obj = npc and alife( ):object( npc:id( ) )
+		local giver_id = se_obj and (se_obj.group_id ~= 65535 and se_obj.group_id or se_obj.id)
+		local giver_task_count = (load_var( db.actor, ("drx_sl_task_giver_" .. giver_id), 0 ) + 1)
+		save_var( db.actor, ("drx_sl_task_giver_" .. giver_id), giver_task_count )
+		printf( ("DRX SL: drx_sl_task_giver_" .. giver_id .. " registered (" .. giver_task_count .. " outstanding)") )
 	end
-	
----------------------------------
-	-- Update Dialogs
-	if (tg > self.tg_up) then
-		self.tg_up = tg + self.tg_up_rate
 
-		-- Update main dialog list if a precondition result is changed
-		if self.QW then
-			local need_refresh = false
-			for i,t in ipairs(self.Q_all) do
-				local precond_now = self:Process_Preconditions(t.dialog)
-				if precond_now ~= t.precond then
-					need_refresh = true
-				end
-			end
-			
-			if need_refresh then
-				self:Move_Main()
-			end
-			
-		-- Update dialog phrases list if a precondition result is changed
-		else
-			local need_refresh = false
-			local sample
-			for i,t in ipairs(self.Q_all) do
-				local precond_now = self:Process_Preconditions(t.dialog, t.node_now, t.node_new, t.who_next)
-				if precond_now ~= t.precond then
-					need_refresh = true
-				end
-				if (not sample) then
-					sample = t
-				end
-			end
-			
-			if need_refresh and sample then
-				self:Move_Phrase(sample.dialog, sample.node_last, sample.node_now, sample.who)
-			end
+end
+
+-- Give the player the first available simulation task:
+function npc_sim_give_first_available_task( a, b )
+
+	if ( axr_task_manager ) then
+		local npc = who_is_npc( a, b )
+		local task_id = axr_task_manager.npc_give_first_available_ordered_task( npc, true )
+		if ( not task_id ) then
+			return
 		end
+		printf( ("DRX SL simulation task started: " .. task_id) )
+		local se_obj = npc and alife( ):object( npc:id( ) )
+		local giver_id = se_obj and (se_obj.group_id ~= 65535 and se_obj.group_id or se_obj.id)
+		local giver_task_count = (load_var( db.actor, ("drx_sl_task_giver_" .. giver_id), 0 ) + 1)
+		save_var( db.actor, ("drx_sl_task_giver_" .. giver_id), giver_task_count )
+		printf( ("DRX SL: drx_sl_task_giver_" .. giver_id .. " registered (" .. giver_task_count .. " outstanding)") )
+	end
+
+end
+
+
+
+-- npcs and trade and repair
+function npc_is_trader(a,b)
+    local npc = who_is_npc(a, b)
+	if hide_hud_inventory() then
+		npc:start_trade(db.actor)
 	end
 end
 
--- Management
-function UIDialog:Move_Start()
-	self:Print("$", "", "Move_Start")
-	
-	-- begin with start_dialog
-	local st = engine_start_dialog[self.ID]
-	local dls = (st and {{ st }}) or self.character.start_dialog
-	
-	if dls then
-		for i,p in ipairs(dls) do
-		
-			-- pick random dialog from the same order group
-			local dialog = p[ random_key_table(p) ]
-			
-			-- if preconditions are met, initiate this dialog
-			if self:Process_Preconditions(dialog) then
-				self:Move_Phrase(dialog, false, "0", false)
-				return
-			end
-		end
+function npc_is_tech(a,b)
+    local npc = who_is_npc(a,b)
+	if hide_hud_inventory() then
+		npc:start_upgrade(db.actor)
 	end
-	
-	-- In case all start dialogs failed, use the default
-	self:Move_Phrase(default_start_dialog, false, "0", false)
 end
 
-function UIDialog:Move_Main()
-	self:Print("$", "", "Move_Main")
-	
-	-- resetting
-	self.N = false
-	self.D = false
-	for dialog, dl in pairs(self.dialogs) do
-		if dl.functor then
-			dl.phrases = nil -- to generate new dynamic dialog on going to main body
+function rescue_hostage(a,b)
+	local npc = who_is_npc(a,b)
+	local squad = get_object_squad(npc)
+	if (squad) then
+		for k in squad:squad_members() do
+			se_save_var(k.id,k.object:name(),"companion_cannot_teleport",nil)
+			axr_task_manager.hostages_by_id[k.id] = nil
 		end
-	end
-	
-	-- gather dialogs
-	empty_table(self.Q_all)
-	local dialog_valid = {}
-	
-	local dls = self.character.actor_dialog
-	if dls then
-		for i,p in ipairs(dls) do
-			-- pick random dialog from the same order group
-			local dialog = p[ random_key_table(p) ]
-			
-			-- Collect dialog if preconditions are met
-			local precond = false
-			if self:Process_Preconditions(dialog) then
-				--printf("inserted dialog: %s", dialog)
-				table_insert(dialog_valid, dialog)
-				precond = true
-			end
-			
-			local t = {}
-			t.precond = precond
-			t.dialog = dialog
-			table_insert(self.Q_all, t)
-		end
-	end
-	if is_empty(dialog_valid) then
-		dialog_valid = { default_actor_dialog }
-		self.Q_all = { { dialog = default_actor_dialog , precond = true , index = 1 } }
-	end
-	
-	-- show questions
-	self.questions_list:Clear()
-	
-	for i,dialog in ipairs(dialog_valid) do
-		local text = self:Get_Text(dialog, false, "0", true)
-		if text then
-			self:Show_Question( game.translate_string(text), i)
-		end
-	end
-	
-	self.QW = true
-	self.Q = dialog_valid
-end
-
-function UIDialog:Move_Phrase(dialog, node_last, node_now, who)
-	-- this function will be called to move to next phrase
-	-- return false -> failed to move -> break to main dialog
-	-- return true -> successfully moved -> return current node
-	local data = str_data(dialog, node_last, node_now, who)
-	
-	if (not dialog) then
-		dialog = self.D
-	end
-	self.D = dialog
-	
-	if (node_last == nil) then
-		node_last = self.N
-	end
-	self:Print("$", data, "Move_Phrase [%s] -> [%s]", node_last, node_now)
-	
-	-- Get dialog tree and current phrase
-	local dlp = self:Get_Dialog(dialog, node_now)
-	if (not dlp) then
-		self:Print("=", data, "Move_Phrase | node [%s] not found", node_now)
-		self.queue = false
-		return
-	end
-	
-	-- We need to push text when it's the first node of start dialog by NPC
-	if (not who) and (node_now == "0") then
-		local text = self:Get_Text(dialog, node_last, node_now, who)
-		if text then
-			self:Show_Answer(self:Get_NPC_Name(), game.translate_string(text), self:Get_NPC_Icon(), "other_answer_item")
-			self:Print("=", data, "Answer by NPC on node [%s]", node_now)
-		end
-	end
-	
-	-- Do actions of current node if they exist
-	self:Process_Actions(dialog, node_now, node_now, who)
-	
------------ NEXT STAGE
-	local who_next = not who
-	
-	-- Mark dialogs with "run once" prop on this node as finished, to never run them again
-	local run_once = self:Get_Dialog_Property(dialog, "run_once")
-	if (node_now == run_once) then
-		dialog_finished[dialog] = true
-	end
-	
-	-- get next nodes
-	local node_next = dlp.next
-	if (not node_next) then
-		self:Print("=", data, "No next nodes found -> return false")
-		self.queue = false
-		
-		-- Mark dialogs with unspecified "run once" prop as finished once dialog is over, to never run them again
-		if (run_once == true) then
-			dialog_finished[dialog] = true
-		end
-		return
-	end
-	
-	-- get next valid nodes
-	empty_table(self.Q_all)
-	local node_valid = {}
-	for i,node_new in ipairs(node_next) do
-		
-		local precond = false
-		if self:Process_Preconditions(dialog, node_now, node_new, who_next) then
-			table_insert(node_valid, node_new)
-			precond = true
-		end
-		
-		local t = {}
-		t.precond = precond
-		t.dialog = dialog
-		t.node_last = node_last
-		t.node_now = node_now
-		t.node_new = node_new
-		t.who = who
-		t.who_next = who_next
-		
-		table_insert(self.Q_all, t)
-	end
-	self:Print("=", data, "Next nodes gathered: %s", str_nodes(node_valid))
-	
-	
-	-- actor turn to speak -> ask questions
-	if who_next then
-		self:Print("=", data, "Speaker: Actor")
-		
-		self.questions_list:Clear()
-		
-		-- Post questions
-		local text_found = false
-		for i,node_new in ipairs(node_valid) do
-			local text = self:Get_Text(dialog, node_now, node_new, who_next)
-			if text then
-				text_found = true
-				self:Show_Question( game.translate_string(text), i)
-			end
-		end
-		
-		-- Questions are valid -> preserve them for callback
-		if text_found then
-			self:Print("=", data, "Successfully moved, questions posted")
-			self.QW = false
-			self.Q = node_valid
-			self.N = node_now
-			
-			self.queue = true
-			return
-			
-		-- No text was there -> randomize
-		else
-			local node_rand = node_valid[math.random(#node_valid)]
-			self:Print("=", data, "No text found -> move to random node [%s]", node_rand)
-			
-			self.queue = { dialog, node_now, node_rand, who_next}
-			return
-		end
-		
-	-- npc turn to speak -> answer
 	else
-		self:Print("=", data, "Speaker: NPC")
-		
-		for i,node_new in ipairs(node_valid) do
-			local text = self:Get_Text(dialog, node_now, node_new, who_next)
-			if text then
-				self:Show_Answer(self:Get_NPC_Name(), game.translate_string(text), self:Get_NPC_Icon(), "other_answer_item")
-				
-				self:Print("=", data, "Answer by NPC on node [%s]", node_new)
-				self.queue = {dialog, node_now, node_new, who_next}
-				return
-			end
-		end
-		
-		-- No text was there -> randomize
-		local node_rand = node_valid[math.random(#node_valid)]
-		self:Print("=", data, "No text found -> move to random node [%s]", node_rand)
-		
-		self.queue = {dialog, node_now, node_rand, who_next}
-		return
-	end
-end
-
-function UIDialog:Ask_Selected_Question(index)
-	local value = self.Q[index]
-	if (not value) then
-		self:Print("-", "", "Ask_Selected_Question | index (%s) has no assigned question", index)
-		return
-	end
-	self:Print("-", "", "_____________Ask_Selected_Question | index: %s - value: %s - type: %s", index, value, type(value))
-		
-	-- In case it's a selected dialog
-	if (self.QW == true) then
-		local text = self:Get_Text(value, false, "0", true)
-		self:Show_Answer( game.translate_string("st_actor_generic_name"), game.translate_string(text), db.actor:character_icon(), "actor_answer_item")
-		
-		local node = self:Move_Phrase(value, false, "0", true)
-		if (not node) then
-			--self:Move_Main()
-		end
-		
-	-- In case it's a selected phrase
-	elseif (self.QW == false) then
-		local text = self:Get_Text(self.D, self.N, value, true)
-		self:Show_Answer( game.translate_string("st_actor_generic_name"), game.translate_string(text), db.actor:character_icon(), "actor_answer_item")
-		
-		local node = self:Move_Phrase(self.D, self.N, value, true)
-		if (not node) then
-			--self:Move_Main()
+		local se_npc = alife_object(npc:id())
+		if (se_npc) then
+			se_save_var(se_npc.id,se_npc:name(),"companion_cannot_teleport",nil)
+			axr_task_manager.hostages_by_id[se_npc.id] = nil
 		end
 	end
 end
 
-function UIDialog:Process_Preconditions(dialog, node_last, node_now, who)
-	local data = str_data(dialog, node_last, node_now, who)
-	--self:Print("=", data,"Preconditions")
-	
-	local dl = self:Get_Dialog(dialog, node_now)
-	local conds = dl.precondition or dl.conds -- could be dialog or phrase preconditions
-	if conds then
-		for i,p in ipairs(conds) do
-			local key = random_key_table(p)
-			local value = p[key]
+-- Dynamic Ordered Task dialog
+-- AVAILABLE TASKS
+function generate_available_tasks(a,b)
+	local npc = who_is_npc(a, b)
+	axr_task_manager.generate_available_tasks(npc,nil)
+	--printf("generate_available_tasks %s",axr_task_manager.available_tasks[npc:id()] and #axr_task_manager.available_tasks[npc:id()])
+end
 
-			if (key == "has_info") and (not has_alife_info(value)) then
-				self:Print("~", data, "Precondition has_info (%s) is false", value)
-				return false
-				
-			elseif (key == "dont_has_info") and has_alife_info(value) then
-				self:Print("~", data, "Preconditions | dont_has_info (%s) is false", value)
-				return false
-				
-			elseif (key == "condition") then
-				if dl.precondition then
-					self:Print("=", data, "Preconditions | testing precondition (%s)", str_func2(value))
-					if (not self:Execute_Precondition(value) ) then
-						self:Print("~", data, "Preconditions | precondition (%s) is false", str_func2(value))
-						return false
-					end
-				elseif dl.conds then
-					self:Print("=", data, "Preconditions | testing condition (%s)", str_func2(value))
-					if (not self:Execute(value, dialog, node_last, node_now, who) ) then
-						self:Print("~", data, "Preconditions | condition (%s) is false", str_func2(value))
-						return false
-					end
-				end
-			end
+function sim_generate_available_tasks(a,b)
+	local npc = who_is_npc(a, b)
+	axr_task_manager.generate_available_tasks(npc,true)
+	--printf("sim_generate_available_tasks %s",axr_task_manager.available_tasks[npc:id()] and #axr_task_manager.available_tasks[npc:id()])
+end
+
+function text_npc_has_task(a,b)
+	local npc = who_is_npc(a, b)
+	local task_id = axr_task_manager.available_tasks[npc:id()] and axr_task_manager.available_tasks[npc:id()][1]
+	--printf("text_npc_has_task %s",task_id)
+
+	local on_job_descr = task_id and task_manager.task_ini:r_string_ex(task_id,"on_job_descr")
+	if (on_job_descr) then 
+		local cond = xr_logic.parse_condlist(db.actor,"task_manager","condlist",on_job_descr)
+		if (cond) then 
+			xr_logic.pick_section_from_condlist(db.actor,db.actor,cond)
 		end
 	end
 	
-	-- If dialog is marked to run once, and it happened before -> disable it
-	if dl.run_once and dialog and dialog_finished[dialog] then
-		self:Print("~", data, "Preconditions | dialog was set to run once")
-		return false
+	local fetch = task_id and task_manager.task_ini:r_string_ex(task_id,"fetch_descr")
+	if (fetch) then
+		axr_task_manager.trigger_fetch_func(task_id)
+		return strformat(game.translate_string(fetch),_FETCH_TEXT or "")
 	end
-	
-	self:Print("+", data, "Preconditions are valid")
-	return true
+
+	return game.translate_string(task_id and task_manager.task_ini:r_string_ex(task_id,"job_descr") or "st_no_available_task")
 end
 
-function UIDialog:Process_Actions(dialog, node_last, node_now, who)
-	local data = str_data(dialog, node_last, node_now, who)
-	--self:Print("=", data, "Actions")
-	
-	local dl = self:Get_Dialog(dialog, node_now)
-	local actions = dl.actions
-	if actions then
-		for i,p in ipairs(actions) do
-			local key = random_key_table(p)
-			local value = p[key]
+function npc_has_task(a,b)
+	local npc = who_is_npc(a, b)
+	--printf("npc_has_task %s",axr_task_manager.available_tasks[npc:id()] and axr_task_manager.available_tasks[npc:id()][1] ~= nil)
+	return axr_task_manager.available_tasks[npc:id()] and axr_task_manager.available_tasks[npc:id()][1] ~= nil
+end
 
-			if (key == "give_info") then
-				self:Print("+", data, "Process_Actions | give_info (%s)", value)
-				give_info(value)
-				
-			elseif (key == "disable_info") then
-				self:Print("+", data, "Process_Actions | disable_info (%s)", value)
-				disable_info(value)
-				
-			elseif (key == "action") then
-				self:Print("+", data, "Process_Actions | action (%s)", str_func2(value))
-				self:Execute(value, dialog, node_last, node_now, who)
-			
+function npc_give_task(a,b)
+	local npc = who_is_npc(a, b)
+	local task_id = axr_task_manager.available_tasks[npc:id()] and axr_task_manager.available_tasks[npc:id()][1]
+	if (task_id) then
+        task_manager.get_task_manager():give_task(task_id,npc:id())
+	end
+	--printf("npc_give_task %s",task_id)
+end
+
+function npc_skip_task(a,b)
+	local npc = who_is_npc(a, b)
+	if (axr_task_manager.available_tasks[npc:id()]) then
+		table.remove(axr_task_manager.available_tasks[npc:id()],1)
+	end
+	--printf("npc_skip_task %s",axr_task_manager.available_tasks[npc:id()] and #axr_task_manager.available_tasks[npc:id()])
+end
+
+-- FINISHED TASK TURN-IN DIALOG
+function actor_has_finished_task(a,b)
+	local npc = who_is_npc(a, b)
+
+	axr_task_manager.generate_finished_tasks(npc,nil)
+
+	--printf("actor_has_finished_task %s",axr_task_manager.finished_tasks[npc:id()] and axr_task_manager.finished_tasks[npc:id()][1] ~= nil)
+	return axr_task_manager.finished_tasks[npc:id()] and axr_task_manager.finished_tasks[npc:id()][1] ~= nil
+end
+
+function sim_actor_has_finished_task(a,b)
+	local npc = who_is_npc(a, b)
+
+	axr_task_manager.generate_finished_tasks(npc,true)
+
+	--printf("sim_actor_has_finished_task %s",axr_task_manager.finished_tasks[npc:id()] and axr_task_manager.finished_tasks[npc:id()][1] ~= nil)
+	return axr_task_manager.finished_tasks[npc:id()] and axr_task_manager.finished_tasks[npc:id()][1] ~= nil
+end
+
+function text_npc_task_finish(a,b)
+	local npc = who_is_npc(a, b)
+	local task_id = axr_task_manager.finished_tasks[npc:id()] and axr_task_manager.finished_tasks[npc:id()][1]
+	--printf("text_npc_task_finish %s",task_id)
+	return game.translate_string(task_id and task_manager.task_ini:r_string_ex(task_id,"task_complete_descr") or "st_default_task_finished_"..math.random(1,3))
+end
+
+-- Set current dynamic task to complete:
+function npc_set_finished_task_complete( a, b )
+
+	local npc = who_is_npc( a, b )
+	axr_task_manager.set_finished_task_complete( npc )
+
+end
+
+
+
+-- CANCEL TASKS
+
+function actor_has_ongoing_task(a,b)
+	local npc = who_is_npc(a, b)
+	axr_task_manager.generate_ongoing_tasks(npc,nil)
+	return axr_task_manager.ongoing_tasks[npc:id()] and axr_task_manager.ongoing_tasks[npc:id()][1] ~= nil
+end
+
+function sim_actor_has_ongoing_task(a,b)
+	local npc = who_is_npc(a, b)
+	axr_task_manager.generate_ongoing_tasks(npc,true)
+	return axr_task_manager.ongoing_tasks[npc:id()] and axr_task_manager.ongoing_tasks[npc:id()][1] ~= nil
+end
+
+function text_npc_has_cancel_task(a,b)
+	local npc = who_is_npc(a, b)
+	local task_id = axr_task_manager.ongoing_tasks[npc:id()] and axr_task_manager.ongoing_tasks[npc:id()][1]
+	--printf("text_npc_has_cancel_task %s",task_id)
+
+	local text = task_id and game.translate_string(task_manager.task_ini:r_string_ex(task_id, "title"))
+	if not (text) then
+		return game.translate_string("st_task_none_active")
+	end
+
+	local fetch = task_id and task_manager.task_ini:r_string_ex(task_id,"fetch_descr")
+	if (fetch) then
+        local sec = load_var(db.actor,task_id.."_fetch")
+        if not (sec) then
+            return text or game.translate_string("st_task_none_active")
+        end
+		local name = ui_item.get_sec_name(sec)
+		return strformat(text,name or "")
+	end
+
+	return text
+end
+
+function npc_has_cancel_task(a,b)
+	local npc = who_is_npc(a, b)
+	--printf("npc_has_cancel_task %s",axr_task_manager.ongoing_tasks[npc:id()] and axr_task_manager.ongoing_tasks[npc:id()][1] ~= nil)
+	return axr_task_manager.ongoing_tasks[npc:id()] and axr_task_manager.ongoing_tasks[npc:id()][1] ~= nil
+end
+
+function npc_cancel_task(a,b)
+	local npc = who_is_npc(a, b)
+	local task_id = axr_task_manager.ongoing_tasks[npc:id()] and axr_task_manager.ongoing_tasks[npc:id()][1]
+	if (task_id) then
+        task_manager.get_task_manager():set_task_cancelled(task_id)
+	end
+	--printf("npc_cancel_task %s",task_id)
+end
+
+function npc_skip_cancel_task(a,b)
+	local npc = who_is_npc(a, b)
+	if (axr_task_manager.ongoing_tasks[npc:id()]) then
+		table.remove(axr_task_manager.ongoing_tasks[npc:id()],1)
+	end
+	--printf("npc_skip_cancel_task %s",axr_task_manager.ongoing_tasks[npc:id()] and #axr_task_manager.ongoing_tasks[npc:id()])
+end
+
+function text_actor_cancel_task(a,b)
+    local npc = who_is_npc(a, b)
+	local task_id = axr_task_manager.ongoing_tasks[npc:id()] and axr_task_manager.ongoing_tasks[npc:id()][1]
+    return game.translate_string(task_id and task_manager.task_ini:r_string_ex(task_id, "abandoned_reason") or "st_task_default_excuse_cancel_job")
+end
+
+function text_task_cancel(a,b)
+    local npc = who_is_npc(a, b)
+    local task_id = axr_task_manager.ongoing_tasks[npc:id()] and axr_task_manager.ongoing_tasks[npc:id()][1]
+    return game.translate_string(task_id and task_manager.task_ini:r_string_ex(task_id, "abandoned_reply") or "st_default_task_cancel_"..math.random(1,3))
+end
+
+-- This function allows Player to see NPC inventory as if it was a corpse
+function free_trade_with_npc(a,b)
+	local npc = who_is_npc(a, b)
+	if hide_hud_inventory() then
+		npc:use(db.actor)
+	end
+end
+
+-- Dynamic Broker dialog
+
+-- Determine if actor has valuable item:
+function condition_actor_has_valuable_item( a, b )
+
+-- 	local story_done = has_alife_info( "story_mode_disabled" ) or has_alife_info( "warlab_deactivate_generators_done" ) or false
+	local story_done = has_alife_info( "warlab_deactivate_generators_done" )
+
+	local items = {
+		["itm_pda_common"] = true,
+		["itm_pda_uncommon"] = true,
+		["itm_pda_rare"] = true,
+		--["main_story_1_quest_case"] = story_done,
+		--["main_story_2_lab_x18_documents"] = story_done,
+		--["main_story_3_lab_x16_documents"] = story_done,
+		--["main_story_4_lab_x10_documents"] = story_done,
+		--["main_story_5_lab_x8_documents"] = story_done,
+		--["main_story_6_jup_ug_documents"] = story_done,
+		--["main_story_7_mon_con_documents"] = story_done
+	}
+
+	for k,v in pairs( items ) do
+		if ( v == true and db.actor:object( k ) ) then
+			return true
+		end
+	end
+
+	return false
+
+end
+
+-- Text for if the player has an item that can be brokered:
+function text_actor_has_valuable_item( a, b )
+
+	local npc = who_is_npc( a, b )
+
+-- 	local story_done = has_alife_info( "story_mode_disabled" ) or has_alife_info( "warlab_deactivate_generators_done" ) or false
+	local story_done = has_alife_info( "warlab_deactivate_generators_done" )
+
+	local valuable = {
+		--["main_story_1_quest_case"] = story_done,
+		--["main_story_2_lab_x18_documents"] = story_done,
+		--["main_story_3_lab_x16_documents"] = story_done,
+		--["main_story_4_lab_x10_documents"] = story_done,
+		--["main_story_5_lab_x8_documents"] = story_done,
+		--["main_story_6_jup_ug_documents"] = story_done,
+		--["main_story_7_mon_con_documents"] = story_done
+	}
+
+	for k,v in pairs( valuable ) do
+		if ( v == true and db.actor:object( k ) ) then
+			return game.translate_string( "st_broker_query_valuable" )
+		end
+	end
+
+	local count = 0
+	local function itr( actor, itm )
+		local sec = itm:section( )
+		if ( sec == "itm_pda_common" or sec == "itm_pda_uncommon" or sec == "itm_pda_rare" ) then
+			count = (count + 1)
+		end
+	end
+
+	db.actor:iterate_inventory( itr, db.actor )
+
+	if ( count == 1 ) then
+		return game.translate_string( "st_broker_query_pda" )
+	end
+
+	return strformat( game.translate_string( "st_broker_query_pdas" ), count ) or game.translate_string( "st_broker_query_pda" )
+
+end
+
+-- Text for trading PDA:
+function text_trade_npc_pda(a,b)
+    local npc = who_is_npc(a, b)
+
+-- 	local story_done = has_alife_info("story_mode_disabled") or has_alife_info("warlab_deactivate_generators_done") or false
+	local story_done = has_alife_info( "warlab_deactivate_generators_done" )
+
+
+	local valuable = {
+		--["main_story_1_quest_case"] = story_done,
+		--["main_story_2_lab_x18_documents"] = story_done,
+		--["main_story_3_lab_x16_documents"] = story_done,
+		--["main_story_4_lab_x10_documents"] = story_done,
+		--["main_story_5_lab_x8_documents"] = story_done,
+		--["main_story_6_jup_ug_documents"] = story_done,
+		--["main_story_7_mon_con_documents"] = story_done
+	}
+
+	for k,v in pairs(valuable) do
+		local item = v == true and db.actor:object(k)
+		if (item) then 
+			-- xQd, don't transfer documents cu warfare trader inventory
+			local se_obj = alife_object(item:id())
+			local wf_trader
+			if not warfare.is_warfare_trader(npc) then
+				wf_trader = false
+				db.actor:transfer_item(item,npc)
 			else
-				printf("!UIDialog:Process_Actions | [%s] is not a valid action | %s", key, data)
+				wf_trader = true
+			end
+			news_manager.relocate_item(db.actor, "out", item:section())
+			relocate_money(npc, random_choice(10000,15000,20000,25000) , "in")
+			local name = ui_item.get_sec_name(sec)
+			if wf_trader == true then
+				alife_release(se_obj)
+			end
+			-- xQd end
+			return strformat(game.translate_string("st_broker_trade_valuable"),name)
+		end
+	end
+
+	-- Collect PDA content to determine pricing
+    local cost_per_typ = { 
+		["common"] = 1,
+		["uncommon"] = 2,
+		["rare"] = 3,
+	}
+	local cost_per_state = { 
+		["junk"] = 1,
+		["info"] = 1.5,
+		["encrypted"] = 2,
+		["kill_the_strelok"] = 15,
+	}
+
+	local pda_sell = {}
+    local function itr(actor,itm)
+		if item_device.device_npc_pda[itm:section()] then
+			local chk, pda_t = itm:section():match("(itm_pda_)([%l]+)")
+			if chk and cost_per_typ[pda_t] then
+				local id = itm:id()
+				local info = se_load_var(id, itm:name(), "info")
+				if info then
+					local state
+					if (info.state == "kill_the_strelok") then
+						state = "kill_the_strelok"
+					elseif (info.state == "encrypted") then
+						state = "encrypted"
+					else
+						local msgs = info.msg
+						for i=1,#msgs do
+							local msg = msgs[i]
+							if msg.stash or msg.route or msg.rf_freq then
+								state = "info"
+								break
+							end
+						end
+						if (not state) then
+							state = "junk"
+						end
+					end
+					pda_sell[id] = { typ = pda_t , state = state }
+				else
+					pda_sell[id] = { typ = pda_t , state = "junk" }
+				end
+				-- xQd, don't transfer pdas cu warfare trader inventory
+	
+				if not warfare.is_warfare_trader(npc) then
+					actor:transfer_item(itm,npc)
+				else
+					alife_release_id(id)
+				end
+				game_statistics.increment_statistic("pdas_delivered")
+			end
+		end
+    end
+    db.actor:iterate_inventory(itr,db.actor)
+
+    local npc_text = ""
+
+    local total_value = 0
+    local pda_bonus_coords = 0
+    local first_line
+	local count = 0
+    for id,info in pairs(pda_sell) do
+		local typ = info.typ
+		local state = info.state
+		if typ and state then
+		    local mul = (cost_per_typ[typ] * cost_per_state[state])
+			local mul2 = typ == "common" and 0.5 or typ == "uncommon" and 5 or typ == "rare" and 10
+			count = count + 1
+            total_value = total_value + (mul * math.random(350,900))
+
+            if (math.random(1,100) <= mul2) then
+                pda_bonus_coords = pda_bonus_coords + 1
+            end
+
+			if first_line then
+				npc_text = npc_text .. " " .. game.translate_string("st_drx_questlines_and_this_one") .. " "
+			end
+			
+			local trans = utils_data.collect_translations("st_broker_npc_about_pda_" .. state .. "_",true)
+			if trans then
+				npc_text = npc_text .. trans[math.random(#trans)]
+			end
+			
+			first_line = true
+		end
+    end
+
+	news_manager.relocate_item(db.actor, "out", "itm_pda_common", count)
+	
+    if (game_achievements.has_achievement("infopreneur")) then
+        total_value = total_value + math.floor(total_value / 20)
+    end
+
+	-- Round off value:
+	total_value = math.ceil( (total_value / 50) )
+	total_value = (total_value * 50)
+
+    relocate_money(npc, total_value, "in")
+
+	-- Add ending text:
+	npc_text = (npc_text .. " " .. game.translate_string( "st_drx_broker_finish_" .. math.random( 1, 3 ) ))
+
+    if (pda_bonus_coords > 0 and treasure_manager) then
+        npc_text = npc_text .. "\n\n " .. game.translate_string("st_broker_npc_about_pda_bonus_coords")
+
+        for i=1,pda_bonus_coords do
+            treasure_manager.create_random_stash()
+        end
+    end
+
+    return npc_text
+end
+
+
+
+-- Dynamic Surrender dialog
+function victim_is_bounty(a,b)
+	local npc = who_is_npc(a, b)
+	local id = npc:id()
+	for task_id,npc_id in pairs(axr_task_manager.bounties_by_id) do
+		if (id == npc_id) then
+			return true
+		end
+	end
+	return false
+end
+
+function npc_is_surrendered(a,b)
+	local npc = who_is_npc(a, b)
+	local st = db.storage[npc:id()]
+	local po = st and st.victim_surrender and st.victim_surrender < 65534 and level.object_by_id(st.victim_surrender)
+	--printf("npc_is_surrendered: surrendered to %s",st.victim_surrender)
+	if (po) then
+		return true
+	end
+	return false
+end
+
+function npc_is_not_surrendered(a,b)
+	local npc = who_is_npc(a, b)
+	local st = db.storage[npc:id()]
+	local po = st and st.victim_surrender and st.victim_surrender < 65534 and level.object_by_id(st.victim_surrender)
+	if not (po) then
+		return false
+	end
+	return true
+end
+
+function victim_surrender(a,b)
+	local npc = dialogs.who_is_npc(a,b)
+	return load_var(npc,"victim_surrender",false) == true
+end
+
+function victim_no_surrender(a,b)
+	local npc = dialogs.who_is_npc(a,b)
+	return load_var(npc,"victim_surrender",false) == false
+end
+
+function set_victim_surrendered(a,b)
+	local npc = dialogs.who_is_npc(a,b)
+	save_var(npc,"victim_surrender",true)
+end
+
+function surrender_victim_answers_bounty(a,b)
+	local npc = dialogs.who_is_npc(a,b)
+	local id = npc:id()
+
+	local prefix = "default"
+	for task_id,npc_id in pairs(axr_task_manager.bounties_by_id) do
+		if (npc_id == id) then
+			if (task_id == "esc_m_trader_task_2") then
+				prefix = "esc_m_trader"
+			elseif (task_id == "zat_b7_bandit_boss_sultan_task_1") then
+				prefix = "zat_b7_bandit_boss_sultan"
 			end
 		end
 	end
-end
 
-function UIDialog:Show_Question(text, index)
-	self:Print("\\", "", "Show_Question | index: %s - text: %s", index, text)
-	
-	-- If elements aren't made yet, create them
-	if (not self.ele_q[index]) then
-		local xml = self.xml
-		
-		self.ele_q[index] = {}
-		self.ele_q[index].base = xml:InitStatic("question_item", nil)
-		self.ele_q[index].num = xml:InitTextWnd("question_item:num_text", self.ele_q[index].base)
-		self.ele_q[index].context = xml:InitTextWnd("question_item:content_text", self.ele_q[index].base)
-		self.ele_q[index].btn = xml:Init3tButton("question_item:btn", self.ele_q[index].base)
-		self.ele_q[index].footer = xml:ReadAttribute("question_item", 0, "bottom_footer")
-		
-		self:Register(self.ele_q[index].btn, "question_" .. index)
-		local _wrapper = function(handler) -- we need wrapper in order to pass ctrl to method
-			self:Ask_Selected_Question(index)
+	local r = math.random(1,10)
+	if (r == 1 or r == 2) and ui_pda_npc_tab.can_own_pda(npc) then
+		r = (math.random(1,100)/100)
+		local sec = "itm_pda_common"
+		if (r <= 0.10) then
+			sec = "itm_pda_rare"
+		elseif (r <= 0.5) then
+			sec = "itm_pda_uncommon"
 		end
-		self:AddCallback("question_" .. index, ui_events.BUTTON_CLICKED, _wrapper, self)
+		relocate_item_section_to_actor(a, b, sec, 1)
+		relocate_money_to_actor(a,b,math.random(500,3000))
+		return game.translate_string("st_surrender_victim_answer_"..prefix.."_bounty_1")
+	elseif (r == 3 or r == 4) then
+		return game.translate_string("st_surrender_victim_answer_"..prefix.."_bounty_2")
+	elseif (r == 5) then
+		return game.translate_string("st_surrender_victim_answer_"..prefix.."_bounty_3")
+	elseif (r == 6 or r == 7) then
+		return game.translate_string("st_surrender_victim_answer_"..prefix.."_bounty_4")
+	elseif (r == 8 or r == 9) then
+		return game.translate_string("st_surrender_victim_answer_"..prefix.."_bounty_5")
 	end
-	
-	-- Assign values
-	self.ele_q[index].context:SetText(text) -- could be a node or main dialog
-	self.ele_q[index].context:AdjustHeightToText()
-	
-	self.ele_q[index].num:SetText(index and (index ..".") or "")
-	
-	utils_xml.sync_size(self.ele_q[index].context, self.ele_q[index].base, 0, tonumber(self.ele_q[index].footer) or 2)
-	utils_xml.sync_size(self.ele_q[index].context, self.ele_q[index].btn)
-	
-	self.questions_list:AddWindow(self.ele_q[index].base, true)
-	self.ele_q[index].base:SetAutoDelete(false)
+
+	if ((math.random(1,100)/100) < 0.5) then
+		alife_create_item("medkit_script", npc)
+		xr_wounded.unlock_medkit(npc)
+	end
+
+	return game.translate_string("st_surrender_victim_answer_5")
 end
 
-function UIDialog:Show_Answer(caption, context, icon, element, sound)
-	self:Print("\\", "", "Show_Answer | caption: %s - context: %s - icon: %s - element: %s", caption, context, icon, element)
+function surrender_victim_answers_1(a,b)
+	local npc = dialogs.who_is_npc(a,b)
 
-	local xml = self.xml
-	if (not xml:NodeExist(element, 0)) then
-		printf("!UIDialog:Show_Answer | Answer element [%s] doesn't exist", element)
-		return
-	end
-	
-	local box = xml:InitStatic(element, nil)
-	if caption and xml:NodeExist(element .. ":name_caption", 0) then
-		local ele_caption = xml:InitTextWnd(element .. ":name_caption", box)
-		ele_caption:SetText(caption)
-		ele_caption:AdjustHeightToText()
-	end
+	local r = math.random(1,5)
 
-	if context and xml:NodeExist(element .. ":content_text", 0) then
-		local ele_text = xml:InitTextWnd(element .. ":content_text", box)
-		ele_text:SetText(context)
-		ele_text:AdjustHeightToText()
-		
-		if icon and type(icon) == "string" and xml:NodeExist(element .. ":msg_icon", 0) then
-			local ele_icon = xml:InitStatic(element .. ":msg_icon", box)
-			ele_icon:InitTexture(icon)
+	if (treasure_manager) and (r <= 2) then
+
+		local function itr(npc,itm)
+			if (IsWeapon(itm)) then
+				local cond = math.random(25,50)/100
+				itm:set_condition(cond)
+				npc:transfer_item(itm,db.actor)
+			end
 		end
-		
-		local footer = xml:ReadAttribute(element, 0, "bottom_footer")
-		box:SetWndSize(vector2():set( box:GetWidth(), ele_text:GetHeight() + ele_text:GetWndPos().y + (tonumber(footer) or 10) ))
-	
-		self.answers_list:AddWindow(box, true)
-		box:SetAutoDelete(false)
-	end
 
-	self.answers_list:ScrollToEnd()
-	
-	-- play sound
-	if sound then
-		xr_sound.set_sound_play(AC_ID, sound)
+		npc:iterate_inventory(itr,npc)
+
+		if (treasure_manager) then
+			treasure_manager.create_random_stash(nil,game.translate_string("st_stash_of") .. " " .. npc:character_name(),nil,true)
+			if (game_achievements.has_achievement("silver_or_lead") and ((math.random(1,100)/100) <= 0.33)) then
+				treasure_manager.create_random_stash(nil,game.translate_string("st_stash_of") .. " " .. npc:character_name(),nil,true)
+			end
+		end
+
+		if (treasure_manager and treasure_manager.last_secret) then
+			return game.translate_string("st_surrender_victim_answer_"..math.random(3))
+		else
+			return game.translate_string("st_surrender_victim_answer_5")
+		end
+	elseif (r == 3) then
+		r = (math.random(1,100)/100)
+		local sec = "itm_pda_common"
+		if (r <= 0.10) then
+			sec = "itm_pda_rare"
+		elseif (r <= 0.5) then
+			sec = "itm_pda_uncommon"
+		end
+		relocate_item_section_to_actor(a, b, sec, 1)
+		return game.translate_string("st_surrender_victim_answer_4")
+	elseif (r == 5) then
+		alife_create_item("medkit_script", npc)
+		xr_wounded.unlock_medkit(npc)
+		return game.translate_string("st_surrender_victim_answer_5")
 	end
+	return game.translate_string("st_surrender_victim_answer_5")
 end
 
-function UIDialog:Show_Relocated_Items(type, item_list)
-	local xml = self.xml
-	
-	local c
-	for i,b in ipairs(self.item_boxes) do
-		if (b.active == false) then
-			c = i
+function surrender_victim_answers_2(a,b)
+	local npc = dialogs.who_is_npc(a,b)
+	alife_create_item("medkit_script", npc)
+	xr_wounded.unlock_medkit(npc)
+	--npc:set_relation(game_object.enemy,db.actor)
+	local function itr(npc,itm)
+		if (IsWeapon(itm)) then
+			local cond = math.random(25,50)/100
+			itm:set_condition(cond)
+			npc:transfer_item(itm,db.actor)
+		end
+	end
+
+	game_statistics.increment_statistic("wounded_helped")
+
+	npc:iterate_inventory(itr,npc)
+
+	--if (math.random() <= 0.8) then
+		--npc:set_relation(game_object.neutral,db.actor)
+	--end
+
+	db.storage[npc:id()].panicked_to_actor = true
+
+	return game.translate_string("st_surrender_victim_answer_6")
+end
+
+function set_enemy(a,b)
+	local npc = dialogs.who_is_npc(a,b)
+	npc:set_relation(game_object.enemy,db.actor)
+end
+--End Alundaio
+function is_npc_in_current_smart(first_speaker, second_speaker, smart_name)
+	local npc = who_is_npc(first_speaker, second_speaker)
+	local smart = xr_gulag.get_npc_smart(npc)
+	if not smart then return false end
+	return smart:name() == smart_name
+end
+
+function break_dialog(first_speaker, second_speaker, id)
+	first_speaker:stop_talk()
+	second_speaker:stop_talk()
+end
+
+function update_npc_dialog(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+	local st = db.storage[npc:id()]
+	st.meet.meet_manager:update()
+	xr_meet.process_npc_usability(npc)
+	--xr_motivator.update_logic(npc)
+	xr_logic.try_switch_to_another_section(npc, st[st.active_scheme], db.actor)
+end
+
+function disable_talk_self(first_speaker, second_speaker)
+	first_speaker:disable_talk()
+end
+function disable_talk_victim(first_speaker, second_speaker)
+	second_speaker:disable_talk()
+end
+
+function punch(first_speaker, second_speaker)
+	--printf("KICK ASS !!!!")
+	--xr_punch.punch[first_speaker:id()] = second_speaker
+	db.storage[second_speaker:id()].punch.enabled = true
+end
+
+function get_money_then_leave(first_speaker, second_speaker)
+	db.storage[first_speaker:id()].meet.enabled = false
+	db.storage[first_speaker:id()].robber.enabled = true
+end
+
+function is_wounded(first_speaker, second_speaker)
+--	if db.storage[first_speaker:id()].wounded ~= nil and
+--		 db.storage[first_speaker:id()].wounded.wound_manager.can_use_medkit == true
+--	then
+--		return false
+--	end
+	local npc = who_is_npc(first_speaker, second_speaker)
+	return xr_wounded.is_wounded(npc)
+end
+--[[
+function is_opp_wounded(first_speaker, second_speaker, dialog_id)
+		if db.storage[second_speaker:id()].wounded ~= nil and
+			 db.storage[second_speaker:id()].wounded.wound_manager.can_use_medkit == true
+		then
+				return false
+		end
+	return	xr_wounded.is_wounded(second_speaker)
+end
+]]--
+function is_not_wounded(first_speaker, second_speaker, dn)
+	return not is_wounded(first_speaker, second_speaker)
+end
+function actor_have_medkit(first_speaker, second_speaker)
+	local med = {"medkit","medkit_army","medkit_scientic"}
+	for k,v in pairs(med) do
+		if (first_speaker:object(v)) then
+			return true
+		end
+	end
+	return false
+end
+function actor_hasnt_medkit(first_speaker, second_speaker)
+	return actor_have_medkit(first_speaker, second_speaker) == false
+end
+function actor_have_bandage(first_speaker, second_speaker)
+	return first_speaker:object("bandage") ~= nil
+end
+function transfer_medkit(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+
+	xr_wounded.unlock_medkit(npc)
+
+	if not (npc:object("medkit_script")) then
+		alife_create_item("medkit_script", npc)
+	end
+
+	local t = {"medkit","medkit_army","medkit_scientic"}
+	for i=1,#t do
+		if (db.actor:object(t[i])) then
+			dialogs.relocate_item_section(npc,t[i],"out")
 			break
 		end
 	end
-	if (not c) then
-		c = #self.item_boxes + 1
-		self.item_boxes[c] = {}
-		self.item_boxes[c].box = xml:InitStatic("relocated_item", nil)
-		self.item_boxes[c].caption = xml:InitTextWnd("relocated_item:name_caption", self.item_boxes[c].box)
-		self.item_boxes[c].icon = xml:InitStatic("relocated_item:msg_icon", self.item_boxes[c].box)
-		self.item_boxes[c].CC = utils_ui.UICellContainer("relocated_items_"..c, self, nil, "relocated_item:container", self.item_boxes[c].box)
-		self.item_boxes[c].CC.showcase              = true
-		self.item_boxes[c].CC.showcase_counter      = true
-		self.item_boxes[c].CC.can_select	        = false
-		self.item_boxes[c].CC.disable_drag          = true
-		--self.item_boxes[c].CC.disable_stack       = true
-		self.item_boxes[c].CC.disable_scroll        = true
-		
-		local grid_size = tonumber(xml:ReadAttribute("relocated_item:container", 0, "grid_size")) or 35
-		local grid_line = tonumber(xml:ReadAttribute("relocated_item:container", 0, "grid_line")) or 2
-		self.item_boxes[c].CC:SetGridSpecs(grid_size, grid_line)
+
+	if (npc:relation(db.actor) >= game_object.enemy) then
+		npc:set_relation(game_object.neutral,db.actor)
+	else
+		npc:set_relation(game_object.friend,db.actor)
 	end
-	
-	self.item_boxes[c].active = true
-	
-	local cap = (type == "in") and "general_in_item" or "general_out_item"
-	self.item_boxes[c].caption:SetText( game.translate_string(cap) )
-	
-	local ico = (type == "in") and "ui_inGame2_Predmet_poluchen" or "ui_inGame2_Predmet_otdan"
-	self.item_boxes[c].icon:InitTexture(ico)
-	
-	self.item_boxes[c].CC:Reinit(item_list)
-	self.item_boxes[c].CC:AdjustHeightToCell()
-	
-	local footer = xml:ReadAttribute("relocated_item", 0, "bottom_footer")
-	local w = self.item_boxes[c].box:GetWidth()
-	local h = self.item_boxes[c].CC.prof:GetWndPos().y + self.item_boxes[c].CC.prof:GetHeight() + (tonumber(footer) or 10)
-	self.item_boxes[c].box:SetWndSize(vector2():set( w, h ))
-	
-	self.answers_list:AddWindow(self.item_boxes[c].box, true)
-	self.item_boxes[c].box:SetAutoDelete(false)
-	
-	self.answers_list:ScrollToEnd()
+
+	game_statistics.increment_statistic("wounded_helped")
 end
 
--- Utilities
-function UIDialog:Get_Dialog_Cache(dialog)
-	if (not dialog) then
-		printe("!UIDialog:Get_Dialog_Cache | no dialog passed")
-		callstack()
-		return
+function transfer_medkit_to_hip(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+
+	xr_wounded.unlock_medkit(npc)
+
+	if not (npc:object("medkit_script")) then
+		alife_create_item("medkit_script", npc)
 	end
 
-	if (not self.dialogs[dialog]) then
-		self.dialogs[dialog] = dup_table(dialog_list[dialog])
-	end
-	return self.dialogs[dialog]
-end
-
-function UIDialog:Get_Dialog(dialog, node)
-	dialog = dialog or self.D
-	
-	-- Caching dialog
-	local dl = self:Get_Dialog_Cache(dialog)
-	if (not dl) then
-		printe("!ERROR UIDialog:Get_Dialog | dialog [%s] doesn't exist", dialog)
-	end
-	
-	-- Processing dialog functor
-	if dl.functor and (not dl.phrases) then
-	
-		-- this will be attached to self.dialogs[dialog] ?
-		if (not dialog_script) then
-			dialog_script = DialogScripted()
+	local t = {"medkit","medkit_army","medkit_scientic"}
+	for i=1,#t do
+		if (db.actor:object(t[i])) then
+			dialogs.relocate_item_section(npc,t[i],"out")
+			break
 		end
-		dl.phrases = dialog_script:Process(dialog, dl.functor)
 	end
 
-	-- When node is passed, return related phrase
-	if node then
-		if dl.phrases then
-			local phrase = dl.phrases[node]
-			if phrase then
-				return phrase
-			else
-				printe("!ERROR Get_Dialog | dialog [%s] [%s] doesn't exist", dialog, node)
+	if (npc:relation(db.actor) >= game_object.enemy) then
+		npc:set_relation(game_object.neutral,db.actor)
+	else
+		npc:set_relation(game_object.friend,db.actor)
+	end
+
+end
+
+function transfer_bandage(first_speaker, second_speaker)
+	dialogs.relocate_item_section(second_speaker, "bandage", "out")
+	second_speaker:set_relation(game_object.friend, first_speaker)
+end
+function kill_yourself(first_speaker, second_speaker)
+local npc = who_is_npc(first_speaker, second_speaker)
+	npc:kill(actor)
+end
+
+function relocate_item_section(victim, section, type, amount) -- Tronex
+	if type == "in" then
+		itms_manager.relocate_item_to_actor(db.actor, nil, section, amount)
+	elseif type == "out" then
+		itms_manager.relocate_item_from_actor(db.actor, victim, section, amount)
+	end
+end
+
+function relocate_money(victim, num, type)
+	if db.actor then
+		if type == "in" then
+			db.actor:give_money(num)
+			-- game_stats.money_quest_update (num)
+
+		elseif type == "out" then
+			if victim == nil then
+				printf("Couldn't relocate money to NULL")
 			end
+			db.actor:transfer_money(num, victim)
+			-- game_stats.money_quest_update(-num)
 		end
-	end
-	
-	-- otherwise return the dialog tree
-	return dl
-end
-
-function UIDialog:Get_Dialog_Property(dialog, prop)
-	local dl = self:Get_Dialog(dialog)
-	local prop = dl and dl[prop]
-	if prop then
-		return prop
+		news_manager.relocate_money(db.actor, type, num)
 	end
 end
 
-function UIDialog:Get_Text(dialog, node_last, node_now, who)
-	node_now = node_now or "0"
-	
-	local data = str_data(dialog, node_last, node_now, who)
-	self:Print("*", data, "Get_Text")
-	
-	if (not dialog) then
-		self:Print("!", "", "Get_Text | no dialog passed")
+--'---------------------------------------------------------------------------------
+--' DIALOG ALLOWED
+--'---------------------------------------------------------------------------------
+--function dialog_allowed(object, victim, id)
+--	if id ~= nil then
+----		printf("*DIALOGS*: dialog_allowed: %s", id)
+--	else
+----		printf("*DIALOGS*: dialog_allowed: nil")
+--	end
+--	if db.storage[victim:id()].actor_dialogs ~= nil then
+--		for k,v in pairs(db.storage[victim:id()].actor_dialogs) do
+--			if v == id then return true end
+--		end
+--	end
+--	return false
+--end
+--function dialog_not_disable(object, victim, id)
+--	if id ~= nil then
+----		printf("*DIALOGS*: dialog_disable:%s", id)
+--	else
+----		printf("*DIALOGS*: dialog_disable:nil")
+--	end
+--	if db.storage[victim:id()].actor_disable ~= nil then
+--		for k,v in pairs(db.storage[victim:id()].actor_disable) do
+--			if v == id then return false end
+--		end
+--	end
+--	return true
+--end
+
+function allow_wounded_dialog(object, victim, id)
+	if db.storage[victim:id()].wounded == nil then
 		return false
 	end
-	
-	local txt
-	local dlp = self:Get_Dialog(dialog, node_now)
-	if dlp.script_text then
-		txt = self:Execute(dlp.script_text, dialog, node_last, node_now, who)
-	elseif dlp.text then
-		txt = dlp.text
-	end
-	
-	if txt and (txt ~= "") then
-		return txt
+	if db.storage[victim:id()].wounded.help_dialog == id then
+		return true
 	end
 	return false
 end
 
-function UIDialog:Get_NPC()
-	local id = self.ID
-	if id then
-		if self.offline then
-			return alife_object(id)
-		end
-		return db.storage[id] and db.storage[id].object or level.object_by_id(id)
-	end
-	printe("!UIDialog:Get_NPC | missing NPC ID!")
+--function allow_guide_dialog(object, victim, id)
+--	local section = db.storage[victim:id()].active_section
+--	printf("active_section %s", tostring(section))
+--	if section == nil then
+--		return false
+--	end
+--	if string.find(section, "conductor", 1) ~= nil then
+--		return true
+--	end
+--	return false
+--end
+
+-----------------------------------------------------------------------------------
+-- LEVELS
+-----------------------------------------------------------------------------------
+--function level_escape(first_speaker, second_speaker)
+--	return level.name() == "l01_escape"
+--end
+--
+--function level_garbage(first_speaker, second_speaker)
+--	return level.name() == "l02_garbage"
+--end
+--
+--function level_agroprom(first_speaker, second_speaker)
+--	return level.name() == "l03_agroprom_ai2" or level.name() == "l03_agroprom"
+--end
+
+
+function level_zaton(first_speaker, second_speaker)
+	return level.name() == "zaton"
 end
 
-function UIDialog:Get_NPC_Name()
-	local npc = self:Get_NPC()
-	if (not npc) then
-		return ""
-	end
-	
-	if self.name then
-		return game.translate_string(self.name)
-	elseif self.is_npc then
-		return game.translate_string(npc:character_name())
-	end
-	return game.translate_string("st_dyn_news_unknown_contact")
+function level_jupiter(first_speaker, second_speaker)
+	return level.name() == "jupiter"
 end
 
-function UIDialog:Get_NPC_Icon()
-	local npc = self:Get_NPC()
-	if (not npc) then
-		return "ui_icon_news_trx_common"
-	end
-	
-	if self.icon then
-		return self.icon
-	elseif self.is_npc then
-		return npc:character_icon()
-	end
-	return "ui_icon_news_trx_common"
+function level_pripyat(first_speaker, second_speaker)
+	return level.name() == "pripyat"
 end
 
-
-function UIDialog:Execute(f, dialog, node_last, node_now, who)
-	local data = str_data(dialog, node_last, node_now, who)
-	local file, func, params = extract_func(f)
-	
-	if (not func) then		
-		printe("!ERROR UIDialog:Execute | no passed func name")
-		callstack()
-		return
-	end
-	
-	local speaker, listener
-	if who then
-		speaker = db.actor 
-		listener = self:Get_NPC()
-	else
-		speaker = self:Get_NPC()
-		listener = db.actor 
-	end
-	
-	--self:Print("@", data, "Execute | %s", str_func(file, func, params))
-	if file and _G[file] and _G[file][func] then
-		return _G[file][func](speaker, listener, dialog, node_last, node_now, unpack(params or {}))
-	elseif _G[func] then
-		return _G[func](speaker, listener, dialog, node_last, node_now, unpack(params or {}))
-	end
-	
-	printe("!Warning UIDialog:Execute | file or func not found | file: %s , func: %s", file, func)
+function not_level_zaton(first_speaker, second_speaker)
+	return level.name() ~= "zaton"
 end
 
-function UIDialog:Execute_Precondition(f)
-	local file, func, params = extract_func(f)
-
-	--self:Print("@", "", "Execute_Precondition | %s", str_func(file, func, params))
-	if file and _G[file] and _G[file][func] then
-		return _G[file][func](db.actor, self:Get_NPC(), unpack(params or {}))
-	elseif _G[func] then
-		return _G[func](db.actor, self:Get_NPC(), unpack(params or {}))
-	end
-	
-	printe("!Warning UIDialog:Execute_Precondition | file or func not found | file: %s , func: %s", file, func)
+function not_level_jupiter(first_speaker, second_speaker)
+	return level.name() ~= "jupiter"
 end
 
--- Temp hiding
-function UIDialog:Hold_Conversation(what, state)
-	if (what == "UIInventory") then
-		if state and self:IsShown() then
-			self.stand_by = true
-			self:Show(false)
-			
-		elseif (not state) and (not self:IsShown()) and self.stand_by then
-			self.stand_by = false
-			self:Show(true)
-		end
-	end
+function not_level_pripyat(first_speaker, second_speaker)
+	return level.name() ~= "pripyat"
 end
 
--- End
-function UIDialog:OnKeyboard(dik, keyboard_action)
-	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
-	if (res == false) then
-		local bind = dik_to_bind(dik)
-		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
-			if (dik == DIK_keys.DIK_ESCAPE) or (bind == key_bindings.kUSE) then
-				self:Close()
-			else
-				for i=1,9 do
-					if dik == DIK_keys["DIK_" .. i] then
-						self:Ask_Selected_Question(i)
-					end
-				end
-			end
-		end
-	end
-	return res
+-----------------------------------------------------------------------------------
+-- Relation functions
+-----------------------------------------------------------------------------------
+function is_friend(first_speaker, second_speaker)
+	return first_speaker:relation(second_speaker) == game_object.friend
 end
 
-function UIDialog:Close()
-	self:Print("*", "", "Close")
-	
-	self:HideDialog()
-	self:Show(false)
-	Unregister_UI("Dialog")
-	
-	-- Needed for now to simulate engine functionality in calling this
-	actor_menu.actor_menu_mode(11)
-	pda.actor_menu_mode(11)
+function is_not_friend(first_speaker, second_speaker)
+	return not is_friend(first_speaker, second_speaker)
 end
 
-function UIDialog:Print(mark, data, fmt, ...)
-	if enable_debug then
-		printf((mark or "") .. "UIDialog %s | " .. fmt, data, ...)
-	end
+function become_friend(first_speaker, second_speaker)
+	first_speaker:set_relation(game_object.friend, second_speaker)
+end
+
+-----------------------------------------------------------------------------------
+-- Community
+-----------------------------------------------------------------------------------
+function actor_stalker(first_speaker, second_speaker)
+	return character_community(db.actor) == "actor_stalker"
+end
+
+function actor_bandit(first_speaker, second_speaker)
+	return character_community(db.actor) == "actor_bandit"
+end
+
+function actor_freedom(first_speaker, second_speaker)
+	return character_community(db.actor) == "actor_freedom"
+end
+
+function actor_dolg(first_speaker, second_speaker)
+	return character_community(db.actor) == "actor_dolg"
+end
+
+function actor_killer(first_speaker, second_speaker)
+	return character_community(db.actor) == "actor_killer"
+end
+
+function actor_army(first_speaker, second_speaker)
+	return character_community(db.actor) == "actor_army"
+end
+
+function actor_ecolog(first_speaker, second_speaker)
+	return character_community(db.actor) == "actor_ecolog"
+end
+
+function actor_csky(first_speaker, second_speaker)
+	return character_community(db.actor) == "actor_csky"
+end
+
+function actor_monolith(first_speaker, second_speaker)
+	return character_community(db.actor) == "actor_monolith"
+end
+
+function actor_renegade(first_speaker, second_speaker)
+	return character_community(db.actor) == "actor_renegade"
+end
+
+function actor_greh(first_speaker, second_speaker)
+	return character_community(db.actor) == "actor_greh"
+end
+
+function actor_isg(first_speaker, second_speaker)
+	return character_community(db.actor) == "actor_isg"
+end
+
+function actor_zombied(first_speaker, second_speaker)
+	return character_community(db.actor) == "actor_zombied"
 end
 
 
-
-----------------------------------------------------------------------
--- Scripted Dialog
-----------------------------------------------------------------------
-class "DialogScripted"
-
-function DialogScripted:__init()
-	self:Print("-", "__init")
-
-	self.F = {}
-	self.dialog = false
-	self.last_id = false
+function actor_not_stalker(first_speaker, second_speaker)
+	return character_community(db.actor) ~= "actor_stalker"
 end
 
-function DialogScripted:Process(name, f)
--- Call other scripts to begin dialog attaching
-
-	empty_table(self.F)
-	self.dialog = name
-	
-	local file, func, params = extract_func(f)
-	
-	if (not func) then		
-		printe("!ERROR UIDialog:Execute | no passed func name")
-		callstack()
-		return
-	end
-	
-	self:Print("@", "Process | %s", str_func(file, func, params))
-	if file and _G[file] and _G[file][func] then
-		_G[file][func](self, unpack(params or {}))
-	elseif func and _G[func] then
-		_G[func](self, unpack(params or {}))
-	else
-		printe("!Warning UIDialog:Execute | file or func not found | file: %s - func: %s", file, func)
-	end
-	
-	self:Clean()
-	return dup_table(self.F)
+function actor_not_bandit(first_speaker, second_speaker)
+	return character_community(db.actor) ~= "actor_bandit"
 end
 
-function DialogScripted:AddPhrase(text, node_now, node_last, goodwill)
-	self:Print("=", "AddPhrase( text: %s - node_now: %s - node_last: %s - goodwill: %s )", text, node_now, node_last, goodwill)
-	--node_now = tonumber(node_now)
-	--node_last = tonumber(node_last)
-	
-	-- handling last node
-	if node_last and (node_last ~= "") then
-		if (not self.F[node_last]) then
-			self.F[node_last] = {}
-		end
-		if (not self.F[node_last].next) then
-			self.F[node_last].next = {}
-		end
-		local cnt = #self.F[node_last].next + 1
-		self.F[node_last].next[cnt] = node_now
-	end
-	
-	-- handling current node
-	if (not self.F[node_now]) then
-		self.F[node_now] = {}
-	end
-	
-	if text and (text ~= "") then
-		self.F[node_now].text = text
-	end
-	
-	self.last_id = node_now
-	
-	return self
+function actor_not_freedom(first_speaker, second_speaker)
+	return character_community(db.actor) ~= "actor_freedom"
 end
 
-function DialogScripted:GetPhraseScript()
-	self:Print("=", "GetPhraseScript")
-	return self
+function actor_not_dolg(first_speaker, second_speaker)
+	return character_community(db.actor) ~= "actor_dolg"
 end
 
-function DialogScripted:AddPrecondition(value)
-	self:Print("=", "AddPrecondition: %s", value)
-	
-	local node = self.last_id
-	
-	if (not self.F[node].conds) then
-		self.F[node].conds = {}
-	end
-	
-	if type(value) == "table" then
-		for i,c in ipairs(value) do
-			local t = parse_custom_func(c, true)
-			local cnt = #self.F[node].conds + 1
-			self.F[node].conds[cnt] = { ["condition"] = t }
-		end
-	else
-		local t = parse_custom_func(value, true)
-		local cnt = #self.F[node].conds + 1
-		self.F[node].conds[cnt] = { ["condition"] = t }
-	end
+function actor_not_killer(first_speaker, second_speaker)
+	return character_community(db.actor) ~= "actor_killer"
 end
 
-function DialogScripted:AddAction(value)
-	self:Print("=", "AddPrecondition: %s", value)
-	local node = self.last_id
-	
-	if (not self.F[node].actions) then
-		self.F[node].actions = {}
-	end
-	
-	if type(value) == "table" then
-		for i,c in ipairs(value) do
-			local t = parse_custom_func(c, true)
-			local cnt = #self.F[node].actions + 1
-			self.F[node].actions[cnt] = { ["action"] = t }
-		end
-	else
-		local t = parse_custom_func(value, true)
-		local cnt = #self.F[node].actions + 1
-		self.F[node].actions[cnt] = { ["action"] = t }
-	end
+function actor_not_army(first_speaker, second_speaker)
+	return character_community(db.actor) ~= "actor_army"
 end
 
-function DialogScripted:SetScriptText(text)
-	self:Print("=", "SetScriptText: %s", text)
-	local node = self.last_id
-	
-	self.F[node].text = nil
-	self.F[node].script_text = text and (text ~= "") and parse_custom_func(text, true)
+function actor_not_ecolog(first_speaker, second_speaker)
+	return character_community(db.actor) ~= "actor_dolg"
 end
 
-function DialogScripted:Clean()
-	self:Print("=", "Clean")
-	for node,v in pairs(self.F) do
-		if v.next and is_empty(v.next) then
-			self.F[node].next = nil
-		end
-	end
+function actor_not_csky(first_speaker, second_speaker)
+	return character_community(db.actor) ~= "actor_csky"
 end
 
-function DialogScripted:Print(mark, fmt, ...)
-	if enable_debug then
-		--printf((mark or "") .. "DialogScripted | " .. fmt, ...)
-	end
+function actor_not_monolith(first_speaker, second_speaker)
+	return character_community(db.actor) ~= "actor_monolith"
+end
+
+function actor_not_renegade(first_speaker, second_speaker)
+	return character_community(db.actor) ~= "actor_renegade"
+end
+
+function actor_not_greh(first_speaker, second_speaker)
+	return character_community(db.actor) ~= "actor_greh"
+end
+
+function actor_not_isg(first_speaker, second_speaker)
+	return character_community(db.actor) ~= "actor_isg"
+end
+
+function actor_not_zombied(first_speaker, second_speaker)
+	return character_community(db.actor) ~= "actor_zombied"
 end
 
 
-----------------------------------------------------------------------
--- Utilities
-----------------------------------------------------------------------
-function overrides_1()
-
-	game_object.stop_talk = function(self)
-		if (GUI and GUI:IsShown()) and (self:id() == AC_ID or self:id() == GUI.ID) then
-			GUI:Close()
-		end
-	end
-	
-	game_object.is_talking = function(self)
-		return (GUI and GUI:IsShown()) and (self:id() == AC_ID or self:id() == GUI.ID)
-	end
-	
-	game_object.set_start_dialog = function(self, dialog)
-		engine_start_dialog[self:id()] = dialog
-	end
-	
-	game_object.restore_default_start_dialog = function(self)
-		engine_start_dialog[self:id()] = nil
-	end
-
-	game_object.give_talk_message2 = function(self, caption, text, icon, element)
-		if (not show_info(caption, text, icon, element)) then
-			self:give_game_news(caption, text, icon, 0, 5000)
-		end
-	end
-
-		--self.npc:allow_break_talk_dialog(self.allow_break)
-		--db.actor:run_talk_dialog(self.npc, not(self.allow_break))
-		--self.npc:set_tip_text("character_use")
-
-end
-if enable_feature then overrides_1() end
-
-function overrides_2()
-
--------------------------------------------------
-	--GhenTuong: It crashes.
-	--news_manager.relocate_item = function(actor, type, item, amount)
-	--	show_relocated_item(type, item, amount)
-	--end
-	
-	_G.get_speaker = function(safe, all)
-		return GUI and GUI:IsShown() and GUI:Get_NPC()
-	end
--------------------------------------------------
-	--
-	dialog_manager.precondition_job_dialogs_do_not_know = function(npc, actor, dialog_name, parent_id, id)
-		return dialog_manager.precondition_no_more(npc, "job", id, dialog_manager.priority_table.job)
-	end
-	
-	dialog_manager.precondition_anomalies_dialogs_do_not_know = function(npc, actor, dialog_name, parent_id, id)
-		return dialog_manager.precondition_no_more(npc, "anomalies", id, dialog_manager.priority_table.anomalies)
-	end
-	
-	dialog_manager.precondition_information_dialogs_do_not_know = function(npc, actor, dialog_name, parent_id, id)
-		return dialog_manager.precondition_no_more(npc, "information", id, dialog_manager.priority_table.information)
-	end
-	
-	dialog_manager.precondition_tips_dialogs_do_not_know = function(npc, actor, dialog_name, parent_id, id)
-		return dialog_manager.precondition_no_more(npc, "tips", id, dialog_manager.priority_table.tips)
-	end
-	
-	dialog_manager.precondition_no_more = function(npc, str, phrase_id, PRT_subtable)
-		local id = npc:id()
-		if (dialog_manager.priority_table[str] == nil or dialog_manager.priority_table[str][id] == nil) then
-			return true
-		end
-	
-		local pr, id = dialog_manager.get_highest_priority_phrase(dialog_manager.phrase_table[str], dialog_manager.priority_table[str], npc, phrase_id)
-		if(pr<0) or (id==0) then
-			printf("there is no avaliable "..str.." dialogs")
-			return true
-		end
-	
-		if (not PRT_subtable[id]) then
-			return true
-		end
-		if (PRT_subtable[id][phrase_id] == nil or PRT_subtable[id][phrase_id] == -1) then
-			return true
-		end
-	
-		return false
-	end
-	--
+function actor_true_stalker(first_speaker, second_speaker)
+	return get_actor_true_community() == "stalker"
 end
 
-function extract_func(f)
-	local params
-	if #f > 2 then
-		params = {}
-		for i=3,#f do
-			params[#params+1] = f[i]
-		end
-	end
-	return f[1], f[2], params
+function actor_true_bandit(first_speaker, second_speaker)
+	return get_actor_true_community() == "bandit"
 end
 
--- format text
-function str_nodes(t)
-	local str = "["
-	for i,node in ipairs(t) do
-		str = str .. node .. ((i < #t) and "|" or "")
-	end
-	str = str .. "]"
-	return str
+function actor_true_freedom(first_speaker, second_speaker)
+	return get_actor_true_community() == "freedom"
 end
 
-function str_data(dialog, node_last, node_now, who)
-	return strformat("(%s) [%s] -> [%s] - Who: %s", dialog or "-", node_last or "-", node_now or "-", who and "Actor" or "NPC")
+function actor_true_dolg(first_speaker, second_speaker)
+	return get_actor_true_community() == "dolg"
 end
 
-function str_func(file, func, params)
-	if file then
-		return strformat("%s.%s(%s)", file,func, str_params(params))
-	end
-	return strformat("%s(%s)", func, str_params(params))
+function actor_true_killer(first_speaker, second_speaker)
+	return get_actor_true_community() == "killer"
 end
 
-function str_func2(f)
-	local file, func, params = extract_func(f)
-	if file then
-		return strformat("%s.%s(%s)", file,func, str_params(params))
-	end
-	return strformat("%s(%s)", func, str_params(params))
+function actor_true_army(first_speaker, second_speaker)
+	return get_actor_true_community() == "army"
 end
 
-function str_params(params)
-	if (not params) then
-		return ""
-	end
-	
-	local str = ""
-	for i,p in ipairs(params) do
-		str = str .. tostring(p) .. ","
-	end
-	return str
+function actor_true_ecolog(first_speaker, second_speaker)
+	return get_actor_true_community() == "ecolog"
+end
+
+function actor_true_csky(first_speaker, second_speaker)
+	return get_actor_true_community() == "csky"
+end
+
+function actor_true_monolith(first_speaker, second_speaker)
+	return get_actor_true_community() == "monolith"
+end
+
+function actor_true_renegade(first_speaker, second_speaker)
+	return get_actor_true_community() == "renegade"
+end
+
+function actor_true_greh(first_speaker, second_speaker)
+	return get_actor_true_community() == "greh"
+end
+
+function actor_true_isg(first_speaker, second_speaker)
+	return get_actor_true_community() == "isg"
 end
 
 
--- initiate dialogs
-function prepare_dialog_table()
-
-	empty_table(dialog_list)
-	
-	-- Collect dialog files
-	local dir = "gameplay"
-	local files = parse_list(ini_sys,"dialogs","files",true)
-	
-	-- Parse files
-	for file,_ in pairs(files) do
-		file = file..".xml"
-		
-		local xml = CScriptXmlInit()
-		xml:ParseDirFile (dir,file)
-		
-		for i=0,xml:GetNodesNum("game_dialogs", 0, "dialog")-1 do
-			local dialog = xml:ReadAttribute("dialog", i, "id")
-			if dialog and dialog ~= "" then
-				dialog_list[dialog] = parse_dialog(xml, dialog)
-			end
-		end
-	end
-	
-	-- Validate
-	for dialog, v in pairs(dialog_list) do
-		local ps = v.phrases
-		if ps then
-			for id,p in pairs(ps) do
-				if p.next then
-					for i,n in ipairs(p.next) do
-						if (not ps[n]) then
-							printe("!ERROR dialog: %s - phrase id [%s] has next [%s] which leads to nothing!", dialog, id, n)
-						end
-					end
-				end
-			end
-		end
-	end
+function actor_not_true_stalker(first_speaker, second_speaker)
+	return get_actor_true_community() ~= "stalker"
 end
 
-function parse_dialog(xml, dialog)
-
-	xml:NavigateToRoot()
-	xml:NavigateToNode_ByAttribute("dialog", "id", dialog)
-	
-	local t = {}
-	local c = 0
-	
--------------------- preconditions
-	-- precondition
-	for i=0,xml:GetNodesNum("dialog", 0, "precondition")-1 do
-		if (not t.precondition) then t.precondition = {} end
-		c = c + 1
-		
-		local value = xml:ReadValue("precondition", i)
-		if value and value ~= "" then
-			t.precondition[c] = { ["condition"] = parse_custom_func(value, true) }
-		end
-	end
-	
-	-- has_info
-	for i=0,xml:GetNodesNum("dialog", 0, "has_info")-1 do
-		if (not t.precondition) then t.precondition = {} end
-		c = c + 1
-		
-		local value = xml:ReadValue("has_info", i)
-		if value and value ~= "" then
-			t.precondition[c] = { ["has_info"] = value }
-		end
-	end
-	
-	-- dont_has_info
-	for i=0,xml:GetNodesNum("dialog", 0, "dont_has_info")-1 do
-		if (not t.precondition) then t.precondition = {} end
-		c = c + 1
-		
-		local value = xml:ReadValue("dont_has_info", i)
-		if value and value ~= "" then
-			t.precondition[c] = { ["dont_has_info"] = value }
-		end
-	end
-	
--------------------- technical
-	if xml:NodeExist("init_func", 0) then
-		local value = xml:ReadValue("init_func", 0)
-		if value and value ~= "" then
-			t.functor = parse_custom_func(value, true)
-		end
-	end
-	
-	if xml:NodeExist("run_once", 0) then
-		local value = xml:ReadValue("run_once", 0)
-		if value and value ~= "" then
-			t.run_once = value
-		else
-			t.run_once = true
-		end
-	end
-	
--------------------- phrase_list
-	if xml:NodeExist("phrase_list", 0) then
-		xml:NavigateToNode("phrase_list",0)
-		t.phrases = {}
-			
-		for i=0,xml:GetNodesNum("phrase_list", 0, "phrase")-1 do
-			local id = xml:ReadAttribute("phrase", i, "id")
-			t.phrases[id] = {}
-			
-			-- Text
-			local text = xml:ReadValue("phrase:text", i)
-			if text and (text ~= "") then
-				t.phrases[id].text = text
-			end
-			
-			-- Script text
-			local script_text = xml:ReadValue("phrase:script_text", i)
-			if script_text and (script_text ~= "") then
-				t.phrases[id].script_text = parse_custom_func(script_text, true)
-			end
-			
-			--------------------------
-			local cnt_next          = xml:GetNodesNum("phrase", i,"next")-1
-			local cnt_precondition  = xml:GetNodesNum("phrase", i,"precondition")-1
-			local cnt_has_info      = xml:GetNodesNum("phrase", i,"has_info")-1
-			local cnt_dont_has_info = xml:GetNodesNum("phrase", i,"dont_has_info")-1
-			local cnt_action        = xml:GetNodesNum("phrase", i,"action")-1
-			local cnt_give_info     = xml:GetNodesNum("phrase", i,"give_info")-1
-			local cnt_disable_info  = xml:GetNodesNum("phrase", i,"disable_info")-1
-			xml:NavigateToNode("phrase",i)
-			
-			c = 0
-			for j=0,cnt_has_info do
-				if (not t.phrases[id].conds) then t.phrases[id].conds = {} end
-	
-				local value = xml:ReadValue("has_info", j)
-				if value and (value ~= "") then
-					c = c + 1
-					t.phrases[id].conds[c] = { ["has_info"] = value }
-				end
-			end
-			for j=0,cnt_dont_has_info do
-				if (not t.phrases[id].conds) then t.phrases[id].conds = {} end
-	
-				local value = xml:ReadValue("dont_has_info", j)
-				if value and (value ~= "") then
-					c = c + 1
-					t.phrases[id].conds[c] = { ["dont_has_info"] = value }
-				end
-			end
-			for j=0,cnt_precondition do
-				if (not t.phrases[id].conds) then t.phrases[id].conds = {} end
-	
-				local value = xml:ReadValue("precondition", j)
-				if value and (value ~= "") then
-					c = c + 1
-					t.phrases[id].conds[c] = { ["condition"] = parse_custom_func(value, true) }
-				end
-			end
-			
-			c = 0
-			for j=0,cnt_next do
-				if (not t.phrases[id].next) then t.phrases[id].next = {} end
-	
-				local nex = xml:ReadValue("next", j)
-				if nex and nex ~= "" then
-					c = c + 1
-					t.phrases[id].next[c] = nex
-				end
-			end
-			
-			c = 0
-			for j=0,cnt_give_info do
-				if (not t.phrases[id].actions) then t.phrases[id].actions = {} end
-	
-				local value = xml:ReadValue("give_info", j)
-				if value and (value ~= "") then
-					c = c + 1
-					t.phrases[id].actions[c] = { ["give_info"] = value }
-				end
-			end
-			for j=0,cnt_disable_info do
-				if (not t.phrases[id].actions) then t.phrases[id].actions = {} end
-	
-				local value = xml:ReadValue("disable_info", j)
-				if value and (value ~= "") then
-					c = c + 1
-					t.phrases[id].actions[c] = { ["disable_info"] = value }
-				end
-			end
-			for j=0,cnt_action do
-				if (not t.phrases[id].actions) then t.phrases[id].actions = {} end
-	
-				local value = xml:ReadValue("action", j)
-				if value and (value ~= "") then
-					c = c + 1
-					t.phrases[id].actions[c] = { ["action"] = parse_custom_func(value, true) }
-				end
-			end
-			
-			xml:NavigateToRoot()
-			xml:NavigateToNode_ByAttribute("dialog", "id", dialog)
-			xml:NavigateToNode("phrase_list",0)
-			--------------------------
-		end
-	end
-	
--------------------- finale
-	xml:NavigateToRoot()
-	return t
+function actor_not_true_bandit(first_speaker, second_speaker)
+	return get_actor_true_community() ~= "bandit"
 end
 
--- initiate characters
-function prepare_character_table()
-	local string_find = string.find
-	local string_sub = string.sub
-	local string_gsub = string.gsub
-	empty_table(character_list)
-	
-	-- Collect character_desc files
-	local dir = "gameplay"
-	local files = parse_list(ini_sys,"profiles","specific_characters_files",true)
-	
-	-- Parse files
-	for file,_ in pairs(files) do
-		file = file..".xml"
-		
-		local xml = CScriptXmlInit()
-		xml:ParseDirFile (dir,file)
-		
-		for i=0,xml:GetNodesNum("xml", 0, "specific_character")-1 do
-			local character = xml:ReadAttribute("specific_character", i, "id")
-			if character and character ~= "" then
-				local character_full = character
-			
-				-- remove copies of sim_default profiles
-				local _,__,num = string_find(character, "_default_(%d+)")
-				if num then
-					local a = "_default_" .. num
-					local as = string_sub(character, -1 * #a)
-					if (a == as) then
-						character = string_gsub(character, as, "")
-					end
-				end
-				
-				if (character_list[character] == nil) then
-					character_list[character] = parse_character(xml, character_full)
-				end
-			end
-		end
-	end
+function actor_not_true_freedom(first_speaker, second_speaker)
+	return get_actor_true_community() ~= "freedom"
 end
 
-function parse_character(xml, character)
-	xml:NavigateToRoot()
-	xml:NavigateToNode_ByAttribute("specific_character", "id", character)
-	
-	local t = {}
-	local c = 0
-	
-	-- start dialogs
-	for i=0,xml:GetNodesNum("specific_character", 0, "start_dialog")-1 do
-		if (not t.start_dialog) then t.start_dialog = {} end
-		
-		local value = xml:ReadValue("start_dialog", i)
-		if value and value ~= "" then
-			c = c + 1
-			t.start_dialog[c] = {value}
-		end
-	end
-	
-	-- actor dialogs
-	c = 0
-	for i=0,xml:GetNodesNum("specific_character", 0, "actor_dialog")-1 do
-		if (not t.actor_dialog) then t.actor_dialog = {} end
+function actor_not_true_dolg(first_speaker, second_speaker)
+	return get_actor_true_community() ~= "dolg"
+end
 
-		local value = xml:ReadValue("actor_dialog", i)
-		if value and value ~= "" then
-			c = c + 1
-			t.actor_dialog[c] = {value}
-		end
-	end
+function actor_not_true_killer(first_speaker, second_speaker)
+	return get_actor_true_community() ~= "killer"
+end
+
+function actor_not_true_army(first_speaker, second_speaker)
+	return get_actor_true_community() ~= "army"
+end
+
+function actor_not_true_ecolog(first_speaker, second_speaker)
+	return get_actor_true_community() ~= "ecolog"
+end
+
+function actor_not_true_csky(first_speaker, second_speaker)
+	return get_actor_true_community() ~= "csky"
+end
+
+function actor_not_true_monolith(first_speaker, second_speaker)
+	return get_actor_true_community() ~= "monolith"
+end
+
+function actor_not_true_renegade(first_speaker, second_speaker)
+	return get_actor_true_community() ~= "renegade"
+end
+
+function actor_not_true_greh(first_speaker, second_speaker)
+	return get_actor_true_community() ~= "greh"
+end
+
+function actor_not_true_isg(first_speaker, second_speaker)
+	return get_actor_true_community() ~= "isg"
+end
+
+
+function npc_stalker(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+	return character_community(npc) == "stalker"
+end
+
+function npc_bandit(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+	return character_community(npc) == "bandit"
+end
+
+function npc_freedom(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+	return character_community(npc) == "freedom"
+end
+
+function npc_dolg(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+	return character_community(npc) == "dolg"
+end
+
+function npc_killer(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+	return character_community(npc) == "killer"
+end
+
+function npc_army(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+	return character_community(npc) == "army"
+end
+
+function npc_ecolog(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+	return character_community(npc) == "ecolog"
+end
+
+function npc_csky(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+	return character_community(npc) == "csky"
+end
+
+function npc_monolith(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+	return character_community(npc) == "monolith"
+end
+
+function npc_renegade(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+	return character_community(npc) == "renegade"
+end
+
+function npc_greh(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+	return character_community(npc) == "greh"
+end
+
+function npc_isg(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+	return character_community(npc) == "isg"
+end
+
+-----------------------------------------------------------------------------------
+-- Goodwill
+-----------------------------------------------------------------------------------
+function is_actor_trustworthy(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+	local sec = npc:section()
 	
-	xml:NavigateToRoot()
+	local comm = sim_offline_combat.story_id_communities[sec] or character_community(npc)
+	if (comm == "trader") then comm = "stalker" end
 	
-	if is_not_empty(t) then
-		return t
+	local goodwill = relation_registry.community_goodwill(comm, AC_ID)
+	return goodwill > goodwill_trust_limit
+end
+
+function is_actor_not_trustworthy(first_speaker, second_speaker)
+	return (not is_actor_trustworthy(first_speaker, second_speaker))
+end
+
+-----------------------------------------------------------------------------------
+-- Rank
+-----------------------------------------------------------------------------------
+function is_actor_experienced(first_speaker, second_speaker)
+	local rank = ranks.get_obj_rank_name(db.actor)
+	if (rank == "veteran" or rank == "expert" or rank == "master" or rank == "legend") then
+		return true
+    end
+	return false
+end
+
+function is_actor_reliable(first_speaker, second_speaker)
+	return (not is_actor_noob(first_speaker, second_speaker))
+end
+
+function is_actor_noob(first_speaker, second_speaker)
+	local rank = ranks.get_obj_rank_name(db.actor)
+	if (rank == "novice" or rank == "trainee") then
+		return true
+    end
+	return false
+end
+
+-----------------------------------------------------------------------------------
+-- Money functions
+-----------------------------------------------------------------------------------
+function has_2000_money(first_speaker, second_speaker)
+	return first_speaker:money() >= 2000
+end
+
+-----------------------------------------------------------------------------------
+-- TRADE
+-----------------------------------------------------------------------------------
+--' Èíèöèàëèçàöèÿ òîðãîâëè
+function trade_init(seller, buyer)
+	db.storage[seller:id()].meet.begin_wait_to_see.begin = time_global()/1000
+	xr_position.setPosition(db.storage[seller:id()].meet.Seller,
+							db.storage[seller:id()].meet.Seller:level_vertex_id())
+	db.storage[seller:id()].meet.Buyer = buyer
+end
+
+function want_trade(seller, buyer)
+	if seller:relation(buyer) == game_object.friend or
+		seller:relation(buyer) == game_object.neutral
+	then
+		return true
 	else
 		return false
 	end
 end
 
---[[
-	How XML dialog is converted to table inside this script:
+function dont_want_trade(seller, buyer)
+	return not want_trade(seller,buyer)
+end
+
+function relocate_item_section_to_actor(first_speaker, second_speaker, section, amount) -- Tronex
+	local npc = who_is_npc(first_speaker, second_speaker)
+	itms_manager.relocate_item_to_actor(db.actor, npc, section, amount)
+end
+
+function relocate_money_to_actor(first_speaker, second_speaker, num)
+	db.actor:give_money(num)
+	-- game_stats.money_quest_update (num)
+	news_manager.relocate_money(db.actor, "in", num)
+end
+
+function relocate_money_from_actor(first_speaker, second_speaker, num)
+	local victim = who_is_npc(first_speaker, second_speaker)
+	if victim == nil then
+		printf("Couldn't relocate money to NULL")
+	end
+	db.actor:transfer_money(num, victim)
+	-- game_stats.money_quest_update(-num)
+	news_manager.relocate_money(db.actor, "out", num)
+end
+
+--[[ Old one
+function relocate_item_section_from_actor(first_speaker, second_speaker, section)
+	local npc = who_is_npc(first_speaker, second_speaker)
+	db.actor:transfer_item(db.actor:object(section), npc)
+	news_manager.relocate_item(db.actor, "out", section)
+end
+]]--
+
+function who_is_actor(first_speaker, second_speaker)
+	local npc = second_speaker
+	if AC_ID ~= npc:id() then
+		npc	= first_speaker
+	end
+	return npc
+end
+
+function relocate_item_section_from_actor(first_speaker, second_speaker, section, amount) -- Tronex
+	local npc = who_is_npc(first_speaker, second_speaker)
+	itms_manager.relocate_item_from_actor(db.actor, npc, section, amount)
+end
+
+function actor_has_item(first_speaker, second_speaker, section)
+	return db.actor:object(section) ~= nil
+end
+
+function npc_has_item(first_speaker, second_speaker, section)
+	local npc = who_is_npc(first_speaker, second_speaker)
+	return npc:object(section) ~= nil
+end
+
+function who_is_npc(first_speaker, second_speaker)
+	return first_speaker:id() == AC_ID and second_speaker or first_speaker
+end
+
+--------------------------------------------------------------------------------
+function transfer_any_pistol_from_actor(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+		db.actor:iterate_inventory(is_pistol, npc)
+	if(db.actor.pistol~=nil) then
+			db.actor:transfer_item(db.actor:object(db.actor.pistol), npc)
+		news_manager.relocate_item(db.actor, "out", db.actor.pistol)
+		db.actor.pistol = nil
+	end
+end
+
+function is_pistol(npc, item)
+	local section = item:section()
+	if(section=="wpn_beretta")
+	or(section=="wpn_colt1911")
+	or(section=="wpn_desert_eagle")
+	or(section=="wpn_fort")
+	or(section=="wpn_hpsa")
+	or(section=="wpn_pb")
+	or(section=="wpn_pm")
+	or(section=="wpn_usp")
+	or(section=="wpn_walther") then
+		db.actor.pistol = section
+	end
+end
+
+function have_actor_any_pistol(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+		db.actor:iterate_inventory(is_pistol, npc)
+	if(db.actor.pistol~=nil) then
+		return true
+	else
+		return false
+	end
+end
+
+--------------------------------------------------------------------------------
+function transfer_any_gun_from_actor(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+		db.actor:iterate_inventory(is_gun, npc)
+	if(db.actor.gun~=nil) then
+			db.actor:transfer_item(db.actor:object(db.actor.gun), npc)
+		news_manager.relocate_item(db.actor, "out", db.actor.gun)
+		db.actor.gun = nil
+	end
+end
+
+function is_gun(npc, item)
+	local section = item:section()
+	if(section=="wpn_abakan")
+	or(section=="wpn_ak74")
+	or(section=="wpn_ak74u")
+	or(section=="wpn_groza")
+	or(section=="wpn_sig550")
+	or(section=="wpn_vintorez") then
+		db.actor.gun = section
+	end
+end
+
+function have_actor_any_gun(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+		db.actor:iterate_inventory(is_gun, npc)
+	if(db.actor.gun~=nil) then
+		return true
+	else
+		return false
+	end
+end
+
+--------------------------------------------------------------------------------
+function transfer_any_shootgun_from_actor(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+		db.actor:iterate_inventory(is_shootgun, npc)
+	if(db.actor.shootgun~=nil) then
+			db.actor:transfer_item(db.actor:object(db.actor.shootgun), npc)
+		news_manager.relocate_item(db.actor, "out", db.actor.shootgun)
+		db.actor.shootgun = nil
+	end
+end
+
+function is_shootgun(npc, item)
+	local section = item:section()
+	if(section=="wpn_bm16")
+	or(section=="wpn_toz34")
+	or(section=="wpn_wincheaster1300")
+	or(section=="wpn_spas12") then
+		db.actor.shootgun = section
+	end
+end
+
+function have_actor_any_shootgun(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+		db.actor:iterate_inventory(is_shootgun, npc)
+	if(db.actor.shootgun~=nil) then
+		return true
+	else
+		return false
+	end
+end
+
+-----------------------------------------------------------------------------------
+-- Weapons
+-----------------------------------------------------------------------------------
+function give_suitable_ammo(first_speaker, second_speaker)
+	local wpns = {}
+	local wpn_1 = db.actor:item_in_slot(2)
+	if wpn_1 and IsWeapon(wpn_1) then
+		wpns[#wpns + 1] = wpn_1:section()
+	end
 	
-	XML:
-		<dialog id="sidorovich_questlines_about_dialog">
-			<precondition>dialogs.actor_true_stalker</precondition>
-			<dont_has_info>story_mode_disabled</dont_has_info>
-			<has_info>faction_limited_playthrough</has_info>
-			<phrase_list>
-				<phrase id="0">  <!-- Actor -->
-					<text>dialog_text_0</text>
-					<next>1</next>
-					<next>2</next>
-					<next>3</next>
-				</phrase>
-				<phrase id="1">  <!-- NPC -->
-					<text>dialog_text_1</text>
-					<give_info>questlines_about_info</give_info>
-					<next>4</next>
-				</phrase>
-				<phrase id="2">  <!-- NPC -->
-					<text>dialog_text_2</text>
-					<disable_info>start_game_esc_m_trader</disable_info>
-					<action>xr_effects.decrease_sl_tasks_count(4)</action>
-					<action>xr_effects.decrease_tasks(true,0,false)</action>
-					<next>4</next>
-				</phrase>
-				<phrase id="3">  <!-- NPC -->
-					<script_text>dialogs.text_3_function</script_text>
-					<precondition>dialogs.level_name(zaton)</precondition>
-					<has_info>zaton_not_visited</has_info>
-				</phrase>
-				<phrase id="4">  <!-- Actor -->
-					<script_text>dialogs.goodbye_text</script_text>
-				</phrase>
-			</phrase_list>
-		</dialog>
+	local wpn_2 = db.actor:item_in_slot(3)
+	if wpn_2 and IsWeapon(wpn_2) then
+		wpns[#wpns + 1] = wpn_2:section()
+	end
 	
-	LUA:	
-		dialog_list["sidorovich_questlines_about_dialog"] = {
-			precondition = {
-				[1] = { ["condition"] = {"dialogs","actor_true_stalker"} },
-				[2] = { ["dont_has_info"] = "story_mode_disabled" },
-				[3] = { ["has_info"] = "faction_limited_playthrough" },
-			},
-			phrases = {
-				[0] = {
-					text = "dialog_text_0",
-					next = {1,2,3},
-				},
-				[1] = {
-					text = "dialog_text_1",
-					actions = {
-						[1] = { ["give_info"] = "questlines_about_info" }
-					},
-					next = {4},
-				},
-				[2] = {
-					text = "dialog_text_2",
-					actions = {
-						[1] = { ["disable_info"] = "start_game_esc_m_trader" },
-						[2] = { ["action"] = {"xr_effects","decrease_sl_tasks_count",4} }, 
-						[3] = { ["action"] = {"xr_effects","decrease_tasks",true,0,false} },
-					},
-					next = {4},
-				},
-				[3] = {
-					script_text = {"dialogs","text_3_function"},
-					conds = {
-						[1] = { ["condition"] = {"dialogs","level_name","zaton"} },
-						[2] = { ["has_info"] = "zaton_not_visited" },
-					},
-					next = {4},
-				},
-				[4] = {
-					script_text = {"dialogs","goodbye_text"},
-				},
-			},
-		}
---]]
+	for i=1,#wpns do
+		local section = wpns[i]
+		local ammo = parse_list(ini_sys,section,"ammo_class")
+		if ammo and #ammo > 0 then
+			local ammo_sec = ammo[1]
+			local box_size = ini_sys:r_u32(ammo_sec, "box_size")
+			alife_create_item(ammo_sec, db.actor, { ammo = box_size })
+			
+			news_manager.relocate_item(db.actor, "in", ammo_sec, box_size)
+		end
+	end
+end
+
+--------------------------------------------------------------------------------
+--			ALIFE SUPPORT
+--------------------------------------------------------------------------------
+
+function disable_ui(first_speaker, second_speaker)
+	xr_effects.disable_ui(first_speaker, second_speaker)
+end
+
+function disable_ui_only(first_speaker, second_speaker)
+	xr_effects.disable_ui_only(first_speaker, second_speaker)
+end
+
+function is_surge_running(first_speaker, second_speaker)
+	return xr_conditions.surge_started()
+end
+
+function is_surge_not_running(first_speaker, second_speaker)
+	return not xr_conditions.surge_started()
+end
+
+---------------------
+function quest_dialog_heli_precond(first_speaker, second_speaker)
+	if (has_alife_info("jup_b9_heli_1_searched") and
+				has_alife_info("zat_b100_heli_2_searched") and
+				has_alife_info("zat_b28_heli_3_searched") and
+				has_alife_info("jup_b8_heli_4_searched") and
+				has_alife_info("zat_b101_heli_5_searched")) or
+				has_alife_info("pri_b305_actor_wondered_done") then
+			return false
+	end
+
+	return true
+end
+
+function quest_dialog_military_precond(first_speaker, second_speaker)
+	if has_alife_info("zat_b28_heli_3_searched") or has_alife_info("jup_b9_blackbox_decrypted") then
+		if not (has_alife_info("zat_b28_heli_3_searched") and has_alife_info("jup_b9_blackbox_decrypted")) then
+			return true
+		end
+	end
+	return false
+end
+
+function quest_dialog_squad_precond(first_speaker, second_speaker)
+	return not (has_alife_info("jup_b218_monolith_hired") and has_alife_info("jup_b218_soldier_hired") and has_alife_info("jup_a10_vano_agree_go_und"))
+end
+
+function quest_dialog_toolkits_precond(first_speaker, second_speaker)
+	if has_alife_info("zat_a2_mechanic_toolkit_search") and not has_alife_info("zat_b3_task_end") then
+		return true
+	elseif has_alife_info("jup_b217_tech_instruments_start") and not has_alife_info("jup_b217_task_end") then
+		return true
+	end
+	return false
+end
+
+
+function squad_not_in_smart_b101(first_speaker, second_speaker)
+	local smart = "zat_b101"
+	return not is_npc_in_current_smart(first_speaker, second_speaker, smart)
+end
+
+function squad_not_in_smart_b103(first_speaker, second_speaker)
+	local smart = "zat_b103"
+	return not is_npc_in_current_smart(first_speaker, second_speaker, smart)
+end
+
+function squad_not_in_smart_b104(first_speaker, second_speaker)
+	local smart = "zat_b104"
+	return not is_npc_in_current_smart(first_speaker, second_speaker, smart)
+end
+
+function squad_not_in_smart_b213(first_speaker, second_speaker)
+	local smart = "jup_b213"
+	return not is_npc_in_current_smart(first_speaker, second_speaker, smart)
+end
+
+function squad_not_in_smart_b214(first_speaker, second_speaker)
+	local smart = "jup_b214"
+	return not is_npc_in_current_smart(first_speaker, second_speaker, smart)
+end
+
+function squad_not_in_smart_b304(first_speaker, second_speaker)
+	local smart = "pri_b304_monsters_smart_terrain"
+	return not is_npc_in_current_smart(first_speaker, second_speaker, smart)
+end
+
+function squad_not_in_smart_b303(first_speaker, second_speaker)
+	local smart = "pri_b303"
+	return not is_npc_in_current_smart(first_speaker, second_speaker, smart)
+end
+
+function squad_not_in_smart_b40(first_speaker, second_speaker)
+	local smart = "zat_b40_smart_terrain"
+	return not is_npc_in_current_smart(first_speaker, second_speaker, smart)
+end
+
+function squad_not_in_smart_b18(first_speaker, second_speaker)
+	local smart = "zat_b18"
+	return not is_npc_in_current_smart(first_speaker, second_speaker, smart)
+end
+
+function squad_not_in_smart_b6(first_speaker, second_speaker)
+	local smart = "jup_b41"
+	return not is_npc_in_current_smart(first_speaker, second_speaker, smart)
+end
+
+function squad_not_in_smart_b205(first_speaker, second_speaker)
+	local smart = "jup_b205_smart_terrain"
+	return not is_npc_in_current_smart(first_speaker, second_speaker, smart)
+end
+
+function squad_not_in_smart_b47(first_speaker, second_speaker)
+	local smart = "jup_b47"
+	return not is_npc_in_current_smart(first_speaker, second_speaker, smart)
+end
+
+function squad_in_smart_zat_base(first_speaker, second_speaker)
+	local smart = "zat_stalker_base_smart"
+	return is_npc_in_current_smart(first_speaker, second_speaker, smart)
+end
+
+function squad_in_smart_jup_b25(first_speaker, second_speaker)
+	local smart = "jup_a6"
+	return is_npc_in_current_smart(first_speaker, second_speaker, smart)
+end
+
+function spartak_is_alive(first_speaker, second_speaker)
+	return xr_conditions.is_alive(nil,nil,{"zat_b7_stalker_victim_1"})
+end
+
+function tesak_is_alive(first_speaker, second_speaker)
+	return xr_conditions.is_alive(nil,nil,{"zat_b103_lost_merc_leader"})
+end
+
+function gonta_is_alive(first_speaker, second_speaker)
+	return xr_conditions.is_alive(nil,nil,{"zat_b103_lost_merc_leader"})
+end
+
+function mityay_is_alive(first_speaker, second_speaker)
+	return xr_conditions.is_alive(nil,nil,{"jup_a12_stalker_assaulter"})
+end
+
+function dolg_can_work_for_sci(first_speaker, second_speaker)
+	return not (has_alife_info("jup_a6_freedom_leader_bunker_guards_work") or has_alife_info("jup_a6_freedom_leader_bunker_scan_work"))
+end
+
+function dolg_can_not_work_for_sci(first_speaker, second_speaker)
+	return has_alife_info("jup_a6_freedom_leader_bunker_guards_work") or has_alife_info("jup_a6_freedom_leader_bunker_scan_work")
+end
+
+function freedom_can_work_for_sci(first_speaker, second_speaker)
+	return not (has_alife_info("jup_a6_duty_leader_bunker_guards_work") or has_alife_info("jup_a6_duty_leader_bunker_scan_work"))
+end
+
+function freedom_can_not_work_for_sci(first_speaker, second_speaker)
+	return has_alife_info("jup_a6_duty_leader_bunker_guards_work") or has_alife_info("jup_a6_duty_leader_bunker_scan_work")
+end
+
+function monolith_leader_is_alive(first_speaker, second_speaker)
+	if not (has_alife_info("jup_b4_monolith_squad_in_freedom") or has_alife_info("jup_b4_monolith_squad_in_duty")) then
+		return xr_conditions.is_alive(nil,nil,{"jup_b4_monolith_squad_leader_monolith_skin"})
+	end
+
+	if has_alife_info("jup_b4_monolith_squad_in_freedom") then
+		return xr_conditions.is_alive(nil,nil,{"jup_b4_monolith_squad_leader_freedom_skin"})
+	elseif has_alife_info("jup_b4_monolith_squad_in_duty") then
+		return xr_conditions.is_alive(nil,nil,{"jup_b4_monolith_squad_leader_duty_skin"})
+	end
+
+	return false
+end
+
+function monolith_leader_dead_or_hired(first_speaker, second_speaker)
+	if has_alife_info("jup_b218_soldier_hired") then
+		return true
+	end
+
+	if not (has_alife_info("jup_b4_monolith_squad_in_freedom") or has_alife_info("jup_b4_monolith_squad_in_duty")) then
+		return not xr_conditions.is_alive(nil,nil,{"jup_b4_monolith_squad_leader_monolith_skin"})
+	end
+
+	if has_alife_info("jup_b4_monolith_squad_in_freedom") then
+		return not xr_conditions.is_alive(nil,nil,{"jup_b4_monolith_squad_leader_freedom_skin"})
+	elseif has_alife_info("jup_b4_monolith_squad_in_duty") then
+		return not xr_conditions.is_alive(nil,nil,{"jup_b4_monolith_squad_leader_duty_skin"})
+	end
+
+	return true
+end
+
+function monolith_leader_dead_or_dolg(first_speaker, second_speaker)
+	if has_alife_info("jup_b218_soldier_hired") then
+		return true
+	end
+
+	if not (has_alife_info("jup_b4_monolith_squad_in_freedom") or has_alife_info("jup_b4_monolith_squad_in_duty")) then
+		return not xr_conditions.is_alive(nil,nil,{"jup_b4_monolith_squad_leader_monolith_skin"})
+	end
+
+	if has_alife_info("jup_b4_monolith_squad_in_freedom") then
+		return true
+	elseif has_alife_info("jup_b4_monolith_squad_in_duty") then
+		return not xr_conditions.is_alive(nil,nil,{"jup_b4_monolith_squad_leader_duty_skin"})
+	end
+
+	return true
+end
+
+function monolith_leader_dead_or_freedom(first_speaker, second_speaker)
+	if has_alife_info("jup_b218_soldier_hired") then
+		return true
+	end
+
+	if not (has_alife_info("jup_b4_monolith_squad_in_freedom") or has_alife_info("jup_b4_monolith_squad_in_duty")) then
+		return not xr_conditions.is_alive(nil,nil,{"jup_b4_monolith_squad_leader_monolith_skin"})
+	end
+
+	if has_alife_info("jup_b4_monolith_squad_in_freedom") then
+		return not xr_conditions.is_alive(nil,nil,{"jup_b4_monolith_squad_leader_freedom_skin"})
+	elseif has_alife_info("jup_b4_monolith_squad_in_duty") then
+		return true
+	end
+
+	return true
+end
+
+-- Medic support
+function medic_magic_potion(first_speaker, second_speaker)
+	db.actor.health = 1
+	db.actor.power = 1
+-- com	db.actor.radiation = 0
+	db.actor.bleeding = 1
+end
+
+function medic_rad_potion(first_speaker, second_speaker)
+	db.actor.radiation = 0
+end
+
+function health_care_actor_has_money(first_speaker, second_speaker)
+	return db.actor:money() >= 1850
+end
+
+function health_care_actor_has_rad_money(first_speaker, second_speaker)
+	return db.actor:money() >= 1480
+end
+
+function health_care_actor_hasnt_money(first_speaker, second_speaker)
+	return not health_care_actor_has_money(first_speaker, second_speaker)
+end
+
+function health_care_actor_hasnt_rad_money(first_speaker, second_speaker)
+	return not health_care_actor_has_rad_money(first_speaker, second_speaker)
+end
+
+function health_care_actor_transfer_money(first_speaker, second_speaker)
+	dialogs.relocate_money_from_actor(first_speaker, second_speaker, 1850)
+end
+
+function health_care_actor_transfer_rad_money(first_speaker, second_speaker)
+	dialogs.relocate_money_from_actor(first_speaker, second_speaker, 1480)
+end
+
+function give_hip_medic_potion(first_speaker, second_speaker)
+	local npc = who_is_npc(first_speaker, second_speaker)
+	npc.health = 1
+	npc.power = 1
+	npc.radiation = 0
+	npc.bleeding = 1
+end
+
+function actor_needs_bless(first_speaker, second_speaker)
+	if db.actor.health < 1 or
+			db.actor.radiation > 0 or
+			db.actor.bleeding > 0 then
+		return true
+	end
+
+	return false
+end
+
+function actor_needs_health(first_speaker, second_speaker)
+	if (db.actor.health < 1) and (db.actor:money() >= 1850) then
+		return true
+	end
+	return false
+end
+
+function actor_needs_rad_health(first_speaker, second_speaker)
+	if (db.actor.radiation > 0) and (db.actor:money() >= 1480) then
+		return true
+	end
+	return false
+end
+
+function actor_is_damn_healthy(first_speaker, second_speaker)
+	return not actor_needs_bless(first_speaker, second_speaker)
+end
+
+function actor_needs_rad_bless(first_speaker, second_speaker)
+	if db.actor.radiation > 0 or
+			db.actor.bleeding >= 0 then
+		return true
+	end
+
+	return false
+end
+
+function actor_wants_rad_bless(first_speaker, second_speaker)
+	if db.actor.radiation > 0 and db.actor:money() >= 3500 then
+		return true
+	end
+
+	return false
+end
+
+function actor_must_rad_bless(first_speaker, second_speaker)
+	if db.actor.radiation > 0 and db.actor:money() >= 500 and db.actor:money() < 3500 then
+		return true
+	end
+
+	return false
+end
+
+function actor_is_damn_healthy(first_speaker, second_speaker)
+	return not actor_needs_bless(first_speaker, second_speaker)
+end
+
+function leave_zone_save(first_speaker, second_speaker)
+	xr_effects.scenario_autosave(db.actor,nil,{"st_save_uni_zone_to_reality"})
+end
+
+function save_uni_travel_zat_to_jup(first_speaker, second_speaker)
+	xr_effects.scenario_autosave(db.actor,nil,{"st_save_uni_travel_zat_to_jup"})
+end
+
+function save_uni_travel_zat_to_pri(first_speaker, second_speaker)
+	xr_effects.scenario_autosave(db.actor,nil,{"st_save_uni_travel_zat_to_pri"})
+end
+
+function save_uni_travel_jup_to_zat(first_speaker, second_speaker)
+	xr_effects.scenario_autosave(db.actor,nil,{"st_save_uni_travel_jup_to_zat"})
+end
+
+function save_uni_travel_jup_to_pri(first_speaker, second_speaker)
+	xr_effects.scenario_autosave(db.actor,nil,{"st_save_uni_travel_jup_to_pri"})
+end
+
+function save_uni_travel_pri_to_zat(first_speaker, second_speaker)
+	xr_effects.scenario_autosave(db.actor,nil,{"st_save_uni_travel_pri_to_zat"})
+end
+
+function save_uni_travel_pri_to_jup(first_speaker, second_speaker)
+	xr_effects.scenario_autosave(db.actor,nil,{"st_save_uni_travel_pri_to_jup"})
+end
+
+function save_jup_b218_travel_jup_to_pas(first_speaker, second_speaker)
+	xr_effects.scenario_autosave(db.actor,nil,{"st_save_jup_b218_travel_jup_to_pas"})
+end
+
+function save_pri_a17_hospital_start(first_speaker, second_speaker)
+	xr_effects.scenario_autosave(db.actor,nil,{"st_save_pri_a17_hospital_start"})
+end
+
+function save_jup_a10_gonna_return_debt(first_speaker, second_speaker)
+	if has_alife_info("jup_a10_vano_give_task") and not has_alife_info("jup_a10_avtosave") and not has_alife_info("jup_b218_gather_squad_complete") then
+		xr_effects.scenario_autosave(db.actor,nil,{"st_save_jup_a10_gonna_return_debt"})
+		db.actor:give_info_portion("jup_a10_avtosave")
+	end
+end
+
+function save_jup_b6_arrived_to_fen(first_speaker, second_speaker)
+	xr_effects.scenario_autosave(db.actor,nil,{"st_save_jup_b6_arrived_to_fen"})
+end
+
+function save_jup_b6_arrived_to_ash_heap(first_speaker, second_speaker)
+	xr_effects.scenario_autosave(db.actor,nil,{"st_save_jup_b6_arrived_to_ash_heap"})
+end
+
+function save_jup_b19_arrived_to_kopachy(first_speaker, second_speaker)
+	xr_effects.scenario_autosave(db.actor,nil,{"st_save_jup_b19_arrived_to_kopachy"})
+end
+
+function save_zat_b106_arrived_to_chimera_lair(first_speaker, second_speaker)
+	xr_effects.scenario_autosave(db.actor,nil,{"st_save_zat_b106_arrived_to_chimera_lair"})
+end
+
+function save_zat_b5_met_with_others(first_speaker, second_speaker)
+	xr_effects.scenario_autosave(db.actor,nil,{"st_save_zat_b5_met_with_others"})
+end
+
+function can_do_alun_riddle_quest(first_speaker, second_speaker)
+	return has_alife_info("alun_riddle_begin") ~= true
+end
+
+
+-----------------------------------------------------------------------------------
+-- Medic general dialog
+-----------------------------------------------------------------------------------
+function is_actor_not_healthy(first_speaker, second_speaker)
+	if (db.actor.health < 1 or db.actor.bleeding > 0 or db.actor.radiation > 0) then
+		return true
+	end
+	return false
+end
+function is_actor_healthy(first_speaker, second_speaker)
+	return (not is_actor_not_healthy(first_speaker, second_speaker))
+end
+
+function is_actor_injured(first_speaker, second_speaker)
+	if (db.actor.health < 1 or db.actor.bleeding > 0)
+	and (db.actor:money() >= 1850)
+	then
+		return true
+	end
+	return false
+end
+function is_actor_irradiated(first_speaker, second_speaker)
+	if (db.actor.radiation > 0)
+	and (db.actor:money() >= 1480)
+	then
+		return true
+	end
+	return false
+end
+function is_actor_injured_irradiated(first_speaker, second_speaker)
+	if (db.actor.health < 1 or db.actor.bleeding > 0) and (db.actor.radiation > 0)
+	and (db.actor:money() >= 3350)
+	then
+		return true
+	end
+	return false
+end
+
+function heal_actor_injury(first_speaker, second_speaker)
+	relocate_money_from_actor (first_speaker, second_speaker, 1850)
+	db.actor.health = 1
+	db.actor.power = 1
+	db.actor.bleeding = 1
+end
+function heal_actor_radiation(first_speaker, second_speaker)
+	relocate_money_from_actor (first_speaker, second_speaker, 1480)
+	db.actor.radiation = 0
+end
+function heal_actor_injury_radiation(first_speaker, second_speaker)
+	relocate_money_from_actor (first_speaker, second_speaker, 3350)
+	db.actor.health = 1
+	db.actor.power = 1
+	db.actor.radiation = 0
+	db.actor.bleeding = 1
+end
+
+function st_dm_medic_general_text_1(first_speaker, second_speaker)
+	local str_0 = "st_dm_medic_general_text_1_0"
+	local str_r = "st_dm_medic_general_text_1_" .. math.random(1,3)
+	local str = game.translate_string(str_r) .. " " .. game.translate_string(str_0)
+	return str
+end
+function st_dm_medic_general_text_10(first_speaker, second_speaker)
+	local str_0 = "st_dm_medic_general_text_10_0"
+	local str_r = "st_dm_medic_general_text_10_" .. math.random(1,4)
+	local str = game.translate_string(str_r) .. " " .. game.translate_string(str_0)
+	return str
+end
+
+
+-----------------------------------------------------------------------------------
+-- Trade important documents
+-----------------------------------------------------------------------------------
+local important_docs = {
+	["main_story_1_quest_case"] = 10000,
+	["main_story_2_lab_x18_documents"] = 13000,
+	["main_story_3_lab_x16_documents"] = 16000,
+	["main_story_4_lab_x10_documents"] = 20000,
+	["main_story_5_lab_x8_documents"] = 13000,
+	["main_story_6_jup_ug_documents"] = 14000,
+	["main_story_7_mon_con_documents"] = 25000,
+}
+
+local important_docs_warfare_names = {
+	["stalker"] = "bar_visitors_barman_stalker_trader",
+	["bandit"] = "zat_b7_bandit_boss_sultan",
+	["csky"] = "mar_smart_terrain_base_stalker_leader_marsh",
+	["dolg"] = "bar_dolg_leader",
+	["army"] = "agr_smart_terrain_1_6_near_2_military_colonel_kovalski",
+	["killer"] = "cit_killers_merc_trader_stalker",
+	["ecolog"] = "yan_stalker_sakharov",
+	["freedom"] = "mil_smart_terrain_7_7_freedom_leader_stalker",
+}
+
+local inv_important_docs = {}
+local inv_important_docs_money = 0
+function actor_has_important_documents(a,b)
+	-- reset
+	empty_table(inv_important_docs)
+	inv_important_docs_money = 0
+	
+	local function itr(_,obj)
+		local sec = obj:section()
+		if important_docs[sec] then
+			inv_important_docs[#inv_important_docs + 1] = sec
+		end
+	end
+	db.actor:iterate_inventory(itr, nil)
+	
+	return (#inv_important_docs > 0)
+end
+
+function st_trade_important_documents(a,b,typ,txt)
+	local npc = who_is_npc(a, b)
+	local npc_name
+	if _G.WARFARE then
+		local se_obj = alife_object(npc:id())
+		local comm = se_obj:community()
+		npc_name = important_docs_warfare_names[comm]
+	else
+		npc_name = npc:section()
+		if npc_name == "m_trader" then
+			npc_name = npc:name()
+		end
+	end
+	local str = game.translate_string("st_trade_important_documents_".. typ .. "_" .. npc_name)
+	str = strformat(str,txt)
+	return str
+end
+
+function st_trade_important_documents_ask(a,b)
+	inv_important_docs_money = 0
+	for i=1,#inv_important_docs do
+		inv_important_docs_money = inv_important_docs_money + important_docs[inv_important_docs[i]]
+	end
+	
+	-- Economy factor
+	local eco_type = game_difficulties.get_eco_factor("type")
+	local factor = ((eco_type == 3) and 0.5) or ((eco_type == 2) and 0.75) or 1
+	inv_important_docs_money = inv_important_docs_money * factor
+	
+	-- Randomizer
+	local delta = inv_important_docs_money * 0.1
+	inv_important_docs_money = math.ceil(math.random(inv_important_docs_money - delta , inv_important_docs_money + delta ))
+	
+	return st_trade_important_documents(a,b,"ask",inv_important_docs_money)
+end
+
+function st_trade_important_documents_answer(a,b)
+	return st_trade_important_documents(a,b,"answer","")
+end
+
+function trade_important_documents_reward(a,b)
+	local sweets_1 = {
+		"af_aac",
+		"af_iam",
+		"af_plates",
+		"af_camelbak",
+		"af_surge_up",
+		"af_frames_up",
+		"af_grid_up",
+		"af_grid",
+	}
+	local sweets_2 = {
+		"stimpack",
+		"medkit_army",
+		"medkit",
+		"drug_psy_blockade",
+	}
+	
+	for i=1,#inv_important_docs do
+		dialogs.relocate_item_section(db.actor, inv_important_docs[i], "out")
+		local obj = db.actor:object(inv_important_docs[i])
+		if obj then
+			alife_release_id(obj:id())
+		end
+	end
+	dialogs.relocate_money(db.actor, inv_important_docs_money, "in")
+	dialogs.relocate_item_section(db.actor, sweets_1[math.random(#sweets_1)], "in", 1)
+	dialogs.relocate_item_section(db.actor, sweets_2[math.random(#sweets_2)], "in", math.random(2,3))
+end
+
+
+-----------------------------------------------------------------------------------
+-- Trade / Repair init
+-----------------------------------------------------------------------------------
+function is_trade_init_accept(a,b)
+	local npc = who_is_npc(a, b)
+	local id = npc:id()
+	
+	local npc_items = death_manager.get_items_by_npc(id)
+	return (npc_items ~= false)
+end
+function is_trade_accept(a,b)
+	local npc = who_is_npc(a, b)
+	local id = npc:id()
+	
+	local npc_items = death_manager.get_items_by_npc(id)
+	
+	-- first-time trade request, decide if NPC wants to trade
+	local init_items = nil
+	if (npc_items == nil) then
+		init_items = (math.random(100) <= 60) and true or false
+	end
+	
+	-- if npc agrees, spawn items in his inventory
+	if (init_items == true) then
+		local npc_comm = character_community(npc)
+		local npc_rank = ranks.get_obj_rank_name(npc)
+		death_manager.create_item_list(npc, npc_comm, npc_rank, false, true)
+	
+	-- if npc disagrees, mark him
+	elseif (init_items == false) then
+		death_manager.set_items_by_npc(id,false)
+	end
+	
+	return ((npc_items or init_items) and true or false)
+end
+function is_not_trade_accept(a,b)
+	local npc = who_is_npc(a, b)
+	local id = npc:id()
+	
+	local npc_items = death_manager.get_items_by_npc(id)
+	return (npc_items == false)
+end
+
+function st_stalker_trade_dialog_reply(a,b)
+	local str = game.translate_string("st_stalker_trade_dialog_reply_" .. math.random(1,3))
+	return str
+end
+
+function st_stalker_trade_dialog_reply_no(a,b)
+	local str = game.translate_string("st_stalker_trade_dialog_reply_no_" .. math.random(1,2))
+	return str
+end
+
+function st_trader_dialog_reply(a,b)
+	local str = game.translate_string("st_trader_dialog_reply_" .. math.random(1,3))
+	return str
+end
+
+function st_mechanic_dialog_reply(a,b)
+	local str = game.translate_string("st_mechanic_dialog_reply_" .. math.random(1,3))
+	return str
+end
+
+function st_medic_dialog_reply(a,b)
+	local str = game.translate_string("st_medic_dialog_reply_" .. math.random(1,3))
+	return str
+end
+
+function st_bartender_dialog_reply(a,b)
+	local str = game.translate_string("st_bartender_dialog_reply_" .. math.random(1,3))
+	return str
+end
+
+
+-----------------------------------------------------------------------------------
+-- Questions about NPC life style
+-----------------------------------------------------------------------------------
+local lifestyle_asked_already = {} -- dialog is available 2 times only for an npc: when asked and get answer, and when npc has enough
+local lifestyle_id -- stores latest npc with this dialog, it will be safe because of the procondition
+local lifestyle_tbl = {
+	["esc_m_trader"] = "esc_m_trader",
+	["bar_dolg_leader"] = "bar_dolg_leader",
+	["mil_smart_terrain_7_7_freedom_leader_stalker"] = "mil_smart_terrain_7_7_freedom_leader_stalker",
+	["yan_stalker_sakharov"] = "yan_stalker_sakharov",
+	["jup_b6_scientist_nuclear_physicist"] = "yan_stalker_sakharov",
+	["hunter_gar_trader"] = "hunter_gar_trader",
+	["jup_b220_trapper"] = "jup_b220_trapper",
+}
+
+function lifestyle_first_time(a,b)
+	local npc = who_is_npc(a, b)
+	local name = npc and (npc:section() ~= "m_trader") and npc:section() or npc:name()
+	lifestyle_id = npc:id()
+	--printf("- lifestyle_first_time | NPC: %s - id: %s", name, lifestyle_id)
+	-- if npc is asked twice, no dialog
+	if name and (lifestyle_asked_already[name] == true) then
+		return false
+	end
+	return true
+end
+function st_lifestyle_ask(a,b)
+	local npc = lifestyle_id and db.storage[lifestyle_id] and db.storage[lifestyle_id].object
+	local name = npc and (npc:section() ~= "m_trader") and npc:section() or npc:name()
+	local prof = name and lifestyle_tbl[name]
+	if prof then
+		return game.translate_string("st_" .. prof .. "_life_ask")
+	end
+	return game.translate_string("st_esc_m_trader_life_ask")
+end
+function st_lifestyle_answer(a,b)
+	local npc = lifestyle_id and db.storage[lifestyle_id] and db.storage[lifestyle_id].object
+	local name = npc and (npc:section() ~= "m_trader") and npc:section() or npc:name()
+	local prof = name and lifestyle_tbl[name]
+	
+	-- if npc is asked once, second answer is enough
+	if prof and (lifestyle_asked_already[name] == false) then
+		lifestyle_asked_already[name] = true
+		return game.translate_string("st_" .. prof .. "_life_end")
+	end
+	lifestyle_asked_already[name] = false
+	
+	-- if npc never asked, give proper answer
+	local tbl = prof and utils_data.collect_translations("st_" .. prof .. "_life_",true)
+	if (not tbl) then
+		lifestyle_asked_already[name] = true
+		return game.translate_string("st_esc_m_trader_life_end")
+	end
+	return tbl[math.random(#tbl)]
+end
