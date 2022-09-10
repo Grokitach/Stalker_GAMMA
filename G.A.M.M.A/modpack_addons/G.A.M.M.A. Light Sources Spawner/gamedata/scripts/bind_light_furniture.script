@@ -1,0 +1,243 @@
+local function get_time_elapsed()
+    return game.get_game_time():diffSec(level.get_start_time())
+end
+gc = game.translate_string
+---------------------------------------------------------------------------------------------------
+-- Physic objects binding
+----------------------------------------------------------------------------------------------------
+local lights = {}
+local switch = false
+
+local psi_influence_clsid = {
+
+	[clsid.poltergeist_s] = true,
+	[clsid.controller_s] = true,
+	
+}
+
+function need_flicker(lamp_obj)
+	
+	-- Flicker on Emission Wave or Vortex
+	if (level_environment.get_light_flicker()) then return true end
+	
+	-- Flicker if Psi Mutant nearby
+	local psi_influence = false
+	local function iterate_func(obj)
+		if (obj and psi_influence_clsid[obj:clsid()] and obj:alive()) then 
+			psi_influence = true
+			return true
+		end
+	end
+
+	level.iterate_nearest(lamp_obj:position(), 15, iterate_func)
+	
+	if psi_influence then return true end
+	
+	return switch
+end
+
+function init(obj)
+    obj:bind_object(placeable_light_binder(obj))
+end
+
+---------------------------------------------------------------------------------------------
+class "placeable_light_binder" (object_binder)
+function placeable_light_binder:__init(obj) super(obj)
+
+	lights[obj:id()] = "light_flicker"
+
+	-- Get paths to sound files
+	local section = self.object:section()
+	self.humming_snd_path = ini_sys:r_string_ex(section,"snd_on")
+	self.turn_on_snd_path = ini_sys:r_string_ex(section,"snd_turn_on")
+	self.turn_off_snd_path = ini_sys:r_string_ex(section,"snd_turn_off")
+	self.particle_path = ini_sys:r_string_ex(section,"particle")
+	self.hide_bone_off = ini_sys:r_string_ex(section,"hide_bone_off")
+	
+	if self.humming_snd_path then
+		self.humming = sound_object(self.humming_snd_path)
+		self.humming:play_at_pos(self.object, self.object:position(), 0, sound_object.s3d + sound_object.looped)
+		self.humming.volume = 0.0
+		self.humming_max = time_global() + 5000
+	end
+	
+	if self.particle_path then
+		self.particles = particles_object(self.particle_path)
+	end
+	
+	if obj:section() ~= "placeable_gas_lamp_gamma" then
+		self.object:set_tip_text(gc("st_interact"))
+	end
+	
+	self.last_state = self.object:get_hanging_lamp():is_on()
+	
+	self.tg = time_global()
+	
+	self.time_last = get_time_elapsed() -- used to keep track of time difference in between updates
+	self.max_duration = ini_sys:r_string_ex(section,"fuel_duration")*3600
+	
+	local condition = placeable_furniture.conditions[obj:id()]
+	if condition then
+		self.fuel = condition
+	else
+		self.fuel = 1
+	end
+
+end
+
+function placeable_light_binder:reload(section)
+end
+
+function placeable_light_binder:reinit()
+end
+
+function placeable_light_binder:update(delta)
+	self.object:set_callback(callback.hit, placeable_light_binder.hit_callback, self)
+	self.object:set_callback(callback.death, placeable_light_binder.death_callback, self)
+	self.object:set_callback(callback.use_object, placeable_light_binder.use_callback, self)
+
+	if not self.init then
+		local phys = self.object:get_physics_shell()
+		if phys then
+			phys:apply_force(0, 1, 0)
+			self.init = true
+		end
+	end
+	
+	local lamp_obj = self.object:get_hanging_lamp()
+	if self.fuel <= 0.0 then
+		lamp_obj:turn_off()
+	end
+	local is_flickering = lamp_obj:is_flickering()
+	local is_on = lamp_obj:is_on()
+	
+	if (self.last_state ~= is_on) then
+	
+		-- Play humming sound
+		if (is_on) then
+			if (self.humming == nil and self.humming_snd_path) then
+				self.humming = sound_object(self.humming_snd_path)
+			end
+			if (self.humming ~= nil and not self.humming:playing()) then
+		
+				self.humming:play_at_pos(self.object, self.object:position(), 0, sound_object.s3d + sound_object.looped)
+				self.humming.volume = 0.0
+				self.humming_max = time_global() + 5000
+			end
+			-- 'Turn on' sound
+			if self.turn_on_snd_path then
+				sound_object(self.turn_on_snd_path):play_no_feedback(self.object, sound_object.s3d, 0, self.object:position(), math.random(5,8), random_float(0.9, 1.1))
+			end
+
+			-- Show bone when on
+			if self.hide_bone_off then
+				self.object:set_bone_visible(self.hide_bone_off, true, true, false)
+			end
+		
+		-- Stop humming sound
+		else
+			if (self.humming ~= nil and self.humming:playing()) then
+				self.humming:stop()
+			end
+			-- 'Turn off' sound
+			if self.turn_off_snd_path then
+				sound_object(self.turn_off_snd_path):play_no_feedback(self.object, sound_object.s3d, 0, self.object:position(), random_float(0.5, 0.9), random_float(0.9, 1.1))
+			end
+
+			-- Hide bone when off
+			if self.hide_bone_off then
+				self.object:set_bone_visible(self.hide_bone_off, false, true, false)
+			end
+		end
+	end
+	
+	self.last_state = is_on
+	
+	-- Slow Startup for Humming Sound
+	if (self.humming ~= nil and self.humming:playing() and (self.humming_max > time_global())) then
+		self.humming.volume = 0.6 - (self.humming_max - time_global()) / 5000.0
+	end
+	
+	local needflicker = need_flicker(self.object)
+	
+	if (needflicker and not is_flickering) then
+		--							color animator			 flicker	on/off chance	on/off base time		 color animator fps
+		lamp_obj:set_color_animator(lights[self.object:id()], true, math.random(25,75), random_float(0.75,1.75), math.random(10,20))
+	elseif (not needflicker and is_flickering) then
+		lamp_obj:reset_color_animator()
+	end
+
+
+	if (self.humming ~= nil and self.humming:playing()) then
+		self.humming:set_position(self.object:position())
+	end
+
+
+
+	
+	local time_current = get_time_elapsed()
+	local time_diff = time_current - self.time_last
+	if is_on then
+		-- Create and move particles to bone_light
+		if self.particle_path then
+			if not self.particles:playing() then
+				self.particles:play_at_pos(self.object:bone_position("bone_light"))
+			end
+			self.particles:move_to(self.object:bone_position("bone_light"), VEC_Z)
+		end
+		
+		-- Deplete light fuel by adjusting condition
+		self.fuel = self.fuel - (time_diff / self.max_duration)
+	else
+		-- Stop particles if turned off
+		if self.particles and self.particles:playing() then
+			self.particles:stop()
+		end
+	end
+
+	self.time_last = time_current
+end
+
+function placeable_light_binder:net_spawn(data)
+end
+
+function placeable_light_binder:net_destroy()
+	if (self.humming) then
+		self.humming:stop()
+		self.humming = nil
+	end
+	
+	if self.particles and self.particles:playing() then
+		self.particles:stop()
+	end
+
+	lights[self.object:id()] = nil
+end
+
+function placeable_light_binder:net_save_relevant()
+	return true
+end
+
+function placeable_light_binder:save(packet)
+end
+
+function placeable_light_binder:load(reader)
+end
+
+function placeable_light_binder:use_callback(obj, who)
+	if obj:section() == "placeable_gas_lamp_gamma" then return end
+	hide_hud_inventory()
+	ui_furniture_light.start_light_dialog(obj:id())
+end
+
+function placeable_light_binder:hit_callback(obj, amount, local_direction, who, bone_index)
+end
+
+function placeable_light_binder:death_callback(victim, who)
+	if (self.humming) then
+		self.humming:stop()
+		self.humming = nil
+	end
+	
+	lights[self.object:id()] = nil
+end
