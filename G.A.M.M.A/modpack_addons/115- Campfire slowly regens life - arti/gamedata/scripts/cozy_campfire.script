@@ -1,0 +1,27 @@
+local health_regen =  0.00002
+
+function get_nearby_lit_campfire(dist)
+	local pos = db.actor:position()
+	for id,binder in pairs(bind_campfire.campfires_all) do
+		if (binder and binder.campfire and binder.campfire:is_on()) then
+			if (pos:distance_to_sqr(binder.object:position()) <= dist) then
+				return true
+			end
+		end 
+	end 
+	return false
+end
+
+function actor_on_update()
+    if not (db.actor) then 
+		return
+	end
+    if get_nearby_lit_campfire(10.0) then
+        db.actor:change_health(health_regen)
+        -- printf("regenerating hp")
+    end
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_update",actor_on_update)
+end
