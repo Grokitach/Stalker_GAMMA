@@ -1,7 +1,7 @@
 //=================================================================================================
 //Settings for PBR conversion
 //=================================================================================================
-//#define USE_PBR //Use physically based specular 
+#define USE_PBR //Use physically based specular 
 #define USE_GGX_SPECULAR //use more expensive GGX specular
 //=================================================================================================
 #define ALBEDO_AMOUNT 1.00
