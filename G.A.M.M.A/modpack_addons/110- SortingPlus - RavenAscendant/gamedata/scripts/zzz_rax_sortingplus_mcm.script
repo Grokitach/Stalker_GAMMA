@@ -1,0 +1,652 @@
+--[[
+SortingPlus
+24FEB2021
+This work is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License
+Author: RavenAscendant
+--]]
+
+
+-- UI events
+local K_K = DIK_keys.DIK_K --if you want to change this change the very last letter. must be caps.
+local K_J = DIK_keys.DIK_J --if you want to change this change the very last letter. must be caps.
+PLAYERINV = true
+PLAYERTRADE = true
+NPCINV = true
+NPCTRADE = true
+SORTJUNK = true
+HILITEJUNK = true
+ICONJUNK = true
+SORTFAVS = true
+HILITEFAVS = true
+ICONFAVS = true
+BLOCKPUTALLFAVS = true
+AUTOSELLJUNK = true
+RESORT = true
+local favorite_itms = {}
+local junk_itms = {}
+local favs_color = GetARGB(50, 176, 238, 26)
+local junk_color = GetARGB(50, 204, 0, 0)
+local ini = ini_file("sortingplus.ltx")
+if yyy_mag_sorting  then
+	--force load order
+end
+if aaa_rax_icon_override_mcm then end
+
+local bags = {
+    actor_bag = true,
+    actor_trade_bag = true,
+    npc_bag = true,
+    npc_trade_bag = true
+}
+
+local function save_state(mdata)
+    mdata.rax_favorite_itms = favorite_itms
+    mdata.rax_junk_itms = junk_itms
+end
+
+local function load_state(mdata)
+    favorite_itms = mdata.rax_favorite_itms or favorite_itms
+    junk_itms = mdata.rax_junk_itms or junk_itms
+end
+
+function pr(txt, ...)
+    --printf("RAX: "..txt, ...)
+end
+
+function check_favs(cell)
+    if bags[cell.container.ID] then return HILITEFAVS and favorite_itms[cell.section] and favs_color end
+end
+
+function check_junk(cell)
+    if bags[cell.container.ID] then return HILITEJUNK and junk_itms[cell.section] and junk_color end
+end
+
+function icon_junk(cell, obj, sec)
+	if bags[cell.container.ID] and ICONJUNK and junk_itms[cell.section] then
+		axis = utils_xml.get_item_axis(sec)
+		return {texture = "ui\\sortingplus\\icon-junk",y = axis.h / 2 - 7 or 0, x = axis.w - 15, w = 15, h = 15}
+	end
+end
+--{texture = "ui_am_propery_01", x = 1, y = 1, w = 15, h = 15}
+function icon_favs(cell, obj, sec)
+	if bags[cell.container.ID] and ICONFAVS and favorite_itms[cell.section] then
+		axis = utils_xml.get_item_axis(sec)
+		return {texture = "ui\\sortingplus\\icon-favourite", y = axis.h / 2 - 11 or 0, x = 0 , w = 15, h = 15}
+	end
+end
+
+
+
+
+
+function on_game_start()
+    rax_persistent_highlight.register("aafavorite_itms", check_favs)
+    rax_persistent_highlight.register("aajunk_itms", check_junk)
+	rax_dynamic_custom_functor.add_functor("SP_fav", fav_menu_string, menu_precond, fav_menu_action)
+	rax_dynamic_custom_functor.add_functor("SP_junk", junk_menu_string, menu_precond, junk_menu_action)
+	rax_icon_layers.register("aajunk_itms", icon_junk)
+	rax_icon_layers.register("abfavorite_itms", icon_favs)
+	
+	
+    RegisterScriptCallback("load_state", load_state)
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+    RegisterScriptCallback("on_option_change", actor_on_first_update) --MCM sends the same callback as ui_options 
+    RegisterScriptCallback("ActorMenu_on_item_before_move", ActorMenu_on_item_before_move)
+    RegisterScriptCallback("GUI_on_show", GUI_on_show)
+end
+
+-- code to move junk to actor trade bag, when trade window opened.
+function GUI_on_show(name)
+    if (name ~= "UIInventory") then return end --return quickly if not the GUI we want
+
+    if ui_inventory.GUI.mode == "trade" and AUTOSELLJUNK then
+        ui_inventory.GUI:SortJunkTrade() --defined at end of this file
+    end
+end
+
+function actor_on_first_update()
+    loadsettings() --load settings
+
+    if not ui_inventory.GUI then
+        ui_inventory.GUI = ui_inventory.UIInventory()
+    end
+
+    ui_inventory.GUI.CC["actor_bag"].sort_method = PLAYERINV and "kind" or "sizekind"
+    ui_inventory.GUI.CC["actor_trade_bag"].sort_method = PLAYERTRADE and "kind" or "sizekind"
+    ui_inventory.GUI.CC["npc_bag"].sort_method = NPCINV and "kind" or "sizekind"
+    ui_inventory.GUI.CC["npc_trade_bag"].sort_method = NPCTRADE and "kind" or "sizekind"
+end
+
+local ui_catagories = {}
+local item_order = {}
+local kind_overrides = {}
+local ab_w, ab_h, ab_k = {}, {}, {}
+local a_sec, a_w, a_h, a_k = nil, nil, nil, nil
+local b_sec, b_w, b_h, b_k = nil, nil, nil, nil
+
+function loadsettings()
+    -- here we test to make sure ui_mcm exists before trying to call it's get function.
+    if ui_mcm then
+        PLAYERINV = ui_mcm.get("SortingPlus/playerinv")
+        PLAYERTRADE = ui_mcm.get("SortingPlus/playertrade")
+        NPCINV = ui_mcm.get("SortingPlus/npcinv")
+        NPCTRADE = ui_mcm.get("SortingPlus/npctrade")
+        SORTJUNK = ui_mcm.get("SortingPlus/sortjunk")
+        HILITEJUNK = ui_mcm.get("SortingPlus/hilitejunk")
+        ICONJUNK = ui_mcm.get("SortingPlus/iconjunk")
+        AUTOSELLJUNK = ui_mcm.get("SortingPlus/selljunk")
+        SORTFAVS = ui_mcm.get("SortingPlus/sortfavs")
+        HILITEFAVS = ui_mcm.get("SortingPlus/hilitefavs")
+        ICONFAVS = ui_mcm.get("SortingPlus/iconfavs")
+        BLOCKPUTALLFAVS = ui_mcm.get("SortingPlus/putallfavs")
+        RESORT = ui_mcm.get("SortingPlus/resort")
+        USEFUNCTORS = ui_mcm.get("SortingPlus/usefunctors")
+        item_order = {} --clear the cached item order since user may have changed those
+        ab_k = {} -- (dis/en)able junk/favs sorting requires this to be cleared.
+
+        -- use the function to read the lxt if set to
+        if ui_mcm.get("SortingPlus/useltx") == true then
+            set_item_order()
+        else
+            --other wise loop thru ui_catagories, built when MCM menu is next function, and use the number entered into the mcm menu as the sorting order. 
+            for key, value in pairs(ui_catagories) do
+                for i = 2, #value do
+                    item_order[value[i]] = ui_mcm.get("SortingPlus/" .. key)
+                end
+            end
+
+            item_order["na"] = size_table(item_order) + 1 --fail case
+        end
+    else
+        set_item_order() --without mcm read from the lxt
+    end
+	if HILITEFAVS then rax_persistent_highlight.register("aafavorite_itms", check_favs) end
+    if HILITEJUNK then rax_persistent_highlight.register("aajunk_itms", check_junk) end
+	if USEFUNCTORS then
+		rax_dynamic_custom_functor.add_functor("SP_fav", fav_menu_string, menu_precond, fav_menu_action)
+		rax_dynamic_custom_functor.add_functor("SP_junk", junk_menu_string, menu_precond, junk_menu_action)
+	end
+	if ICONJUNK then rax_icon_layers.register("aajunk_itms", icon_junk) end
+	if ICONFAVS then rax_icon_layers.register("abfavorite_itms", icon_favs) end
+	
+
+end
+
+
+function on_mcm_load() --builds mcm menu
+		t = {
+				{ id= "sorting"				 ,type= "slide"	  ,link= "ui_options_slider_economy_diff"	 ,text= "ui_mcm_title_SortingPlus"		,size= {512,50}		,spacing= 20 },
+				{id = "playerinv", type = "check", val = 1, def = true},
+				{id = "playertrade", type = "check", val = 1, def = true},
+				{id = "npcinv", type = "check", val = 1, def = true},
+				{id = "npctrade", type = "check", val = 1, def = true},
+				{id = "line", type = "line"},
+				{id = "hilitejunk", type = "check", val = 1, def = true},
+				{id = "iconjunk", type = "check", val = 1, def = true},
+				{id = "sortjunk", type = "check", val = 1, def = true},
+				{id = "selljunk", type = "check", val = 1, def = true},				
+				{id = "hilitefavs", type = "check", val = 1, def = true},
+				{id = "iconfavs", type = "check", val = 1, def = true},
+				{id = "sortfavs", type = "check", val = 1, def = true},
+				{id = "putallfavs", type = "check", val = 1, def = true},
+				{id = "resort", type = "check", val = 1, def = false},
+				{id = "usefunctors", type = "check", val = 1, def = true},
+				
+				{id = "line", type = "line"},
+				{id = "useltx", type = "check", val = 1, def = false},
+			}
+	
+	local n = ini:line_count("sortingplusmcm") --the catagories portion is dynamic
+	for i=0,n-1 do
+		local result, catgory, kinds = ini:r_line_ex("sortingplusmcm",i,"","") --catagory is a text entry field in the mcm menu, kinds is the list of kinds grouped in that catagory
+		if magazine_binder or not ( catgory == "002mags" or catgory == "001loadout") then
+			if catgory and kinds then
+				ui_catagories[catgory] = str_explode(kinds,",") -- building ui_catagories list
+				if  tonumber(ui_catagories[catgory][1]) then --first element in list of kinds is the defualt value for the catagory 
+					table.insert(t, {id=catgory,  type = "input", val = 2, def = tonumber(ui_catagories[catgory][1]), min = -100, max = 1000}) -- here we push the entry into the menu table
+				else
+					ui_catagories[catgory] = nil -- if it doesn't start with a number it is invalid get rid of it.
+				end
+			end
+		end
+	end
+
+			
+		
+	op = { id= "SortingPlus"      	 	,sh=true ,gr= t	} -- put the list of setting into the table describing the entire MCM menu
+			
+		return op
+end
+
+
+
+function set_item_order()
+    local n = ini:line_count("item_kind_order")
+
+    for i = 0, n - 1 do
+        local result, kind, order = ini:r_line_ex("item_kind_order", i, "", "")
+
+        if kind and order then
+            item_order[kind] = tonumber(order) or 30
+        end
+    end
+
+    item_order["na"] = size_table(item_order) + 1
+    n = ini:line_count("kind_overrides")
+
+    for i = 0, n - 1 do
+        local result, sec, kind = ini:r_line_ex("kind_overrides", i, "", "")
+
+        if sec and kind then
+            kind_overrides[sec] = kind
+            --printf("override %s as %s", sec, kind)
+        end
+    end
+end
+
+function get_sort_kind(sec)
+    return  magazine_binder and magazine_binder.is_magazine(sec) and "mags" or kind_overrides[sec] or SYS_GetParam(0, sec, "kind", "na")
+end
+
+
+
+
+function sort_info(asec, bsec)
+    ---	printf("Print table")
+    ---store_table(item_order)
+    -- A
+    a_sec = asec
+	axis = utils_xml.get_item_axis(a_sec,1)
+    if (not ab_w[a_sec]) then
+        ab_w[a_sec] = axis.w
+    end
+
+    if (not ab_h[a_sec]) then
+        ab_h[a_sec] = axis.h
+    end
+
+    if (not ab_k[a_sec]) then
+        ab_k[a_sec] = get_sort_kind(a_sec)
+
+        if (not item_order[ab_k[a_sec]]) then
+            ab_k[a_sec] = "na"
+        end
+    end
+
+    a_w = ab_w[a_sec]
+    a_h = ab_h[a_sec]
+    a_k = item_order[ab_k[a_sec]]
+    -- B
+    b_sec = bsec
+	axis = utils_xml.get_item_axis(b_sec,1)
+    if (not ab_w[b_sec]) then
+        ab_w[b_sec] = axis.w
+    end
+
+    if (not ab_h[b_sec]) then
+        ab_h[b_sec] = axis.h
+    end
+
+    if (not ab_k[b_sec]) then
+        ab_k[b_sec] = get_sort_kind(b_sec)
+
+        if (not item_order[ab_k[b_sec]]) then
+            ab_k[b_sec] = "na"
+        end
+    end
+
+    b_w = ab_w[b_sec]
+    b_h = ab_h[b_sec]
+    b_k = item_order[ab_k[b_sec]]
+end
+
+function sort_by_size(t, a, b)
+    if (type(t[a]) == "string") then
+        sort_info(t[a], t[b])
+    else
+        sort_info(t[a]:section(), t[b]:section())
+    end
+
+    -- Comparison
+    --printf("%s - %s", a_sec, b_sec)
+    if (a_w == b_w) then
+        if (a_h == b_h) then
+            if (a_sec == b_sec) then
+                if (type(t[a]) == "string") then return false end --true
+
+                return t[a]:id() > t[b]:id()
+            end
+            -- alphaptic order
+
+            return a_sec < b_sec
+        end
+
+        return a_h > b_h
+    end
+
+    return a_w > b_w
+end
+
+function sort_by_kind(t, a, b)
+	local a_o,b_o
+	if (type(t[a]) == "string") then
+        sort_info(t[a], t[b])
+		a_o = item_order[SORTFAVS and favorite_itms[t[a]] or SORTJUNK and junk_itms[t[a]]] or false
+		b_o = item_order[SORTFAVS and favorite_itms[t[b]] or SORTJUNK and junk_itms[t[b]]] or false
+    else
+        sort_info(t[a]:section(), t[b]:section())
+		a_o = item_order[SORTFAVS and favorite_itms[t[a]:section()] or SORTJUNK and junk_itms[t[a]:section()]] or false
+		b_o = item_order[SORTFAVS and favorite_itms[t[b]:section()] or SORTJUNK and junk_itms[t[b]:section()]] or false
+		
+        if magazine_binder then
+            if magazine_binder.is_carried_mag(t[a]:id()) then
+                a_k = item_order["loadout"]
+            end
+
+            if magazine_binder.is_carried_mag(t[b]:id()) then
+                b_k = item_order["loadout"]
+            end
+        end
+    end
+	if a_o ~= b_o then --if the overrides are equal sort by the actual kind
+		a_k = a_o or a_k --otherwise sort by the overide if it exists or the orginal kind
+		b_k = b_o or b_k
+	end
+	
+    if a_k == b_k then return sort_by_size(t, a, b) end
+
+    return a_k < b_k
+end
+
+function sort_by_index(t, a, b)
+    return t[a].index < t[b].index
+end
+
+function sort_by_sizekind(t, a, b)
+ 	local a_o,b_o
+	if (type(t[a]) == "string") then
+        sort_info(t[a], t[b])
+		a_o = item_order[SORTFAVS and favorite_itms[t[a]] or SORTJUNK and junk_itms[t[a]]] or false
+		b_o = item_order[SORTFAVS and favorite_itms[t[b]] or SORTJUNK and junk_itms[t[b]]] or false
+    else
+        sort_info(t[a]:section(), t[b]:section())
+		a_o = item_order[SORTFAVS and favorite_itms[t[a]:section()] or SORTJUNK and junk_itms[t[a]:section()]] or false
+		b_o = item_order[SORTFAVS and favorite_itms[t[b]:section()] or SORTJUNK and junk_itms[t[b]:section()]] or false
+		
+        if magazine_binder then
+            if magazine_binder.is_carried_mag(t[a]:id()) then
+                a_o = item_order["loadout"]
+            end
+
+            if magazine_binder.is_carried_mag(t[b]:id()) then
+                b_o = item_order["loadout"]
+            end
+        end
+    end
+
+	if a_o ~= b_o then --if the overrides are equal sort by the actual kind
+		a_k = a_o or a_k --otherwise sort by the overide if it exists or the orginal kind
+		b_k = b_o or b_k
+	end
+ 
+
+
+ -- Comparison
+    --printf("%s - %s", a_sec, b_sec)
+	-- override wins first
+	if not (a_o or b_o) then
+		--\\ bigger width wins
+		if (a_w == b_w) then
+			--\\ bigger height wins
+			if (a_h == b_h) then
+				--\\ important kind wins
+				if a_k == b_k then
+					--\\ alphaptic order wins
+					if (a_sec == b_sec) then
+						--\\ better condition wins
+						if (type(t[a]) == "string") then return false end --true
+
+						return t[a]:condition() > t[b]:condition()
+					end
+
+					return a_sec < b_sec
+				end
+
+				return a_k < b_k
+			end
+
+			return a_h > b_h
+		end
+		
+		return a_w > b_w
+	end
+	return a_k < b_k
+end
+
+function sort_by_props(t, a, b)
+    -- Only for objects with same sections
+    local sec = t[a]:section()
+
+    -- For ammo, bigger ammo counts wins
+    if IsItem("ammo", sec) and (not IsItem("grenade_ammo", sec)) then
+        -- Upgraded items wins
+        return t[a]:ammo_get_count() > t[b]:ammo_get_count()
+    elseif utils_item.has_upgrades(t[a]) and (not utils_item.has_upgrades(t[b])) then
+        return true
+    end
+    -- Better condition wins
+
+    return t[a]:condition() > t[b]:condition()
+end
+
+-- over ride the functions in utils_ui to point to these instead
+utils_ui.sort_by_props = sort_by_props
+utils_ui.sort_by_sizekind = sort_by_sizekind
+utils_ui.sort_by_index = sort_by_index
+utils_ui.sort_by_kind = sort_by_kind
+utils_ui.sort_by_size = sort_by_size
+utils_ui.sort_info = sort_info
+
+-- one more function that referances the sorting tables so redifine it here, code is identical tho. 19JUN2021 not identical any more mag support required edit
+function utils_ui.UICellContainer.FindFreeCell(self, obj, sec)
+    if (not sec) then
+        if (not obj) then return false end
+        sec = obj and obj:section()
+    end
+
+	axis = utils_xml.get_item_axis(sec,1)
+	local w = axis.w
+	local h = axis.h
+    -- Avoid icons that don't fit
+    if w > self.cols then return false end
+
+    -- Sorting by kind: when sorting a new kind, always start from last row taken by previous kind
+    if self.sort_method == "kind" then
+        local sort_k = magazine_binder and obj and magazine_binder.is_carried_mag(obj:id()) and "loadout" or SORTFAVS and favorite_itms[sec] or SORTJUNK and junk_itms[sec] or  ab_k[sec]
+		self.rKind.current = item_order[sort_k]
+
+        if (self.rKind.last ~= self.rKind.current) then
+            self.rKind.last = self.rKind.current
+            self.rKind.row = self.row_end + 1
+        end
+    end
+
+    local row_s = self.rKind.row
+    local rows = #self.grid
+    local cols = self.cols + 1 - w
+    self:Print(nil, "FindFreeCell for [%s] (rows: %s, cols: %s, W: %s, H: %s)", sec, rows, cols, w, h)
+
+    for r = row_s, rows do
+        for c = 1, cols do
+            if self:IsFreeRoom(r, c, w, h) then return self:TakeRoom(r, c, w, h) end
+        end
+    end
+
+    self:Grow()
+
+    return self:FindFreeCell(obj, sec)
+end
+
+utils_ui.UICellContainer.OnKeyboardBase = utils_ui.UICellContainer.OnKeyboard --make a copy of the original version
+tg_wait = 0
+
+--editing this is easier than using a normal key callback because this function has "selfself.hover.idx" that is the cell the mouse is over
+function utils_ui.UICellContainer:OnKeyboard(dik, keyboard_action)
+    tg = time_global() --this function gets called repetedly when key pressed, using a timer to lcean that up
+
+    -- for some reason self.hover.idx can be false when the first of the batch of keyboard events comes in. this makes sure the timer isn't triggered until it has a value
+    if ((dik == K_K or dik == K_J) and tg > tg_wait and self.hover.idx) then
+        tg_wait = tg + 500 --half a second seems like a nice time for a key press, no one is seedrunning this game, or if they are they shouldn't use mods, atleast not htis one :)
+        local indx = self.hover.idx
+        pr(tostring(indx))
+
+        -- make sure the cell at the index exist and that it has the section of the item it refers to set
+        if self.cell[indx] and self.cell[indx].section then
+            --keep key
+			local sec = self.cell[indx].section
+            if dik == K_K then
+                --if this item is in the list we will clear it
+				set_favorite(sec,not favorite_itms[sec])
+             elseif dik == K_J then
+                -- same things but for junk list
+				set_junk(sec, not junk_itms[sec])
+           end
+
+			rax_icon_layers.refresh(RESORT and 1)
+		end
+    end
+
+    self:OnKeyboardBase(dik, keyboard_action) -- pass key on to orginal version
+end
+
+local PUTALL = false --flag to keep track of put all being in progress
+ui_inventory.UIInventory.LMode_PutAllBase = ui_inventory.UIInventory.LMode_PutAll --copy of the base script.
+
+
+local snd_open = sound_object([[interface\inv_open]])
+
+-- Loot mode (Override)
+function ui_inventory.UIInventory.LMode_Init(self, obj)
+    self:Print(nil, "LMode_Init | obj: %s", obj and obj:name())
+
+    self.mode = "loot"
+
+    -- Show/Hide needed elements
+    self:Reset(obj)
+
+    -- We need this because box can spawn items after opening, so they don't update those instantly
+    if (not self.box_init_update.state) then -- Do not ignore inventory reset for npc boxes, so they are sorted on startup - Ishy.
+        self.box_init_update.tg = time_global()
+        self.box_init_update.state = true
+        self:LMode_ResetInventories(true)
+        return
+    end
+    self.box_init_update.state = false
+
+    -- Update inventories
+    self:LMode_ResetInventories()
+
+    -- Update info
+    self:UpdateInfo(true)
+
+    -- Known info (Special case for corpses)
+    self:LMode_TransferInfo(obj)
+
+    -- Sound effect
+    self:PlaySND(snd_open)
+end
+
+
+
+
+-- add entry exit flag set to the put all function
+function ui_inventory.UIInventory:LMode_PutAll()
+    PUTALL = BLOCKPUTALLFAVS -- flag is set to the setting option. if setting is false normal behavior results.
+    self:LMode_PutAllBase()
+    PUTALL = false
+end
+
+-- i wish there was a ActorMenu_on_item_before_move_all callback then the above PUTALL bs wouldn't be needed.
+function ActorMenu_on_item_before_move(flags, npc_id, obj, mode, bag)
+    flags.ret_value = flags.ret_value and not (PUTALL and favorite_itms[obj:section()]) -- if PUTALL is true, and the item is in the favorite_itms list set the flag to false, to block the item being transfered.
+end
+
+-- moves items to actor trade bag. Action_Move checks for quest itmes, vendor doesn't want ect. 
+function ui_inventory.UIInventory:SortJunkTrade()
+    function itr(_, item)
+        if junk_itms[item:section()] then
+            self:Action_Move(item, "actor_trade_bag")
+        end
+    end
+
+    local cc = self.CC["actor_trade_bag"]
+
+    if cc:IsShown() then
+        db.actor:iterate_inventory(itr, db.actor)
+    end
+end
+
+
+
+function fav_menu_string(obj)
+    if favorite_itms[obj:section()] then
+        return "st_rax_unfav"
+    else
+        return "st_rax_fav"
+    end
+end
+
+function junk_menu_string(obj)
+    if junk_itms[obj:section()] then
+        return "st_rax_unjunk"
+    else
+        return "st_rax_junk"
+    end
+end
+
+function menu_precond(obj, mode, bag)
+    return USEFUNCTORS and mode ~= "repair"
+end
+
+
+
+function fav_menu_action(obj)
+    sec = obj:section()
+	set_favorite(sec,not favorite_itms[sec])
+	rax_icon_layers.refresh(RESORT and 1)
+end
+
+function junk_menu_action(obj)
+    sec = obj:section()
+
+    -- same things but for junk list
+	set_junk(sec, not junk_itms[sec])
+    rax_icon_layers.refresh(RESORT and 1)
+end
+
+function is_favorite(sec)
+	return favorite_itms[sec] and true or false
+end
+function is_junk(sec)
+	return junk_itms[sec] and true or false
+end
+
+function set_favorite(sec,state)
+	if state then
+        favorite_itms[sec] = "favorites" -- add it to the list if it isn't there.
+        junk_itms[sec] = nil --remove it from junk, these lists are mutaly exclusive 
+    else
+        favorite_itms[sec] = nil
+    end
+end
+
+function set_junk(sec, state)
+	    -- same things but for junk list
+    if state then
+        junk_itms[sec] = "junk"
+        favorite_itms[sec] = nil
+    else
+        junk_itms[sec] = nil
+    end
+end
