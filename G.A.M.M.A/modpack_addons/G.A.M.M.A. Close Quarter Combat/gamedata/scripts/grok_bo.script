@@ -9,6 +9,22 @@ ini_damage		= ini_file("creatures\\damages.ltx")
 leg_meta_sniper_null = 1
 sniper_bad_bone_shit_reduce = 1
 
+local difficulty_multiplier = {
+	[1]  = 1.3,
+	[2]  = 1.05,
+	[3]  = 1.0,
+	[4]  = 1.0,
+}
+
+gameplay = alife_storage_manager.get_state().diff_game
+if not (type(gameplay) == "table") then -- for old saves
+	alife_storage_manager.get_state().diff_game = {}
+	alife_storage_manager.get_state().diff_game["type"] = game_num
+	ameplay = alife_storage_manager.get_state().diff_game
+end
+
+game_num = gameplay["type"] or game_num
+
 Bone_IDs = {
 [2]  =	"bip01_pelvis",
 [3]  =	"bip01_l_thigh",
@@ -326,7 +342,7 @@ function monster_on_before_hit(monster,shit,bone_id)
 		end
 	end
 
-	shit.power = shit.power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * mutant_mult * ammo_mult * spec_monster_mult * bone_mult * cqc_mult * barrel_condition_corrected
+	shit.power = shit.power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * mutant_mult * ammo_mult * spec_monster_mult * bone_mult * cqc_mult * barrel_condition_corrected * difficulty_multiplier[game_num]
 
 	printf("Barrel condition: %s, GBO output damage: %s", barrel_condition, shit.power)
 	return
@@ -619,9 +635,9 @@ function npc_on_before_hit(npc,shit,bone_id)
 
 	local k_ap = k_ap * custom_bone_ap_scale * barrel_condition_corrected -- reduce bullet ap following npc ap scale and barrel condition
 
-	k_ap = k_ap / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * isg_res
+	k_ap = k_ap / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * isg_res * difficulty_multiplier[game_num]
 
-	shit.power = wpn_hit_power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * k_hit * custom_bone_dmg_mult * custom_bone_ap_scale * 1.1 * sniper_bad_bone_shit_reduce * barrel_condition_corrected * sin_res
+	shit.power = wpn_hit_power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * k_hit * custom_bone_dmg_mult * custom_bone_ap_scale * 1.1 * sniper_bad_bone_shit_reduce * barrel_condition_corrected * sin_res * difficulty_multiplier[game_num]
 
 	local armor_loss_increment = tonumber(k_ap * 0.60) -- reduce bone armor depending on k_ap
 	
