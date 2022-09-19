@@ -9,6 +9,22 @@ ini_damage		= ini_file("creatures\\damages.ltx")
 leg_meta_sniper_null = 1
 sniper_bad_bone_shit_reduce = 1
 
+local difficulty_multiplier = {
+	[1]  = 1.3,
+	[2]  = 1.05,
+	[3]  = 1.0,
+	[4]  = 1.0,
+}
+
+gameplay = alife_storage_manager.get_state().diff_game
+if not (type(gameplay) == "table") then -- for old saves
+	alife_storage_manager.get_state().diff_game = {}
+	alife_storage_manager.get_state().diff_game["type"] = game_num
+	ameplay = alife_storage_manager.get_state().diff_game
+end
+
+game_num = gameplay["type"] or game_num
+
 Bone_IDs = {
 [2]  =	"bip01_pelvis",
 [3]  =	"bip01_l_thigh",
@@ -164,8 +180,12 @@ function monster_on_before_hit(monster,shit,bone_id)
 	local dist = monster_pos:distance_to(shooter_pos)
 
 	if ammo_section == "ammo_12x70_buck" or ammo_section == "ammo_12x70_buck_bad" or 
-	   ammo_section == "ammo_20x70_buck" or ammo_section == "ammo_23x75_shrapnel" then
+	   ammo_section == "ammo_20x70_buck" then
 		ammo_mult = 0.90
+	end
+	
+	if ammo_section == "ammo_23x75_shrapnel" then
+		ammo_mult = 1.50
 	end
 
 	if ammo_section == "ammo_12x76_zhekan" or ammo_section == "ammo_12x76_zhekan_bad" then
@@ -184,7 +204,7 @@ function monster_on_before_hit(monster,shit,bone_id)
 	end
 
 	if ammo_section == "ammo_7.62x25_ps"  or ammo_section == "ammo_7.62x25_ps_bad" then
-		ammo_mult = 1.10
+		ammo_mult = 1.15
 	end
 
 	if ammo_section == "ammo_357_hp_mag" or ammo_section == "ammo_357_hp_mag_bad" then
@@ -192,7 +212,7 @@ function monster_on_before_hit(monster,shit,bone_id)
 	end
 
  	if ammo_section == "ammo_11.43x23_hydro"  or ammo_section == "ammo_11.43x23_hydro_bad"  then
-		ammo_mult = 1.15
+		ammo_mult = 1.05
 	end
 
  	if ammo_section == "ammo_11.43x23_fmj"  or ammo_section == "ammo_11.43x23_fmj_bad"  then
@@ -229,14 +249,16 @@ function monster_on_before_hit(monster,shit,bone_id)
 
 	-- /// mutants body parts multipliers ///
 	if string.find(monster:name(), "gigant") then
+	
+		spec_monster_mult = 0.85
 		
 		if ammo_section == "ammo_12x70_buck" or ammo_section == "ammo_12x70_buck_bad" or 
 	    ammo_section == "ammo_20x70_buck" then
-			ammo_mult = 1.3
+			ammo_mult = 1.4
 		end
 
         if ammo_section == "ammo_23x75_shrapnel" then
-			ammo_mult = 1.7
+			ammo_mult = 2.2
 		end
 		
 		if ammo_section == "ammo_23x75_barrikada" then
@@ -258,7 +280,7 @@ function monster_on_before_hit(monster,shit,bone_id)
 	end
 
 	if string.find(monster:name(), "chimera") then
-		spec_monster_mult = 0.85
+		spec_monster_mult = 0.75
 		if (bone_id == 33 or bone_id == 24 or bone_id == 25 or bone_id == 23 or bone_id == 28) then
 			bone_mult = 2.00
 			printf("Critical Hit!")
@@ -319,14 +341,14 @@ function monster_on_before_hit(monster,shit,bone_id)
 
 
 	if string.find(monster:name(), "fracture") then
-		spec_monster_mult = 0.50
+		spec_monster_mult = 0.65
 		if (bone_id == 12 or bone_id == 13) then
-			bone_mult = 1.80
+			bone_mult = 2.00
 			printf("Critical Hit!")
 		end
 	end
 
-	shit.power = shit.power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * mutant_mult * ammo_mult * spec_monster_mult * bone_mult * cqc_mult * barrel_condition_corrected
+	shit.power = shit.power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * mutant_mult * ammo_mult * spec_monster_mult * bone_mult * cqc_mult * barrel_condition_corrected * difficulty_multiplier[game_num]
 
 	printf("Barrel condition: %s, GBO output damage: %s", barrel_condition, shit.power)
 	return
@@ -619,9 +641,9 @@ function npc_on_before_hit(npc,shit,bone_id)
 
 	local k_ap = k_ap * custom_bone_ap_scale * barrel_condition_corrected -- reduce bullet ap following npc ap scale and barrel condition
 
-	k_ap = k_ap / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * isg_res
+	k_ap = k_ap / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * isg_res * difficulty_multiplier[game_num]
 
-	shit.power = wpn_hit_power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * k_hit * custom_bone_dmg_mult * custom_bone_ap_scale * 1.1 * sniper_bad_bone_shit_reduce * barrel_condition_corrected * sin_res
+	shit.power = wpn_hit_power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * k_hit * custom_bone_dmg_mult * custom_bone_ap_scale * 1.1 * sniper_bad_bone_shit_reduce * barrel_condition_corrected * sin_res * difficulty_multiplier[game_num]
 
 	local armor_loss_increment = tonumber(k_ap * 0.60) -- reduce bone armor depending on k_ap
 	
