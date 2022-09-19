@@ -1,7 +1,6 @@
 #include "anomaly_shaders.h"
 #include "common.h"
 
-#include "night_vision.h"
 #include "lmodel.h"
 #include "hmodel.h"
 
@@ -86,13 +85,6 @@ _out main ( _input I, uint iSample : SV_SAMPLEINDEX )
 	float4   L = s_accumulator.Load( int3( I.tc0 * screen_res.xy, 0 ), ISAMPLE );
 #endif
 
-	if (abs(P.w - MAT_FLORA) <= 0.05) {
-		// Reapply distance factor to fix overtly glossy plants in distance
-		// Unfortunately some trees etc don't seem to use the same detail shader
-		float	fAtten = 1 - smoothstep(0, 50, P.z);
-		D.a	*= (fAtten * fAtten);
-  }
-
      // static sun
 	float mtl = P.w;
 
@@ -147,7 +139,7 @@ _out main ( _input I, uint iSample : SV_SAMPLEINDEX )
 	occ = compute_colored_ao(occ.x, D.xyz);
 #endif
 #endif
-	
+	 
 	occ.rgb = SRGBToLinear(occ.rgb); 		//gamma correct
 	
 	L.rgb += L.a * SRGBToLinear(D.rgb); //illum in alpha
@@ -171,26 +163,17 @@ _out main ( _input I, uint iSample : SV_SAMPLEINDEX )
 #else
 	hdiffuse *= occ;	
 #endif
+
 	//hspecular *= occ;
 
 		float3       color     = L.rgb + hdiffuse.rgb;
 					 color = LinearTosRGB(color); 			//gamma correct
-
+	
 	// SSR Implementation
 #ifdef SSFX_SSR
 	SSFX_ScreenSpaceReflections(I.tc0, P, N, D.a, color, ISAMPLE);	
 #endif
-
-//// SOME NVG SHIT ////
-		float lua_param_nvg_generation = floor(shader_param_8.x);             		// 1, 2, or 3
-		float lua_param_nvg_num_tubes = frac(shader_param_8.x) * 10.0f;            // 1, 2, 4, 1.1, or 1.2
-		float lua_param_nvg_gain_current = floor(shader_param_8.y) / 10.0f; 
-		float lua_param_vignette_current = floor(shader_param_8.z) / 100.0f;
-
-// NVG reduces gloss to 0 inside mask	
-D.a *= (1.0 - compute_lens_mask(aspect_ratio_correction(I.tc0), lua_param_nvg_num_tubes));
-
-//// END NVG SHIT ////
+	
 ////////////////////////////////////////////////////////////////////////////////
 
         // here should be distance fog
@@ -203,52 +186,9 @@ D.a *= (1.0 - compute_lens_mask(aspect_ratio_correction(I.tc0), lua_param_nvg_nu
         float          	tm_scale        = I.tc0.w;                // interpolated from VS
 
         _out        	o;
-	
-/////////// BEEFS NVGS CHANGES ///////////
+        tonemap        	(o.low, o.high, color, tm_scale )	;
+                        o.low.a         = skyblend	;
+						o.high.a		= skyblend	;
 
-		if (lua_param_nvg_generation > 0.0f && compute_lens_mask(aspect_ratio_correction(I.tc0), lua_param_nvg_num_tubes) == 1.0f)
-		{
-			float lua_param_nvg_gain_offset = floor(shader_param_8.w) / 10.0f;
-	        tonemap(o.low, o.high, color, 10.0f * lua_param_nvg_gain_offset);
-		
-			// Turn split tonemapping data to YUV and discard UV
-			o.low.r = dot(o.low.rgb, luma_conversion_coeff);
-			o.high.r = dot(o.high.rgb, luma_conversion_coeff);
-		
-			o.low.r *= 4.0f;
-			o.high.r *= 4.0f;
-		
-			// Turn s_accumulator data in to YUV and discard UV
-			o.low.g = pow(dot(L.rgb, luma_conversion_coeff),2.0f)*1.3f;
-			o.high.g = o.low.g;
-		
-			// Turn albedo into YUV and discard UV
-			o.low.b = dot(D.rgb, luma_conversion_coeff);
-			o.high.b = o.low.b;
-			
-			o.low *= lua_param_nvg_gain_current;
-			o.high *= lua_param_nvg_gain_current;
-				
-			// Extra
-			o.low.a = skyblend;
-			o.high.a = skyblend;
-					
-
-			// APPLY VIGNETTE
-			float vignette = calc_vignette(lua_param_nvg_num_tubes, I.tc0, lua_param_vignette_current+0.02);
-			
-			o.high = clamp(o.high,0.0,1.0);
-			o.low= clamp(o.low,0.0,1.0);
-			
-			o.high.rgb *= vignette;
-			o.low.rgb *= vignette;
-
-		}
-		else
-		{
-			tonemap(o.low, o.high, color, tm_scale);
-			o.low.a = skyblend;
-			o.high.a = skyblend;
-		}		
-		return o;
+		return        	o;
 }
