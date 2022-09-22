@@ -1,0 +1,109 @@
+#include "anomaly_shaders.h"
+#include "common.h"
+
+uniform	sampler2D	s_half_depth;
+
+#include "lmodel.h"
+#include "hmodel.h"
+
+#include "ssao.ps"
+#include "ssao_blur.ps"
+
+#include "ssdo.ps"
+#include "ssao_hbao.ps"
+
+struct         _input      {
+        float4         hpos        : POSITION        ;
+#ifdef        USE_VTF
+          float4         tc0                : TEXCOORD0        ;        // tc.xy, tc.w = tonemap scale
+#else
+          float2         tc0                : TEXCOORD0        ;        // tc.xy
+#endif
+	float2	tcJ	: TEXCOORD1;	// jitter coords
+};
+
+struct        _out                {
+        float4        low                : COLOR0        ;
+        float4        high        : COLOR1        ;
+};
+
+uniform sampler1D         fog_table        ;
+
+_out         main                ( _input I )
+{
+          // Sample the buffers:
+          float4 P        = tex2D         (s_position,      I.tc0);                // position.(mtl or sun)
+          float4 N         = tex2D         (s_normal,        I.tc0);                // normal.hemi
+          float4 D         = tex2D         (s_diffuse,       I.tc0);                // rgb.gloss
+          float4 L         = tex2D         (s_accumulator, 	I.tc0);                // diffuse.specular
+
+
+     // static sun
+	float mtl = P.w;
+
+#ifdef USE_R2_STATIC_SUN
+	float sun_occ = P.w*2;
+
+	mtl = xmaterial;
+	L.rgb += SRGBToLinear(D.rgb * Ldynamic_color.rgb * sun_occ) * plight_infinity	(mtl, P.xyz, N.xyz, D.xyzw, Ldynamic_dir);
+#endif
+
+
+	//  Calculate SSAO
+
+#ifdef USE_MSAA
+	int2	texCoord = I.pos2d;
+#endif
+	
+	//  Calculate SSAO
+	float3 occ = float3(1.f,1.f,1.f);	
+	
+#ifdef USE_HBAO
+	occ = calc_hbao(P.z, N, I.tc0);
+#else
+	occ = calc_ssdo(P, N, I.tc0).xxx;
+#endif
+	
+#ifdef SSAO_QUALITY
+	occ = compute_colored_ao(occ.x, D.xyz);
+#endif
+	 
+	occ = SRGBToLinear(occ); 		//gamma correct
+	
+	L.rgb += L.a * SRGBToLinear(D.rgb); //illum in alpha
+	
+	// hemisphere
+	float3 hdiffuse, hspecular;
+	hmodel	(hdiffuse, hspecular, mtl, N.w, D, P.xyz, N.xyz);
+
+	hdiffuse *= occ;
+	//hspecular *= occ;
+
+		float3       color     = L.rgb + hdiffuse.rgb;
+					 color = LinearTosRGB(color); 			//gamma correct
+	
+////////////////////////////////////////////////////////////////////////////////
+
+        // here should be distance fog
+        float3        	pos        		= P.xyz;
+        float         	distance		= length		(pos);
+        float         	fog				= saturate		(distance*fog_params.w + fog_params.x); //
+                      	color			= lerp     		(color,fog_color,fog);        			//
+        float        	skyblend		= saturate		(fog*fog);
+
+
+        // final tone-mapping
+#ifdef        USE_VTF
+        float          	tm_scale        = I.tc0.w;                // interpolated from VS
+#else
+        float         	tm_scale        = tex2D        (s_tonemap,I.tc0).x;
+#endif
+
+
+        _out        	o;
+        tonemap        	(o.low, o.high, color, tm_scale )	;
+                        o.low.a         = skyblend	;
+						o.high.a		= skyblend	;
+
+		return        	o;
+}
