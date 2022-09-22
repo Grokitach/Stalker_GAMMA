@@ -4,6 +4,7 @@
 #define USE_PBR //Use physically based specular 
 #define USE_GGX_SPECULAR //use more expensive GGX specular
 //=================================================================================================
+
 #define ALBEDO_AMOUNT 0.50
 
 #define ROUGHNESS_LOW 0.25
