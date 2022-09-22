@@ -1,25 +1,27 @@
 # Stalker GAMMA
-S.T.A.L.K.E.R. Anomaly G.A.M.M.A. modpack definition files.
+S.T.A.L.K.E.R. Anomaly G.A.M.M.A. modpack "actively updated" files are stored in this repository.
 
-## Get the client to use this repository
+For the complete client (heavy, rarely modified files) necessary for this repository to work, you need to download it from the associated discord server where a team of people is ready to help you with your questions and potential issues related to this project:
 
-G.A.M.M.A. stands for Grok's Automated Modular Modpack for Anomaly.
+https://discord.gg/stalker-gamma
 
-To get the latest Stalker GAMMA client and install intructions, head to the associated discord server:
 
-https://discord.gg/KT2bEHZQbh
+## Credits
+
+GAMMA is a large project using the work of many talented modders, and each and everyone one of them are contributing to making Stalker Anomaly a better experience. I would thus like to thank all the modders involved in this project by making all the GAMMA addons free to use, edit and repost with modifications as long as the source is indicated (original addon author, from Stalker GAMMA). Repost of unmodified individual parts of this project are not recommended and may harm the community in the long run because updates happen quite often in this repository and it is thus better to directly post links to the relevant files stored here.
+
 
 ## Description
 
+G.A.M.M.A. stands for Grok's Automated Modular Modpack for Anomaly.
+
 G.A.M.M.A. aims at providing a balanced survival, scavenging, cooking, crafting and repairing focused experience with a long progression and smooth gameplay.
 
-For people accustomed to Skyrim modding, G.A.M.M.A. is basically Wabbajack remade from scratch in PowerShell + a modlist of 200+ addons and its own developed modular add-ons for STALKER Anomaly.
+The main motivation behind this project is to provide an easy to install, automatically updated and modular modding platform for Stalker Anomaly, with base parameters and gameplay mechanics setup to create a meaningful and enjoyable sense of progression.
 
-This modpack is 100% copyright free since it doesn't redistribute any copyrighted content developed by other modders. Indeed, G.A.M.M.A. downloads every add-on directly from moddb or github, and installs them automatically and in the correct order in a Mod Organizer 2 (MO2) instance. You will thus directly support modders by installing G.A.M.M.A.
+This modpack is 100% copyright free since it redistributes little to no copyrighted content developed by other modders. Indeed, G.A.M.M.A. downloads every add-on directly from moddb or github, and installs them automatically. You will thus directly support modders by installing G.A.M.M.A. On top of this, each addon original source (moddb or github page) is directly accessible from the Mod Organizer 2 instance by right-clicking addons > visit moddb.com.
 
-G.A.M.M.A. is easy to use, since by simply executing 3 scripts and following basic instructions, you'll find on your desktop the G.A.M.M.A. icon which will launch a MO2 instance directly linked to your STALKER Anomaly folder. From there, you will find every add-on installed and be able to deactivate the ones you don't like, or add new add-ons. This is especially easy since all add-ons used in G.A.M.M.A. are separated by their type, i.e. Audio, Gameplay, Gunplay, etc.
-
-This modpack also features its own new modular set of add-ons including:
+Many addons are developped exclusively for this project, including:
 - A new UI.
 - A rebalanced survival experience focused on crafting, repairing and cooking.
 - A new economy where traders will only sell you supplies, and where good ammunition will only be available to trustful stalkers.
