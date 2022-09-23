@@ -1,5 +1,5 @@
 
-vtbl = {
+light_tbl = {
         l09_deadcity_1_gamma_lights                   = {'placeable_gas_lamp_gamma', -50.532341003418, 8.2219791412354, 34.491687774658, 100231, 2367},
         l09_deadcity_2_gamma_lights                   = {'placeable_gas_lamp_gamma', -58.609260559082, 8.230975151062, 37.267387390137, 96424, 2367},
         l09_deadcity_3_gamma_lights                   = {'placeable_gas_lamp_gamma', -41.146419525146, 7.3842039108276, 39.84497833252, 107875, 2367},
@@ -47,22 +47,27 @@ vtbl = {
 }
 
 function actor_on_first_update()
-	if grok_vehicle_spawned then return end
-	
-	for k, v in pairs(vtbl) do
-		spawned_light = alife():create(v[1], vector():set(v[2], v[3], v[4]), v[5], v[6])
-		placeable_furniture.createLightData(spawned_light, v[1])
+	if not grok_lights_spawned then
+		grok_lights_spawned = {}
 	end
 	
-	grok_vehicle_spawned = true
+	for k, v in pairs(light_tbl) do
+		if grok_lights_spawned[k] then 
+			return
+		else
+			spawned_light = alife():create(v[1], vector():set(v[2], v[3], v[4]), v[5], v[6])
+			placeable_furniture.createLightData(spawned_light, v[1])
+			grok_lights_spawned[k] = true
+		end
+	end
 end
 
 function save_state(m_data)
-    m_data.grok_vehicle_spawned = grok_vehicle_spawned
+    m_data.grok_lights_spawned = grok_lights_spawned
 end
 
 function load_state(m_data)
-    grok_vehicle_spawned = m_data.grok_vehicle_spawned
+    grok_lights_spawned = m_data.grok_lights_spawned
 end
 
 function on_game_start()
