@@ -1,0 +1,453 @@
+--[[
+Created by Tronex
+Bounty squads
+2018/10/13 - created
+2021/03/12 - Vintar - overhauled
+2022/05/01 - Vintar - bounty squads are always hostile, being disguised prevents bounty squads from tracking you
+
+on high ranks or really bad repuation, your enemies will put a bounty on your head. 
+every while and then, one of the enemy factions will send a hit squad to hunt you down.
+
+Enemies will only send bounty squads from locations they own. The player must be within a linked level of an enemy location for a bounty squad to spawn.
+--]]
+
+--==========================================< Controls >==========================================--
+
+local active_squads = {}	-- current active bounty squads
+local delay = 60*60*12 		-- 0.5 days in-game between potential spawns
+local delay_spawn = 300 	-- real seconds
+local delay_state = 60 		-- real seconds. Controls checking of actor's current location (if its safe or not)
+local delta = 60*60			-- not used for now
+local spawn_distance = 250	-- don't spawn bounty squads below this distance 
+local last_spawn_time		-- the last time an bounty squad has been spawned
+
+
+local safe_levels = {} 						-- bounty squad will stop targeting the player if he's in one of those maps
+--local safe_smarts = {} 						-- bounty squad will stop targeting the player if he's in one of those smarts
+local bounty_factions = {} 					-- factions capable of sending bounty squads
+local danger_ranks = {}						-- player ranks and the number of possible bounty squad to spawn when a rank is met 
+local danger_reputations = {} 				-- player reputations and the number of possible bounty squad to spawn when a reputation is met 
+local bounty_squads_by_actor_rank = {}		-- lower-ranked actor will have lower-ranked squads attacking them
+
+local spawn_chance_multiplier = {}			-- each faction will have a multiplier based on how often they've been attacked by the actor
+
+local base_spawn_chance = 5					-- base chance for a bounty squad to spawn on a given update, which occurs every 'delay' seconds in-game time
+local spawn_mult_attacked_increment = 0.5	-- if the player kills an NPC of a faction, that faction is much more likely to spawn bounty squads targeting them. The multiplier will increase by this much per killed NPC
+
+local enable_debug = true
+
+--====================================< Utilities >====================================--
+function try_spawn(actor_rank)
+	-- gather smarts
+	-- local spawn_smrts = {}
+	-- for name,smart in pairs( SIMBOARD.smarts_by_names ) do
+		-- if simulation_objects.is_on_the_same_level(alife():actor(), smart) or simulation_objects.is_on_the_linked_level(alife():actor(), smart) then
+			-- local dist = smart.position:distance_to(db.actor:position())
+			-- local smrt = SIMBOARD.smarts[smart.id]
+			-- if (smrt) and (dist > spawn_distance) then
+				-- for k,v in pairs( smrt.squads ) do
+					-- local squad = alife_object(k)
+					-- if (squad and squad.current_action == 1 and not squad:get_script_target()) then
+						-- local faction = squad:get_squad_community()
+
+						-- -- enemies of the player allowed to spawn bounty squads will do so
+						-- if game_relations.is_factions_enemies(faction,db.actor:character_community()) and bounty_factions[faction] then
+							-- print_debug("smart has enemies on it - add to possible spawn")
+							-- spawn_smrts[#spawn_smrts+1] = { name, faction }
+							-- break
+						-- end
+					-- end
+				-- end
+			-- end
+		-- end
+	end
+
+	if (#spawn_smrts > 0) then
+		-- local spawn_info = spawn_smrts[math.random(#spawn_smrts)]
+		-- local spawn_smrt = spawn_info[1]
+		-- local spawn_faction = spawn_info[2]
+		-- local faction_multiplier = spawn_chance_multiplier[spawn_faction] or 1
+
+		-- if (math.random(100) < base_spawn_chance * faction_multiplier) then
+			-- print_debug("prepping spawn of bounty squad")
+			-- -- need to change spawn section name if merc or duty
+			-- if (bounty_squads_by_actor_rank[actor_rank] ~= "_sim_squad_alpha") then
+				-- if (spawn_faction == "killer") then
+					-- spawn_faction = "merc"
+				-- elseif (spawn_faction == "dolg") then
+					-- spawn_faction = "duty"
+				-- end
+			-- end
+			
+			-- -- Spawn squad and target the player
+			-- local bounty_sq_name = spawn_faction .. bounty_squads_by_actor_rank[actor_rank]
+			-- local sq = sim_board.get_sim_board():create_squad(SIMBOARD.smarts_by_names[spawn_smrt], bounty_sq_name)
+			-- printdbg("- bounty_squads.try_spawn / [%s] bounty squad has been spawned on [%s]", bounty_sq_name, spawn_smrt)
+			
+			-- sq.scripted_target = "actor"
+			-- sq.rush_to_target = true
+			-- active_squads[sq.id] = sq:section_name()
+			-- last_spawn_time = game.get_game_time()
+		end
+	end
+end
+
+function collect_actor_information()
+	-- get actor's closest smart terrain
+	local closest_smarts = {}
+	local pos = db.actor:position()
+	local se_actor = alife():actor()
+	for name,smart in pairs( SIMBOARD.smarts_by_names ) do
+		if simulation_objects.is_on_the_same_level(se_actor, smart) then
+			local dist = smart.position:distance_to(pos)
+			closest_smarts[#closest_smarts+1] = { dist, name, smart.id }
+		end
+	end
+	
+	table.sort(closest_smarts, function(a, b)
+		return math.abs(a[1]) < math.abs(b[1])
+	end)
+	
+	print_debug("found closest smart to actor")
+	local closest_dist = closest_smarts[1][1]
+	local closest_smrt = closest_smarts[1][2]
+	local closest_smrt_id = closest_smarts[1][3]
+	local closest_smrt_seobj = SIMBOARD.smarts[closest_smrt_id]
+	local allies_present = false
+	
+	-- assess closest smart terrain squads
+	for sid,_ in pairs( closest_smrt_seobj.squads ) do
+		local squad = alife_object(sid)
+		--and not squad:get_script_target()
+		if (squad and squad.current_action == 1) and not axr_companions.companion_squads[sid] then
+			local faction = squad:get_squad_community()
+			if (closest_dist < 60) then
+				for k,v in pairs(active_squads) do
+					local b_squad = alife_object(k)
+					if b_squad and (b_squad:section_name() == v) then
+						local b_faction = b_squad:get_squad_community()
+						if game_relations.is_factions_enemies(faction,b_faction) and not game_relations.is_factions_enemies(faction,db.actor:character_community()) then
+							print_debug("found allies to deter bounty squad attack")
+							allies_present = true					-- bounty squads will not attack the actor at safe spots with heavy NPC presence
+							break
+						end
+					end
+				end
+			end
+		end
+	end
+
+	-- actor on a smart with allies nearby
+	if allies_present then
+		--printf("actor is on a safe smart with allies")
+		return false
+	end
+
+	return true
+end
+
+function attack(state)
+	-- if not gameplay_disguise.is_actor_disguised() then
+		-- for k,v in pairs(active_squads) do
+			-- local se = alife_object(k)
+			-- if se and (se:section_name() == v) then
+				-- se.scripted_target = state and "actor" or nil
+				-- se.rush_to_target = state and true or false
+				-- printdbg("-bounty_squads.attack - target: %s - rush: %s",se.scripted_target,se.rush_to_target)
+
+				-- if simulation_objects.is_on_the_same_level(alife():actor(), se) then
+					-- se.force_online = true					-- bounty squads on the same level will be forced online
+					-- print_debug("-bounty_squads.attack - forcing same-level squad online")
+					
+					-- -- if bounty squad faction is neutral, force the bounty squad to be hostile
+					-- local faction = se:get_squad_community()
+					-- if not game_relations.is_factions_enemies(db.actor:character_community(),faction) then
+						-- print_debug("-bounty_squads.attack - forcing neutral bounty squad to be hostile")
+						-- for guy in se:squad_members() do
+							-- local person = guy.object or guy.id and alife():object(guy.id)
+							-- if person and person:alive() then
+								-- person:force_set_goodwill(-3000, db.actor)
+							-- end
+						-- end
+					-- end
+				-- end
+			-- end
+		-- -- end
+	-- else
+		-- print_debug("-bounty_squads.attack - actor is disguised")
+	-- end
+end
+
+-- unused function
+-- function check_close_squads(sq)
+	-- for k,v in pairs(active_squads) do
+		-- local se = alife_object(k)
+		-- if se and (se:section_name() == v) and (simulation_objects.is_on_the_same_level(alife():actor(), se)) then
+			-- for j in se:squad_members() do
+				-- local npc = db.storage[j.id] and db.storage[j.id].object
+				-- if npc and npc:alive() then
+					-- return true
+				-- end
+			-- end
+		-- end
+	-- end
+	-- return false
+-- end
+
+function get_active_squads()
+	return active_squads
+end
+
+function tbl_size(tbl)
+	local n = 0
+	for k,v in pairs(tbl) do
+		n = n + 1
+	end
+	return n
+end
+
+function sync_settings()
+	print_debug("syncing MCM bounty squad settings")
+	delay = bountysquads_mcm.bs_delay
+	delay_spawn = bountysquads_mcm.bs_delay_spawn
+	delay_state = bountysquads_mcm.bs_delay_state
+	base_spawn_chance = bountysquads_mcm.bs_base_spawn_chance
+	spawn_mult_attacked_increment = bountysquads_mcm.bs_spawn_mult_attacked_increment
+end
+
+function print_debug(message)
+	if enable_debug then
+		printf(message)
+	end
+end
+
+--====================================< Callbacks >====================================--
+function spawn_timer()
+	--printf("-bounty_squads.spawn_timer called")
+	ResetTimeEvent("cycle","bounty_squad_spawn",delay_spawn)
+	
+	local num = 0
+
+	-- check rank
+	local rank = ranks.get_obj_rank_name(db.actor)
+	if danger_ranks[rank] then 
+		print_debug("getting rank of actor")
+		num = num + danger_ranks[rank]
+	end
+	
+	-- check reputaion
+	local reputaion = utils_obj.get_reputation_name(db.actor:character_reputation())
+	if danger_reputations[reputaion] then 
+		print_debug("getting actor reputation")
+		num = num + danger_reputations[reputaion]
+	end
+	
+	-- ignore if rank or rep doesn't meet the requirements
+	if (num < 1) then
+		print_debug("zero bounty squads allowed with current actor rep/rank")
+		return false
+	end
+	
+	-- read date
+	print_debug("reading current time")
+	local current_time = game.get_game_time()
+	if (not last_spawn_time) then
+		last_spawn_time = current_time
+		return false
+	end
+	
+	-- ignore if timer hasn't been reached yet
+	if (current_time:diffSec(last_spawn_time) < delay) then
+		return false
+	end
+	
+	-- try to spawn if there isn't enough bounty squads
+	-- if (tbl_size(active_squads) < num) then
+		-- print_debug("attempting to locate a spawn for a bounty squad")
+		-- try_spawn(rank)
+	-- end
+	
+	return false
+end
+
+function state_timer()
+	--printf("-bounty_squads.state_timer called")
+	ResetTimeEvent("cycle","bounty_squad_state",delay_state)
+	
+	-- clean
+	for k,v in pairs(active_squads) do
+		local se = alife_object(k)
+		--if se and (se:section_name() ~= v) then
+			--printf("-bounty_squads.state_timer cleaning [%s] | section: %s - v: %s",k,se:section_name(),v)
+			--safe_release_manager.release(se)
+			active_squads[k] = nil
+		--elseif (not se) then
+			--printf("-bounty_squads.state_timer cleaning [%s] | no alife object found",k)
+			--active_squads[k] = nil
+		--end
+	end
+
+	-- if (tbl_size(active_squads) == 0) then
+		-- return false
+	-- end
+	
+	-- -- get info on actor's whereabouts
+	-- local actor_unsafe = collect_actor_information()
+	
+	-- -- don't attack if actor is in a safe level
+	-- if safe_levels[level.name()] then
+		-- actor_unsafe = false
+	-- end
+	
+	-- attack(actor_unsafe)
+	
+	-- return false
+end
+
+-- used to know if the player is in a sleep menu, and stop targeting if they are
+local function actor_sleeping(hud_name)
+	if (hud_name == "UISleep") then
+		print_debug("stopping bounty squad attacks due to actor initiating sleep")
+		attack(false)
+	end
+end
+
+-- used to determine if the actor is attacking
+local function online_npc_on_death(victim, killer)
+
+	-- return if actor isn't killer
+	if not (killer:id() == AC_ID) then
+		return
+	end
+	
+	-- Return if killed entity is mutant
+	if (not IsStalker(victim)) then
+		return
+	end
+	
+	local faction = character_community(victim)
+	
+	-- if actor kills a certain faction, increase likelihood of future bounty squad spawns from that faction
+	if bounty_factions[faction] and not gameplay_disguise.is_actor_disguised() then
+		if not spawn_chance_multiplier[faction] then
+			spawn_chance_multiplier[faction] = 1 + spawn_mult_attacked_increment
+			--printf("Bounty Squads: increased %s multiplier to %s", faction, spawn_chance_multiplier[faction])
+		else
+			spawn_chance_multiplier[faction] = spawn_chance_multiplier[faction] + spawn_mult_attacked_increment
+			printdbg("Bounty Squads: increased %s multiplier to %s", faction, spawn_chance_multiplier[faction])
+		end
+	end
+end
+
+local function load_state(m_data)
+	local bounty_squad = m_data.bounty_squad
+	if (not bounty_squad) then
+		return
+	end
+	
+	if DEV_DEBUG and bounty_squad then
+		for k,v in pairs(bounty_squad) do
+			printdbg("# LOADING: Bounty Squad | [%s]: %s", k, v)
+		end
+	end
+	
+	last_spawn_time = bounty_squad.last_spawn_time and utils_data.CTime_from_table(bounty_squad.last_spawn_time) or game.get_game_time()
+	active_squads = bounty_squad.active_squads or {}
+	spawn_chance_multiplier = bounty_squad.chance_multiplier or {}
+
+	bountysquads_mcm.loadsettings()
+	sync_settings()
+end
+
+local function save_state(m_data)
+	local bounty_squad = {}
+	if (last_spawn_time) then
+		bounty_squad.last_spawn_time = utils_data.CTime_to_table(last_spawn_time)
+	end
+	bounty_squad.active_squads = active_squads or {}
+	bounty_squad.chance_multiplier = spawn_chance_multiplier
+	
+	if DEV_DEBUG then
+		for k,v in pairs(bounty_squad) do
+			printdbg("# SAVING: Bounty Squad | [%s]: %s", k, v)
+		end
+	end
+	
+	m_data.bounty_squad = bounty_squad
+end
+
+local function server_entity_on_unregister(se_obj, typ)
+	active_squads[se_obj.id] = nil
+end
+
+function on_game_start()
+	local ini_bounty_squad = ini_file("plugins\\bounty_squad.ltx")
+	local n = 0
+	
+	n = ini_bounty_squad:line_count("bounty_factions")
+	for i=0,n-1 do
+		local result, id, value = ini_bounty_squad:r_line_ex("bounty_factions",i,"","")
+		if id then
+			bounty_factions[id] = true
+		end
+	end
+	
+	n = ini_bounty_squad:line_count("safe_levels")
+	for i=0,n-1 do
+		local result, id, value	= ini_bounty_squad:r_line_ex("safe_levels",i,"","")
+		if id then
+			safe_levels[id] = true
+		end
+	end
+	
+	-- don't look at individual smarts anymore, only care if the smart has allies on it
+	--[[
+	n = ini_bounty_squad:line_count("safe_smarts")
+	for i=0,n-1 do
+		local result, id, value	= ini_bounty_squad:r_line_ex("safe_smarts",i,"","")
+		if id then
+			safe_smarts[id] = true
+		end
+	end
+	--]]
+	
+	n = ini_bounty_squad:line_count("danger_ranks")
+	for i=0,n-1 do
+		local result, id, value	= ini_bounty_squad:r_line_ex("danger_ranks",i,"","")
+		if id and value then
+			danger_ranks[id] = tonumber(value) or 0
+		end
+	end
+	
+	n = ini_bounty_squad:line_count("danger_reputations")
+	for i=0,n-1 do
+		local result, id, value	= ini_bounty_squad:r_line_ex("danger_reputations",i,"","")
+		if id and value then
+			danger_reputations[id] = tonumber(value) or 0
+		end
+	end
+	
+	n = ini_bounty_squad:line_count("bounty_squads_by_actor_rank")
+	for i=0,n-1 do
+		local result, id, value	= ini_bounty_squad:r_line_ex("bounty_squads_by_actor_rank",i,"","")
+		if id and value then
+			bounty_squads_by_actor_rank[id] = value
+		end
+	end
+
+	local function on_game_load()
+		CreateTimeEvent("cycle","bounty_squad_spawn",delay_spawn,spawn_timer)
+		CreateTimeEvent("cycle","bounty_squad_state",delay_state,state_timer)
+	end
+
+	bountysquads_mcm.loadsettings()
+	sync_settings()
+
+	RegisterScriptCallback( "GUI_on_hide", actor_sleeping )
+	RegisterScriptCallback( "GUI_on_show", actor_sleeping )
+	RegisterScriptCallback( "npc_on_death_callback", online_npc_on_death )
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+	RegisterScriptCallback("on_game_load",on_game_load)
+	RegisterScriptCallback("server_entity_on_unregister",server_entity_on_unregister)
+end
