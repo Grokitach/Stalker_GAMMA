@@ -4,9 +4,7 @@
 
 #define G_SSR_WATER_SCREENFADE			0.3f	// Screen border fade. ( 0.0f = No border fade )
 
-
 #define G_SSR_WATER_WAVES				0.7f	// Water waves intensity
-
 #define G_SSR_WATER_REFLECTION			0.5f	// Reflection intensity. ( 1.0f = 100% )
 #define G_SSR_WATER_REFRACTION			0.05f	// Intensity of refraction distortion
 
