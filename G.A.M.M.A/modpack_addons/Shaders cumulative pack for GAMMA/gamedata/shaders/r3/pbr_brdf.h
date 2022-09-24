@@ -20,13 +20,8 @@ float3 calc_albedo(float3 diffuse, float material_ID)
 float calc_rough(float gloss, float material_ID)
 {
 	
-#ifdef USE_PBR
-	float rough = lerp(ROUGHNESS_HIGH, ROUGHNESS_LOW, pow(gloss, ROUGHNESS_POW)); //gloss to roughness
-	rough = pow(rough, 1/(1.01-Ldynamic_color.w)); //gloss factor
-#else
-	float rough = lerp(0.5, .25, material_ID);
+	float rough = lerp(0.5, 1.5, material_ID);
 	rough *= rough;
-#endif
 	
 	return saturate(rough);
 }
