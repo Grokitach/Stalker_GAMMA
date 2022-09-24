@@ -1,0 +1,56 @@
+local parts_list = {}
+local ini_parts = itms_manager.ini_parts
+
+
+function check_parts(obj) --check if wpn contains non wpn parts
+    local destroy = false
+	
+    if IsWeapon(obj) then
+        local sec = obj:section()
+		sec = ini_sys:r_string_ex(sec,"parent_section") or sec --prevents crash from weapons with scopes
+        local id = obj:id()
+		local exclude = false
+		
+		if sec:match('knife' or 'axe') then
+			exclude = true
+			return
+		end
+		
+        local parts = ini_parts:r_string_ex("con_parts_list", sec)
+        parts = str_explode(parts,",")
+		
+		if parts ~= nil and exclude ~= true then
+			local data = se_load_var(id, obj:name(), "parts")
+			printf('Parts gathered from %s', sec)
+			if data and data[sec] then
+				for i=1,#parts do
+					if string.find(parts[i],"prt_w_") then
+						destroy = false
+						printf("Parts are weapon parts")
+					else 
+						destroy = true
+						printf("Destroy triggered")
+					end
+				end
+					
+				if destroy then
+					local se_obj = alife_object(id)
+					item_parts.clear_parts_con(se_obj.id)
+					local m_data = alife_storage_manager.get_state()
+		
+					if m_data.se_object[se_obj.id] then
+						m_data.se_object[se_obj.id].parts = nil
+						printf("Parts Destroyed")
+					end
+				end    
+			end
+		end
+    end
+end
+
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_item_take",check_parts)
+    RegisterScriptCallback("ActorMenu_on_item_drag_drop",check_parts)
+    RegisterScriptCallback("ActorMenu_on_item_focus_receive",check_parts)
+end

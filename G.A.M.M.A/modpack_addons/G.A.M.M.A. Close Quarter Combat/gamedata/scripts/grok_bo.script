@@ -9,21 +9,13 @@ ini_damage		= ini_file("creatures\\damages.ltx")
 leg_meta_sniper_null = 1
 sniper_bad_bone_shit_reduce = 1
 
+
 local difficulty_multiplier = {
 	[1]  = 1.3,
 	[2]  = 1.05,
 	[3]  = 1.0,
 	[4]  = 1.0,
 }
-
-gameplay = alife_storage_manager.get_state().diff_game
-if not (type(gameplay) == "table") then -- for old saves
-	alife_storage_manager.get_state().diff_game = {}
-	alife_storage_manager.get_state().diff_game["type"] = game_num
-	ameplay = alife_storage_manager.get_state().diff_game
-end
-
-game_num = gameplay["type"] or game_num
 
 Bone_IDs = {
 [2]  =	"bip01_pelvis",
@@ -347,7 +339,17 @@ function monster_on_before_hit(monster,shit,bone_id)
 			printf("Critical Hit!")
 		end
 	end
+	
+	local gameplay = alife_storage_manager.get_state().diff_game
+	if not (type(gameplay) == "table") then -- for old saves
+		alife_storage_manager.get_state().diff_game = {}
+		alife_storage_manager.get_state().diff_game["type"] = game_num
+		gameplay = alife_storage_manager.get_state().diff_game
+	end
 
+	local game_num = gameplay["type"] or game_num
+
+	
 	shit.power = shit.power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * mutant_mult * ammo_mult * spec_monster_mult * bone_mult * cqc_mult * barrel_condition_corrected * difficulty_multiplier[game_num]
 
 	printf("Barrel condition: %s, GBO output damage: %s", barrel_condition, shit.power)
@@ -609,9 +611,18 @@ function npc_on_before_hit(npc,shit,bone_id)
 		end
 
 --////////////// ACTUAL INTERESTING MATH PART ABOUT BALLISTICS //////////////
+	
+	local gameplay = alife_storage_manager.get_state().diff_game
+	if not (type(gameplay) == "table") then -- for old saves
+		alife_storage_manager.get_state().diff_game = {}
+		alife_storage_manager.get_state().diff_game["type"] = game_num
+		gameplay = alife_storage_manager.get_state().diff_game
+	end
 
+	local game_num = gameplay["type"] or game_num
 
 	--printf("// Ammo data :")
+	--printf('game_num = %s', game_num)
 	printf('%s shot with %s, Weapon power= %s, AP power= %s, Hit multiplier= %s, Air res= %s, Distance= %s m, Barrel condition: %s', ammo_section, sec, wpn_hit_power, k_ap, k_hit, air_res, dist, barrel_condition)
 	printf('Bone hit= %s, Bone damage mult= %s, Bone AP scale= %s, Bone hit fraction= %s, Bone armor= %s', custom_bone_name, custom_bone_dmg[custom_bone_id], custom_bone_ap[custom_bone_id], custom_bone_hf[custom_bone_id], custom_bone_value[custom_bone_id])
 
