@@ -5,10 +5,12 @@
 //=================================================================================================
 #include "pbr_settings.h" //load settings files
 #define CUBE_MIPS 5 //mipmaps for ambient shading and specular
+#define MAT_FLORA 0.47451
 static const float Pi = 3.14159265359;
 
 float3 calc_albedo(float3 diffuse, float material_ID)
 {
+
 #ifdef USE_PBR
 	float3 albedo = SRGBToLinear(diffuse) * ALBEDO_AMOUNT;
 #else
@@ -19,11 +21,20 @@ float3 calc_albedo(float3 diffuse, float material_ID)
 
 float calc_rough(float gloss, float material_ID)
 {
-	
-	float rough = lerp(0.4, 1.0, material_ID);
-	rough *= rough;
-	
-	return saturate(rough);
+float rough = lerp(0.4, 1.2, material_ID); // All materials will be affected by shiny GGX
+
+if (abs(material_ID - MAT_FLORA) <= 0.02f)  // foliage not affected by GGX
+     rough = lerp(0.4, 2.7, material_ID); 
+
+if (abs(material_ID - 0.196) <= 0.02f)   // hands, maybe NPCs and some annoying models like swamp tall grass
+     rough = lerp(0.4, 2.7, material_ID); 
+
+if (abs(material_ID - 0.95) <= 0.02f)    // ground 
+     rough = lerp(0.4, 1.9, material_ID); 
+
+
+rough *= rough;
+return saturate(rough);
 }
 
 float3 calc_f0(float gloss, float material_ID)
@@ -133,7 +144,7 @@ float3 Blinn(float nDotL, float nDotH, float nDotV, float lDotH, float3 f0, floa
 
 float3 Lit_Diffuse(float nDotL, float nDotH, float nDotV, float lDotH, float3 f0, float rough)
 {
-	return pow(nDotL, lerp(1.125, 0.75, rough)*1.5); // aesthetic tweak to roughness
+	return pow(nDotL, lerp(1.125, 0.75, rough)*2.0); // aesthetic tweak to roughness
 }
 
 float3 Lit_Specular(float nDotL, float nDotH, float nDotV, float lDotH, float3 f0, float rough)
