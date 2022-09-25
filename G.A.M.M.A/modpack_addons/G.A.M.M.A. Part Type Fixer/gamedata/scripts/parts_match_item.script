@@ -14,8 +14,8 @@ function check_exclusion_list(obj) --function to filter out weapons that need to
 		exclusion_list["w_explosive"] = 2
 		exclusion_list["w_magazine"] = 3
 		
-		if sec:match('gauss') then
-			printe('excluded')
+		if sec:match('gauss') then --specific exclusion for gauss, if individual weapons have the wrong kind type or need a specific exclusion follow this format
+			--printe('excluded')
 			return
 		end
 		
@@ -24,7 +24,7 @@ function check_exclusion_list(obj) --function to filter out weapons that need to
 			if exclusion_list[kind] then
 				--printe('excluded')
 				return
-			elseif 
+			else
 				--printe('not excluded')
 				check_parts(obj) --calls function to evaluate parts and determine if they need to be rerolle
 				return
@@ -34,35 +34,37 @@ function check_exclusion_list(obj) --function to filter out weapons that need to
 end
 
 function check_parts(obj) --check if wpn contains non wpn parts
-    local destroy = false
-	local sec = obj:section()
-	sec = ini_sys:r_string_ex(sec,"parent_section") or sec
-	local parts = ini_parts:r_string_ex("con_parts_list", sec)
-	parts = str_explode(parts,",") --parses parts list into strings
+	local destroy = false
 	
-	local data = se_load_var(id, obj:name(), "parts")
-	--printf('Parts gathered from %s', sec)
-	if data and data[sec] then
-		for i=1,#parts do
-			if string.find(parts[i],"prt_w_") then
-				destroy = false
-				--printf("Parts are weapon parts")
-			else 
-				destroy = true
-				--printf("Destroy triggered")
+	if IsWeapon(obj) then
+		local id = obj:id()
+		local name = obj:name()
+		local sec = obj:section()
+		sec = ini_sys:r_string_ex(sec,"parent_section") or sec
+		local parts = item_parts.get_parts_con(obj, id, true)	
+		local data = se_load_var(id, name, "parts")
+		--printf('Parts gathered from %s', name)
+			for k, v in pairs(parts) do
+				--printe(k)
+				if string.match(tostring(k),"prt_w") or string.match(tostring(k),"wpn_") then
+					destroy = false
+					--printf("Parts are weapon parts")
+				else 
+					destroy = true
+					printe("Destroy triggered")
+				end
 			end
-		end
-			
-		if destroy then --Deletes current parts from alife_storage
-			local se_obj = alife_object(id)
-			item_parts.clear_parts_con(se_obj.id)
-			local m_data = alife_storage_manager.get_state()
+				
+			if destroy then --Deletes current parts from alife_storage
+				local se_obj = alife_object(id)
+				item_parts.clear_parts_con(se_obj.id)
+				local m_data = alife_storage_manager.get_state()
 
-			if m_data.se_object[se_obj.id] then
-				m_data.se_object[se_obj.id].parts = nil
-				--printf("Parts Destroyed")
-			end  
-		end
+				if m_data.se_object[se_obj.id] then
+					m_data.se_object[se_obj.id].parts = nil
+					printe("Parts Destroyed")
+				end  
+			end
 	end
 end
 
