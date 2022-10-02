@@ -1,0 +1,173 @@
+local ini_eff = ini_file("plugins\\grok_bo_enhanced_recoil.ltx")
+
+function on_key_press(key)
+	local bind = dik_to_bind(key)
+	
+	if (bind == key_bindings.kWPN_FIRE) then
+		fov_before = get_console_cmd(2, "fov")
+	end
+end
+	
+
+local wpn_fx = {}
+local function parse_anims(sec)
+	local sec_p = ini_sys:r_string_ex(sec,"parent_section") or sec
+	
+	if wpn_fx[sec_p] and (sec ~= sec_p) then
+		wpn_fx[sec] = wpn_fx[sec_p]
+		
+	elseif ini_eff:section_exist(sec_p) then
+		local tbl = {}
+		
+		-- parse strength
+		tbl.s = {}
+		local s = ini_eff:r_string_ex(sec_p,"s")
+		local _s = str_explode(s,",")
+		for i=1,#_s do
+			tbl.s[#tbl.s + 1] = tonumber(_s[i])
+		end
+		
+		-- parse strength randomizer
+		tbl.r = ini_eff:r_float_ex(sec_p,"r")
+		
+		-- parse anm
+		tbl.e = {}
+		local e = ini_eff:r_string_ex(sec_p,"e")
+		local _e = str_explode(e,",")
+		for i=1,#_e do
+			local __e = str_explode(_e[i],":")
+			for j=1,#__e do
+				__e[j] = tonumber(__e[j])
+			end
+			tbl.e[#tbl.e + 1] = __e
+		end
+		
+		-- parse ppe
+		tbl.p = {}
+		local p = ini_eff:r_string_ex(sec_p,"p")
+		if p and p ~= "" then
+			for k,v in string.gmatch(p, "([%w_%-%s%.]+)=([%w_%-%s%.]+)") do
+				tbl.p[k] = tonumber(v)
+			end
+		end
+		
+		if (not wpn_fx[sec_p]) and (sec ~= sec_p) then
+			wpn_fx[sec_p] = tbl
+		end
+		
+		wpn_fx[sec] = tbl
+		--utils_data.print_table(wpn_fx[sec])
+		
+	else
+		wpn_fx[sec] = true
+		--printf("not recoil effect for [%s]", sec)
+	end
+end
+
+
+local shotc = 1
+local shott = 0
+local fov_r = 1
+function shoot_effect(sect)
+	--printf("-SHOOT")
+
+	if shott and (shott < time_global()) then
+		shotc = 1
+		shott = nil
+	end
+
+	local anims = {}
+	local s = wpn_fx[sect].s
+	local sc = #s
+
+	if sc > 1 then
+		if wpn_fx[sect].r == 1 then
+			s = s[math.random(#s)]
+		elseif wpn_fx[sect].r == 2 then
+			if shotc == 1 then
+				s = s[1]
+			else
+				s = s[math.random(2,#s)]
+			end
+		else
+			sc = shotc <= sc and shotc or (sc > 2 and math.random(sc-1,sc)) or sc
+			s = s[sc]
+		end
+	else
+		s = s[1]
+	end
+--	local cnt, r = math.modf(s*fov_r)
+--	if r ~=0 then
+--		s = math.max(1, cnt - 1)
+--	end
+	for i,v in pairs(wpn_fx[sect].e) do
+		local cnt,r = math.modf(v[1]*fov_r)
+		if r ~= 0 and cnt > 4 then --fmb
+			cnt = cnt-cnt*math.random(0,r*100)/100 --fmb
+			cnt,r = math.modf(cnt)
+		end
+
+		if r ~= 0 and math.random() < r then
+			cnt = cnt+1
+		end
+
+		if cnt > 0 then
+			table.insert(anims,{e = i,d = v[2] or math.random(0,1),c = cnt})
+		end
+	end
+	
+	for i,a in ipairs(anims) do
+		local n = string.format([[shoot\s%s_e%s_%s.anm]],s,a.e,a.d)
+		for ii=1,a.c do
+			level.add_cam_effector(n,math.random(5000,8000),false,"")
+		end
+	end
+	for k,v in pairs(wpn_fx[sect].p) do
+		local eid = math.random(5000,8000)
+		level.add_pp_effector(string.format([[shoot\%s_s%s.ppe]],k,s), eid, false)
+		if v > 0 then
+			level.set_pp_effector_factor(eid,v)
+		end
+	end
+	shotc = shotc+1
+	shott = time_global()+100
+	
+	local weapon_shake_factor = s / 4 * 0.1 + 1
+	exec_console_cmd("fov " .. clamp(math.atan(math.tan(fov_before * (0.5 * math.pi / 180)) * (axr_main.weapon_is_zoomed and 1.02 or 1.00 * weapon_shake_factor )) / (0.5 * math.pi / 180), 5, 120))
+	
+	local function reset_fov_to_normal(fov_val)
+		exec_console_cmd("fov " .. fov_val)
+		return true
+	end
+	
+	CreateTimeEvent(0, "reset_fov_to_normal", 0.025, reset_fov_to_normal, fov_before)
+end
+
+
+function Update_Shooting(obj, wpn, ammo_elapsed, grenade_elapsed, ammo_type, grenade_type)
+	if (obj:id() ~= AC_ID) then
+		return
+	end
+
+	local wpn_obj = utils_item.item_is_fa(wpn) and wpn
+	if wpn_obj then
+		local sec = wpn_obj:section()
+		
+		if (not wpn_fx[sec]) then
+			parse_anims(sec)
+		end
+		
+		if (wpn_fx[sec] == true) then
+			return
+		end
+		
+		shoot_effect(sec)
+		
+		--printf("Shooting effect played for [%s]", sec)
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_key_press", on_key_press)
+	RegisterScriptCallback("actor_on_weapon_fired",Update_Shooting)
+end

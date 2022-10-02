@@ -27,26 +27,39 @@ end
 local get_fov = 0
 local get_hud_fov = 0
 local get_mouse_sens= 0
-local custom_zoom = false
+custom_zoom = false
 
 
 function actor_on_first_update()
-	fov_before = get_console_cmd(2, "fov")
-	hud_fov_before = get_console_cmd(2, "hud_fov")
-	mouse_sens_before = get_console_cmd(2, "mouse_sens")
+	if ui_mcm then
+		fov_before = ui_mcm.get("grok_fov_tricks_saver/fov")
+		hud_fov_before = ui_mcm.get("grok_fov_tricks_saver/hud_fov")
+		mouse_sens_before = ui_mcm.get("grok_fov_tricks_saver/mouse_sens")
+		
+		fov_base = ui_mcm.get("grok_fov_tricks_saver/fov")
+		hud_fov_base = ui_mcm.get("grok_fov_tricks_saver/hud_fov")
+		mouse_sens_base = ui_mcm.get("grok_fov_tricks_saver/mouse_sens")		
+	end
 end
 
 function on_key_press(key)
+	local bind = dik_to_bind(key)
+
+	if (bind == key_bindings.kWPN_FIRE) then
+		wpn_fire_fov_trick = true
+		
+	end
+
     if not (key == KEY_TOGGLE_ZOOM) then return end
---    get_fov = ui_options.get("video/basic/fov")
---    get_hud_fov = ui_options.get("video/basic/hud_fov")
---    get_mouse_sens = ui_options.get("control/general/mouse_sens")
+	
+	fov_before = get_console_cmd(2, "fov")
+	hud_fov_before = get_console_cmd(2, "hud_fov")
+	mouse_sens_before = get_console_cmd(2, "mouse_sens")
+
 	exec_console_cmd("fov " .. fov_before * 0.61)
 	exec_console_cmd("hud_fov " .. hud_fov_before * 0.61)
 	exec_console_cmd("mouse_sens " .. mouse_sens_before * 0.61)
---    get_console():execute("fov " .. get_fov * 0.61)
---    get_console():execute("hud_fov " .. get_hud_fov * 0.61)
---    get_console():execute("mouse_sens " .. get_mouse_sens * 0.61)
+
     custom_zoom = true
     local run_coef = 0.6
     local sprint_coef = 0.95
@@ -55,11 +68,20 @@ function on_key_press(key)
 end
 
 function on_key_release(key)
+	local bind = dik_to_bind(key)
+	
+	if (bind == key_bindings.kWPN_FIRE) then
+		if wpn_fire_fov_trick and not custom_zoom then
+			exec_console_cmd("fov " .. fov_base)
+			exec_console_cmd("hud_fov " .. hud_fov_base)
+			exec_console_cmd("mouse_sens " .. mouse_sens_base)
+			wpn_fire_fov_trick = false
+		end
+	end
+
     if not (key == KEY_TOGGLE_ZOOM) then return end
     if not (custom_zoom) then return end
---    get_console():execute("fov " .. get_fov)
---    get_console():execute("hud_fov " .. get_hud_fov)
---    get_console():execute("mouse_sens " .. get_mouse_sens)
+
     custom_zoom = false
     local run_coef = 1
     local sprint_coef = 1
@@ -70,19 +92,25 @@ function on_key_release(key)
 		exec_console_cmd("fov " .. fov_val)
 		return true
 	end
-	CreateTimeEvent(0, "reset_fov_to_normal", 0.075, reset_fov_to_normal, fov_before)
+	CreateTimeEvent(0, "reset_fov_to_normal", 0.075, reset_fov_to_normal, fov_base)
 	
 	local function reset_hud_fov_to_normal(fov_val)
 		exec_console_cmd("hud_fov " .. fov_val)
 		return true
 	end
-	CreateTimeEvent(0, "reset_hud_fov_to_normal", 0.075, reset_hud_fov_to_normal, hud_fov_before)
+	CreateTimeEvent(0, "reset_hud_fov_to_normal", 0.075, reset_hud_fov_to_normal, hud_fov_base)
 	
 	local function reset_mouse_sens_to_normal(fov_val)
 		exec_console_cmd("mouse_sens " .. fov_val)
 		return true
 	end
-	CreateTimeEvent(0, "reset_mouse_sens_to_normal", 0.075, reset_mouse_sens_to_normal, mouse_sens_before)
+	CreateTimeEvent(0, "reset_mouse_sens_to_normal", 0.075, reset_mouse_sens_to_normal, mouse_sens_base)
+end
+
+function actor_on_weapon_fired()
+	if not custom_zoom then
+		CreateTimeEvent(0, "reset_fov_to_normal", 0.075, reset_fov_to_normal, fov_base)
+	end
 end
 
 function on_game_start()
@@ -90,5 +118,6 @@ function on_game_start()
 	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
     RegisterScriptCallback("on_key_press",on_key_press)
     RegisterScriptCallback("on_key_release",on_key_release)
+	RegisterScriptCallback("actor_on_weapon_fired",actor_on_weapon_fired)
     on_option_change(mcm_keybinds)
 end
