@@ -1,4 +1,4 @@
-# S.T.A.L.K.E.R G.A.M.M.A.
+# S.T.A.L.K.E.R. G.A.M.M.A.
 S.T.A.L.K.E.R. Anomaly G.A.M.M.A. modpack "actively updated" files are stored in this repository.
 
 For the complete client (heavy, rarely modified files) necessary for this repository to work, you need to download it from the associated discord server where a team of people is ready to help you with your questions and potential issues related to this project:
