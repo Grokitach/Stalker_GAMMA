@@ -8,7 +8,7 @@ https://discord.gg/stalker-gamma
 
 ## Credits
 
-GAMMA is a large project using the work of many talented modders, and each and everyone one of them are contributing to making Stalker Anomaly a better experience. I would thus like to thank all the modders involved in this project by making all the GAMMA addons free to use, edit and repost with modifications as long as the source is indicated (original addon author, from Stalker GAMMA). Repost of unmodified individual parts of this project are not recommended and may harm the community in the long run because updates happen quite often in this repository and it is thus better to directly post links to the relevant files stored here.
+GAMMA is a large project using the work of many talented modders, and each and everyone one of them are contributing to making Stalker Anomaly a better experience. I would thus like to thank all the modders involved in this project by making all the GAMMA addons free to use, edit and repost with modifications as long as the source is indicated (original addon author, from Stalker GAMMA). For numbered addons (105-), original authors must be contacted before repost and modifications. Repost of unmodified individual parts of this project are not recommended and may harm the community in the long run because updates happen quite often in this repository and it is thus better to directly post links to the relevant files stored here.
 
 
 ## Description
