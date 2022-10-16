@@ -44,7 +44,17 @@ Bone_IDs = {
 [36] =	"bip01_r_forearm",
 }
 
+local head_bones = {
+    [14] =	"bip01_neck", 
+    [15] =	"bip01_head",
+    [16] =	"eye_left",
+    [17] =	"eye_right",
+    [18] =	"eyelid_1",
+    [19] =	"jaw_1",
+}
+
 local headBones = {
+	[14] = true,
 	[15] = true,
 	[16] = true,
 	[17] = true,
@@ -712,10 +722,53 @@ function npc_on_before_hit(npc,shit,bone_id)
 	else
 		npc:set_health_ex(life_remove)
 	end
+	
+	if life_remove < -3 then
+		if head_bones[bone_id] then
+			target_bone = "bip01_head"
+		end
+		
+		if target_bone and math.random(1,10) >= 8 then
+			npc:set_bone_visible(target_bone, false, true)
+			play_particle(npc, 15, "hit_fx\\effects\\hit_blood_drops_hd_dust_18_extra")
+			play_particle(npc, 15,  "hit_fx\\effects\\hit_blood_drops_hd_dust_20")
+			play_particle(npc, 15,  "hit_fx\\effects\\hit_bb_07")
+			play_sound("gore\\hit_zombie_"..math.random(23), 1.2, npc)
+		end
+	end
+	
 	shit.power = 0.0001
+	life_remove = nil
 end
 
 function on_game_start()
 	RegisterScriptCallback("npc_on_before_hit",npc_on_before_hit)
 	RegisterScriptCallback("monster_on_before_hit",monster_on_before_hit)
+end
+
+
+
+function play_particle(npc, bone_id, name)
+    bone_id = (not bone_id or bone_id == 65535) and 1 or bone_id
+    bone_name = head_bones[bone_id] or "bip01_spine"
+    local particle = particles_object(name)
+    local bone_pos = npc:bone_position(bone_name)
+    
+    if particle and not particle:playing() then
+        particle:play_at_pos(bone_pos)
+    end
+end
+
+
+function play_sound(snd, volume, npc)
+	if not snd then
+		return
+	end
+	local npc
+	local snd = xr_sound.get_safe_sound_object(snd)
+	if snd then
+		snd:play(npc, 0, sound_object.s2d)
+		snd.volume = volume or 1
+		return snd
+	end
 end
