@@ -1,0 +1,81 @@
+local enable_debug = false
+function print_dbg(fmt,...)
+	if enable_debug then
+		printf("Psi-Storm Manager | " .. fmt,...)
+	end
+end
+
+-- local psi_kill = psi_storm_manager.CPsiStormManager.kill_objects_at_pos
+psi_storm_manager.CPsiStormManager.kill_objects_at_pos = function(self, vortex_pos, fate)
+	-- if (load_var(db.actor,"surge_immuned",false) == true) then 
+	-- 	return 
+	-- end
+
+	if (not vortex_pos) then
+		return
+	end
+
+	printdbg("kill_objects_at_pos | pos: %s - fate: %s", vortex_pos, fate)
+	
+	local sm = surge_manager.get_surge_manager()
+	local id, comm, npc_pos, se_npc, npc, squad, squad_id, smart, surge_smart
+	local board = SIMBOARD
+	local sim = alife()
+	for i=1, #db.OnlineStalkers do
+		id = db.OnlineStalkers[i]
+		npc = db.storage[id] and db.storage[id].object or level.object_by_id(id)
+		if npc then
+			comm = npc:character_community()
+			npc_pos = npc:position()
+			
+			if npc_pos
+			and IsStalker(npc)                         							-- must be stalker
+			and npc:alive()                            							-- must be alive
+			and (comm ~= "monolith")                   							-- not monolith (immune)
+			and (comm ~= "zombied")                    							-- not zombied (immune)
+			and (not get_object_story_id(id))          							-- not story npc
+			and (distance_2d(vortex_pos, npc_pos) < self.max_distance_npc_hit)  -- npc is close to psi-vortex
+			and not (id == AC_ID and level_environment.is_actor_immune()) 		-- npc is actor and not immune
+			and not surge_manager_ignore_npc.ignore_npc[npc:section()]			-- not important npc (immune)
+			and not sm:pos_in_cover(npc_pos)									-- not in cover
+			and not npc:has_info("npcx_is_companion") 							-- player companion
+			then
+				se_npc = sim:object(id)
+				squad_id = se_npc.group_id
+				squad = squad_id and sim:object(squad_id)
+				
+				if se_npc and squad then
+					smart = board and squad.smart_id and board.smarts[squad.smart_id] and board.smarts[squad.smart_id].smrt
+					surge_smart = smart and smart.props and (tonumber(smart.props["surge"]) > 0)
+					-- if not (surge_smart or sm:pos_in_cover(npc_pos)) then -- if stalker is not in a safe smart or not inside
+					if not sm:pos_in_cover(npc_pos) then -- if stalker is not inside
+					
+						self.humanParticles[squad_id.."_"..id] = particles_object("crommcruac\\electrocute_human")
+						self.humanParticles[squad_id.."_"..id]:play_at_pos(npc_pos)
+						
+						if (fate == "turn_to_zombie") then
+							print_dbg('kill_objects_at_pos | turn_to_zombie [%s]',se_npc:name())
+							sm:turn_to_zombie(se_npc,squad)
+						elseif (fate == "explode") then
+							print_dbg('kill_objects_at_pos | explode [%s]',se_npc:name())
+							sm:explode(se_npc)
+						else
+							print_dbg('kill_objects_at_pos | kill [%s]',se_npc:name())
+							npc:kill(npc)
+						end
+					end
+				end
+			else
+				if not (IsStalker(npc))	                                                        then print_dbg('cant kill %s must be stalker', npc:name()) end
+				if not (npc:alive())	                                                        then print_dbg('cant kill %s must be alive', npc:name()) end
+				if not ((comm ~= "monolith"))	                                                then print_dbg('cant kill %s is monolith (immune)', npc:name()) end
+				if not ((comm ~= "zombied"))	                                                then print_dbg('cant kill %s is zombied (immune)', npc:name()) end
+				if not ((not get_object_story_id(id)))	                                        then print_dbg('cant kill %s is story npc', npc:name()) end
+				if not ((distance_2d(vortex_pos, npc_pos) < self.max_distance_npc_hit))	        then print_dbg('cant kill %s not close to psi-vortex', npc:name()) end
+				if not (not (id == AC_ID and level_environment.is_actor_immune())) then print_dbg('cant kill %s npc is actor and immune', npc:id()) end
+				if not (not surge_manager_ignore_npc.ignore_npc[npc:section()]) 							then print_dbg('cant kill %s, is important, section %s', npc:name(), npc:section()) end
+				if npc_pos and sm:pos_in_cover(npc_pos) 										then print_dbg('cant kill npc [%s] | in_cover: %s', npc:name(), npc_pos and sm:pos_in_cover(npc_pos,true)) end
+			end
+		end
+	end
+end
