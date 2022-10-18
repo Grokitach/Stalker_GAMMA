@@ -1,0 +1,230 @@
+--[[
+FDDA backpack addon script
+Author: Feel_Fried
+Anims author: Blindside
+18.01.2022
+--]]
+local ini_eff = {}
+local fov_prev,active_slot,item_after_backpack,backpack_open_flag,crouch_value,crouching
+local anim_enabled = false
+local ea_debug = false
+local crouch_toggle = false
+ini_eff = ini_file("items\\items\\ea_addon_backpack.ltx")
+local skip_anims = {
+	["outfit"] = true,
+	["helm"] = true,
+	["disassemble_cloth_fast"] = true,
+	["disassemble_metal_fast"] = true,
+	["lead_box_dummy"] = true,
+	["container_tool_lead_box_dummy"] = true,
+	["af_aac_dummy"] = true,
+	["af_aam_dummy"] = true,
+	["af_iam_dummy"] = true,
+	["container_tool_af_aac_dummy"] = true,
+	["container_tool_af_aam_dummy"] = true,
+	["container_tool_af_iam_dummy"] = true,
+}
+
+local bool_to_int = {
+	[true] = 1,
+	[false] = 0,
+}
+
+function backpack_m_open(name)
+	if enhanced_animations.used_item then return end
+	if not db.actor or not db.actor:alive() then
+		return
+	end
+	if name == "inventory" then
+		item_use_flag = nil
+		backpack_open_flag = true
+		backpack_open()
+	end
+end
+
+function a_crouch()
+	if crouch_toggle then
+		level.press_action(bind_to_dik(key_bindings.kCROUCH))
+		level.release_action(bind_to_dik(key_bindings.kCROUCH))
+	end
+end
+
+function backpack_m_close(name)
+	if name == "UIInventory" and active_slot then
+		item_after_backpack = true
+	end
+	game.stop_hud_motion()
+	if backpack_open_flag ==  nil then return end
+
+	if fov_prev then
+		get_console():execute("g_crouch_toggle "..bool_to_int[crouch_value] or get_console_cmd(2, "g_crouch_toggle"))
+		exec_console_cmd("hud_fov " .. fov_prev)
+		fov_prev = nil
+		if (crouch_value and not crouching) or not crouch_value  then
+			a_crouch()
+		end
+	end
+
+	if enhanced_animations.used_item then
+		backpack_open_flag = nil
+		return
+	 end
+
+	if not db.actor or not db.actor:alive() then
+		return
+	end
+
+	if name == "UIInventory" then
+		if ea_debug then
+			printf("inventory close")
+		end
+		backpack_open_flag = nil
+		if item_use_flag then
+			if ea_debug then
+				printf("item was used before closing backpack")
+			end
+			game.stop_hud_motion()
+			call_my_slot_back()
+			item_use_flag = nil
+			return
+		end
+		if ea_debug then
+			printf("called backpack close anim")
+		end
+		backpack_close()
+	end
+end
+
+local originalPIF = actor_effects.play_item_fx
+function actor_effects.play_item_fx(item)
+	originalPIF(item)
+	if skip_anims[item] and backpack_open_flag then
+		item_use_flag = true
+		if ea_debug then
+			printf("item_skiped")
+	 	end
+	end
+	if ea_debug then
+		printf(item)
+	end
+end
+
+function backpack_open()
+	if IsMoveState("mcClimb") then
+		actor_menu.set_msg(1, game.translate_string("st_EA_ladder_item_not_allowed"),3)
+		backpack_open_flag = nil
+		return
+	end
+	crouch_value = get_console_cmd(1, "g_crouch_toggle")
+	get_console():execute("g_crouch_toggle 1")
+	crouching = IsMoveState('mcCrouch')
+	if ea_debug then
+		printf("crouching = "..bool_to_int[crouching])
+	end
+	if (crouch_value and not crouching) or not crouch_value  then
+		a_crouch()
+	end
+	active_slot = db.actor:active_slot()
+	det_active = db.actor:active_detector() or nil
+	level.disable_input()
+	--recalc_actor_campos()
+	enhanced_animations.used_item = "backpack_open"
+	enhanced_animations.anim_section = ini_eff:r_string_ex(enhanced_animations.used_item, "anm")
+	enhanced_animations.anim_prepare()
+end
+
+function recalc_actor_campos()
+	local dir2 = device().cam_dir
+	local pos = device().cam_pos
+	pos.y = pos.y - 0.5
+	pos.x = pos.x + dir2.x
+	pos.z = pos.z + dir2.z
+	db.actor:actor_look_at_point(pos)
+end
+
+function backpack_close()
+	enhanced_animations.used_item = "backpack_close"
+	enhanced_animations.anim_section = ini_eff:r_string_ex(enhanced_animations.used_item, "anm")
+	enhanced_animations.anim_prepare()
+end
+
+function EA_anim_stop(used_item)
+	if used_item == "backpack_open" then
+		fov_prev = axr_main.config:r_value("temp", "fov_value", 2)
+		fov_anim_manager.change_fov(0.45)
+		game.play_hud_motion(2, "item_ea_backpack_open_hud", "anm_ea_idle", false, 1)
+		level.enable_input()
+		ea_invent_flag = true
+		RemoveTimeEvent("ea_slot_returner", "call_my_slot_back")
+		ui_inventory.start("inventory")
+		game.only_allow_movekeys(false)
+	end
+end
+
+function ea_on_item_use(used_item,tm)
+	if used_item == "backpack_close" then
+		CreateTimeEvent("ea_b_slot_returner", "b_call_my_slot_back", (tm + 0.55), call_my_slot_back)
+		return
+	end
+	if item_after_backpack then
+		CreateTimeEvent("ea_b_slot_returner", "b_call_my_slot_back", (tm + 0.3), call_my_slot_back)
+		item_after_backpack = nil
+	end
+end
+
+function call_my_slot_back()
+	if det_active and db.actor:item_in_slot(9) then
+		db.actor:item_in_slot(9):switch_state(1)
+	end
+	det_active = nil
+	db.actor:activate_slot(active_slot or 0)
+	active_slot = nil
+	item_after_backpack = nil
+	return true
+end
+
+
+local originalUIinvenory_start =ui_inventory.start
+function ui_inventory.start(mode, obj)
+	if mode == "inventory" and ea_invent_flag == nil and anim_enabled then return end
+	if ea_invent_flag then ea_invent_flag = nil end
+	originalUIinvenory_start(mode, obj)
+end
+
+function actor_on_item_use(item)
+	if item:section() ~= "items_anm_dummy" then item_use_flag = true end
+end
+
+function activate()
+	RegisterScriptCallback("ActorMenu_on_before_init_mode",backpack_m_open)
+	RegisterScriptCallback("GUI_on_hide",backpack_m_close)
+	RegisterScriptCallback("actor_on_item_use",actor_on_item_use)
+	ea_callbacks.EA_RegisterScriptCallback("ea_on_item_anim_stop",EA_anim_stop)
+	ea_callbacks.EA_RegisterScriptCallback("ea_on_item_use",ea_on_item_use)
+end
+
+function deactivate()
+	UnregisterScriptCallback("ActorMenu_on_before_init_mode",backpack_m_open)
+	UnregisterScriptCallback("GUI_on_hide",backpack_m_close)
+	UnregisterScriptCallback("actor_on_item_use",actor_on_item_use)
+	ea_callbacks.EA_UnregisterScriptCallback("ea_on_item_anim_stop",EA_anim_stop)
+	ea_callbacks.EA_UnregisterScriptCallback("ea_on_item_use",ea_on_item_use)
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_option_change", loadsettings)
+	loadsettings()
+end
+
+function loadsettings()
+	if ui_mcm then
+		anim_enabled = false --ui_mcm.get("EA_settings/enable_backpack_addon")
+		crouch_toggle = false --ui_mcm.get("EA_settings/enable_crouch_toggle_backpack_addon")
+		ea_debug = ui_mcm.get("EA_settings/ea_debug")
+	end
+	if anim_enabled then
+		activate()
+	else
+		deactivate()
+	end
+end
