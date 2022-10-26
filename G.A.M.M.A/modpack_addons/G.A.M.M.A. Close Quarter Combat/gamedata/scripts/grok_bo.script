@@ -600,13 +600,14 @@ function npc_on_before_hit(npc,shit,bone_id)
 			fx:play_at_pos(pos)			
 		end
 		
---	/////// CHECK IF NPC IS FROM THE ISG FACTION TO REDUCE PENETRATION //////
+--	/////// CHECK IF NPC IS FROM THE ISG FACTION TO REDUCE PENETRATION AND DAMAGE //////
 
 		local se_obj = alife_object(npc:id())
 		local faction = se_obj:community()
 		isg_res = 1
 		if faction == "isg" then
-			isg_res = 0.60
+			isg_res = 0.40
+			sin_res = 0.75
 			pos = npc:bone_position(custom_bone_name)
 			fx = particles_object("hit_fx\\hit_metal_0" .. math.random(0,3))
 			fxdir = shit.direction
@@ -651,12 +652,15 @@ function npc_on_before_hit(npc,shit,bone_id)
 	end
 
 	if tonumber(bone_id) >= 16 and tonumber(bone_id) <= 18 then -- headshot bonus on unprotected parts
-		isg_res = 1
 		if ammo_section == "ammo_12x70_buck" or ammo_section == "ammo_12x70_buck_bad" or
 		   ammo_section == "ammo_20x70_buck" or ammo_section == "ammo_23x75_shrapnel" then
 			k_ap = ( k_ap + 0.017 )
 		else
 			k_ap = k_ap + 0.1
+		end
+		
+		if faction == "isg" then
+			isg_res = 0.70
 		end
 	end
 
@@ -723,7 +727,7 @@ function npc_on_before_hit(npc,shit,bone_id)
 		npc:set_health_ex(life_remove)
 	end
 	
-	if life_remove < -2 then
+	if life_remove < -1 then
 		if head_bones[bone_id] then
 			target_bone = "bip01_head"
 		end
