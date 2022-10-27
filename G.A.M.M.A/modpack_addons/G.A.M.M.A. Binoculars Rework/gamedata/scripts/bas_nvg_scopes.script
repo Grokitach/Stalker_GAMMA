@@ -5,17 +5,18 @@ local nvg_active
 local toggle = false
 local alt_wpn = false
 local nvg_scope
+local upg = false
 
-local function zoom_in()
+local function zoom_in(upg)
 local weapon = db.actor:active_item()
-	if weapon and SYS_GetParam(0, weapon:section(), "nv_scope_status") == "1" or string.find(weapon:section(),"wpn_binoc") then
+	if weapon and SYS_GetParam(0, weapon:section(), "nv_scope_status") == "1" or string.find(weapon:section(),"wpn_binoc") or upg == true then
 		nvg_scope = true
 		local wpn_sec = weapon:section()
 		if string.find(wpn_sec,"1pn93n2_1gs") then nvg_type = 1
 		elseif string.find(wpn_sec,"pn23") then nvg_type = 3
 		elseif utils_item.has_this_upgrade(weapon, wpn_sec, "up_secone_binoc") then nvg_type = 3
 		elseif utils_item.has_this_upgrade(weapon, wpn_sec, "up_seconc_binoc") then nvg_type = 2
-		elseif utils_item.has_this_upgrade(weapon, wpn_sec, "up_secona_binoc") then nvg_type = 1
+		elseif utils_item.has_this_upgrade(weapon, wpn_sec, "up_secona_binoc") then nvg_type = 1		
 		elseif string.find(wpn_sec,"wpn_binoc") then  nvg_scope = false return
 		else nvg_type = 2
 		end
@@ -26,6 +27,28 @@ local weapon = db.actor:active_item()
 		do_check()
 	end		
 alt_wpn = SYS_GetParam(0, weapon:section(), "use_alt_aim_hud")
+end
+
+local function nv_up(upg)
+	local weapon = db.actor:active_item()
+	local wpn_sec = weapon:section()
+	
+	if utils_item.has_this_upgrade(weapon, wpn_sec, "up_fourte_g3sg1")
+		or utils_item.has_this_upgrade(weapon, wpn_sec, "up_fourte_l96a1")
+		or utils_item.has_this_upgrade(weapon, wpn_sec, "up_fourte_l96a1m")
+		or utils_item.has_this_upgrade(weapon, wpn_sec, "up_fourte_m98b")
+		or utils_item.has_this_upgrade(weapon, wpn_sec, "up_fourte_sv98")
+		or utils_item.has_this_upgrade(weapon, wpn_sec, "up_fourte_svd_nimble")
+		or utils_item.has_this_upgrade(weapon, wpn_sec, "up_fourte_trg")
+		or utils_item.has_this_upgrade(weapon, wpn_sec, "up_fourte_vintorez_nimble")
+		or utils_item.has_this_upgrade(weapon, wpn_sec, "up_fourte_m82")
+			then upg = true 
+			zoom_in(upg)
+	else
+		upg = false
+		zoom_in(upg)
+	end
+	
 end
 
 local tmr = 0
@@ -95,7 +118,7 @@ local function load_state(mdata)
 end
 
 function on_game_start()
-	RegisterScriptCallback("actor_on_weapon_zoom_in", zoom_in)
+	RegisterScriptCallback("actor_on_weapon_zoom_in", nv_up)
 	RegisterScriptCallback("actor_on_weapon_zoom_out", zoom_out)
 	RegisterScriptCallback("on_key_release", on_key_release)
 	RegisterScriptCallback("on_key_press", switching_sight)
