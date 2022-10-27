@@ -1,0 +1,127 @@
+local switch = DIK_keys.DIK_M
+
+local nvg_type = 2
+local nvg_active
+local toggle = false
+local alt_wpn = false
+local nvg_scope
+local upg = false
+
+local function zoom_in(upg)
+local weapon = db.actor:active_item()
+	if weapon and SYS_GetParam(0, weapon:section(), "nv_scope_status") == "1" or string.find(weapon:section(),"wpn_binoc") or upg == true then
+		nvg_scope = true
+		local wpn_sec = weapon:section()
+		if string.find(wpn_sec,"1pn93n2_1gs") then nvg_type = 1
+		elseif string.find(wpn_sec,"pn23") then nvg_type = 3
+		elseif utils_item.has_this_upgrade(weapon, wpn_sec, "up_secone_binoc") then nvg_type = 3
+		elseif utils_item.has_this_upgrade(weapon, wpn_sec, "up_seconc_binoc") then nvg_type = 2
+		elseif utils_item.has_this_upgrade(weapon, wpn_sec, "up_secona_binoc") then nvg_type = 1		
+		elseif string.find(wpn_sec,"wpn_binoc") then  nvg_scope = false return
+		else nvg_type = 2
+		end
+		RegisterScriptCallback("actor_on_update", bas_actor_on_update)
+		do_check()
+	else
+		nvg_scope = false
+		do_check()
+	end		
+alt_wpn = SYS_GetParam(0, weapon:section(), "use_alt_aim_hud")
+end
+
+local function nv_up(upg)
+	local weapon = db.actor:active_item()
+	local wpn_sec = weapon:section()
+	
+	if utils_item.has_this_upgrade(weapon, wpn_sec, "up_fourte_g3sg1")
+		or utils_item.has_this_upgrade(weapon, wpn_sec, "up_fourte_l96a1")
+		or utils_item.has_this_upgrade(weapon, wpn_sec, "up_fourte_l96a1m")
+		or utils_item.has_this_upgrade(weapon, wpn_sec, "up_fourte_m98b")
+		or utils_item.has_this_upgrade(weapon, wpn_sec, "up_fourte_sv98")
+		or utils_item.has_this_upgrade(weapon, wpn_sec, "up_fourte_svd_nimble")
+		or utils_item.has_this_upgrade(weapon, wpn_sec, "up_fourte_trg")
+		or utils_item.has_this_upgrade(weapon, wpn_sec, "up_fourte_vintorez_nimble")
+		or utils_item.has_this_upgrade(weapon, wpn_sec, "up_fourte_m82")
+			then upg = true 
+			zoom_in(upg)
+	else
+		upg = false
+		zoom_in(upg)
+	end
+	
+end
+
+local tmr = 0
+function bas_actor_on_update()
+local tg = time_global()
+	if tg > tmr then
+		tmr = tg + 500
+		do_check()
+	end
+end
+
+function do_check()
+	if toggle and (not nvg_active) and nvg_scope and device().fov <= 60 then
+		activate()
+	elseif nvg_active and ((not toggle) or (not nvg_scope) or (device().fov > 60)) then
+		deactivate()
+	end
+end
+
+function activate()
+	level.add_pp_effector("bas_nightvision_" .. nvg_type .. ".ppe",8020, true)
+	nvg_active = true
+end
+
+function deactivate()
+	level.set_pp_effector_factor(8020, 0)
+	level.remove_pp_effector(8020)
+	nvg_active = false
+end
+
+local function zoom_out()
+	deactivate()
+	UnregisterScriptCallback("actor_on_update", bas_actor_on_update)
+end
+
+local function switching_sight(key)
+	if key == bind_to_dik(key_bindings.kWPN_FUNC) and alt_wpn and nvg_active then
+		level.set_pp_effector_factor(8020, 0)
+		level.remove_pp_effector(8020)
+		nvg_active = false
+	end
+end
+
+local function on_key_release(key)
+	if key ~= switch then return end
+	toggle = not toggle
+	do_check()
+	local wpn = db.actor:active_item()
+	if IsWeapon(wpn) then
+		scoped = wpn:cast_Weapon():IsScopeAttached()
+		if scoped then
+			if toggle then	
+				xr_effects.play_snd(db.actor, nil, {[1] = "weapons\\vintorez\\1pn93_nv_start"})
+			else
+				xr_effects.play_snd(db.actor, nil, {[1] = "weapons\\vintorez\\1pn93_nv_off"})
+			end
+		end
+	end
+end
+
+local function save_state(mdata)
+	mdata.snk_bas_nvg_flag = toggle
+end
+
+local function load_state(mdata)
+	toggle = mdata.snk_bas_nvg_flag or false
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_weapon_zoom_in", nv_up)
+	RegisterScriptCallback("actor_on_weapon_zoom_out", zoom_out)
+	RegisterScriptCallback("on_key_release", on_key_release)
+	RegisterScriptCallback("on_key_press", switching_sight)
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
+end
