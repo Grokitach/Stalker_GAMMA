@@ -25,16 +25,15 @@ float rough = lerp(0.4, 1.2, material_ID); // All materials will be affected by 
 
 if (abs(material_ID - MAT_FLORA) <= 0.02f)  // foliage not affected by GGX
      rough = lerp(0.4, 2.7, material_ID); 
-	 rough *= rough;
 
 if (abs(material_ID - 0.196) <= 0.02f)   // hands, maybe NPCs and some annoying models like swamp tall grass
      rough = lerp(0.4, 2.7, material_ID); 
-	 rough *= rough;
 
 if (abs(material_ID - 0.95) <= 0.02f)    // ground 
-    float rough = lerp(ROUGHNESS_HIGH, ROUGHNESS_LOW, pow(gloss, ROUGHNESS_POW)); //gloss to roughness
-	rough = pow(rough, 1/(1.01-Ldynamic_color.w)); //gloss factor
+     rough = lerp(0.4, 1.9, material_ID); 
 
+
+rough *= rough;
 return saturate(rough);
 }
 
