@@ -21,18 +21,20 @@ float3 calc_albedo(float3 diffuse, float material_ID)
 
 float calc_rough(float gloss, float material_ID)
 {
-float rough = lerp(0.5, 1.25, material_ID); // All materials will be affected by shiny GGX, mostly guns with the various filters afterwards
+float rough = lerp(0.4, 1.2, material_ID); // All materials will be affected by shiny GGX
 
-if (abs(material_ID - MAT_FLORA) <= 0.02f)  // folliage materials
+if (abs(material_ID - MAT_FLORA) <= 0.02f)  // foliage not affected by GGX
      rough = lerp(0.4, 2.7, material_ID); 
+	 rough *= rough;
 
 if (abs(material_ID - 0.196) <= 0.02f)   // hands, maybe NPCs and some annoying models like swamp tall grass
-     rough = lerp(0.8, 2.7, material_ID); 
+     rough = lerp(0.4, 2.7, material_ID); 
+	 rough *= rough;
 
-if (abs(material_ID - 0.95) <= 0.02f)    // ground, walls, etc
-	rough = lerp(0.4, 1.9, material_ID); 
-	
-rough = pow(rough, 1/(1.01-Ldynamic_color.w));
+if (abs(material_ID - 0.95) <= 0.02f)    // ground 
+    float rough = lerp(ROUGHNESS_HIGH, ROUGHNESS_LOW, pow(gloss, ROUGHNESS_POW)); //gloss to roughness
+	rough = pow(rough, 1/(1.01-Ldynamic_color.w)); //gloss factor
+
 return saturate(rough);
 }
 
@@ -143,7 +145,7 @@ float3 Blinn(float nDotL, float nDotH, float nDotV, float lDotH, float3 f0, floa
 
 float3 Lit_Diffuse(float nDotL, float nDotH, float nDotV, float lDotH, float3 f0, float rough)
 {
-	return pow(nDotL, lerp(1.125, 0.75, rough)*0.3); // aesthetic tweak to roughness
+	return pow(nDotL, lerp(1.125, 0.75, rough)*2.0); // aesthetic tweak to roughness
 }
 
 float3 Lit_Specular(float nDotL, float nDotH, float nDotV, float lDotH, float3 f0, float rough)
