@@ -21,19 +21,19 @@ float3 calc_albedo(float3 diffuse, float material_ID)
 
 float calc_rough(float gloss, float material_ID)
 {
-	float rough = lerp(0.2, 1.2, material_ID); // All materials will be affected by shiny GGX, mostly guns with the various filters afterwards
+float rough = lerp(0.5, 1.25, material_ID); // All materials will be affected by shiny GGX, mostly guns with the various filters afterwards
 
-		if (abs(material_ID - MAT_FLORA) <= 0.02f)  // folliage materials
-		rough = lerp(0.4, 2.7, material_ID); 
+if (abs(material_ID - MAT_FLORA) <= 0.02f)  // folliage materials
+     rough = lerp(0.4, 2.7, material_ID); 
 
-		if (abs(material_ID - 0.196) <= 0.02f)   // hands, maybe NPCs and some annoying models like swamp tall grass
-		rough = lerp(1.2, 2.7, material_ID); 
+if (abs(material_ID - 0.196) <= 0.02f)   // hands, maybe NPCs and some annoying models like swamp tall grass
+     rough = lerp(0.8, 2.7, material_ID); 
 
-		if (abs(material_ID - 0.95) <= 0.02f)    // ground, walls, etc
-		rough = lerp(0.4, 1.9, material_ID); 
-
-	rough *= rough;
-	return saturate(rough);
+if (abs(material_ID - 0.95) <= 0.02f)    // ground, walls, etc
+	rough = lerp(0.4, 1.9, material_ID); 
+	
+rough = pow(rough, 1/(1.01-Ldynamic_color.w));
+return saturate(rough);
 }
 
 float3 calc_f0(float gloss, float material_ID)
@@ -115,8 +115,8 @@ float3 GGX(float NdotL, float NdotH, float NdotV, float VdotH, float3 F0, float 
 
 float G_Smith(float m2, float nDotX)
 {
-	m2 = m2*0.5; //remapping for GGX
-	//m2 = m2 * 0.797884560802865; //remapping for beckmann/blinn (sqrt(2/pi))
+	//m2 = m2*0.5; //remapping for GGX
+	m2 = m2 * 0.797884560802865; //remapping for beckmann/blinn (sqrt(2/pi))
 	return nDotX / (nDotX * (1 - m2) + m2);
 }
 
@@ -149,7 +149,7 @@ float3 Lit_Diffuse(float nDotL, float nDotH, float nDotV, float lDotH, float3 f0
 float3 Lit_Specular(float nDotL, float nDotH, float nDotV, float lDotH, float3 f0, float rough)
 {
 #ifdef USE_GGX_SPECULAR
-	return GGX(nDotL, nDotH, nDotV, lDotH, f0, rough*1.25); //GGX is much more expensive but looks nicer
+	return GGX(nDotL, nDotH, nDotV, lDotH, f0, rough*1.15); //GGX is much more expensive but looks nicer
 #else
 	return Blinn(nDotL, nDotH, nDotV, lDotH, f0, rough); //much cheaper pbr blinn 
 #endif
@@ -178,7 +178,7 @@ float3 Lit_BRDF(float rough, float3 albedo, float3 f0, float3 V, float3 N, float
 
 float3 CubeDiffuse (float rough, TextureCube cubeMap, float3 nw)
 {
-	float3 nwRemap = nw * 0.7;
+	float3 nwRemap = nw;
 	float3 vnormabs    = abs(nwRemap);
 	float  vnormmax    = max(vnormabs.x, max(vnormabs.y, vnormabs.z));
         nwRemap      /= vnormmax;
