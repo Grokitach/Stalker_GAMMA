@@ -1,0 +1,154 @@
+local enable_debug = false
+function print_dbg(fmt,...)
+	if enable_debug then
+		printf("-utils_item | " .. fmt,...)
+	end
+end
+
+----------------------------------------------------------------------
+-- Utilities
+----------------------------------------------------------------------
+local string_find   = string.find
+local string_match  = string.match
+local string_sub    = string.sub
+
+local read_from_ini = utils_data.read_from_ini
+
+local cache_upgr_tree = {}
+local cache_upgr_ins = {}
+
+local upg_gr = {
+	["first"] = 1,
+	["secon"] = 2,
+	["third"] = 3,
+	["fourt"] = 4,
+	["fifth"] = 5,
+}
+local upg_ind = {
+	["a"] = 1,
+	["b"] = 2,
+	["c"] = 3,
+	["d"] = 4,
+	["e"] = 5,
+	["f"] = 6,
+}
+local upg_prop_tool = {
+	["prop_weight"]	            =	"upgr_w_^d_external",	    --Weight
+	["prop_silencer"]	        =	"upgr_w_^d_external",	   	--Muffler
+	["prop_underbarrel_slot"]	=	"upgr_w_^d_external",	    --Mount the grenade launcher
+	["prop_reliability"]	    =	"upgr_w_^d_internal",	    --Reliability
+	["prop_bullet_speed"]	    =	"upgr_w_^d_external",	    --Flatness
+	["prop_recoil"]	            =	"upgr_w_^d_internal",	    --Recoil
+	["prop_ammo_size"]	        =	"upgr_w_^d_external",	    --Cartridges
+	["prop_grenade_launcher"]	=	"upgr_w_^d_external",	    --Subbarrel
+	["prop_scope_4x"]	        =	"upgr_w_^d_optical",	    --Sight4
+	["prop_scope_1.6x"]	        =	"upgr_w_^d_optical",	    --Sight1.6
+	["prop_rpm"]	            =	"upgr_w_^d_internal",	    --Rateoffire
+	["prop_calibre"]	        =	"upgr_w_^d_internal",	    --caliber(9x18,5x45)
+	["prop_dispersion"]	        =	"upgr_w_^d_external",	    --Accuracy
+	["prop_inertion"]	        =	"upgr_w_^d_external",	    --Convenience
+	["prop_autolockscope"]	    =	"upgr_w_^d_optical",	    --Auto Capture Targets in Optics
+	["prop_scope_1.5x"]	        =	"upgr_w_^d_optical",	    --Reflex Sight 1.5x
+	["prop_scope_5x"]	        =	"upgr_w_^d_optical",	    --Sight 5x
+	["prop_scope_6x"]	        =	"upgr_w_^d_optical",	    --Sight 6x
+	["prop_scope_10x"]	        =	"upgr_w_^d_optical",	    --Sight 10x
+	["prop_scope_12x"]	        =	"upgr_w_^d_optical",	    --Scope 12x
+	["prop_scope_15x"]	        =	"upgr_w_^d_optical",	    --Scope 15x
+	["prop_scope_attach"]	    =	"upgr_w_^d_external",    	--Mount for optics
+	["prop_scope"]	            =	"upgr_w_^d_optical",	    --Adjustable range finder sight
+	["prop_contrast"]	        =	"upgr_w_^d_optical",	    --Increase the contrast of sight
+	["prop_autofire"]	        =	"upgr_w_^d_internal",	    --Fully automatic firemode
+	["prop_3xfire"]	            =	"upgr_w_^d_internal",	    --Three shots automatic shooting mode
+	["prop_nightvision"]	    =	"upgr_w_^d_optical",	    --Installing NVD
+	["prop_no_buck"]	        =	"upgr_w_^d_external",	    --Do not shoot a fraction.
+	
+	["prop_armor"]	            =	"upgr_o_^d_physical",	    --armor
+	["prop_damage"]	            =	"upgr_o_^d_physical",	    --Damage
+	["prop_durability"]	        =	"upgr_o_^d_physical",	    --wear resistance (strength)
+	["prop_restore_bleeding"]	=	"upgr_o_^d_utility",	    --reduce bleeding
+	["prop_restore_health"]	    =	"upgr_o_^d_utility",	    --Health Restoration
+	["prop_power"]	            =	"upgr_o_^d_utility",	    --East. stamina
+	["prop_tonnage"]	        =	"upgr_o_^d_utility",	    --Carry weight
+	["prop_chem"]	            =	"upgr_o_^d_magical",	    --chemical protection
+	["prop_radio"]	            =	"upgr_o_^d_magical",	    --radio protection
+	["prop_thermo"]	            =	"upgr_o_^d_magical",	    --thermo protection
+	["prop_electro"]	        =	"upgr_o_^d_magical",	    --Electro protection
+	["prop_psy"]	            =	"upgr_o_^d_magical",	    --psi protection
+	["prop_artefact"]	        =	"upgr_o_^d_utility",	    --slot for artifacts
+	["prop_weightoutfit"]	    =	"upgr_o_^d_physical",	    --body armor weight
+	--["prop_autolock"]	        =	"",							--Avtozapvatgoal
+	["prop_sprint"]	            =	"upgr_o_^d_utility",	    --Run in the exoskeleton
+	--["prop_scanner"]	        =	"",							--infra red scanner
+	
+	["prop_binoc_zoom"]	        =	"upgr_w_^d_optical",	        --Sight
+	["prop_binoc_nightvision"]	=	"upgr_w_^d_optical",	        --Installing NVD
+	["prop_binoc_autolock"]	    =	"upgr_w_^d_optical",	        --Sight
+}
+
+function utils_item.extract_upgrade(tree, group, not_first)
+    
+	
+	local elements = parse_list(ini_sys, group, "elements")
+	
+	-- Gather groups and indexes
+	for i=1,#elements do
+		local element = elements[i]
+		for k,row in pairs(upg_gr) do
+			if string_find(element,k) then
+			
+				-- create an suitable index
+				if (not tree[row]) then
+					tree[row] = {}
+				end 
+				local indx = element:sub(9,9) -- get the index
+				local col = indx and upg_ind[indx]
+				if col and (not tree[row][col]) then
+					local stats = ini_sys:r_string_ex(element,"section")
+					local effect = ini_sys:r_string_ex(element,"effects")
+					tree[row][col] = {}
+					tree[row][col].section = element
+					tree[row][col].stats = stats
+					tree[row][col].stats_cost = ini_sys:r_float_ex(stats,"cost")
+					tree[row][col].name = ini_sys:r_string_ex(element,"name")
+					tree[row][col].desc = ini_sys:r_string_ex(element,"description")
+					tree[row][col].icon = ini_sys:r_string_ex(element,"icon")
+					tree[row][col].effect = effect and parse_list(ini_sys, effect, "elements",true)
+					tree[row][col].prop = parse_list(ini_sys,element,"property")
+					tree[row][col].tier = ((col <= 2) and 1) or ((col <= 4) and 2) or 3
+					
+					local prop = tree[row][col].prop[1]
+					if prop then
+						local tool = upg_prop_tool[prop]
+						tree[row][col].tool = tool and tool:gsub("%^d", tostring(tree[row][col].tier)) or nil
+						if (not tree[row][col].tool) then
+							printdbg("! extract_upgr | can't generate tool for upgrade [%s], property: %s", tree[row][col].stats, prop)
+						end
+					end
+				end
+			end
+		end
+	end
+	
+	-- Repeat for followed upgrades
+	for i=1,#elements do
+		local group_next = ini_sys:r_string_ex(elements[i],"effects")
+		if group_next and (group_next ~= "") then
+			utils_item.extract_upgrade(tree, group_next, true)
+		end
+	end
+	
+	-- Finalizing
+	if (not not_first) then
+		for row,v in pairs(tree) do
+			for col,info in pairs(v) do
+				if odd(col) and (not v[col+1]) then	
+					tree[row][col].solo = true -- indicating that the upgrade is alone in its group
+				end
+			end
+		end
+	end
+end
+
+function utils_item.get_upgrade_prop_tool(prop)
+	return upg_prop_tool[prop]
+end
