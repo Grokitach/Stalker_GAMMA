@@ -1,18 +1,16 @@
 // [ SETTINGS ] [ WATER ]
 
-#define G_SSR_WATER_QUALITY				1		// Quality of the water.else ( 0 = low | 1 = medium | 2 = high | 3 = Very High | 4 = Ultra )
+#define G_SSR_WATER_QUALITY				1		// Quality of the water. ( 0 = low | 1 = medium | 2 = high | 3 = Very High | 4 = Ultra )
 
-#define G_SSR_WATER_SCREENFADE			0.3f	// Screen border fade. ( 0.0f = No border fade )
-
-#define G_SSR_WATER_WAVES				0.3f	// Water waves intensity
-#define G_SSR_WATER_REFLECTION			0.6f	// Reflection intensity. ( 1.0f = 100% )
+#define G_SSR_WATER_WAVES				1.0f	// Water waves intensity
+#define G_SSR_WATER_REFLECTION			0.5f	// Reflection intensity. ( 1.0f = 100% )
 #define G_SSR_WATER_REFRACTION			0.05f	// Intensity of refraction distortion
 
-#define G_SSR_WATER_SKY_REFLECTION		0.9f	// Sky reflection factor. ( 1.0f = 100% )
+#define G_SSR_WATER_SKY_REFLECTION		1.0f	// Sky reflection factor. ( 1.0f = 100% )
 #define G_SSR_WATER_MAP_REFLECTION		1.0f	// Objects reflection factor. ( 1.0f = 100% )
 
-#define G_SSR_WATER_TEX_DISTORTION		0.15f	// Water texture distortion
-#define G_SSR_WATER_TURBIDITY			0.7f	// Water clarity. ( 0.0f = Clear ~ 1.0f = Murky )
+#define G_SSR_WATER_TEX_DISTORTION		0.2f	// Water texture distortion
+#define G_SSR_WATER_TURBIDITY			0.9f	// Water clarity. ( 0.0f = Clear ~ 1.0f = Murky )
 
 #define G_SSR_WATER_RAIN				0.4f	// Max intensity of rain drops
 
