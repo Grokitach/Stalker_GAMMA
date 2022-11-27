@@ -1,7 +1,7 @@
 /**
- * @ Version: SCREEN SPACE SHADERS - UPDATE 8
+ * @ Version: SCREEN SPACE SHADERS - UPDATE 12.6
  * @ Description: Water implementation
- * @ Modified time: 2022-07-09 16:56
+ * @ Modified time: 2022-11-26 00:47
  * @ Author: https://www.moddb.com/members/ascii1457
  * @ Mod: https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders
  */
@@ -93,15 +93,11 @@ float4 main( vf I ) : SV_Target
 	float3 NN = normalize(float3(basenormal.x * 0.15f, basenormal.y * 0.15f, basenormal.z));
 	float blue_noise = s_bluenoise.Sample(smp_linear, I.tbase * float2(0.05f, 0.05f) + NN).b * 1.5f;
 	
-	// Border screen fade
-	float2 calc_edges = smoothstep(-0.05f, G_SSR_WATER_SCREENFADE, float2(PosTc.x, 1.0f - PosTc.x));
-	float edgeFade = calc_edges.x * calc_edges.y;
-
 	// Compute reflection bounce
 	float3 wreflect = reflect(eyedir, Nv);
 
 	// Don't trace rays which face the camera. Still worth to avoid the rays mess when you look down.
-	edgeFade *= step(dot(-eyedir, wreflect), 0);
+	float edgeFade = step(dot(-eyedir, wreflect), 0);
 	
 	// Trace a ray
 	if (edgeFade > 0.02f)
@@ -114,7 +110,7 @@ float4 main( vf I ) : SV_Target
 	{
 		// Get reflection pixel from scene screen
 		refl_ray = s_image.Sample(smp_linear, ssr_hit_uv.xy).rgb;
-		
+
 		// Adjust reflection intensity using ssr_hit_uv.y and edgeFade
 		float ray_fade = ssr_hit_uv.y * 5.0f;
 		
