@@ -1,11 +1,15 @@
 #include "settings_screenspace_PUDDLES.h"
 #include "settings_screenspace_SSR.h"
+
 #include "common.h"
 #include "sload.h"
+
+#include "screenspace_common_ripples.h"
 
 Texture2D s_puddles_normal;
 Texture2D s_puddles_perlin;
 Texture2D s_puddles_mask;
+Texture2D s_rainsplash;
 
 #define	USE_4_DETAIL
 
@@ -32,13 +36,6 @@ f_deffer 	main	( p_flat I 		)
 	float 	mag	= dot 		(mask,1);
 			mask= mask/mag	;
 
-	float3	d_R	= s_dt_r.Sample ( smp_base, I.tcdbump)*mask.r;
-	float3	d_G	= s_dt_g.Sample ( smp_base, I.tcdbump)*mask.g;
-	float3	d_B	= s_dt_b.Sample ( smp_base, I.tcdbump)*mask.b;
-	float3	d_A	= s_dt_a.Sample ( smp_base, I.tcdbump)*mask.a;
-	float3	dt	= d_R+d_G+d_B+d_A;
-		D.rgb	= 2*D.rgb*dt	 ;
-
   #ifdef USE_4_BUMP
  	 float4	n_Rt = s_dn_r.Sample ( smp_base, I.tcdbump).wzyx;
 	 float4	n_Gt = s_dn_g.Sample ( smp_base, I.tcdbump).wzyx;
@@ -62,6 +59,8 @@ f_deffer 	main	( p_flat I 		)
 
 	 float3	N		= 	mul     	(float3x3(I.M1, I.M2, I.M3), mix.xyz);
 
+	// Puddles Implementation - SSS Update 12
+	// https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders/
 
 	// Wetness factor
 	float wetness_f = rain_params.y;
@@ -103,19 +102,29 @@ f_deffer 	main	( p_flat I 		)
 
 	float rain_int = saturate(rain_params.x * 1.5f);
 
-	// Ripples movement speed
+	// Base ripples anim speed
 	float ripples_anim =  timers.x * ((0.01f + (rain_int * 0.008f)) * G_PUDDLES_RIPPLES_SPEED );
 	
-	// Ripples scale
+	// Base ripples scale
 	float ripples_scale = 140 / G_PUDDLES_RIPPLES_SCALE;
 
-	// Ripples Normal
+	// Base ripples Normal
 	float3 WN0 = s_puddles_normal.Sample(smp_base, I.tcdh * ripples_scale + float2(0, ripples_anim));
 	float3 WN1 = s_puddles_normal.Sample(smp_base, I.tcdh * ripples_scale - float2(0.33f, ripples_anim));
 	float3 ripplesNormal = ((WN0 * 2 - 1) + (WN1 * 2 - 1)) / 2.0f;
 
-	// Ripples Intensity
+	// Rain Ripples
+	float3 rainRipples = SSFX_ripples( s_rainsplash, I.tcdh * ripples_scale * 2.8f / G_PUDDLES_RAIN_RIPPLES_SCALE ) * 2 - 1;
+
+	// Rain ripples intensity... ( Rain intensity * Depth fadeout * Intensity )
+	rainRipples *= clamp(1.5f - I.position.z * 0.15f, 0.3f, 1.0f) * rain_params.x * 3.0f * G_PUDDLES_RAIN_RIPPLES_INTENSITY;
+
+	// Base ripples Intensity
 	ripplesNormal *= (0.05f + rain_int * G_PUDDLES_RIPPLES_RAINING_INT) * G_PUDDLES_RIPPLES_INTENSITY;
+	
+	// Mix ripples
+	ripplesNormal = ( ripplesNormal * 0.666f ) + ( rainRipples * 0.333f );
+
 #else
 	float3 ripplesNormal = 0;
 #endif
@@ -123,6 +132,21 @@ f_deffer 	main	( p_flat I 		)
 	// Normal Up and ripples for puddles
 	float3 MirrorUp	= mul(m_V,  float3(ripplesNormal.x, 1.0f, ripplesNormal.y));
 	N = lerp(N, MirrorUp, puddles);
+
+	// Refraction Normal
+	float3 N_refra = ripplesNormal;
+
+	// Adjust refraction intensity based on wetness and puddle perlin
+	N_refra.xy *= 0.15f * smoothstep( 0.6f, 0.8f, wetness_f * puddles ) * G_PUDDLES_REFRACTION_INTENSITY;
+
+	// Detail textures + refraction when needed
+	float2 detail_tc = I.tcdbump + N_refra;
+	float3 d_R = s_dt_r.Sample ( smp_base, detail_tc) * mask.r;
+	float3 d_G = s_dt_g.Sample ( smp_base, detail_tc) * mask.g;
+	float3 d_B = s_dt_b.Sample ( smp_base, detail_tc) * mask.b;
+	float3 d_A = s_dt_a.Sample ( smp_base, detail_tc) * mask.a;
+	float3 dt = d_R + d_G + d_B + d_A;
+	D.rgb = 2 * D.rgb * dt;
 
 	// Apply tint
 	D.rgb = lerp( D.rgb, D.rgb * G_PUDDLES_TINT, puddles);

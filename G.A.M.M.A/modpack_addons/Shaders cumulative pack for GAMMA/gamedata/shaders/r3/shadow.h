@@ -24,8 +24,8 @@ Texture2D jitterMipped;
 	#define	KERNEL	1.0f
 #endif
 
-#define PCSS_PIXEL int(5)
-#define PCSS_STEP int(5)
+#define PCSS_PIXEL int(4)
+#define PCSS_STEP int(2)
 #define PCSS_PIXEL_MIN float(1.0)
 #define PCSS_SUN_WIDTH float(150.0)
 
@@ -167,45 +167,65 @@ static const float2 poissonDisk[32] = {
 
 float shadow_pcss( float4 tc )
 {
+	// - Small modification to fix flickering and black squares.
+	// - Added a extra performance option with lower SUN_QUALITY settings.
+	// - Extended the blocker search from 3x3 to 4x4 for better results.
+	// https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders/
+
 	tc.xyz /= tc.w;
-	
-	if (tc.x < 0.0 || tc.y < 0.0 || tc.x > 1.0 || tc.y > 1.0)
-        return 1.0;
-	
-    int3 uv = int3(tc.xy * float(SMAP_size), 0);
-    float zBlock = tc.z - 0.0001;
-    float avgBlockerDepth = 0.0;
-    float blockerCount = 0.0;
 
-    [unroll] 
+#if SUN_QUALITY > 3 // Blocker search ( Penumbra ) and filter
+
+	int3 uv = int3(tc.xy * float(SMAP_size), 0);
+	float zBlock = tc.z - 0.0001;
+	float avgBlockerDepth = 0.0;
+	float blockerCount = 0.0;
+
+	[unroll] 
 	for( int row = -PCSS_PIXEL; row <= PCSS_PIXEL; row += PCSS_STEP )
-    {
-        [unroll] 
+	{
+		[unroll] 
 		for( int col = -PCSS_PIXEL; col <= PCSS_PIXEL; col += PCSS_STEP )
-        {
-            float shadowMapDepth = s_smap.Load( uv, int2( col, row ) ).x;
-            float b1 = ( shadowMapDepth < zBlock ) ? 1.0 : 0.0;
-            blockerCount += b1;
-            avgBlockerDepth += shadowMapDepth * b1;
-        }
-    }
+		{
+			float shadowMapDepth = s_smap.Load( uv, int2( col, row ) ).x;
+			float b1 = ( shadowMapDepth < zBlock ) ? 1.0 : 0.0;
+			blockerCount += b1;
+			avgBlockerDepth += shadowMapDepth * b1;
+		}
+	}
 
-    if( blockerCount < 1 || blockerCount >= 9 )
-        return 1.0 - min(1.0, blockerCount);
+	if(blockerCount < 1)
+		return 1.0;
 
-    avgBlockerDepth /= blockerCount;
-    float fRatio = saturate( ( ( tc.z - avgBlockerDepth ) * PCSS_SUN_WIDTH ) / avgBlockerDepth );
-    fRatio *= fRatio;
-    fRatio = max(PCSS_PIXEL_MIN, fRatio * float(PCSS_PIXEL)) / float(SMAP_size);
-    
-    float s = 0.0;
-    [unroll] 
+	avgBlockerDepth /= blockerCount;
+	float fRatio = saturate( ( ( tc.z - avgBlockerDepth ) * PCSS_SUN_WIDTH ) / avgBlockerDepth );
+	fRatio *= fRatio;
+	fRatio = max(PCSS_PIXEL_MIN, fRatio * float(PCSS_PIXEL)) / float(SMAP_size);
+
+	float s = 0.0;
+	[unroll] 
 	for( uint i = 0; i < PCSS_NUM_SAMPLES; ++i )
-    {
-        float2 offset = poissonDisk[i] * fRatio;
-        s += s_smap.SampleCmpLevelZero( smp_smap, tc.xy + offset, tc.z ).x;
-    }
-    return s / PCSS_NUM_SAMPLES;
+	{
+		float2 offset = poissonDisk[i] * fRatio;
+		s += s_smap.SampleCmpLevelZero( smp_smap, tc.xy + offset, tc.z ).x;
+	}
+	return s / PCSS_NUM_SAMPLES;
+
+#else // No blocker search ( Penumbra ), just filter
+
+	float fRatio = max(PCSS_PIXEL_MIN, 0.5f * float(PCSS_PIXEL)) / float(SMAP_size);
+
+	float s = 0.0;
+	[unroll] 
+	for( uint i = 0; i < PCSS_NUM_SAMPLES; ++i )
+	{
+		float2 offset = poissonDisk[i] * fRatio;
+		s += s_smap.SampleCmpLevelZero( smp_smap, tc.xy + offset, tc.z ).x;
+	}
+	return s / PCSS_NUM_SAMPLES;
+
+#endif
+
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////
