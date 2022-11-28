@@ -1,7 +1,7 @@
 /**
- * @ Version: SCREEN SPACE SHADERS - UPDATE 11
+ * @ Version: SCREEN SPACE SHADERS - UPDATE 12.6
  * @ Description: SSR implementation
- * @ Modified time: 2022-09-20 03:20
+ * @ Modified time: 2022-11-26 02:05
  * @ Author: https://www.moddb.com/members/ascii1457
  * @ Mod: https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders
  */
@@ -40,6 +40,9 @@ float4 SSFX_ssr_fast_ray(float3 ray_start_vs, float3 ray_dir_vs, float2 tc, uint
 	// Initialize Ray
 	RayTrace ssr_ray = SSFX_ray_init(ray_start_vs, ray_dir_vs, 150, q_ssr_steps[G_SSR_QUALITY].x, 1.0f);
 
+	// Save the original step.x
+	float ori_x = ssr_ray.r_step.x;
+
 	// Depth from the start of the ray
 	float ray_depthstart = SSFX_get_depth(ssr_ray.r_start, iSample);
 	
@@ -48,8 +51,16 @@ float4 SSFX_ssr_fast_ray(float3 ray_start_vs, float3 ray_dir_vs, float2 tc, uint
 	for (int i = 0; i < q_ssr_steps[G_SSR_QUALITY].x; i++)
 	{
 		// Ray out of screen...
-		if (!SSFX_is_valid_uv(ssr_ray.r_pos))
+		if (ssr_ray.r_pos.y < 0.0f || ssr_ray.r_pos.y > 1.0f)
 			return 0;
+
+		// Trick for the horizontal out of bounds. Mirror border of the screen.
+		if (ssr_ray.r_pos.x < 0.0f || ssr_ray.r_pos.x > 1.0f)
+		{
+			ssr_ray.r_pos -= ssr_ray.r_step; // Step back
+			ssr_ray.r_step.x = -ssr_ray.r_step.x; // Invert Horizontal
+			ssr_ray.r_pos += ssr_ray.r_step; // Step
+		}
 
 		// Ray intersect check
 		float2 ray_check = SSFX_ray_intersect(ssr_ray, iSample);
@@ -118,7 +129,7 @@ void SSFX_ScreenSpaceReflections(float2 tc, float4 P, float3 N, float gloss, ino
 	// Note: Distance falloff on "rain_patch_normal.ps"
 	
 	// Material conditions ( MAT_FLORA and Terrain for now... )
-	bool m_skyalways = abs(P.w - 0.95f) <= 0.02f;
+	bool m_terrain = abs(P.w - 0.95f) <= 0.02f;
 	bool m_flora = abs(P.w - MAT_FLORA) <= 0.02f;
 
 	// Let's start with pure gloss.
@@ -161,14 +172,11 @@ void SSFX_ScreenSpaceReflections(float2 tc, float4 P, float3 N, float gloss, ino
 		// Get scene reflection
 		refl_ray = SSFX_get_scene(hit_uv.xy, iSample);
 
-		// Limit extremely bright pixels
-		refl_ray *= saturate(0.25f + (length(refl_ray) < 1.8f));
-
 		// Set reflection UV
 		uvcoor = hit_uv.xy;
 
 		// Let's fade the reflection based on ray XY coor to avoid abrupt changes and glitches
-		float HitFade = SSFX_calc_SSR_fade(hit_uv.xy, 0.0f, G_SSR_SCREENFADE);
+		float HitFade = saturate(hit_uv.y * G_SSR_VERTICAL_SCREENFADE);
 
 		// Mix base reflection ( skybox ) with ray reflection
 		reflection = lerp(reflection, refl_ray, HitFade);
@@ -182,20 +190,23 @@ void SSFX_ScreenSpaceReflections(float2 tc, float4 P, float3 N, float gloss, ino
 		uvcoor = hit_uv.zw;
 	}
 
-	// Fade sky if !skyalways ( Terrain MAT )
-	float ray_fade = saturate(SSFX_calc_SSR_fade(uvcoor, 0.0f, G_SSR_SCREENFADE) + 1.0f * m_skyalways);
+	// Fade sky if !m_terrain ( Terrain MAT )
+	float ray_fade = saturate(saturate(uvcoor.y * G_SSR_VERTICAL_SCREENFADE) + 1.0f * m_terrain);
 
 	// Adjust the intensity of MAT_FLORA
-	refl_power *= saturate(G_SSR_FLORA_INTENSITY + 1.0f * !m_flora);
+	refl_power *= m_flora ? G_SSR_FLORA_INTENSITY : 1.0f;
 
 	// Weapon Attenuation factor.
 	float WeaponFactor = smoothstep(G_SSR_WEAPON_MAX_LENGTH - 0.2f, G_SSR_WEAPON_MAX_LENGTH, length(P.xyz));
+
+	// Terrain MAT overwrite WeaponFactor.
+	WeaponFactor = saturate(WeaponFactor + 1.0f * m_terrain);
 	
 	// Global intensity and limit max value.
 	float main_clamp = clamp(refl_power * G_SSR_INTENSITY, 0, G_SSR_MAX_INTENSITY);
 	
-	// Raise reflection intensity and max limit using wetness accumulation (rain_params.y)
-	float rain_extra = G_SSR_WEAPON_RAIN_FACTOR * rain_params.y;
+	// Raise reflection intensity and max limit when raining. ( NOTE: Reverted to rain intensity, but improvements are on the way... )
+	float rain_extra = G_SSR_WEAPON_RAIN_FACTOR * rain_params.x;
 
 	// Weapon intensity and limit max value.
 	float wpn_clamp = clamp((refl_power + rain_extra) * G_SSR_WEAPON_INTENSITY, 0, G_SSR_WEAPON_MAX_INTENSITY + rain_extra);
@@ -209,6 +220,11 @@ void SSFX_ScreenSpaceReflections(float2 tc, float4 P, float3 N, float gloss, ino
 
 	// Apply SSR fade to reflection.
 	refl_power *= ray_fade;
+
+	// 'Beefs Shader Based NVGs' optional intensity adjustment
+#ifdef G_SSR_BEEFS_NVGs_ADJUSTMENT
+	refl_power *= saturate(1.0f - (1.0f - G_SSR_BEEFS_NVGs_ADJUSTMENT) * (shader_param_8.x > 0.0f));
+#endif
 
 	// Add the reflection to the scene.
 	color = lerp(color, reflection, refl_power);

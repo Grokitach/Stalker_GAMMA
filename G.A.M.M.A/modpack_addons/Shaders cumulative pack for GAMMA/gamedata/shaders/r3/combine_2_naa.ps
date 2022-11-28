@@ -1,6 +1,16 @@
 #include "common.h"
 #include "anomaly_shaders.h"
-#include "night_vision.h"
+
+// Check Addons
+#include "check_screenspace.h"
+
+#ifdef SSFX_BEEFS_NVG
+	#include "night_vision.h"
+#endif
+
+#ifdef SSFX_DEBAND
+	#include "screenspace_debanding.h"
+#endif
 
 //////////////////////////////////////////////////////////////////////////////////////////
 #ifndef USE_MSAA
@@ -61,19 +71,30 @@ c2_out main( v2p_aa_AA I )
 	float2	center 	= I.Tex0;
 #endif
 
-    float3 img = s_image.Load(int3(center.xy * screen_res.xy, 0),0);
-    float4 bloom = s_bloom.Sample(smp_rtlinear,center);
+
+	float3 img = s_image.Load(int3(center.xy * screen_res.xy, 0),0);
+	float4 bloom = s_bloom.Sample(smp_rtlinear,center);
+
+	// Sky Debanding Implementation
+#ifdef SSFX_DEBAND
+	if (depth <= SKY_EPS)
+		img = ssfx_debanding(img, I.Tex0.xy);
+#endif
 
 	img = mblur( center, ( gbd ).P, img.rgb);
 
-	float lua_param_nvg_generation = floor(shader_param_8.x);             		// 1, 2, or 3
-	float lua_param_nvg_num_tubes = frac(shader_param_8.x) * 10.0f;            // 1, 2, 4, 1.1, or 1.2
+#ifdef SSFX_BEEFS_NVG
 	// NVG CHANGE TO PREVENT WEIRD COLORS, ONLY APPLY BLOOM WHEN WE'RE NOT IN NVG MASK
+	float lua_param_nvg_generation = floor(shader_param_8.x);			// 1, 2, or 3
+	float lua_param_nvg_num_tubes = frac(shader_param_8.x) * 10.0f;		// 1, 2, 4, 1.1, or 1.2
 	if (lua_param_nvg_generation < 0.01f && compute_lens_mask(aspect_ratio_correction(I.Tex0), lua_param_nvg_num_tubes) == 0.0f)
 	{
-	img = blend_soft(img, bloom.xyz*bloom.w);
+		img = blend_soft(img, bloom.xyz*bloom.w);
 	}
-	
+#else
+	img = blend_soft(img, bloom.xyz*bloom.w);
+#endif
+
 	if (tnmp_onoff == 1.0)
 	{		
 		img = Uncharted2ToneMapping(img);
