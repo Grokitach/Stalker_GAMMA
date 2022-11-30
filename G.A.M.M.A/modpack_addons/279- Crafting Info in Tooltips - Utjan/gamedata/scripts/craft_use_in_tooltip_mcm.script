@@ -1,0 +1,489 @@
+local gc = game.translate_string
+local ini_craft
+local ini_cook
+
+local wai_added = {}
+local wai_overrides = {}
+local wai_deletions = {}
+
+local first_update = true
+
+local try = try or function(func, ...)
+	local status, error_or_result = pcall(func, ...)
+	if not status then
+		printf(error_or_result)
+		return false, status, error_or_result
+	else
+		return error_or_result, status
+	end
+end
+
+
+local XMLP
+local sync_cursor           = utils_xml.sync_cursor
+
+og_info_item_init = utils_ui.UIInfoItem.__init
+utils_ui.UIInfoItem.__init = function(self, owner, delay)
+	og_info_item_init(self, owner, delay)
+
+	self.xml = self.xml or (function()
+		if not XMLP then
+			XMLP = CScriptXmlInit()
+			XMLP:ParseFile("utils.xml")
+		end
+		return XMLP
+	end)()
+	
+	first_update = true
+	self.CC = self.CC or {}
+
+	self.cont_to_str = {
+		recipes = "st_craft_unlocks",
+		cooking = "st_cook_used_for",
+	}
+	
+	--Recipes
+	self.recipes          = XMLP:InitStatic("item_info:ammo_type", self.dialog)
+	self.recipes_txt      = XMLP:InitTextWnd("item_info:ammo_type:cap_ammo_used_type", self.dialog)
+
+	-- Cooking
+	self.cooking          = XMLP:InitStatic("item_info:ammo_type", self.dialog)
+	self.cooking_txt      = XMLP:InitTextWnd("item_info:ammo_type:cap_ammo_used_type", self.dialog)
+end
+
+utils_ui.UIInfoItem.AddRecipesContainer = function(self, offset, tbl, cont)
+	if not self.cont_to_str[cont] then return end
+
+	local xml = self.xml
+	self[cont] = xml:InitStatic("item_info:ammo_type", self.dialog)
+
+	local size = {
+		x = self.frame:GetWidth(),
+		y = self.frame:GetHeight(),
+	}
+	local pos = self[cont]:GetWndPos()
+	local size_recipes = {
+		x = self[cont]:GetWidth(),
+		y = self[cont]:GetHeight(),
+	}
+
+	local new_size = {
+		x = size.x - pos.x * 2 - 32, -- MINUS HERE to prevet icons to go out the right side of the tooltip
+		y = size_recipes.y
+	}
+
+	self[cont]:SetWndSize(vector2():set(new_size.x, new_size.y))
+
+	self.CC[cont] = utils_ui.UICellContainer("item_info_recipes_container", self, nil, "item_info:ammo_type:static_ammo_type1", self[cont])
+	self.CC[cont].showcase      		= true
+	self.CC[cont].can_select	   		= false
+	self.CC[cont].disable_bar         = true
+	self.CC[cont].disable_drag  		= true
+	self.CC[cont].disable_highlight   = true
+	self.CC[cont].disable_info        = true
+	self.CC[cont].disable_scroll      = true
+	self.CC[cont].disable_scroll_dragdrop = true
+	self.CC[cont].disable_stack	     = true
+	self.CC[cont]:EnableScrolling(false)
+
+	self.CC[cont].prof:SetWndSize(vector2():set(new_size.x, new_size.y))
+	utils_xml.sync_size(self.CC[cont].prof, self[cont], 0, offset)
+	utils_xml.sync_size(self.CC[cont].prof , self.CC[cont].scroll)
+	self.CC[cont]:SetGridSpecs(35, 5)
+
+	self.CC[cont]:Reinit(tbl)
+	self.CC[cont]:AdjustHeightToCell()	
+
+	utils_xml.sync_size(self.CC[cont].prof, self[cont], 0, offset)
+	self[cont]:SetAutoDelete(true)
+	self:SyncRecipesText(false, cont)	
+end
+
+utils_ui.UIInfoItem.MoveRecipesRightVertical = function(self, offset, tbl, cont)
+	if not self.cont_to_str[cont] then return end
+
+	local frame_size = {x = self.frame:GetWidth(), y = self.frame:GetHeight()}
+	local recipes_pos = self[cont]:GetWndPos()
+	local recipes_size = {x = self[cont]:GetWidth(), y = self[cont]:GetHeight()}
+	local stats_dialog_pos = self.stats_dialog:GetWndPos()
+	
+	local new_pos = {
+		x = frame_size.x - stats_dialog_pos.x - 125,
+		y = stats_dialog_pos.y
+	}
+
+	local new_size = {
+		x = 100,
+		y = frame_size.y
+	}
+
+	self[cont]:SetWndPos(vector2():set(new_pos.x, new_pos.y))
+	self[cont]:SetWndSize(vector2():set(new_size.x, new_size.y))
+	self.CC[cont].prof:SetWndSize(vector2():set(new_size.x, new_size.y))
+	utils_xml.sync_size(self.CC[cont].prof, self[cont], 0, offset)
+	utils_xml.sync_size(self.CC[cont].prof , self.CC[cont].scroll)
+	self.CC[cont]:SetGridSpecs(35, 5)
+
+	self.CC[cont]:Reinit(tbl)
+	self.CC[cont]:AdjustHeightToCell()	
+	self.CC[cont]:AdjustWidthToCell()	
+
+	utils_xml.sync_size(self[cont] , self.CC[cont].scroll)
+
+	-- local fnt = GetFontSmall()
+	-- for idx, ci in pairs(self.CC[cont].cell) do
+	-- 	if ci:IsShown() then
+	-- 		local con = utils_item.get_cond_static(ci.flags.info)
+	-- 		local clr = utils_xml.get_color_con(ci.flags.info, true)
+	-- 		ci:Add_CustomText( con, nil, nil, clr, fnt)
+	-- 	end
+	-- end
+
+	self:SyncRecipesText(true, cont)
+end
+
+function sanitizeText(str)
+	return trim(str:gsub("%%c%[.-%]", ""))
+end
+
+utils_ui.UIInfoItem.SyncRecipesText = function(self, vertical, cont, text)
+	if not self.cont_to_str[cont] then return end
+
+	local str = text and gc(text) or gc(self.cont_to_str[cont])
+	str = sanitizeText(str)
+	local pos = self[cont]:GetWndPos()
+	self[cont.."_txt"]:SetText(str)
+	self[cont.."_txt"]:Show(true)
+	if vertical then
+		local recipes_txt_pos = self.stats_dialog:GetWndPos()
+		self[cont.."_txt"]:SetWndPos(vector2():set(pos.x, recipes_txt_pos.y))
+		self[cont.."_txt"]:SetWndSize(vector2():set(self.frame:GetWidth() - pos.x - 16, self.ammo_cap:GetHeight()))
+		self[cont.."_txt"]:SetTextAlignment(2)
+	else
+		local recipes_txt_pos = self.desc:GetWndPos()
+		self[cont.."_txt"]:SetWndSize(vector2():set(self.desc:GetWidth(), self.desc:GetHeight()))
+		self[cont.."_txt"]:SetWndPos(vector2():set(recipes_txt_pos.x, pos.y))
+		self[cont.."_txt"]:SetTextAlignment(0)
+	end
+end
+
+utils_ui.UIInfoItem.RemoveRecipesContainer = function(self, cont)
+	self[cont]:Show(false)
+	self.CC[cont] = nil
+	self[cont.."_txt"]:Show(false)
+end
+
+og_info_item_update = utils_ui.UIInfoItem.Update
+utils_ui.UIInfoItem.Update = function(self, obj, sec, flags)
+	-- Monkey patch part
+	og_info_item_update(self, obj, sec, flags)
+	
+	if not get_config("use_icons") then
+        for k, v in pairs(self.cont_to_str) do
+            self:RemoveRecipesContainer(k)
+        end
+        return
+    end
+
+	if not self:Pass(obj, sec) then
+		self:Show(false)
+		first_update = true
+		return
+	end
+
+	-- item info box is shown at cursor
+	sync_cursor(self.dialog, self.frame, 0, 0)
+	
+	-- no need to process if it's same item
+	if not first_update then 
+		if obj then
+			if obj:id() == self.id then
+				self:Show(true)
+				return
+			end
+		elseif sec then
+			if sec == self.section then
+				self:Show(true)
+				return
+			end
+		end
+	end
+
+	-- Recipes, displaying new info part
+	try(function()
+		-- Container name, must be defined in _init monkeypatch
+		local container_name = "recipes"
+
+		-- Remove container first for proper update
+		self:RemoveRecipesContainer(container_name)
+
+		-- Get all possible items to display
+		local recipes = getCraftableItems(sec)
+		local cooking = getCookableItems(sec)
+
+		-- If item table isnt empty
+		if is_not_empty(recipes) then 
+			-- Convert to plain array
+			local t = {}
+			for k, v in pairs(recipes) do
+				t[#t+1] = k
+			end
+
+			-- Add new container for icons. Check if next container of items is possible to be displayed and adjust offset accordingly
+			self:AddRecipesContainer(is_not_empty(cooking) and 16 or 40, t, container_name)
+
+			-- Synchronize tooltip height and place container in the tooltip
+			-- If stats container (weapons, outfits) is displayed, then put the container after it, otherwise put after description
+			self:Sync_Finale( true, self.stats_dialog:IsShown() and self.stats_dialog or self.desc, self[container_name], self.frame, 10 )
+
+			-- Add caption to new container
+			self:SyncRecipesText(false, container_name, SYS_GetParam(0, sec, "kind") == "i_letter" and "st_craft_unlocks" or "st_craft_used_for")
+
+			-- Move parts to the right of stats if frame is too big to fit screen
+			if self.frame:GetHeight() > 768 then
+				self:MoveRecipesRightVertical(is_not_empty(cooking) and 8 or 0, t, container_name)
+				self:Sync_Finale( true, nil, self.desc, self.frame, 10 )
+			end
+		end
+
+		-- Container name, must be defined in _init monkeypatch
+		local container_name = "cooking"
+		
+		-- Remove container first for proper update
+		self:RemoveRecipesContainer(container_name)
+
+		-- If item table isnt empty
+		if is_not_empty(cooking) then 
+			local t = {}
+			for k, v in pairs(cooking) do
+				t[#t+1] = k
+			end
+
+			-- No new container possible here, put fixed offset
+			self:AddRecipesContainer(40, t, container_name)
+
+			-- Check if recipes container is shown and put container under it, else if stats container is shown, else after description
+			self:Sync_Finale( true, self.recipes:IsShown() and self.recipes or (self.stats_dialog:IsShown() and self.stats_dialog or self.desc), self.cooking, self.frame, 10 )
+			self:SyncRecipesText(false, container_name)
+
+			-- Move parts to the right of stats if frame is too big to fit screen
+			if self.frame:GetHeight() > 768 then
+				self:MoveRecipesRightVertical(0, t, container_name)
+				self:Sync_Finale( true, nil, self.desc, self.frame, 10 )
+			end
+		end
+
+		self:Show(true)
+	end)
+	first_update = false
+end
+
+function getCraftableItems(sec)
+	local items_craftable = {}
+	ini_craft:section_for_each(function(section)
+		local n = ini_craft:line_count(section) or 0
+		for i=0,n-1 do
+			result, recipe_name, info	= ini_craft:r_line_ex(section,i,"","")
+			local t = str_explode(info,",")
+			for k, v in pairs(t) do
+				if v == sec then
+					local craft_sec = string.sub(recipe_name, 3)
+					items_craftable[craft_sec] = true
+					break
+				end
+			end
+		end
+	end)
+
+	if workshop_autoinject then
+		for recipe_sec, v in pairs(wai_deletions) do
+			items_craftable[recipe_sec] = nil
+		end
+
+		for recipe_sec, string in pairs(wai_overrides)do
+			items_craftable[recipe_sec] = nil
+			if string ~= "none" then
+				local t = str_explode(string,",")
+				for k, v in pairs(t) do
+					if v == sec then
+						items_craftable[recipe_sec] = true
+						break
+					end
+				end
+			end
+		end
+
+		for recipe_sec, recipes in pairs(wai_added) do
+			for index, string in pairs(recipes) do
+				local t = str_explode(string,",")
+				for k, v in pairs(t) do
+					if v == sec then
+						items_craftable[recipe_sec] = true
+						break
+					end
+				end
+			end
+		end
+	end
+
+	return items_craftable
+end
+
+function getCookableItems(sec)
+	local items_cookable = {}
+	local n = ini_cook:line_count("meal_list") or 0
+	for i=0,n-1 do
+		result, recipe_name, info	= ini_cook:r_line_ex("meal_list",i,"","")
+		local t = str_explode(info,",")
+		for k, v in pairs(t) do
+			if v == sec then
+				local meal_sec = string.sub(recipe_name, 3)
+				items_cookable[meal_sec] = true
+				break
+			end
+		end
+	end
+	return items_cookable
+end
+
+function base_build_desc_footer() end
+
+function monkey_build_desc_footer(obj, sec, str)
+    str = base_build_desc_footer(obj, sec, str)
+	if (not str) then return "" end
+	if get_config("use_icons") then return str end
+
+	local items_craftable = getCraftableItems(sec)
+	local items_cookable = getCookableItems(sec)
+	
+	if is_not_empty(items_craftable) then
+		-- Patch for attachment overhaul
+		if surge_protector and sec == "af_surge" then
+			str = str .. "\\n \\n"
+		end
+
+		local kind = SYS_GetParam(0, sec, "kind")
+		if kind == "i_letter" then
+			str = str .. gc("st_craft_unlocks")
+		else
+			str = str .. gc("st_craft_used_for")
+		end
+		
+		local counter = 0
+		for craftable_sec, v in spairs(items_craftable) do
+			local name_str = SYS_GetParam(0, craftable_sec, "inv_name")
+			if arti_ammo_utils and arti_ammo_utils.ini_ammo:section_exist(craftable_sec) then
+				name_str = arti_ammo_utils.ini_ammo:r_string_ex(craftable_sec, "name")
+			end
+			if name_str then
+				if counter >= 1 then
+					str = str .. ","
+				end
+				str = str .. " " .. gc(name_str)
+
+				-- If craftable item is an upgrade, add the post-fix (Basic/Advanced/Fine-Tuning)
+				local upgr_tier = IsItem("upgrade",craftable_sec)
+				if upgr_tier then
+					str = str .. " " .. gc("st_cap_upgr_" .. upgr_tier)
+				end
+
+				counter = counter + 1
+			else
+				printf("! Craft Info in Tooltip | Could not find inv name of section " .. craftable_sec)
+			end
+		end
+		str = str .. "\\n \\n"
+	end
+
+	if is_not_empty(items_cookable) then
+		counter = 0
+		str = str .. gc("st_cook_used_for")
+		for meal_sec, v in spairs(items_cookable) do
+			local name_str = SYS_GetParam(0, meal_sec, "inv_name")
+			if name_str then
+				if counter >= 1 then
+					str = str .. ","
+				end
+				str = str .. " " .. gc(name_str)
+				local meal_tier = IsItem("meal",meal_sec)
+				if meal_tier then
+					str = str .. " " .. gc("st_cap_meal_" .. meal_tier)
+				end
+				counter = counter + 1
+			else
+				printf("! Craft Info in Tooltip | Could not find inv name of section " .. meal_sec)
+			end
+		end
+		str = str .. "\\n \\n"
+	end
+
+	return str
+end
+
+function on_game_start()
+	ini_craft = ini_file("items\\settings\\craft.ltx")
+	ini_cook = ini_file("items\\settings\\cook.ltx")
+	base_build_desc_footer = ui_item.build_desc_footer
+	ui_item.build_desc_footer = monkey_build_desc_footer
+end
+
+if workshop_autoinject then
+	base_add_recipe = workshop_autoinject.add_new_recipe
+	function workshop_autoinject.add_new_recipe(index, sec, recipe_string)
+		local bool = base_add_recipe(index, sec, recipe_string)
+		if bool ~= false then
+			if not wai_added[sec] then
+				wai_added[sec] = {}
+			end
+			local length = #wai_added[sec]
+			wai_added[sec][length + 1] = recipe_string
+		end
+		return bool
+	end
+
+	base_add_override_recipe = workshop_autoinject.add_override_recipe
+	function workshop_autoinject.add_override_recipe(sec, recipe_string, index)
+		local bool = base_add_override_recipe(sec, recipe_string, index)
+		if bool then
+			wai_overrides[sec] = recipe_string
+		end
+		return bool
+	end
+
+	base_remove_recipe = workshop_autoinject.remove_existing_recipes
+	function workshop_autoinject.remove_existing_recipes(sec)
+		local bool = base_remove_recipe(sec)
+		if bool then
+			wai_overrides[sec] = "none"
+		end
+		return bool
+	end
+
+	base_clear_recipe = workshop_autoinject.clear_existing_recipes
+	function workshop_autoinject.clear_existing_recipes(sec)
+		local bool = base_clear_recipe(sec)
+		if bool then
+			wai_deletions[sec] = true
+		end
+		return bool
+	end
+end
+
+-- MCM
+local defaults = {
+    ["use_icons"] = true,
+}
+
+function get_config(key)
+    local opt = ui_mcm and ui_mcm.get("craft_in_tooltip/"..key) 
+    if opt ~= nil then return opt else return defaults[key] end
+ end
+
+function on_mcm_load()
+    op = { id= "craft_in_tooltip",sh=true ,gr={
+            {id = "title",type= "slide",link= "ui_options_slider_gameplay_diff",text="ui_mcm_craft_in_tooltip_title",size= {512,50},spacing= 20 },
+            {id = "use_icons", type = "check", val = 1, def = true},
+        }
+    }
+    return op
+end
