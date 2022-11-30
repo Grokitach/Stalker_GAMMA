@@ -192,9 +192,8 @@ float3 CubeSpecular (float rough, TextureCube cubeMap, float3 vreflect, float3 m
 	float RoughMip = rough * CUBE_MIPS;
 	float3 SpecularColor = cubeMap.SampleLevel(smp_rtlinear, vreflect, RoughMip);
 	bool m_weapon = abs(mat_id - 0.323) <= 0.0279f;
-
-	return SpecularColor * 0.43;
-	//return SpecularColor * (0.53 + (0.15 * m_weapon)); // Reduce effects of cube specular, helps with SSR not reflecting too much cubemap color
+	//return SpecularColor;
+	return SpecularColor * (0.45 + (0.15 * m_weapon)); // Reduce effects of cube specular, helps with SSR not reflecting too much cubemap color
 }
 
 //UE4 mobile approx
@@ -219,13 +218,20 @@ float3 EnvironmentBRDF(float g, float NoV, float3 rf0)
   return saturate(lerp(a0, a1, rf0));
 }
 
+//https://learnopengl.com/PBR/IBL/Diffuse-irradiance
+float3 fresnelSchlickRoughness(float cosTheta, float3 F0, float roughness)
+{
+    return F0 + (max(1.0 - roughness, F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
 float3 Amb_BRDF(float rough, float3 albedo, float3 f0, float3 env_d, float3 env_s, float3 V, float3 N)
 {
 	float nDotV = max(0.0, dot(N, V));
+	//float3 kS = fresnelSchlickRoughness(max(dot(N, V), 0.0), f0, rough);
+	//float3 kD = 1.0 - kS;
 
 	float3 diffuse_term = env_d * albedo;
-
 	float3 specular_term = env_s * EnvironmentBRDF(1.0-rough, nDotV, f0);
 
-	return diffuse_term + specular_term;
+	return saturate(diffuse_term + specular_term);
 }
