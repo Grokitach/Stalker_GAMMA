@@ -2,7 +2,7 @@
 
 #define G_SSR_WATER_QUALITY				1		// Quality of the water. ( 0 = low | 1 = medium | 2 = high | 3 = Very High | 4 = Ultra )
 
-#define G_SSR_WATER_SCREENFADE			0.15f	// Screen border fade. ( 0.0f = No border fade )
+#define G_SSR_WATER_SCREENFADE			0.15f	// Screen border fade. ( 0.0f = No border fade ) DEPRECATED IN 12.6
 
 #define G_SSR_WATER_WAVES				0.37f	// Water waves intensity
 #define G_SSR_WATER_REFLECTION			0.7f	// Reflection intensity. ( 1.0f = 100% )
