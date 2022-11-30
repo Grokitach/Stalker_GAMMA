@@ -49,6 +49,18 @@ function death_manager.spawn_cosmetics(npc, npc_id, npc_comm, npc_rank, visual, 
 	local tbl = death_manager.get_outfit_by_npc_visual(visual)
 	local outfit_section = tbl and tbl[1]
 	local helmet_section = tbl and tbl[2]
+  
+  	-- DPH_LOOT_COND
+	local ckey = npc_rank
+
+	if npc:character_community() == "zombied" then
+		ckey = 'zombied'
+	end
+
+	local min_cond = ui_mcm.get('dph_loot_cond/outfit/' .. ckey .. '_min')
+	local max_cond = ui_mcm.get('dph_loot_cond/outfit/' .. ckey .. '_max')
+
+	-- DPH_LOOT_COND END
 
 	-- Spawn patch
 	if ini_sys:section_exist(npc_comm .. "_patch") then
@@ -58,7 +70,7 @@ function death_manager.spawn_cosmetics(npc, npc_id, npc_comm, npc_rank, visual, 
 	-- Spawn outfit
 	local outfit_id
 	if outfit_section and ini_sys:section_exist(outfit_section)  then
-        local condition = rand_condition and (math.random(75,85)/100) or death_manager.get_condition_by_rank(npc_rank, coef)
+        local condition = math.random(min_cond, max_cond) / 100
         if death_manager.validate_drop(outfit_section) then
             outfit_id = death_manager.spawn_with_condition(npc, outfit_section, condition)
         else
@@ -70,7 +82,7 @@ function death_manager.spawn_cosmetics(npc, npc_id, npc_comm, npc_rank, visual, 
 	-- Spawn helmet
 	local helmet_id
 	if helmet_section and ini_sys:section_exist(helmet_section) and  death_manager.validate_drop(helmet_section) then
-		local condition = rand_condition and (math.random(75,85)/100) or death_manager.get_condition_by_rank(npc_rank, coef)
+		local condition = math.random(min_cond, max_cond) / 100
 		helmet_id = death_manager.spawn_with_condition(npc, helmet_section, condition)
 	end
 
