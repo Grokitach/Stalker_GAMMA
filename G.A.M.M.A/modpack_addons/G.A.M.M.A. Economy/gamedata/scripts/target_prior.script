@@ -1,39 +1,10 @@
---[[
-	-Factions that are not in "factions_t" or set to "false" will use vanilla travelling calculation
-	-If picked target's level or faction or squad's rank won't be in "prior_t"/"prior_lab" then vanilla calculation
-	-Better not to delete anything from "prior_t"/"prior_lab" and instead set to "0" (vanilla priority values are different)
-	-"extra_bonus_t" can add priority bonus to factions for certain smart terrains (e.g. Freedom - Barrier)
+-- if level or rank aren't defined, then its gonna be same as vanilla i.e. 100% (for this rank and level)
+local ignore_best_target_chance = 5		-- chance to ignore target with highest priority and pick a random one (from top 5 highest targets)
+local minimum_chance = 5		-- if prior_t value is less than "minimum_chance" its gonna be "minimum_chance"
+local ALLOW_NPC_LEVEL_TRANSITION = true
+local debugx = false			-- displays info in console
 
-	-"replace_respawns" replaces rank of squad on spawn according to their travelling priority
-	-e.g. if veteran squad is about to spawn in cordon - it will be replaced for novice squad and vice versa for northern locations
-	-If you set "replace_respawn" to "false" squads are gonna walk to the target across the entire zone, because veterans spawned on cordon will focus north mainly
-	-Ratio of spawned ranks are gonna be similar to how it was in vanilla, the only purpose of replacing squads is to not see high ranks at south (and low at north) before they head out
-
-	-"allow_event_based_transitions" allows factions to visit some levels after certain event (e.g. Radar after disabling Brain Scorcher)
-	-"event_t" has conditions required for faction to visit this level (value used with has_alife_info currently)
-
-	-"allow_mutants_transition" allows mutants to travel between levels, uses vanilla calculation so it can be very chaotic (didn't test, enable at your own risk)
---]]
-
-local ignore_best_target_chance = 10		-- chance to ignore target with highest priority and pick a random one (from top 5 highest targets)
-local minimum_chance = 5		-- prior_t/prior_lab value is set to "minimum_chance" if less than it
-local dist_ext = 1		-- distance mult's power, decrease for distance to matter less and vice versa, "1" default, "0" disabling distance factor (will mainly be only prior_t values)
-local ALLOW_NPC_LEVEL_TRANSITION = true		-- allows stalkers to travel between levels
-local allow_mutants_transition = false		-- allows mutants to travel between levels just like stalkers do
-local allow_event_based_transitions = true		-- allows all factions to visit levels they cant in vanilla after certain event
-
-local replace_respawns = false		-- set to "false" if you have some addon like ZCP that changes "function se_smart_terrain:try_respawn" from "smart_terrain.script"
-local val_ext = 1 		-- better not to touch (prior_t val's power, increases/decreases value range between lower and higher priorities)
-
-local SMART_TERRAIN_SPAWNS_BUGFIX_PATCH = true		-- set this to "true" if you want to use changes from "smart terrain spawns bugfix" addon
-
-
-local debugx = false			-- displays only targets with priority more than "debugx" value
-local debugy = false			-- displays top 5 and picked targets in console
-local debugz = false			-- displays squads that are being replaced on spawn by higher ranks according to "prior_t"
-
---------------------------- Viable Factions ---------------------------
-local factions_t = {
+local factions_t = { 		-- viable factions
 	["stalker"] = true,
 	["dolg"] = true,
 	["freedom"] = true,
@@ -48,428 +19,149 @@ local factions_t = {
 	["isg"] = false,
 }
 
---------------------------- Main Priority Values ---------------------------
-local prior_t = {	-- ("pripyat" = outskirts)
-	["stalker"] = {
-		["l01_escape"] = { novice = 100, experienced = 40, veteran = 0, master = 0 },
-		["k00_marsh"] = { novice = 90, experienced = 60, veteran = 10, master = 0 },
-		["k01_darkscape"] = { novice = 80, experienced = 50, veteran = 20, master = 0 },
-		["l02_garbage"] = { novice = 90, experienced = 60, veteran = 30, master = 0 },
-		["l03_agroprom"] = { novice = 70, experienced = 80, veteran = 40, master = 10 },
-		["l05_bar"] = { novice = 80, experienced = 100, veteran = 100, master = 90 },
-		["l04_darkvalley"] = { novice = 60, experienced = 70, veteran = 60, master = 20 },
-		["l06_rostok"] = { novice = 50, experienced = 90, veteran = 70, master = 50 },
-		["l08_yantar"] = { novice = 40, experienced = 80, veteran = 60, master = 30 },
-		["l07_military"] = { novice = 40, experienced = 70, veteran = 90, master = 80 },
-		["k02_trucks_cemetery"] = { novice = 50, experienced = 80, veteran = 70, master = 50 },
-		["l09_deadcity"] = { novice = 20, experienced = 50, veteran = 60, master = 50 },
-		["l10_radar"] = { novice = 20, experienced = 50, veteran = 70, master = 80 },
-		["l10_red_forest"] = { novice = 10, experienced = 40, veteran = 70, master = 80 },
-		["l10_limansk"] = { novice = 10, experienced = 30, veteran = 50, master = 80 },
-		["jupiter"] = { novice = 20, experienced = 50, veteran = 80, master = 90 },
-		["zaton"] = { novice = 10, experienced = 40, veteran = 70, master = 80 },
-		["l11_pripyat"] = { novice = 0, experienced = 15, veteran = 60, master = 70 },
-		["pripyat"] = { novice = 10, experienced = 30, veteran = 80, master = 90 },
-		["l12_stancia"] = { novice = 0, experienced = 0, veteran = 40, master = 50 },
-		["l12_stancia_2"] = { novice = 0, experienced = 0, veteran = 40, master = 50 },
-		["l13_generators"] = { novice = 0, experienced = 0, veteran = 10, master = 30 },
+local prior_t = {		-- in % of vanilla priority values
+	["l01_escape"] = {
+		["novice"] = 200,
+		["experienced"] = 25,
+		["veteran"] = 0,
+		["master"] = 0,
 	},
 
-	["dolg"] = {
-		["l01_escape"] = { novice = 80, experienced = 30, veteran = 0, master = 0 },
-		["k00_marsh"] = { novice = 60, experienced = 30, veteran = 0, master = 0 },
-		["k01_darkscape"] = { novice = 70, experienced = 40, veteran = 10, master = 0 },
-		["l02_garbage"] = { novice = 90, experienced = 50, veteran = 10, master = 0 },
-		["l03_agroprom"] = { novice = 60, experienced = 90, veteran = 20, master = 0 },
-		["l05_bar"] = { novice = 100, experienced = 90, veteran = 80, master = 60 },
-		["l04_darkvalley"] = { novice = 50, experienced = 70, veteran = 50, master = 20 },
-		["l06_rostok"] = { novice = 70, experienced = 80, veteran = 70, master = 30 },
-		["l08_yantar"] = { novice = 50, experienced = 60, veteran = 40, master = 10 },
-		["l07_military"] = { novice = 50, experienced = 70, veteran = 80, master = 70 },
-		["k02_trucks_cemetery"] = { novice = 60, experienced = 80, veteran = 70, master = 30 },
-		["l09_deadcity"] = { novice = 0, experienced = 40, veteran = 50, master = 30 },
-		["l10_radar"] = { novice = 10, experienced = 50, veteran = 60, master = 70 },
-		["l10_red_forest"] = { novice = 0, experienced = 50, veteran = 60, master = 70 },
-		["l10_limansk"] = { novice = 0, experienced = 20, veteran = 40, master = 60 },
-		["jupiter"] = { novice = 0, experienced = 60, veteran = 70, master = 80 },
-		["zaton"] = { novice = 0, experienced = 50, veteran = 60, master = 70 },
-		["l11_pripyat"] = { novice = 0, experienced = 30, veteran = 50, master = 70 },
-		["pripyat"] = { novice = 0, experienced = 60, veteran = 70, master = 80 },
-		["l12_stancia"] = { novice = 0, experienced = 10, veteran = 30, master = 50 },
-		["l12_stancia_2"] = { novice = 0, experienced = 10, veteran = 30, master = 50 },
-		["l13_generators"] = { novice = 0, experienced = 0, veteran = 10, master = 30 },
+	["k00_marsh"] = {
+		["novice"] = 150,
+		["experienced"] = 50,
+		["veteran"] = 0,
+		["master"] = 0,
 	},
 
-	["freedom"] = {
-		["l01_escape"] = { novice = 40, experienced = 10, veteran = 0, master = 0 },
-		["k00_marsh"] = { novice = 50, experienced = 20, veteran = 0, master = 0 },
-		["k01_darkscape"] = { novice = 50, experienced = 20, veteran = 10, master = 0 },
-		["l02_garbage"] = { novice = 60, experienced = 30, veteran = 0, master = 0 },
-		["l03_agroprom"] = { novice = 70, experienced = 80, veteran = 20, master = 0 },
-		["l05_bar"] = { novice = 10, experienced = 20, veteran = 30, master = 40 },
-		["l04_darkvalley"] = { novice = 70, experienced = 80, veteran = 50, master = 10 },
-		["l06_rostok"] = { novice = 50, experienced = 70, veteran = 50, master = 30 },
-		["l08_yantar"] = { novice = 30, experienced = 70, veteran = 40, master = 20 },
-		["l07_military"] = { novice = 100, experienced = 100, veteran = 90, master = 80 },
-		["k02_trucks_cemetery"] = { novice = 80, experienced = 90, veteran = 60, master = 40 },
-		["l09_deadcity"] = { novice = 60, experienced = 80, veteran = 70, master = 60 },
-		["l10_radar"] = { novice = 20, experienced = 30, veteran = 70, master = 80 },
-		["l10_red_forest"] = { novice = 20, experienced = 30, veteran = 70, master = 80 },
-		["l10_limansk"] = { novice = 10, experienced = 40, veteran = 70, master = 80 },
-		["jupiter"] = { novice = 40, experienced = 60, veteran = 80, master = 90 },
-		["zaton"] = { novice = 0, experienced = 50, veteran = 70, master = 80 },
-		["l11_pripyat"] = { novice = 0, experienced = 30, veteran = 60, master = 70 },
-		["pripyat"] = { novice = 0, experienced = 50, veteran = 80, master = 90 },
-		["l12_stancia"] = { novice = 0, experienced = 10, veteran = 40, master = 60 },
-		["l12_stancia_2"] = { novice = 0, experienced = 10, veteran = 40, master = 60 },
-		["l13_generators"] = { novice = 0, experienced = 0, veteran = 20, master = 40 },
+	["k01_darkscape"] = {
+		["novice"] = 150,
+		["experienced"] = 50,
+		["veteran"] = 0,
+		["master"] = 0,
 	},
 
-	["csky"] = {
-		["l01_escape"] = { novice = 90, experienced = 40, veteran = 0, master = 0 },
-		["k00_marsh"] = { novice = 100, experienced = 60, veteran = 30, master = 10 },
-		["k01_darkscape"] = { novice = 70, experienced = 50, veteran = 10, master = 0 },
-		["l02_garbage"] = { novice = 80, experienced = 40, veteran = 10, master = 0 },
-		["l03_agroprom"] = { novice = 70, experienced = 80, veteran = 40, master = 10 },
-		["l05_bar"] = { novice = 60, experienced = 90, veteran = 80, master = 60 },
-		["l04_darkvalley"] = { novice = 40, experienced = 50, veteran = 20, master = 10 },
-		["l06_rostok"] = { novice = 40, experienced = 70, veteran = 60, master = 20 },
-		["l08_yantar"] = { novice = 60, experienced = 70, veteran = 60, master = 20 },
-		["l07_military"] = { novice = 20, experienced = 60, veteran = 70, master = 90 },
-		["k02_trucks_cemetery"] = { novice = 20, experienced = 70, veteran = 60, master = 40 },
-		["l09_deadcity"] = { novice = 20, experienced = 40, veteran = 50, master = 40 },
-		["l10_radar"] = { novice = 0, experienced = 40, veteran = 50, master = 70 },
-		["l10_red_forest"] = { novice = 0, experienced = 40, veteran = 50, master = 70 },
-		["l10_limansk"] = { novice = 0, experienced = 20, veteran = 30, master = 60 },
-		["jupiter"] = { novice = 0, experienced = 50, veteran = 70, master = 90 },
-		["zaton"] = { novice = 0, experienced = 0, veteran = 60, master = 70 },
-		["l11_pripyat"] = { novice = 0, experienced = 20, veteran = 40, master = 60 },
-		["pripyat"] = { novice = 0, experienced = 50, veteran = 70, master = 80 },
-		["l12_stancia"] = { novice = 0, experienced = 0, veteran = 30, master = 50 },
-		["l12_stancia_2"] = { novice = 0, experienced = 0, veteran = 30, master = 50 },
-		["l13_generators"] = { novice = 0, experienced = 0, veteran = 10, master = 30 },
+	["l02_garbage"] = {
+		["novice"] = 150,
+		["experienced"] = 100,
+		["veteran"] = 25,
+		["master"] = 0,
 	},
 
-	["ecolog"] = {
-		["l01_escape"] = { novice = 100, experienced = 40, veteran = 0, master = 0 },
-		["k00_marsh"] = { novice = 100, experienced = 50, veteran = 10, master = 0 },
-		["k01_darkscape"] = { novice = 80, experienced = 50, veteran = 10, master = 0 },
-		["l02_garbage"] = { novice = 90, experienced = 60, veteran = 30, master = 0 },
-		["l03_agroprom"] = { novice = 70, experienced = 90, veteran = 40, master = 10 },
-		["l05_bar"] = { novice = 80, experienced = 90, veteran = 90, master = 70 },
-		["l04_darkvalley"] = { novice = 60, experienced = 70, veteran = 40, master = 20 },
-		["l06_rostok"] = { novice = 60, experienced = 80, veteran = 70, master = 40 },
-		["l08_yantar"] = { novice = 70, experienced = 100, veteran = 60, master = 20 },
-		["l07_military"] = { novice = 40, experienced = 60, veteran = 90, master = 80 },
-		["k02_trucks_cemetery"] = { novice = 50, experienced = 80, veteran = 70, master = 50 },
-		["l09_deadcity"] = { novice = 40, experienced = 70, veteran = 80, master = 50 },
-		["l10_radar"] = { novice = 20, experienced = 40, veteran = 60, master = 80 },
-		["l10_red_forest"] = { novice = 20, experienced = 40, veteran = 60, master = 80 },
-		["l10_limansk"] = { novice = 10, experienced = 30, veteran = 60, master = 80 },
-		["jupiter"] = { novice = 0, experienced = 50, veteran = 80, master = 100 },
-		["zaton"] = { novice = 0, experienced = 40, veteran = 70, master = 80 },
-		["l11_pripyat"] = { novice = 0, experienced = 20, veteran = 60, master = 80 },
-		["pripyat"] = { novice = 0, experienced = 50, veteran = 80, master = 90 },
-		["l12_stancia"] = { novice = 0, experienced = 10, veteran = 40, master = 60 },
-		["l12_stancia_2"] = { novice = 0, experienced = 10, veteran = 40, master = 60 },
-		["l13_generators"] = { novice = 0, experienced = 0, veteran = 10, master = 30 },
+	["l03_agroprom"] = {
+		["novice"] = 100,
+		["experienced"] = 150,
+		["veteran"] = 50,
+		["master"] = 0,
 	},
 
-	["killer"] = {
-		["l01_escape"] = { novice = 80, experienced = 10, veteran = 0, master = 0 },
-		["k00_marsh"] = { novice = 100, experienced = 30, veteran = 10, master = 0 },
-		["k01_darkscape"] = { novice = 90, experienced = 20, veteran = 10, master = 0 },
-		["l02_garbage"] = { novice = 80, experienced = 40, veteran = 0, master = 0 },
-		["l03_agroprom"] = { novice = 70, experienced = 90, veteran = 30, master = 10 },
-		["l05_bar"] = { novice = 10, experienced = 20, veteran = 30, master = 40 },
-		["l04_darkvalley"] = { novice = 60, experienced = 70, veteran = 40, master = 10 },
-		["l06_rostok"] = { novice = 40, experienced = 80, veteran = 70, master = 40 },
-		["l08_yantar"] = { novice = 30, experienced = 70, veteran = 60, master = 30 },
-		["l07_military"] = { novice = 0, experienced = 70, veteran = 90, master = 70 },
-		["k02_trucks_cemetery"] = { novice = 40, experienced = 80, veteran = 70, master = 40 },
-		["l09_deadcity"] = { novice = 20, experienced = 70, veteran = 100, master = 80 },
-		["l10_radar"] = { novice = 0, experienced = 40, veteran = 60, master = 80 },
-		["l10_red_forest"] = { novice = 0, experienced = 40, veteran = 60, master = 80 },
-		["l10_limansk"] = { novice = 0, experienced = 60, veteran = 90, master = 100 },
-		["jupiter"] = { novice = 0, experienced = 50, veteran = 80, master = 90 },
-		["zaton"] = { novice = 0, experienced = 40, veteran = 70, master = 80 },
-		["l11_pripyat"] = { novice = 0, experienced = 40, veteran = 70, master = 80 },
-		["pripyat"] = { novice = 0, experienced = 50, veteran = 80, master = 90 },
-		["l12_stancia"] = { novice = 0, experienced = 20, veteran = 40, master = 60 },
-		["l12_stancia_2"] = { novice = 0, experienced = 20, veteran = 40, master = 60 },
-		["l13_generators"] = { novice = 0, experienced = 0, veteran = 20, master = 30 },
+	["l05_bar"] = {
+		["novice"] = 100,
+		["experienced"] = 200,
+		["veteran"] = 150,
+		["master"] = 50,
 	},
 
-	["army"] = {
-		["l01_escape"] = { novice = 90, experienced = 30, veteran = 0, master = 0 },
-		["k00_marsh"] = { novice = 90, experienced = 40, veteran = 10, master = 0 },
-		["k01_darkscape"] = { novice = 80, experienced = 60, veteran = 10, master = 0 },
-		["l02_garbage"] = { novice = 70, experienced = 40, veteran = 10, master = 0 },
-		["l03_agroprom"] = { novice = 70, experienced = 100, veteran = 30, master = 10 },
-		["l05_bar"] = { novice = 20, experienced = 30, veteran = 40, master = 30 },
-		["l04_darkvalley"] = { novice = 60, experienced = 80, veteran = 40, master = 10 },
-		["l06_rostok"] = { novice = 40, experienced = 60, veteran = 40, master = 30 },
-		["l08_yantar"] = { novice = 50, experienced = 60, veteran = 50, master = 20 },
-		["l07_military"] = { novice = 10, experienced = 50, veteran = 80, master = 60 },
-		["k02_trucks_cemetery"] = { novice = 40, experienced = 80, veteran = 50, master = 20 },
-		["l09_deadcity"] = { novice = 20, experienced = 40, veteran = 60, master = 50 },
-		["l10_radar"] = { novice = 0, experienced = 20, veteran = 50, master = 80 },
-		["l10_red_forest"] = { novice = 0, experienced = 20, veteran = 50, master = 80 },
-		["l10_limansk"] = { novice = 0, experienced = 20, veteran = 60, master = 70 },
-		["jupiter"] = { novice = 0, experienced = 10, veteran = 70, master = 90 },
-		["zaton"] = { novice = 0, experienced = 0, veteran = 50, master = 70 },
-		["l11_pripyat"] = { novice = 0, experienced = 10, veteran = 50, master = 80 },
-		["pripyat"] = { novice = 0, experienced = 30, veteran = 70, master = 90 },
-		["l12_stancia"] = { novice = 0, experienced = 0, veteran = 40, master = 60 },
-		["l12_stancia_2"] = { novice = 0, experienced = 0, veteran = 40, master = 60 },
-		["l13_generators"] = { novice = 0, experienced = 0, veteran = 20, master = 40 },
+	["l04_darkvalley"] = {
+		["novice"] = 100,
+		["experienced"] = 150,
+		["veteran"] = 100,
+		["master"] = 0,
 	},
 
-	["bandit"] = {
-		["l01_escape"] = { novice = 100, experienced = 50, veteran = 10, master = 0 },
-		["k00_marsh"] = { novice = 80, experienced = 40, veteran = 10, master = 0 },
-		["k01_darkscape"] = { novice = 90, experienced = 60, veteran = 20, master = 0 },
-		["l02_garbage"] = { novice = 90, experienced = 60, veteran = 30, master = 0 },
-		["l03_agroprom"] = { novice = 70, experienced = 80, veteran = 50, master = 20 },
-		["l05_bar"] = { novice = 10, experienced = 20, veteran = 30, master = 40 },
-		["l04_darkvalley"] = { novice = 70, experienced = 100, veteran = 60, master = 30 },
-		["l06_rostok"] = { novice = 50, experienced = 80, veteran = 100, master = 60 },
-		["l08_yantar"] = { novice = 40, experienced = 60, veteran = 70, master = 40 },
-		["l07_military"] = { novice = 20, experienced = 70, veteran = 80, master = 90 },
-		["k02_trucks_cemetery"] = { novice = 60, experienced = 90, veteran = 70, master = 60 },
-		["l09_deadcity"] = { novice = 10, experienced = 40, veteran = 80, master = 60 },
-		["l10_radar"] = { novice = 0, experienced = 40, veteran = 60, master = 80 },
-		["l10_red_forest"] = { novice = 0, experienced = 40, veteran = 60, master = 80 },
-		["l10_limansk"] = { novice = 0, experienced = 30, veteran = 60, master = 80 },
-		["jupiter"] = { novice = 0, experienced = 60, veteran = 80, master = 100 },
-		["zaton"] = { novice = 0, experienced = 50, veteran = 70, master = 90 },
-		["l11_pripyat"] = { novice = 0, experienced = 30, veteran = 60, master = 80 },
-		["pripyat"] = { novice = 0, experienced = 50, veteran = 70, master = 90 },
-		["l12_stancia"] = { novice = 0, experienced = 10, veteran = 30, master = 50 },
-		["l12_stancia_2"] = { novice = 0, experienced = 10, veteran = 30, master = 50 },
-		["l13_generators"] = { novice = 0, experienced = 0, veteran = 10, master = 30 },
+	["l06_rostok"] = {
+		["novice"] = 50,
+		["experienced"] = 150,
+		["veteran"] = 200,
+		["master"] = 25,
 	},
 
-	["renegade"] = {
-		["l01_escape"] = { novice = 90, experienced = 50, veteran = 10, master = 0 },
-		["k00_marsh"] = { novice = 100, experienced = 60, veteran = 20, master = 10 },
-		["k01_darkscape"] = { novice = 80, experienced = 60, veteran = 20, master = 0 },
-		["l02_garbage"] = { novice = 80, experienced = 60, veteran = 30, master = 0 },
-		["l03_agroprom"] = { novice = 70, experienced = 90, veteran = 60, master = 10 },
-		["l05_bar"] = { novice = 0, experienced = 10, veteran = 20, master = 30 },
-		["l04_darkvalley"] = { novice = 70, experienced = 100, veteran = 50, master = 10 },
-		["l06_rostok"] = { novice = 50, experienced = 70, veteran = 100, master = 40 },
-		["l08_yantar"] = { novice = 40, experienced = 60, veteran = 80, master = 30 },
-		["l07_military"] = { novice = 20, experienced = 60, veteran = 80, master = 60 },
-		["k02_trucks_cemetery"] = { novice = 50, experienced = 80, veteran = 70, master = 40 },
-		["l09_deadcity"] = { novice = 10, experienced = 40, veteran = 70, master = 50 },
-		["l10_radar"] = { novice = 0, experienced = 30, veteran = 50, master = 80 },
-		["l10_red_forest"] = { novice = 0, experienced = 30, veteran = 50, master = 80 },
-		["l10_limansk"] = { novice = 0, experienced = 20, veteran = 50, master = 80 },
-		["jupiter"] = { novice = 0, experienced = 40, veteran = 60, master = 100 },
-		["zaton"] = { novice = 0, experienced = 30, veteran = 50, master = 90 },
-		["l11_pripyat"] = { novice = 0, experienced = 30, veteran = 50, master = 80 },
-		["pripyat"] = { novice = 0, experienced = 40, veteran = 60, master = 90 },
-		["l12_stancia"] = { novice = 0, experienced = 10, veteran = 30, master = 50 },
-		["l12_stancia_2"] = { novice = 0, experienced = 10, veteran = 30, master = 50 },
-		["l13_generators"] = { novice = 0, experienced = 0, veteran = 10, master = 30 },
+	["l08_yantar"] = {
+		["novice"] = 25,
+		["experienced"] = 100,
+		["veteran"] = 200,
+		["master"] = 50,
 	},
 
-	["monolith"] = {
-		["l01_escape"] = { novice = 0, experienced = 0, veteran = 0, master = 0 },
-		["k00_marsh"] = { novice = 0, experienced = 0, veteran = 0, master = 0 },
-		["k01_darkscape"] = { novice = 0, experienced = 0, veteran = 0, master = 0 },
-		["l02_garbage"] = { novice = 30, experienced = 0, veteran = 0, master = 0 },
-		["l03_agroprom"] = { novice = 10, experienced = 0, veteran = 0, master = 0 },
-		["l05_bar"] = { novice = 50, experienced = 30, veteran = 10, master = 0 },
-		["l04_darkvalley"] = { novice = 50, experienced = 10, veteran = 0, master = 0 },
-		["l06_rostok"] = { novice = 40, experienced = 10, veteran = 0, master = 0 },
-		["l08_yantar"] = { novice = 30, experienced = 0, veteran = 0, master = 0 },
-		["l07_military"] = { novice = 90, experienced = 80, veteran = 50, master = 20 },
-		["k02_trucks_cemetery"] = { novice = 70, experienced = 40, veteran = 10, master = 0 },
-		["l09_deadcity"] = { novice = 50, experienced = 40, veteran = 10, master = 0 },
-		["l10_radar"] = { novice = 100, experienced = 90, veteran = 70, master = 50 },
-		["l10_red_forest"] = { novice = 100, experienced = 90, veteran = 70, master = 50 },
-		["l10_limansk"] = { novice = 90, experienced = 100, veteran = 80, master = 40 },
-		["jupiter"] = { novice = 60, experienced = 70, veteran = 90, master = 70 },
-		["zaton"] = { novice = 50, experienced = 60, veteran = 80, master = 60 },
-		["l11_hospital"] = { novice = 50, experienced = 60, veteran = 70, master = 80 },
-		["l11_pripyat"] = { novice = 50, experienced = 60, veteran = 100, master = 90 },
-		["pripyat"] = { novice = 60, experienced = 80, veteran = 90, master = 70 },
-		["l12_stancia"] = { novice = 30, experienced = 40, veteran = 60, master = 100 },
-		["l12_stancia_2"] = { novice = 30, experienced = 40, veteran = 60, master = 100 },
-		["l13_generators"] = { novice = 10, experienced = 20, veteran = 50, master = 80 },
+	["l07_military"] = {
+		["novice"] = 0,
+		["experienced"] = 100,
+		["veteran"] = 200,
+		["master"] = 100,
+	},
+
+	["k02_trucks_cemetery"] = {
+		["novice"] = 25,
+		["experienced"] = 100,
+		["veteran"] = 150,
+		["master"] = 25,
+	},
+
+	["l09_deadcity"] = {
+		["novice"] = 0,
+		["experienced"] = 50,
+		["veteran"] = 125,
+		["master"] = 100,
+	},
+
+	["l10_radar"] = {
+		["novice"] = 0,
+		["experienced"] = 0,
+		["veteran"] = 100,
+		["master"] = 200,
+	},
+
+	["l10_red_forest"] = {
+		["novice"] = 0,
+		["experienced"] = 50,
+		["veteran"] = 125,
+		["master"] = 200,
+	},
+
+	["l10_limansk"] = {
+		["novice"] = 0,
+		["experienced"] = 50,
+		["veteran"] = 125,
+		["master"] = 100,
+	},
+
+	["jupiter"] = {
+		["novice"] = 0,
+		["experienced"] = 50,
+		["veteran"] = 150,
+		["master"] = 200,
+	},
+
+	["zaton"] = {
+		["novice"] = 0,
+		["experienced"] = 25,
+		["veteran"] = 100,
+		["master"] = 150,
+	},
+
+	["l11_pripyat"] = {
+		["novice"] = 0,
+		["experienced"] = 0,
+		["veteran"] = 50,
+		["master"] = 100,
+	},
+
+	["pripyat"] = {
+		["novice"] = 0,
+		["experienced"] = 0,
+		["veteran"] = 75,
+		["master"] = 150,
+	},
+
+	["l12_stancia"] = {
+		["novice"] = 0,
+		["experienced"] = 0,
+		["veteran"] = 25,
+		["master"] = 100,
 	},
 
 }
 
-local prior_lab = {
-	["l03u_agr_underground"]		= { novice = 30, experienced = 50, veteran = 30, master = 10 },
-	["l04u_labx18"]					= { novice = 20, experienced = 40, veteran = 40, master = 20 },
-	["l08u_brainlab"]					= { novice = 10, experienced = 30, veteran = 50, master = 30 },
-	["jupiter_underground"]		= { novice = 0, experienced = 20, veteran = 40, master = 50 },
-	["l10u_bunker"]					= { novice = 0, experienced = 10, veteran = 30, master = 50 },
-	["labx8"]								= { novice = 0, experienced = 0, veteran = 20, master = 40 },
-	["l12u_control_monolith"]		= { novice = 0, experienced = 0, veteran = 20, master = 40 },
-	["l12u_sarcofag"]					= { novice = 0, experienced = 0, veteran = 10, master = 30 },
-	["l13u_warlab"]					= { novice = 0, experienced = 0, veteran = 10, master = 30 },
-}
-
-function get_new_prior_val(comm, level_name, rank)
-	local x_prior
-	-- set new priority for this target
-	if prior_t[comm] and prior_t[comm][level_name] and prior_t[comm][level_name][rank] then
-		x_prior = prior_t[comm][level_name][rank]
-	elseif prior_lab[level_name] and prior_lab[level_name][rank] then
-		x_prior = prior_lab[level_name][rank]
-	else
-		return
-	end
-
-	-- set minimum chance
-	if x_prior < minimum_chance then
-		x_prior = minimum_chance
-	end
-
-	return x_prior^val_ext
-end
-
---------------------------- Rank/dist related stuff ---------------------------
-local rank_to_val = {
-	["novice"] = 1,
-	["trainee"] = 2,
-	["experienced"] = 3,
-	["professional"] = 4,
-	["veteran"] = 5,
-	["expert"] = 6,
-	["master"] = 7,
-	["legend"] = 8,
-}
-
-local shared_rank = {
-	["trainee"] = "novice",
-	["professional"] = "experienced",
-	["expert"] = "veteran",
-	["legend"] = "master",
-}
-
-function get_average_rank_name(squad)
-	local squad_rank
-	local members = {}
-	local avg_sq_rank = 0
-	-- get squad members summary rank value
-	if squad.squad_members then
-		for npc in squad:squad_members() do
-			members[#members + 1] = npc.id
-			local se_member = alife_object(npc.id)
-			if se_member and IsStalker(nil, se_member:clsid()) and se_member:alive() then
-				local rank = se_member and ranks.get_se_obj_rank_name(se_member)
-				avg_sq_rank = avg_sq_rank + rank_to_val[rank]
-			end
-		end
-	end
-
-	-- get average squad rank value
-	if #members > 0 then
-		avg_sq_rank = avg_sq_rank / (#members)
-		avg_sq_rank = math.floor(avg_sq_rank + 0.5)
-	end
-
-	-- convert rank value into rank name
-	if avg_sq_rank > 0 then
-		for rank_name, val in pairs(rank_to_val) do
-			if avg_sq_rank == val then
-				squad_rank = rank_name
-				break
-			end
-		end
-	end
-
-	if not squad_rank then
-		return
-	end
-
-	-- generalize ranks to lesser groups
-	if shared_rank[squad_rank] then
-		squad_rank = shared_rank[squad_rank]
-	end
-
-	return squad_rank
-end
-
-function get_distx(squad, target)
-	local squad_pos = global_position.from(squad)
-	local target_pos = global_position.from(target)
-	local dist_between = squad_pos:distance_to_xz(target_pos)
-	dist_between = dist_between < 1 and 1 or dist_between
-
-	return ( 1 + normalize(dist_between, 9600, 1) )^dist_ext		-- 9600 meters from darkscape to generators
-end
-
---------------------------- Smart props bonuses ---------------------------
--- default_territory = all, territory
-local faction_prop_bonus = 10		-- bonus if faction prop exist on this smart
-local smart_bonus_t = {		-- not to mess with the vanilla's
-	["actor"]			= 0,
-	["all"]				= 10,
-	["base"] 			= 10,
-	["lair"]			= 0,
-	["resource"] 		= 20,
-	["squad"] 			= 0,
-	["surge"]			= 10,
-	["territory"]		= 10,
-}
-
--- add "faction_prop_exception" value to "all" prop instead of "smart_bonus_t" value for these factions and levels
--- should point monolith mostly to outskirts rather than zaton/jupiter in this one
-local faction_prop_exception = {
-	["monolith"] = {
-		["jupiter"] = -30,
-		["zaton"] = -30,
-	},
-}
-
--- extra target bonus for special cases like (freedom - barrier)
-local extra_bonus_t = {
-	["freedom"] = {
-		["mil_smart_terrain_3_8"] = 30,
-	},
-}
-
-function calc_new_props(target, comm, faction, level_name)
-	-- smart base props
-	local target_bonus = 0
-	for prop, val in pairs(smart_bonus_t) do
-		if target.props[prop] then
-			if prop == "all" and faction_prop_exception[comm] and faction_prop_exception[comm][level_name] then
-				target_bonus = target_bonus + faction_prop_exception[comm][level_name]
-			else
-				target_bonus = target_bonus + val
-			end
-		end
-	end
-
-	-- smart faction props
-	if target.props[faction] ~= nil then
-		target_bonus = target_bonus + faction_prop_bonus
-	end
-
-	target_bonus = target_bonus > 0 and target_bonus or 0
-
-	return target_bonus
-end
-
-function calc_extra_target_bonus(comm, target)
-	local extra_target_bonus = 0
-	local target_name = target and target:name()
-	if comm and target_name and extra_bonus_t[comm] and extra_bonus_t[comm][target_name] then
-		extra_target_bonus = extra_target_bonus + extra_bonus_t[comm][target_name]
-	end
-
-	return extra_target_bonus
-end
-
---------------------------- vanilla's ---------------------------
 local default_squad_behaviour = {	
 	["actor"]			= 0,
 	["all"]				= 1,
@@ -492,6 +184,29 @@ local default_monster_behaviour = {
 	["territory"]		= 1
 }
 
+local rank_to_mult = {
+	["novice"] = 1,
+	["trainee"] = 2,
+	["experienced"] = 3,
+	["professional"] = 4,
+	["veteran"] = 5,
+	["expert"] = 6,
+	["master"] = 7,
+	["legend"] = 8,
+}
+
+local shared_rank = {
+	["trainee"] = "novice",
+	["professional"] = "experienced",
+	["expert"] = "veteran",
+	["legend"] = "master",
+}
+
+function pr(...)
+	if not debugx then return end
+	printf(...)
+end
+
 function sim_dist_to(obj1 , obj2)
 	local pos1,lv1,gv1 = obj1:get_location()
 	local pos2,lv2,gv2 = obj2:get_location()
@@ -510,14 +225,11 @@ function is_on_the_same_level(se_obj_1, se_obj_2)
 	if not (se_obj_1 and se_obj_2) then
 		return false
 	end
-
+	
 	local gg = game_graph()
 	return (gg:vertex(se_obj_1.m_game_vertex_id):level_id() == gg:vertex(se_obj_2.m_game_vertex_id):level_id())
 end
-----------------------------------------------------------------------------------
 
-
---------------------------- Target priority calculation function ---------------------------
 function simulation_objects.evaluate_prior(target, squad)
 
 	local sim = alife()
@@ -577,7 +289,7 @@ function simulation_objects.evaluate_prior(target, squad)
 
 		-- Level travel
 		if not (is_on_the_same_level(target, squad)) then
-			if (not allow_mutants_transition) and (is_squad_monster[squad.player_id]) then 
+			if (is_squad_monster[squad.player_id]) then 
 				return 0 
 			end
 			
@@ -609,33 +321,106 @@ function simulation_objects.evaluate_prior(target, squad)
 	end
 
 
-	---------------------------------------- xcvb target priority changes -----------------------------------------------
-	local squad_comm = squad:get_squad_community()
-	local squad_viable = squad_comm and factions_t[squad_comm]
-	local target_level_id = game_graph():vertex(target.m_game_vertex_id):level_id()
-	local target_level_name = sim:level_name(target_level_id)
+	-- xcvb (rank multiplier for target priority)
+	local rank_prior = 100
+	local squad_rank
 
-	local dist_mult = get_distx(squad, target)		-- distance between squad and target
-	local squad_rank = get_average_rank_name(squad)		-- average squad rank name
-	local new_prior = squad_rank and get_new_prior_val(squad_comm, target_level_name, squad_rank)		-- new priority value
-	local target_bonus = calc_new_props(target, squad_comm, squad.player_id, target_level_name)		-- smart props bonuses
-	local additional_target_bonus = calc_extra_target_bonus(squad_comm, target)		-- additional bonus for certain smart and faction
-
-	-- do only if target is smart, squad not monster, faction is viable, rank found, new priority value not nil
-	if (target:clsid() ~= clsid.smart_terrain) or (is_squad_monster[squad.player_id]) or (not squad_viable) or (not new_prior) then
-	--	pry("return vanilla, target: %s || faction: %s", target:name() or target:section_name() or "<empty>", squad.player_id)
+	-- smarts only
+	if target:clsid() ~= clsid.smart_terrain then
 		return prior * evaluate_prior_by_dist(target, squad)
 	end
 
-	local total_prior = (new_prior + target_bonus + additional_target_bonus) * dist_mult
+	-- get target's level name
+	local sim = alife()
+	local target_level_id = game_graph():vertex(target.m_game_vertex_id):level_id()
+	local target_level_name = sim:level_name(target_level_id)
 
-	-- dbg
-	dbgx(squad, squad_rank, target, new_prior, target_bonus, additional_target_bonus, total_prior, dist_mult)
+	-- check if squad are stalkers
+	local squad_comm = squad:get_squad_community()
+	local squad_viable = squad_comm and factions_t[squad_comm]
+	if squad_viable then
+		local members = {}
+		local avg_sq_rank = 0
+		-- get squad members summary rank
+		if squad.squad_members then
+			for npc in squad:squad_members() do
+				members[#members + 1] = npc.id
+				local se_member = alife_object(npc.id)
+				if se_member and IsStalker(nil, se_member:clsid()) and se_member:alive() then
+					local rank = se_member and ranks.get_se_obj_rank_name(se_member)
+					avg_sq_rank = avg_sq_rank + rank_to_mult[rank]
+				end
+			end
+		end
 
-	return total_prior
+		-- get average squad rank
+		if #members > 0 then
+			avg_sq_rank = avg_sq_rank / (#members)
+			avg_sq_rank = math.floor(avg_sq_rank + 0.5)
+		end
+
+		if avg_sq_rank > 0 then
+			for rank_name, val in pairs(rank_to_mult) do
+				if avg_sq_rank == val then
+					squad_rank = rank_name
+					break
+				end
+			end
+		end
+
+	end
+
+	-- do only if rank found/exist
+	if not squad_rank then
+		return prior * evaluate_prior_by_dist(target, squad)
+	end
+
+	-- shared ranks
+	if shared_rank[squad_rank] then
+		squad_rank = shared_rank[squad_rank]
+	end
+
+	-- set rank priority multiplier for this target (backup with factions included, filling up table is very hard and result is subjective, but maybe later)
+	--[[
+	if prior_t[target_level_name] and prior_t[target_level_name][squad_comm] then
+		for rank_name, val in pairs(prior_t[target_level_name][squad_comm]) do
+			if squad_rank == rank_name then
+				rank_prior = val
+			end
+		end
+	end
+	--]]
+
+
+	-- set rank priority multiplier for this target
+	if prior_t[target_level_name] and prior_t[target_level_name][squad_rank] then
+		rank_prior = (prior_t[target_level_name][squad_rank])
+	end
+
+	if rank_prior < minimum_chance then
+		rank_prior = minimum_chance
+	end
+
+	rank_prior = rank_prior / 100
+
+	-- test
+	local squad_name = squad:name() or squad:section_name() or "<empty>"
+	local squad_level_name = alife():level_name(game_graph():vertex(squad.m_game_vertex_id):level_id())
+	local target_name = target:name() or target:section_name() or "<empty>"
+	local target_level_name = alife():level_name(game_graph():vertex(target.m_game_vertex_id):level_id())
+
+	pr("------------------- target_prior -------------------")
+	pr("squad: [ %s ] || rank: [ %s ] || cur_level: [ %s ]", squad_name, squad_rank, squad_level_name)
+	pr("target: [ %s ] || target_level: [ %s ]", target_name, target_level_name)
+	local old_tot = prior * evaluate_prior_by_dist(target, squad)
+	local new_tot = old_tot * rank_prior
+	pr("$ rank prior mult: [ %s ] || old_tot: [ %s ] || NEW_TOT: [ %s ]", round_idp(rank_prior, 3), round_idp(old_tot, 3), round_idp(new_tot, 3))
+	pr("---------------------------------------------------")
+	------
+
+	return prior * evaluate_prior_by_dist(target, squad) * rank_prior
 end
 
---------------------------- Picked targets function ---------------------------
 local priority_tasks = {}
 function sim_board.simulation_board:get_squad_target(squad)
 	local size_t = 0
@@ -674,449 +459,28 @@ function sim_board.simulation_board:get_squad_target(squad)
 		end
 	end
 
-	-- test
-	dbgy(squad, priority_tasks, size_t, highest_prior, best_target)
+	-- xcvb test
+	local squad_name = squad:name() or squad:section_name() or "<empty>"
+	pr("----------------------------------")
+	for i = 1, size_t do
+		pr("squad_name: [ %s ] || simboard_t_target: [ %s ] || simboard_t_prior: [ %s ]", squad_name, priority_tasks[i][1]:name() or priority_tasks[i][1]:section_name() or "<empty>", round_idp(priority_tasks[i][2], 3))
+	end
+
+	if best_target then
+		local best_target_name = best_target:name() or best_target:section_name() or "<empty>"
+		local best_target_level_name = alife():level_name(game_graph():vertex(best_target.m_game_vertex_id):level_id())
+		pr("squad_name: [ %s ] || highest prior: [ %s ] || best_target: [ %s ] || best_target_level: [ %s ]", squad_name, round_idp(highest_prior, 3), best_target_name, best_target_level_name)
+	end
+	pr("----------------------------------")
 	----------------
 
 	if (size_t > 0) then
-		local squad_name = squad:name() or squad:section_name() or "<empty>"
 		--local target = priority_tasks[math.random(size_t)][1]
 		local target = (math.random(1,100) < ignore_best_target_chance) and priority_tasks[math.random(size_t)][1] or best_target -- Tronex
 		--printf("squad=%s size=%s target=%s",squad:name(),size_t,target:name())
-		pry("$ squad_name: [ %s ] || picked target: [ %s ] || picked_target_level: [ %s ]", squad_name, target:name(), alife():level_name(game_graph():vertex(target.m_game_vertex_id):level_id()))
-		pry("----------------------------------")
+		pr("squad_name: [ %s ] || picked target: [ %s ] || picked_target_level: [ %s ]", squad_name, target:name(), alife():level_name(game_graph():vertex(target.m_game_vertex_id):level_id()))
+		pr("----------------------------------")
 		iempty_table(priority_tasks) -- It is better to reuse table to avoid GC
 		return target
 	end
-end
-
---------------------------- Target precondition function ---------------------------
--- allows everyone to visit location if conditions are true
-local event_t = {
-	["l10_radar"] = "bar_deactivate_radar_done",
-}
-
-function smart_terrain.se_smart_terrain:target_precondition(squad, ignore_population, skip_props)
-	--utils_data.debug_write(strformat("%s:target_precondition",squad and squad:name()))
-	
-	-- commented out because smarts on other levels don't load job table and that means squads won't target them
-	-- if (self.job_count == 0) then 
-		-- -- can't target a smart that doesn't have any simulation jobs available
-		-- return false 
-	-- end
-	
-	if self.respawn_only_smart == true then
-		return false
-	end
-
-	-- squad is already stayed here don't count population
-	if not (ignore_population) then
-		local squad_count = SIMBOARD.smarts[self.id].population -- smart_terrain_squad_count(SIMBOARD.smarts[self.id].squads)
-		if (squad_count and squad_count >= self.max_population) then
-			return false
-		end
-	end
-	
-	if not (self.props) then 
-		return false
-	end
-	
-	local is_monster = is_squad_monster[squad.player_id]
-	if (is_monster) then 
-		if (self.props.all > 0 or self.props.all_monster > 0 or self.props[squad.player_id] > 0) then 
-			if (skip_props) and (self.props.lair > 0 or self.props.territory > 0) then
-				return true 
-			end
-		
-			-- lair
-			if (self.props.lair > 0 and sim_board.general_lair_precondition(squad,self)) then 
-				return true 
-			end
-			
-			-- territory
-			if (self.props.territory > 0 and sim_board.general_territory_precondition(squad,self)) then 
-				return true 
-			end
-		end
-	elseif (squad.player_id == "zombied") then 
-		if (self.props.all > 0 or self.props.all_stalker > 0 or self.props[squad.player_id] > 0) then 
-			if (skip_props) and (self.props.territory > 0) then
-				return true 
-			end
-			
-			-- territory
-			if (self.props.territory > 0 and sim_board.general_territory_precondition(squad,self)) then 
-				return true
-			end
-		end
-	else 
-		-- xcvb 
-		local sim = alife()
-		local target_level_id = game_graph():vertex(self.m_game_vertex_id):level_id()
-		local target_level_name = sim:level_name(target_level_id)
-		local event_cond = allow_event_based_transitions and target_level_name and has_alife_info(event_t[target_level_name])
-
-		if (self.props.all and self.props.all > 0) or (self.props.all_stalker and self.props.all_stalker > 0) or (self.props[squad.player_id] and self.props[squad.player_id] > 0) or (event_cond) then 
-			if (skip_props) and (self.props.base > 0 or self.props.resource > 0 or self.props.territory > 0) then
-				return true
-			end
-	
-			-- surge
-			if (squad.player_id ~= "monolith" and xr_conditions.surge_started()) then
-				if (self.props.surge > 0) then 
-					return true 
-				end
-				return false
-			end
-			
-			-- base
-			if (self.props.base > 0 and sim_board.general_base_precondition(squad,self)) then 
-				return true 
-			end
-			
-			-- resource
-			if (self.props.resource > 0 and sim_board.general_resource_precondition(squad,self)) then 
-				return true 
-			end
-		
-		-- territory
-		if (self.props.territory > 0 and sim_board.general_territory_precondition(squad,self)) then 
-			return true 
-			end				
-		end
-	end
-
-	return false
-end
-
---------------------------- Smart terrain spawns ---------------------------
-local convert_ranks = {
-	["novice"] = "novice",
-	["advanced"] = "experienced",
-	["veteran"] = "veteran",
-	["alpha"] = "master",
-}
-
-local s_find = string.find
-local available_sects = {}
-function smart_terrain.se_smart_terrain:try_respawn()
-	local flags = {
-		disabled = false
-	}
-	SendScriptCallback("on_try_respawn",self,flags)
-	
-	if self.disabled or flags.disabled then
-		return
-	end
-	
-	if (has_alife_info("actor_made_wish_for_peace")) then 
-		return 
-	end
-	
-	if not (self.is_on_actor_level) then 
-		if (self.respawn_only_level) then
-			return
-		end
-	end
-	
-	--utils_data.debug_write(strformat("%s:try_respawn",self:name()))
-	
-	if (self.is_on_actor_level and self.dist_to_actor ~= nil) then 
-		if (self.dist_to_actor < self.respawn_radius) then
-			return
-		end
-	end
-	
-	if not (self.respawn_params and self.already_spawned) then 
-		return 
-	end
-
-	-- simulation_objects.available_by_id[self.id]  nil is unprocessed false is unavail
-	if (simulation_objects.available_by_id[self.id] == false) then 
-		return 
-	end
-
-	--[[
-	local squad_count = smart_terrain_squad_count(SIMBOARD.smarts[self.id].squads)
-	if self.max_population <= squad_count then
-		return
-	end
-	--]]
-		
-	local curr_time = game.get_game_time()
-	
-	-- first spawn after game load
-	--[[
-	if (self.last_respawn_update == nil and (math.random(1,100)/100) < 0.3) then 
-		self.last_respawn_update = curr_time
-		return
-	end
-	--]]
-	
-	if self.last_respawn_update == nil or curr_time:diffSec(self.last_respawn_update) > self.respawn_idle then
-		self.last_respawn_update = curr_time
-		
-		iempty_table(available_sects)
-		local size_t = 0
-		
-		-- check self.faction
-		if not (self.faction) then 
-			self.faction = self.default_faction
-		end
-				
-		local max_respawn_count
-		local stalker_pop_factor = ui_options.get("alife/general/alife_stalker_pop")
-		local monster_pop_factor = ui_options.get("alife/general/alife_mutant_pop")
-		for k,v in pairs(self.respawn_params) do
-			if (v.num and self.already_spawned[k] and self.already_spawned[k].num) then
-				if (self.faction_controlled == nil) or (self.faction ~= nil and v.faction == self.faction) then
-				
-					max_respawn_count = tonumber(xr_logic.pick_section_from_condlist(db.actor, self,v.num) or 0)
-					
-					-- Tronex
-					-- Safer check for common squads
-					-- DPH
-					if SMART_TERRAIN_SPAWNS_BUGFIX_PATCH then
-						if (v["squads"]) then
-							-- Just take the first squad section to determine type. Not correct, but accurate in almost all cases
-							local k2 = v["squads"][1]
-							if ini_sys:r_bool_ex(k2,"common") then
-								-- almost all spawn sections with "zombied" in them have mutants as other spawns
-								if (s_find(k2,"simulation") or s_find(k2,"zombied")) then
-									max_respawn_count = round_idp(max_respawn_count*monster_pop_factor)
-								elseif (s_find(k2,"sim_squad")) then 
-									max_respawn_count = round_idp(max_respawn_count*stalker_pop_factor)
-								end
-							end
-						end
-					else
-						if ini_sys:r_bool_ex(k,"common") then
-							if (s_find(k,"sim_squad")) then 
-								max_respawn_count = round_idp(max_respawn_count*stalker_pop_factor)
-							elseif (s_find(k,"simulation")) then
-								max_respawn_count = round_idp(max_respawn_count*monster_pop_factor)
-							end
-						end
-					end
-					
-					-- modifier for spawn chances
-					if max_respawn_count < 1 then
-						local respawn_chance = max_respawn_count*100
-						if (math.random(1,100) > respawn_chance) then
-							max_respawn_count = 0
-						end
-					end
-					
-					if max_respawn_count > self.already_spawned[k].num then
-						size_t = size_t + 1
-						available_sects[size_t] = k
-					end
-				end
-			else 
-				log("ERROR: %s Incorrect Respawn Params. respawn_params[%s].num=%s already_spawned[%s]=%s already_spawned[%s].num=%s",self:name(),k,v.num,k,type(self.already_spawned[k]),self.already_spawned[k] and self.already_spawned[k].num)
-			end
-		end
-		
-		if size_t > 0 then
-			local sect_to_spawn = available_sects[math.random(1,size_t)]
-			local sect_to_spawn_params = self.respawn_params[sect_to_spawn]
-			
-			if (sect_to_spawn_params.squads) then
-				local squad
-				if (IsSurvivalMode() and math.random(1,100) < 90) then
-					local t = {"simulation_zombie","simulation_zombie","simulation_zombie","simulation_zombie","simulation_zombie","zombied_sim_squad_novice","zombied_sim_squad_advanced","zombied_sim_squad_veteran","simulation_fracture","simulation_snork","simulation_zombie_blind_3zomb_civ","simulation_zombie_blind_3zomb"}
-					squad = SIMBOARD:create_squad(self, t[math.random(#t)])
-				else
-					local squad_to_spawn = sect_to_spawn_params.squads[math.random(1,#sect_to_spawn_params.squads)]
-
-					-- xcvb squad replacer xd ---
-					if replace_respawns then
-						local sim = alife()
-						local target_level_id = game_graph():vertex(self.m_game_vertex_id):level_id()
-						local target_level_name = sim:level_name(target_level_id)
-
-						-- get viable faction name
-						local squad_faction
-						for str, bool in pairs(factions_t) do
-							if bool and string.find(squad_to_spawn, str) then
-								squad_faction = str
-								break
-							end
-						end
-
-						-- get squad section rank name and convert it into our prior_t ranks (and make sure rank is last in the section string)
-						local squad_rank
-						for old_rank, new_rank in pairs(convert_ranks) do
-							local id1, id2 = string.find(squad_to_spawn, old_rank)
-							if id1 and id2 and #squad_to_spawn == id2 then
-								squad_rank = new_rank
-								break
-							end
-						end
-
-						-- get max rank name and its priority value for this faction and level
-						local target_max_rank, target_max_prior
-						local function get_t_max_key(t)
-							local max_k = next(t)
-							local max_v = t[max_k]
-							for k, v in pairs(t) do
-								if v > max_v then
-									max_k, max_v = k, v
-								end
-							end
-							return max_k, max_v
-						end
-
-						if squad_faction and prior_t[squad_faction] and prior_t[squad_faction][target_level_name] then
-							target_max_rank, target_max_prior = get_t_max_key(prior_t[squad_faction][target_level_name])
-							target_max_rank = tostring(target_max_rank)
-						end
-
-						-- check current squad travel priority to this target
-						local curr_target_prior
-						if squad_faction and squad_rank and prior_t[squad_faction] and prior_t[squad_faction][target_level_name] and prior_t[squad_faction][target_level_name][squad_rank] then
-							curr_target_prior = prior_t[squad_faction][target_level_name][squad_rank]
-						end
-
-						-- compare current rank's (+20) and max rank's priority value and convert squad to the one with max
-						if curr_target_prior and target_max_rank and target_max_prior and (curr_target_prior + 20 < target_max_prior) then
-							-- convert our rank name back to regular and replace the section string
-							local replaced_rank
-							for old_rank, new_rank in pairs(convert_ranks) do
-								if target_max_rank == new_rank then
-									replaced_rank = old_rank
-									break
-								end
-							end
-
-							-- special case for special ecologists
-							if replaced_rank and replaced_rank == "alpha" and squad_faction and squad_faction == "ecolog" then
-								replaced_rank = "veteran"
-							end
-
-							-- dbg
-							dbgz(replaced_rank, squad_to_spawn, squad_rank, curr_target_prior, target_max_rank, target_max_prior)
-							-------
-
-							squad_to_spawn = replaced_rank and squad_to_spawn:gsub(squad_rank, replaced_rank)
-						end
-
-					end
-					---------------------------
-
-					squad = has_alife_info("actor_made_wish_for_control") and SIMBOARD:create_squad(self, "simulation_controller_psy") or SIMBOARD:create_squad(self, squad_to_spawn)
-				end
-				
-				if (squad) then
-					squad.respawn_point_id = self.id
-					squad.respawn_point_prop_section = sect_to_spawn
-					for m in squad:squad_members() do
-						SIMBOARD:setup_squad_and_group(m.object)
-					end
-				else
-					printe("!ERROR: call respawn failed for %s, check squad descriptions",sect_to_spawn)
-					return
-				end
-			elseif (sect_to_spawn_params.helicopter and ui_options.get("alife/general/heli_spawn")) then
-				local heli = sect_to_spawn_params.helicopter[math.random(1,#sect_to_spawn_params.helicopter)]
-				if (heli) then --if (heli and self.online) then
-					local pos = vector():set(level.get_bounding_volume().max.x,level.get_bounding_volume().min.y-50,level.get_bounding_volume().max.z)
-					local lvid = self.m_level_vertex_id
-					local gvid = self.m_game_vertex_id
-					
-					local se_heli = alife_create(heli,pos,lvid,gvid)
-					
-					local visual = ini_sys:r_string_ex(heli,"visual")
-					-- required to spawn by script
-					local data = utils_stpk.get_heli_data(se_heli)
-					if (data) then
-						data.visual_name = visual and visual ~="" and visual or [[dynamics\vehicles\mi2\veh_mi2_01]]
-						data.motion_name = [[helicopter\aaa.anm]]
-						data.startup_animation = "idle"
-						data.skeleton_name = "idle"
-						data.engine_sound = [[vehicles\helicopter\helicopter]]
-						utils_stpk.set_heli_data(data,se_heli)
-						
-						self:register_npc(se_heli)
-						se_heli.respawn_point_id = self.id
-						se_heli.respawn_point_prop_section = sect_to_spawn
-					else
-						safe_release_manager.release(se_heli)
-					end
-				else
-					return
-				end
-			end
-			self.already_spawned[sect_to_spawn].num = self.already_spawned[sect_to_spawn].num + 1
-		end
-	end
-end
-
---------------------------- debug ---------------------------
-function prx(...)
-	if not debugx then return end
-	printf(...)
-end
-
-function pry(...)
-	if not debugy then return end
-	printf(...)
-end
-
-function prz(...)
-	if not debugz then return end
-	printf(...)
-end
-
-function dbgx(squad, squad_rank, target, prior, bonus, extra_bonus, tot_prior, dist)
-	local sim = alife()
-	local squad_namex = squad:name() or squad:section_name() or "<empty>"
-	local squad_level_namex = sim:level_name(game_graph():vertex(squad.m_game_vertex_id):level_id())
-	local target_namex = target:name() or target:section_name() or "<empty>"
-	local target_level_namex = sim:level_name(game_graph():vertex(target.m_game_vertex_id):level_id())
-
-	if not (debugx and type(debugx) == "number" and debugx <= tot_prior) then return end
-
-	prx("------------------- target_prior -------------------")
-	prx("squad: [ %s ] || rank: [ %s ] || cur_level: [ %s ]", squad_namex, squad_rank, squad_level_namex)
-	prx("target: [ %s ] || target_level: [ %s ]", target_namex, target_level_namex)
-	prx("rank prior mult: [ %s ] || target bonus: [ %s ] || extra bonus: [ %s ] || dist mult: [ %s ]", round_idp(prior, 1), round_idp(bonus, 1), extra_bonus, round_idp(dist, 4))
-	prx( "$ total: [ %s ]", round_idp(tot_prior, 1) )
-	prx("---------------------------------------------------")
-
-end
-
-function dbgy(squad, target_t, size_t, highest_prior, best_target)
-	if not debugy then return end
-
-	local sim = alife()
-	local squad_name = squad:name() or squad:section_name() or "<empty>"
-	local squad_comm = squad:get_squad_community()
-	local squad_viable = squad_comm and factions_t[squad_comm]
-
-	if (allow_mutants_transition) or ((not is_squad_monster[squad.player_id]) and (squad_viable)) then
-		pry("---------------- picked targets ------------------")
-		for i = 1, size_t do
-			pry("squad_name: [ %s ] || simboard_t_target: [ %s ] || simboard_t_prior: [ %s ]", squad_name, target_t[i][1]:name() or target_t[i][1]:section_name() or "<empty>", round_idp(target_t[i][2], 3))
-		end
-
-		if best_target then
-			local squad_level_namex = sim:level_name(game_graph():vertex(squad.m_game_vertex_id):level_id())
-			local best_target_name = best_target:name() or best_target:section_name() or "<empty>"
-			local best_target_level_name = sim:level_name(game_graph():vertex(best_target.m_game_vertex_id):level_id())
-			pry("squad_name: [ %s ] at cur level: [ %s ] || highest prior: [ %s ] || best_target: [ %s ] || best_target_level: [ %s ]", squad_name, squad_level_namex, round_idp(highest_prior, 3), best_target_name, best_target_level_name)
-		end
-		pry("----------------------------------")
-	end
-
-end
-
-function dbgz(replaced_rank, old_squad_name, old_rank, old_prior, max_rank, max_prior)
-	if not replaced_rank then return end
-
-	local new_squad_name = old_squad_name:gsub(old_squad_name, replaced_rank)
-	prz("----------------- spawn replace ------------------")
-	prz("old squad: [ %s ] || old rank: [ %s ] || old_prior: [ %s ]", old_squad_name, old_rank, old_prior)
-	prz("new squad: [ %s ] || max rank: [ %s ] || max prior: [ %s ]", new_squad_name, max_rank, max_prior)
-	prz("---------------------------------------------------")
 end
