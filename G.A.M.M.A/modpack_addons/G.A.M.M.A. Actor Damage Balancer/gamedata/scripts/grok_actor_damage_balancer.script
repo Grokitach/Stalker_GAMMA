@@ -189,12 +189,20 @@ end
 -- Calculates player protection
 function get_protection(shit,bone_id,k_ap)
 
+	total_prot = 0
+	headshot = 0
+	elemental = 0
+	psy = 0
+	adjuster = 1.00
+	local actor = db.actor
+
 	if shit.type == hit.fire_wound then
 		hit_type = HitTypeID["FireWound"]
 		immunity = "fire_wound_immunity"
 		protection = "FireWound"
 		booster_type_def = 15
 		adjuster = 0.80
+		arti_adjuster = adjuster 
 		limiter = 0.90
 	end
 
@@ -204,7 +212,18 @@ function get_protection(shit,bone_id,k_ap)
 		protection = "Wound"
 		booster_type_def = 16
 		adjuster = 0.58
+		arti_adjuster = adjuster 
 		limiter = 0.90 
+	end
+	
+	if shit.type == hit.wound_2 then
+		hit_type = HitTypeID["Wound_2"]
+		immunity = "wound_2_immunity"
+		protection = "Wound_2"
+		booster_type_def = 16
+		adjuster = 0.58
+		arti_adjuster = adjuster 
+		limiter = 0.90
 	end
 
 	if shit.type == hit.strike then
@@ -213,7 +232,9 @@ function get_protection(shit,bone_id,k_ap)
 		protection = "Strike"
 		booster_type_def = 14
 		adjuster = 0.55
+		arti_adjuster = adjuster 
 		limiter = 0.70
+		elemental = 1
 	end
 	
 	if shit.type == hit.explosion then
@@ -222,14 +243,77 @@ function get_protection(shit,bone_id,k_ap)
 		protection = "Explosion"
 		booster_type_def = 13
 		adjuster = 0.45
+		arti_adjuster = adjuster 
 		limiter = 0.75
+		elemental = 1
 	end
 
-	total_prot = 0
-	local actor = db.actor
+	if shit.type == hit.burn then
+		hit_type = HitTypeID["Burn"]
+		immunity = "burn_immunity"
+		protection = "Burn"
+		booster_type_def = 8
+		adjuster = 1.00
+		arti_adjuster = adjuster * 2.0
+		limiter = 0.95
+		elemental = 1
+	end
+	
+	if shit.type == hit.light_burn then
+		hit_type = HitTypeID["LightBurn"]
+		immunity = "burn_immunity"
+		protection = "Burn"
+		booster_type_def = 8
+		adjuster = 1.00
+		arti_adjuster = adjuster * 2.0
+		limiter = 0.95
+		elemental = 1
+	end
+	
+	if shit.type == hit.shock then
+		hit_type = HitTypeID["Shock"]
+		immunity = "shock_immunity"
+		protection = "Shock"
+		booster_type_def = 9
+		adjuster = 0.102
+		arti_adjuster = adjuster * 26.5
+		limiter = 0.95
+		elemental = 1
+	end
+	
+	if shit.type == hit.chemical_burn then
+		hit_type = HitTypeID["ChemicalBurn"]
+		immunity = "chemical_burn_immunity"
+		protection = "ChemicalBurn"
+		booster_type_def = 7
+		adjuster = 1.32
+		arti_adjuster = adjuster 
+		limiter = 0.95
+		elemental = 1
+	end
+	
+--	if shit.type == hit.radiation then
+--		hit_type = HitTypeID["Radiation"]
+--		immunity = "radiation_immunity"
+--		protection = "Radiation"
+--		booster_type_def = 10
+--		adjuster = 0.80
+--		limiter = 1.00
+--	end
+	
+	if shit.type == hit.telepatic then
+		hit_type = HitTypeID["Telepatic"]
+		immunity = "telepatic_immunity"
+		protection = "telepatic"
+		booster_type_def = 6
+		adjuster = 1.00
+		arti_adjuster = adjuster 
+		limiter = 0.90
+		psy = 1
+	end
 	
 	-- Special case for Headshot
-	headshot = 0
+
 	if hitboxes[bone_id] == "head" then
 		headshot = 1
 	end
@@ -306,7 +390,7 @@ function get_protection(shit,bone_id,k_ap)
 		artefacts_protection = artefacts_protection + prot
 		artefacts_ap_res = artefacts_ap_res + af_bone_value
 	end)
-	artefacts_protection = artefacts_protection * 0.6 -- scale to the displayed inventory values more or less
+	artefacts_protection = artefacts_protection * 0.6 * arti_adjuster -- scale to the displayed inventory values more or less
 
 	-- Booster protection
 	local booster_protection = 0
@@ -315,15 +399,16 @@ function get_protection(shit,bone_id,k_ap)
 			booster_protection = booster_value
 		end
 	end)
-
-	if headshot == 1 then
-		armor_bone_value = 0
-		armor_protection = 0
-	else
-		helmet_bone_value = 0
-		helmet_protection = 0
-	end
 	
+	if elemental == 0 then
+		if headshot == 1 then
+			armor_bone_value = 0
+			armor_protection = 0
+		else
+			helmet_bone_value = 0
+			helmet_protection = 0
+		end
+	end
 
 	-- Total protection adjusted by damage source
 	printf('%s + %s + %s + %s', helmet_protection, armor_protection, artefacts_protection, booster_protection)
@@ -356,22 +441,8 @@ function get_protection(shit,bone_id,k_ap)
 	
 	total_prot = (helmet_protection + armor_protection + artefacts_protection + booster_protection)
 	-- Max protection limiter to avoid immunity to damages		
-	if total_prot >= 1 then
-		if shit.type == hit.wound then
-			total_prot = limiter
-		end
-
-		if shit.type == hit.fire_wound then
-			total_prot = limiter
-		end
-
-		if shit.type == hit.strike then
-			total_prot = limiter
-		end
-		
-		if shit.type == hit.explosion then
-			total_prot = limiter
-		end
+	if total_prot > limiter then
+		total_prot = limiter
 	end
 end
 
@@ -397,7 +468,7 @@ function shit_booster(shit, bone_id, k_ap)
 	
 	-- Body part damage multiplier (already applied by engine in shit.power)
 	local body_part = hitboxes[bone_id]
-	local body_part_mult = hitbox_mult[body_part] or 0.5
+	local body_part_mult = hitbox_mult[body_part] or 1.0
 	damage = damage * body_part_mult
 	
 	-- Resolve mechanic, survive with few hp instead of dying from huge hits
@@ -405,10 +476,16 @@ function shit_booster(shit, bone_id, k_ap)
 		printf("/// avoided one shot - last chance")
 		damage = db.actor.health - 0.10
 	end
+	printf('Hit by %s %s damages', shit.power, protection)
 	printf('part hit = %s', hitboxes[bone_id])
-	printf('hit power = %s', shit.power)
-	printf('total protection = %s', total_prot)	
+	printf('total protection = %s', total_prot)
 	printf('damage to actor = %s', damage)
+	
+	if psy == 1 then
+		printf('Psy damages, handeld by engine')
+		return
+	end
+	
 	shit.power = 0
 	db.actor:set_health_ex(db.actor.health - damage)
 	if no_pen == 0 then
@@ -417,18 +494,38 @@ function shit_booster(shit, bone_id, k_ap)
 		end
 	end
 	
-	if headshot == 1 then
+	if elemental == 1 then
 		helmet = db.actor:item_in_slot(12)
-                if helmet then
-		    cond = helmet:condition()
-		    helmet:set_condition(cond - damage * 0.07)
-                end
-	else
+        if helmet then
+			cond = helmet:condition()
+			helmet:set_condition(cond - damage * 0.07)
+			printf('Helmet condition dmg = %s', damage * 0.07)
+		end
+		
 		armor = db.actor:item_in_slot(7)
-                if armor then
-		    cond = armor:condition()
+		if armor then
+			cond = armor:condition()
 		    armor:set_condition(cond - damage * 0.07)
-                end
+			printf('Armor condition dmg = %s', damage * 0.07)
+		end
+	end
+
+	if elemental == 0 then	
+		if headshot == 1 then
+			helmet = db.actor:item_in_slot(12)
+			if helmet then
+				cond = helmet:condition()
+				helmet:set_condition(cond - damage * 0.07)
+				printf('Helmet condition dmg = %s', damage * 0.07)
+			end
+		else
+			armor = db.actor:item_in_slot(7)
+			if armor then
+				cond = armor:condition()
+				armor:set_condition(cond - damage * 0.07)
+				printf('Armor condition dmg = %s', damage * 0.07)
+			end
+		end
 	end
 end
 
@@ -508,6 +605,30 @@ function actor_on_before_hit(shit,bone_id)
 	if (shit.type == hit.explosion) then
 		shit_booster(shit,bone_id)
 	end	
+	
+	if shit.type == hit.light_burn then
+		shit_booster(shit,bone_id)
+	end
+		
+	if shit.type == hit.burn then
+		shit_booster(shit,bone_id)
+	end
+		
+	if shit.type == hit.shock then
+		shit_booster(shit,bone_id)
+	end
+		
+	if shit.type == hit.radiation then
+		shit_booster(shit,bone_id)
+	end
+		
+	if shit.type == hit.telepatic then
+		shit_booster(shit,bone_id)
+	end
+		
+	if shit.type == hit.chemical_burn then
+		shit_booster(shit,bone_id)
+	end
 end
 
 function on_game_start()
