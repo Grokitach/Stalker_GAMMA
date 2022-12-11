@@ -1,0 +1,175 @@
+local simm
+local level_vertex_id = level.vertex_id
+local level_vertex_position = level.vertex_position
+
+local random = math.random
+
+--//// SETTINGS ////
+local teleport_chance = 18
+local player_only = false
+local min_rank = 0
+local allowed_comm = { ["isg"] = true }
+--//////////////////
+
+function one_in(num)
+  local result = random(1,num)
+  
+  if( result == 1 ) then 
+    return true 
+  end
+  
+  return false
+end
+
+--  ////////////////////////
+-- //// TELEPORT DODGE ////
+--////////////////////////
+
+function teleport_dodge(npc)
+  simm = alife()
+  
+  local st = db.storage[npc:id()] and db.storage[npc:id()].object
+  printf("[Fuji] Teleport: Get npc")
+  if(st and st:alive()) then
+    local pre_pos = st:position()
+    
+    local post_pos = teleport_offset_random(pre_pos)
+    
+    if((pre_pos.x ~= post_pos.x) and (pre_pos.y ~= post_pos.y) and (pre_pos.z ~= post_pos.z)) then
+      local fx = particles_object("anomaly2\\effects\\gravi_flash_00")
+      fx:play_at_pos(npc:position())
+      play_sound_at_pos("anomaly\\anomaly_gravy_hit1", 1.0, 1.0, npc, pre_pos)
+      
+      printf("[Fuji] Teleport: Move NPC")
+      st:set_npc_position(post_pos)
+      
+      local fx = particles_object("anomaly2\\effects\\gravi_flash_00")
+      fx:play_at_pos(post_pos)
+      play_sound_at_pos("anomaly\\anomaly_gravy_hit1", 1.0, 1.0, npc, post_pos)
+      
+    end
+  end
+  printf("[Fuji] Teleport: Done")
+end
+
+function teleport_offset_random(oldpos)
+  local min_radius = 1
+  local max_radius = 3
+  local int_radius = max_radius - min_radius
+
+  local pos = vector():set(0,0,0)
+  
+  --Get random x offset
+  local off_x = min_radius + (int_radius * random(0.0,1.0))
+  if(random(0.0,1.0) <= 0.5) then
+    off_x = -(off_x)
+  end
+  local pos_x = oldpos.x + off_x
+  
+  --Get random y offset
+  local off_y = min_radius + (int_radius * random(0.0,1.0))
+  if(random(0.0,1.0) <= 0.5) then
+    off_y = -(off_y)
+  end
+  local pos_y = oldpos.y + off_y
+  
+  --Get random z offset
+  local off_z = min_radius + (int_radius * random(0.0,1.0))
+  if(random(0.0,1.0) <= 0.5) then
+    off_z = -(off_z)
+  end
+  local pos_z = oldpos.z + off_z
+  
+  --local pos_z = oldpos.z
+  
+  pos = vector():set(pos_x, pos_y, pos_z)
+  local lvid = level_vertex_id(pos)
+  
+  if(lvid < 4294967295) then
+    pos = level_vertex_position(lvid)
+  else
+    pos = oldpos
+  end
+  printf("[Fuji] Teleport: Generate new pos")
+  return pos
+end
+
+function play_sound_at_pos(snd, volume, frequency, obj, pos)
+	if not snd then
+		printf("snd is nil")
+		return
+	end
+	local snd = xr_sound.get_safe_sound_object(snd)
+	if snd then
+		if obj and obj:id() ~= AC_ID then
+			snd:play_at_pos(obj, pos, 0, sound_object.s3d)
+		else
+			snd:play(obj, 0, sound_object.s2d)
+		end
+		snd.volume = volume or 1
+		snd.frequency = frequency or 1
+		return snd
+	end
+end
+
+function squad_on_first_update(squad)
+  for k in squad:squad_members() do
+    local st = db.storage[k.id] and db.storage[k.id].object
+    if(st and IsStalker(st) and st:dont_has_info("magic_init")) then
+      printf("[Fuji] Initializing magic for NPC:%s in SQUAD:%s", st:id(), squad.id)
+      
+      if( st:id() ~= db.actor:id() ) then
+        npc_init_magic(st)
+      end
+      
+      st:give_info_portion("magic_init")
+    end
+  end
+end
+
+function npc_init_magic(npc)
+  local npc_rank = npc:rank()
+  local npc_comm = character_community(npc)
+  
+  if((npc_rank < min_rank) or not (allowed_comm[npc_comm])) then
+    npc:give_info_portion("magic_muggle")
+    return
+  end
+  
+  magic = "tele"
+  npc:give_info_portion("magic_" .. magic)
+end
+
+function npc_on_before_hit(npc,shit,bone_id)
+  printf("[Fuji] On hit, try magic")
+  if(not npc) then
+    printf("[Fuji] Invalid NPC, aborting")
+    return
+  end
+  
+  if(IsWounded(npc)) then
+    printf("[Fuji] NPC is wounded, aborting")
+    return
+  end
+  
+  if(player_only) then
+    if shit.draftsman:id() ~= db.actor:id() then
+      printf("[Fuji] Not hit by player, aborting")
+      return
+    end
+  end
+  
+  if(not one_in(teleport_chance)) then
+    printf("[Fuji] Bad roll, aborting")
+  end
+  
+  printf("[Fuji] Do teleport")
+  teleport_dodge(npc)
+end
+
+function on_game_start()
+  RegisterScriptCallback("npc_on_before_hit",npc_on_before_hit)
+  RegisterScriptCallback("squad_on_first_update",squad_on_first_update)
+end
+
+
