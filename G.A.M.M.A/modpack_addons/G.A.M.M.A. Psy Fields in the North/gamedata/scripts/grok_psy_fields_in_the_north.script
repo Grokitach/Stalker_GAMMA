@@ -1,28 +1,35 @@
+
+local psy_extra_levels = {
+	["l10_red_forest"] = true,
+	["jupiter"] = true,
+	["l12_stancia"] = true,
+	["zaton"] = true,
+	["l12_stancia_2"] = true,
+	["l11_pripyat"] = true,
+	["l12u_sarcofag"] = true,
+	["l13_generators"] = true,
+	["pripyat"] = true,
+	["l10_limansk"] = true
+}
+
+local psy_immune_factions = {
+	["monolith"] = true,
+	["army"] = true,
+	["isg"] = true,
+	["greh"] = true,
+	["zombied"] = true
+}
+
 local function actor_on_first_update()
 	local lvl_name = level.name()
 	local faction = get_actor_true_community()
+
 	psy_damage = 0
-	
-	if faction == "monolith" or faction == "army" or faction == "isg" or faction == "greh" or faction == "zombied" then
-		psy_damage = 0
+	if (psy_immune_factions[faction] or dialogs_yantar.actor_has_psi_helmet()) then
 		return
 	end
-	
-	if dialogs_yantar.actor_has_psi_helmet() then
-		psy_damage = 0
-		return
-	end
-		
-	if lvl_name == "l10_red_forest"
-	or lvl_name == "jupiter" 
-	or lvl_name == "l12_stancia" 
-	or lvl_name == "zaton" 
-	or lvl_name == "l12_stancia_2" 
-	or lvl_name == "l11_pripyat" 
-	or lvl_name == "l12u_sarcofag" 
-	or lvl_name == "l13_generators" 
-	or lvl_name == "pripyat" 
-	or lvl_name == "l10_limansk" then
+
+	if (psy_extra_levels[lvl_name]) then
 		actor_menu.set_msg(1, game.translate_string("st_psy_danger"),7)
 		psy_damage = 1
 	end
@@ -33,12 +40,12 @@ trigger = 0
 delay = 5000
 function actor_on_update()
 	tg = time_global()
-	
+
 	if trigger == 0 then
-        grok_delay = tg + delay
+		grok_delay = tg + delay
 		trigger = 1
 	end
-	
+
 	if (trigger == 1 and tg > grok_delay and psy_damage == 1) then
 		printf("damage")
 		power =  0.09 + arszi_psy.get_telepatic_protection_total() * 1.12
@@ -47,7 +54,7 @@ function actor_on_update()
 		psy_hit.direction 			= vector():set( 0, 0, 0 )
 		psy_hit.impulse 			= 0
 		psy_hit.draftsman 			= db.actor
-		psy_hit.type = hit.telepatic
+		psy_hit.type				= hit.telepatic
 		db.actor:hit(psy_hit)
 		actor_menu.set_msg(1, game.translate_string("st_psy_danger"),5)
 		trigger = 0
