@@ -213,7 +213,7 @@ function get_protection(shit,bone_id,k_ap)
 		booster_type_def = 16
 		adjuster = 0.58
 		arti_adjuster = adjuster 
-		limiter = 0.90 
+		limiter = 0.90
 	end
 	
 	if shit.type == hit.wound_2 then
@@ -530,9 +530,9 @@ function shit_booster(shit, bone_id, k_ap)
 end
 
 
-trigger = 0
-delay = 1000
-delay_mine = 10
+local trigger = 0
+local delay = 1000
+local delay_mine = 10
 
 function elemental_damage(draftman_sec, shit, bone_id, flags)
 	if string.find(draftman_sec,"field") then
@@ -560,16 +560,43 @@ function elemental_damage(draftman_sec, shit, bone_id, flags)
 	flags.ret_value = false
 end
 
+local trigger2 = 0
+local delay2 = 3
+
 function actor_on_before_hit(shit,bone_id, flags)
-
-	draftman = shit.draftsman
-	draftman_sec = draftman:section()
-
-	if shit.draftsman and shit.draftsman:has_info("npcx_is_companion") then
-		shit.power = 0
+	local damage = 0
+	local skip = 0
+	if shit.type == hit.radiation then
+		skip = 1
 	end
 
--- Reduce hit power based on difficulty	
+	tg = time_global()
+	if (trigger2 == 0 and skip == 0) then
+		grok_delay2 = tg + delay2
+		trigger2 = 1
+	end
+	if (trigger2 == 1) then
+		if (tg < grok_delay2) then
+			shit.power = 0
+			flags.ret_value = false
+			return
+		else
+			damage = 1
+			trigger2 = 0
+		end
+	end
+
+	if damage == 1 or skip == 1 then
+		draftman = shit.draftsman
+		draftman_sec = draftman:section()
+
+		if shit.draftsman and shit.draftsman:has_info("npcx_is_companion") then
+			shit.power = 0
+			flags.ret_value = false
+			return
+		end
+
+	-- Reduce hit power based on difficulty	
 
 		gameplay = alife_storage_manager.get_state().diff_game
 		if not (type(gameplay) == "table") then -- for old saves
@@ -578,89 +605,91 @@ function actor_on_before_hit(shit,bone_id, flags)
 			gameplay = alife_storage_manager.get_state().diff_game
 		end
 		game_num = gameplay["type"] or game_num
-		
-		--printf(game_num)
+			
+			--printf(game_num)
 		shit.power = shit.power * difficulty_multiplier[game_num]
 
--- Reduce shotguns damage and get ammo AP power
-	if (shit.type == hit.fire_wound) then
+	-- Reduce shotguns damage and get ammo AP power
+		if (shit.type == hit.fire_wound) then
 
-		wpn = level.object_by_id(shit.weapon_id)
+			wpn = level.object_by_id(shit.weapon_id)
 
-		if wpn == nil then return end
+			if wpn == nil then return end
 
-		local sec = wpn:section()
-		local wpn_id = wpn:id()
+			local sec = wpn:section()
+			local wpn_id = wpn:id()
 
-		local ammo_type_number = wpn:get_ammo_type()
-		local ammo_list = utils_item.get_ammo(sec, wpn_id)
-		local ammo_section = ammo_list[ammo_type_number+1]
+			local ammo_type_number = wpn:get_ammo_type()
+			local ammo_list = utils_item.get_ammo(sec, wpn_id)
+			local ammo_section = ammo_list[ammo_type_number+1]
 
-		if ammo_section == nil then return end
-	
-		if (string.find(ammo_section, "buck")) then
-			printf("/// Reducing buckshots damage")
-			shit.power = shit.power / 3
-		end
-
-	    if (string.find(ammo_section, "23x75")) then
-			printf("/// Reducing KS23 damage")
-			shit.power = shit.power / 5
-		end
+			if ammo_section == nil then return end
 		
-		if (string.find(ammo_section, "dart")) then
-			printf("/// Reducing AP Slugs damage")
-			shit.power = shit.power / 2
+			if (string.find(ammo_section, "buck")) then
+				printf("/// Reducing buckshots damage")
+				shit.power = shit.power / 3
+			end
+
+			if (string.find(ammo_section, "23x75")) then
+				printf("/// Reducing KS23 damage")
+				shit.power = shit.power / 5
+			end
+			
+			if (string.find(ammo_section, "dart")) then
+				printf("/// Reducing AP Slugs damage")
+				shit.power = shit.power / 2
+			end
+			
+			if (string.find(ammo_section, "zhekan")) then
+				printf("/// Reducing Slugs damage")
+				shit.power = shit.power / 2
+			end
+			
+			if (string.find(ammo_section, "pkm")) then
+				printf("/// Reducing PKM damage")
+				shit.power = shit.power / 4
+			end
+
+			k_ap = ini_sys:r_float_ex(ammo_section, "k_ap") or 0
+
+			shit_booster(shit,bone_id, k_ap)	
 		end
+
+		if (shit.type == hit.wound) then
+			shit_booster(shit,bone_id)
+			flags.ret_value = false
+		end
+
+		if (shit.type == hit.strike) then
+			shit_booster(shit,bone_id)
+		end
+
+		if (shit.type == hit.explosion) then
+			shit_booster(shit,bone_id)
+		end	
 		
-		if (string.find(ammo_section, "zhekan")) then
-			printf("/// Reducing Slugs damage")
-			shit.power = shit.power / 2
-		end
-		
-		if (string.find(ammo_section, "pkm")) then
-			printf("/// Reducing PKM damage")
-			shit.power = shit.power / 4
+		if shit.type == hit.telepatic then
+			shit_booster(shit,bone_id)
 		end
 
-		k_ap = ini_sys:r_float_ex(ammo_section, "k_ap") or 0
+		if shit.type == hit.light_burn then
+			elemental_damage(draftman_sec, shit, bone_id, flags)
+		end
 
-		shit_booster(shit,bone_id, k_ap)	
-	end
+		if shit.type == hit.burn then
+			elemental_damage(draftman_sec, shit, bone_id, flags)
+		end
 
-	if (shit.type == hit.wound) then
-		shit_booster(shit,bone_id)
-	end
+		if shit.type == hit.shock then
+			elemental_damage(draftman_sec, shit, bone_id, flags)
+		end
 
-	if (shit.type == hit.strike) then
-		shit_booster(shit,bone_id)
-	end
-
-	if (shit.type == hit.explosion) then
-		shit_booster(shit,bone_id)
-	end	
-	
-	if shit.type == hit.telepatic then
-		shit_booster(shit,bone_id)
-	end
-
-	if shit.type == hit.light_burn then
-		elemental_damage(draftman_sec, shit, bone_id, flags)
-	end
-
-	if shit.type == hit.burn then
-		elemental_damage(draftman_sec, shit, bone_id, flags)
-	end
-
-	if shit.type == hit.shock then
-		elemental_damage(draftman_sec, shit, bone_id, flags)
-	end
-
-	if shit.type == hit.chemical_burn then
-		elemental_damage(draftman_sec, shit, bone_id, flags)
+		if shit.type == hit.chemical_burn then
+			elemental_damage(draftman_sec, shit, bone_id, flags)
+		end
 	end
 end
-
+	
 function on_game_start()
 	RegisterScriptCallback("actor_on_before_hit",actor_on_before_hit)
 end
