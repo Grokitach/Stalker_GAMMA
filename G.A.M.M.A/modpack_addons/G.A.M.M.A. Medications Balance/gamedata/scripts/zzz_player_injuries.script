@@ -387,28 +387,23 @@ function shaking_hands()
 	local max_arms_sum = (maxhp.rightarm + maxhp.leftarm) * effects_mult
 
 	if arms_sum < (max_arms_sum * (zzz_player_injuries_mcm.get_config("arm_penalty_minimum_hp") * 0.1)) then
-		cam_power = 0.65 * weight / arms_sum
-		cam_power = (body_state == "crouch") and (0.60 * weight / arms_sum) or cam_power
-		cam_power = (body_state == "low_crouch") and (0.55 * weight / arms_sum) or cam_power
+		if (left_arm < right_arm / 1.5) or (right_arm < left_arm / 1.5) then
+			cam_power = 1.15 * weight / arms_sum
+			cam_power = (body_state == "crouch") and (0.8 * weight / arms_sum) or cam_power
+			cam_power = (body_state == "low_crouch") and (0.4 * weight / arms_sum) or cam_power
+		else
+			cam_power = 0.8 * weight / arms_sum
+			cam_power = (body_state == "crouch") and (0.55 * weight / arms_sum) or cam_power
+			cam_power = (body_state == "low_crouch") and (0.3 * weight / arms_sum) or cam_power
+		end
 
 		cam_power = clamp(cam_power, 0, 3)
 		cam_power = cam_power * (zzz_player_injuries_mcm.get_config("arm_animation_power"))
-		local cam_power_scope = cam_power * 0.27
+		local cam_power_scope = cam_power * 0.2
 		if item_in_slot:weapon_is_scope() then
 			cam_power = cam_power_scope
 		end
 		-- play anm
-		level.add_cam_effector("camera_effects\\" .. aim_anm[math.random(#aim_anm)] .. ".anm", 9921, true, "", 0, true, cam_power)
-	else
-		cam_power = 0.18 * weight / max_arms_sum
-		cam_power = (body_state == "crouch") and (0.17 * weight / max_arms_sum) or cam_power
-		cam_power = (body_state == "low_crouch") and (0.16 * weight / max_arms_sum) or cam_power
-		cam_power = clamp(cam_power, 0, 3)
-		cam_power = cam_power * (zzz_player_injuries_mcm.get_config("arm_animation_power"))
-		local cam_power_scope = cam_power * 0.27
-		if item_in_slot:weapon_is_scope() then
-			cam_power = cam_power_scope
-		end
 		level.add_cam_effector("camera_effects\\" .. aim_anm[math.random(#aim_anm)] .. ".anm", 9921, true, "", 0, true, cam_power)
 	end
 	--	news_manager.send_tip(db.actor, r(cam_power), 0, nil, 1500)
@@ -518,7 +513,7 @@ function bhs_concussion()
 --	actor_menu.set_msg(1, strformat("head.tbl.volume: %s, console_volume: %s, stage: %s", r(head_tbl.volume), r(get_console_cmd(2,"snd_volume_eff")), r(head_tbl.stage)))
 
 	-- removing effects if hp between previous and current yellow or blue (or dead)
-	if head_tbl.stage ~= 0 and ((previous == current) or (current <= 0)) then
+	if (previous == current) or (current <= 0) then
 		exec_console_cmd("snd_volume_eff " .. head_tbl.volume)
 		level.remove_pp_effector(99133)
 		head_tbl.stage = 0
