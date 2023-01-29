@@ -1,7 +1,7 @@
 
 --[[
 Icon Override
-11DEC2021
+18OCT2021
 This work is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License
 Author: RavenAscendant
 Provide a location to specifiy alternitive item icons that should be less prone to conflicts
@@ -281,6 +281,47 @@ function utils_ui.UICellItem:Set(obj, area)
 	return true
 end
 
+function utils_ui.UICellItem:Add_Icon(sec, w, h)
+	local rot =  self.ico:GetHeading() > 0
+
+	self.ico:InitTexture( utils_xml.get_icons_texture(sec) )
+	self.ico:SetTextureRect(Frect():set( utils_xml.get_item_axis(sec, nil, true) ))
+	self.ico:SetStretchTexture(true)
+	self.ico:SetWndSize(vector2():set( w * (rot and 1 or ratio) , h  ))
+	self.ico:Show(true)
+	utils_xml.align_to_center(self.ico, self.cell)
+	
+	self:Print(nil, "Show icon")
+end
+
+function utils_ui.UICellItem:Add_Shadow(sec, w, h)
+	local rot =  self.shadow:GetHeading() > 0
+
+	self.shadow:InitTexture( utils_xml.get_icons_texture(sec) )
+	self.shadow:SetTextureRect(Frect():set( utils_xml.get_item_axis(sec, nil, true) ))
+	self.shadow:SetStretchTexture(true)
+	self.shadow:SetWndSize(vector2():set( w * (rot and 1 or ratio) , h  ))
+	self.shadow:Show(true)
+	self.shadow:Show(true)
+	utils_xml.align_to_center(self.shadow, self.cell)
+	
+	local pos = self.ico:GetWndPos()
+	self.shadow:SetWndPos( vector2():set( pos.x + 1 , pos.y + 2 ) )
+	self.shadow:SetTextureColor( clr_list["shadow"] )
+	
+	self:Print(nil, "Show shadow")
+end
+
+function utils_ui.UICellContainer:SetGridSpecs(size, line)
+	self.grid_size = size or self.grid_size
+	self.grid_line = line or self.grid_line
+	self.cols = math.floor( (self.scroll:GetWidth() ) / (self.grid_size * ratio + self.grid_line) )
+	
+	self:Print(nil, "SetGridSpecs | size: %s - line: %s - num of colomns: %s", self.grid_size, self.grid_line, self.cols)
+end
+
+
+
 function utils_ui.UICellItem:Create_Layer(ele, base, sec_m, sec_l, str_x, str_y, str_scale)
 	local ratio = utils_xml.screen_ratio()
 	local grid_size = self.grid_size
@@ -303,15 +344,15 @@ function utils_ui.UICellItem:Create_Layer(ele, base, sec_m, sec_l, str_x, str_y,
 		-- despite rotation, movement for x and y stays normal! 
 		-- Move start pos to match the one for rotated base icon
 		local w_b, h_b = base:GetWidth(), base:GetHeight()
-		local x_st = (w_b/2) - (h_b/2)
-		local y_st = h_b + x_st
-		
+		local x_st = (w_b/2) - (h_b/2)*ratio
+		local y_st = (w_b/2) + (h_b/2)
+		--printf("w:%s,h:%s, y:%s,x:%s",w_b, h_b, y_st,x_st)
 		-- On 90 rotation, x and y are inverted, y axis goes negative simulate normal x movement
 		x_s = x_st + (y * ratio * scale_pos)
 		y_s = y_st - (x * scale_pos) 
 		w_s = w * scale
 		h_s = h * scale
-		w_off = (h_s - h_s *ratio/2)
+		w_off = (h_s* ratio/2)
 		h_off = -w_s/2
 	end
 
@@ -388,7 +429,7 @@ function utils_xml.set_icon(sec, hidden, XML_temp, XML_box, XML_box_small)
 	local _w = XML_temp:GetWidth()
 	local _h = XML_temp:GetHeight()
 	
-	
+
 	local h, w
 	ico.w = ico.w * ico_size * ico_width
 	ico.h = ico.h * ico_size
@@ -799,3 +840,4 @@ function ui_inventory.UIInventory:RMode_InitItemIcon(obj)
 	self.npc_up_item:SetStretchTexture(true)
 	self.npc_up_item:Show(true)
 end
+
