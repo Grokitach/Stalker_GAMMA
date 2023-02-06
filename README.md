@@ -5,6 +5,9 @@ For the complete client (heavy, rarely modified files) necessary for this reposi
 
 https://discord.gg/stalker-gamma
 
+## Contributing
+
+Any Pull Request should be made **to the dev branch**. Anyone can contribute to this project.
 
 ## Credits
 
