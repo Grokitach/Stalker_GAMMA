@@ -4,10 +4,10 @@
 --
 -- Overrides engine calculations for physical damages by using much simpler formulas removing immunities garbage.
 -- The goal of this script is to remove the possibility to become immune to physical damages (stalkers, mutants, strike).
--- It uses a simple damage calculation system derived from Puzzle and Dragons shield system. 
--- The system calculates a protection factor from different sources (armor, artefacts, boosters) 
+-- It uses a simple damage calculation system derived from Puzzle and Dragons shield system.
+-- The system calculates a protection factor from different sources (armor, artefacts, boosters)
 -- and simply multiply the hit power by (1 - protection).
--- Lots of hardcoded multiplier are used for the different damage sources so that even everything feels right 
+-- Lots of hardcoded multiplier are used for the different damage sources so that even everything feels right
 -- using GAMMA modpack values (ammo pen and power, mutants damage, etc).
 -- This script do not change anomalies damages
 -- This script overrides most of the values customisable in the game option menu.
@@ -175,13 +175,13 @@ function get_outfit_ap_res(obj)
 		if outfit then
 			armor_hit_frac = ini_sys:r_float_ex(obj:section(), "hit_fraction_actor") or 1
 			armor_bone_value = (1 - armor_hit_frac) * 0.75 or 0
-				
+
 			-- Helmet
 		elseif helmet then
 			helmet_hit_frac = ini_sys:r_float_ex(obj:section(), "hit_fraction_actor") or 1
-			armor_bone_value = (1 - helmet_hit_frac) or 0  
+			armor_bone_value = (1 - helmet_hit_frac) or 0
 		end
-		
+
 		return armor_bone_value * obj:condition()
 	end
 end
@@ -202,7 +202,7 @@ function get_protection(shit,bone_id,k_ap)
 		protection = "FireWound"
 		booster_type_def = 15
 		adjuster = 0.80
-		arti_adjuster = adjuster 
+		arti_adjuster = adjuster
 		limiter = 0.90
 	end
 
@@ -212,17 +212,17 @@ function get_protection(shit,bone_id,k_ap)
 		protection = "Wound"
 		booster_type_def = 16
 		adjuster = 0.58
-		arti_adjuster = adjuster 
-		limiter = 0.90 
+		arti_adjuster = adjuster
+		limiter = 0.90
 	end
-	
+
 	if shit.type == hit.wound_2 then
 		hit_type = HitTypeID["Wound_2"]
 		immunity = "wound_2_immunity"
 		protection = "Wound_2"
 		booster_type_def = 16
 		adjuster = 0.58
-		arti_adjuster = adjuster 
+		arti_adjuster = adjuster
 		limiter = 0.90
 	end
 
@@ -232,18 +232,18 @@ function get_protection(shit,bone_id,k_ap)
 		protection = "Strike"
 		booster_type_def = 14
 		adjuster = 0.55
-		arti_adjuster = adjuster 
+		arti_adjuster = adjuster
 		limiter = 0.70
 		elemental = 1
 	end
-	
+
 	if shit.type == hit.explosion then
 		hit_type = HitTypeID["Explosion"]
 		immunity = "explosion_immunity"
 		protection = "Explosion"
 		booster_type_def = 13
 		adjuster = 0.45
-		arti_adjuster = adjuster 
+		arti_adjuster = adjuster
 		limiter = 0.75
 		elemental = 1
 	end
@@ -258,7 +258,7 @@ function get_protection(shit,bone_id,k_ap)
 		limiter = 0.95
 		elemental = 1
 	end
-	
+
 	if shit.type == hit.light_burn then
 		hit_type = HitTypeID["LightBurn"]
 		immunity = "burn_immunity"
@@ -269,7 +269,7 @@ function get_protection(shit,bone_id,k_ap)
 		limiter = 0.95
 		elemental = 1
 	end
-	
+
 	if shit.type == hit.shock then
 		hit_type = HitTypeID["Shock"]
 		immunity = "shock_immunity"
@@ -280,18 +280,18 @@ function get_protection(shit,bone_id,k_ap)
 		limiter = 0.95
 		elemental = 1
 	end
-	
+
 	if shit.type == hit.chemical_burn then
 		hit_type = HitTypeID["ChemicalBurn"]
 		immunity = "chemical_burn_immunity"
 		protection = "ChemicalBurn"
 		booster_type_def = 7
 		adjuster = 1.32
-		arti_adjuster = adjuster 
+		arti_adjuster = adjuster
 		limiter = 0.95
 		elemental = 1
 	end
-	
+
 --	if shit.type == hit.radiation then
 --		hit_type = HitTypeID["Radiation"]
 --		immunity = "radiation_immunity"
@@ -300,18 +300,18 @@ function get_protection(shit,bone_id,k_ap)
 --		adjuster = 0.80
 --		limiter = 1.00
 --	end
-	
+
 	if shit.type == hit.telepatic then
 		hit_type = HitTypeID["Telepatic"]
 		immunity = "telepatic_immunity"
 		protection = "telepatic"
 		booster_type_def = 6
 		adjuster = 1.00
-		arti_adjuster = adjuster 
+		arti_adjuster = adjuster
 		limiter = 0.90
 		psy = 1
 	end
-	
+
 	-- Special case for Headshot
 
 	if hitboxes[bone_id] == "head" then
@@ -325,7 +325,7 @@ function get_protection(shit,bone_id,k_ap)
 		if (outfit) then
 		local cond = outfit:condition()
 		local c_outfit = outfit:cast_CustomOutfit()
-		if (c_outfit) then    
+		if (c_outfit) then
 			if protection == "FireWound" then
 				armor_protection = c_outfit:GetBoneArmor( BoneID["bip01_spine"] ) * cond * adjuster or 0
 			else
@@ -343,14 +343,14 @@ function get_protection(shit,bone_id,k_ap)
     	if (helmet) then
 		local cond = helmet:condition()
 		local c_helmet = helmet:cast_Helmet()
-		if (c_helmet) then    
+		if (c_helmet) then
 			if protection == "FireWound" then
 				helmet_protection = c_helmet:GetBoneArmor( BoneID["bip01_head"] ) * cond * adjuster or 0
 			else
 				helmet_protection = c_helmet:GetDefHitTypeProtection( hit_type ) * adjuster or 0
 			end
 			helmet_hit_frac = ini_sys:r_float_ex(helmet:section(), "hit_fraction_actor") or 1
-			helmet_bone_value = (1 - helmet_hit_frac) * cond or 0  
+			helmet_bone_value = (1 - helmet_hit_frac) * cond or 0
         end
 	end
 
@@ -360,10 +360,10 @@ function get_protection(shit,bone_id,k_ap)
 	actor:iterate_belt( function(owner, obj)
 		local sec = obj:section()
 		local cond = obj:condition()
-		
+
 		af_bone_value = 0
 		prot = 0
-		
+
 		if sec == "af_kevlar" then
 			af_bone_value = 0.00
 		end
@@ -376,17 +376,17 @@ function get_protection(shit,bone_id,k_ap)
 		if sec == "af_plates_up" then
 			af_bone_value = 0.03
 		end
-		
+
 		local immunities_sec = SYS_GetParam(0, sec, "hit_absorbation_sect", sec)
 		local prot = SYS_GetParam(2, immunities_sec, immunity , 0) * cond
-		
+
 		if headshot == 1 then
 			if sec == "af_kevlar" or sec == "af_kevlar_up" or sec == "af_plates" or sec == "af_plates_up" then
 				prot = 0
 				af_bone_value = 0
 			end
 		end
-		
+
 		artefacts_protection = artefacts_protection + prot
 		artefacts_ap_res = artefacts_ap_res + af_bone_value
 	end)
@@ -399,7 +399,7 @@ function get_protection(shit,bone_id,k_ap)
 			booster_protection = booster_value
 		end
 	end)
-	
+
 	if elemental == 0 then
 		if headshot == 1 then
 			armor_bone_value = 0
@@ -415,10 +415,10 @@ function get_protection(shit,bone_id,k_ap)
 
 
 	-- Special case if ammo do not penetrate armor
-	no_pen = 0 
+	no_pen = 0
 	if shit.type == hit.fire_wound then
 		if headshot == 1 then
-			printf('ammo pen = %s', k_ap)	
+			printf('ammo pen = %s', k_ap)
 			printf('armor class = %s', helmet_bone_value)
 			if k_ap < helmet_bone_value then
 				helmet_protection = helmet_protection * 0.2 + helmet_bone_value * 1.3
@@ -426,7 +426,7 @@ function get_protection(shit,bone_id,k_ap)
 				no_pen = 1
 			end
 		else
-			printf('ammo pen = %s', k_ap)	
+			printf('ammo pen = %s', k_ap)
 			printf('armor class = %s', armor_bone_value)
 			printf('plates armor class = %s', artefacts_ap_res)
 			armor_bone_value = armor_bone_value + artefacts_ap_res
@@ -438,9 +438,9 @@ function get_protection(shit,bone_id,k_ap)
 			end
 		end
 	end
-	
+
 	total_prot = (helmet_protection + armor_protection + artefacts_protection + booster_protection)
-	-- Max protection limiter to avoid immunity to damages		
+	-- Max protection limiter to avoid immunity to damages
 	if total_prot > limiter then
 		total_prot = limiter
 	end
@@ -455,7 +455,7 @@ function shit_booster(shit, bone_id, k_ap)
 	if shit.type == hit.strike then
 		shit.power = shit.power -- some strike damage are really low and need to be boosted (jumping from height, etc)
 	end
-	
+
 	if shit.type == hit.fire_wound then
 		shit.power = shit.power * 0.8 -- weapons damage are a bit crazy, P90 has a power of 0.33 + crazy rate of fire...
 	end
@@ -463,14 +463,14 @@ function shit_booster(shit, bone_id, k_ap)
 	if shit.type == hit.wound then
 		shit.power = shit.power * 0.65 -- Now that there's no immunity, damages need to be scaled down. Chimeras do 1.54 damage and boars do 0.90 !
 	end
-	
+
 	damage = shit.power * ( 1 - total_prot )
-	
+
 	-- Body part damage multiplier (already applied by engine in shit.power)
 	local body_part = hitboxes[bone_id]
 	local body_part_mult = hitbox_mult[body_part] or 1.0
 	damage = damage * body_part_mult
-	
+
 	-- Resolve mechanic, survive with few hp instead of dying from huge hits
 	if damage >= db.actor.health and db.actor.health >= 0.65 then
 		printf("/// avoided one shot - last chance")
@@ -480,12 +480,12 @@ function shit_booster(shit, bone_id, k_ap)
 	printf('part hit = %s', hitboxes[bone_id])
 	printf('total protection = %s', total_prot)
 	printf('damage to actor = %s', damage)
-	
+
 	if psy == 1 then
 		printf('Psy damages, handeld by engine')
 		return
 	end
-	
+
 	shit.power = 0
 	db.actor:set_health_ex(db.actor.health - damage)
 	if no_pen == 0 then
@@ -493,7 +493,7 @@ function shit_booster(shit, bone_id, k_ap)
 			db.actor:cast_Actor():conditions():AddWound(damage, hit_type, bone_id)
 		end
 	end
-	
+
 	if elemental == 1 then
 		helmet = db.actor:item_in_slot(12)
         if helmet then
@@ -501,7 +501,7 @@ function shit_booster(shit, bone_id, k_ap)
 			helmet:set_condition(cond - damage * 0.07)
 			printf('Helmet condition dmg = %s', damage * 0.07)
 		end
-		
+
 		armor = db.actor:item_in_slot(7)
 		if armor then
 			cond = armor:condition()
@@ -510,7 +510,7 @@ function shit_booster(shit, bone_id, k_ap)
 		end
 	end
 
-	if elemental == 0 then	
+	if elemental == 0 then
 		if headshot == 1 then
 			helmet = db.actor:item_in_slot(12)
 			if helmet then
@@ -530,9 +530,9 @@ function shit_booster(shit, bone_id, k_ap)
 end
 
 
-trigger = 0
-delay = 1000
-delay_mine = 10
+local trigger = 0
+local delay = 1000
+local delay_mine = 10
 
 function elemental_damage(draftman_sec, shit, bone_id, flags)
 	if string.find(draftman_sec,"field") then
@@ -556,20 +556,73 @@ function elemental_damage(draftman_sec, shit, bone_id, flags)
 			shit_booster(shit,bone_id)
 		end
 	end
-	
+
 	flags.ret_value = false
 end
 
+local trigger2 = 0
+local delay2 = 33
+local rad_grace = 1000
+local rad_damage = 10000
+local rad_trigger = 0
+
 function actor_on_before_hit(shit,bone_id, flags)
+	local damage = 0
+	local skip = 0
+	tg = time_global()
 
-	draftman = shit.draftsman
-	draftman_sec = draftman:section()
+	if shit.type == hit.radiation then
+		if rad_trigger == 0 then
+			rad_grace_delay = tg + rad_grace
+			rad_grace_cancel = tg + rad_damage
+			rad_trigger = 1
+			printf("starting radiation protection")
+			shit.power = 0
+			flags.ret_value = false
+			return
+		end
 
-	if shit.draftsman and shit.draftsman:has_info("npcx_is_companion") then
-		shit.power = 0
+		if tg > rad_grace_cancel then
+			rad_trigger = 0
+			shit.power = 0
+			flags.ret_value = false
+			return
+		end
+
+		if (rad_trigger == 1 and tg > rad_grace_delay and tg < rad_grace_cancel) then
+			shit.power = shit.power * difficulty_multiplier[game_num]
+			return
+		else
+			shit.power = 0
+			flags.ret_value = false
+			return
+		end
 	end
 
--- Reduce hit power based on difficulty	
+	if (trigger2 == 0 and skip == 0) then
+		grok_delay2 = tg + delay2
+		trigger2 = 1
+		hitter = shit.draftsman:section()
+	end
+	if (trigger2 == 1) then
+		if (tg < grok_delay2) and (hitter == shit.draftsman:section()) then
+			shit.power = 0
+			flags.ret_value = false
+			return
+		else
+			damage = 1
+			trigger2 = 0
+		end
+	end
+
+	if damage == 1 then
+		if shit.draftsman and shit.draftsman:has_info("npcx_is_companion") then
+			shit.power = 0
+			flags.ret_value = false
+			return
+		end
+
+	-- Reduce hit power based on difficulty
 
 		gameplay = alife_storage_manager.get_state().diff_game
 		if not (type(gameplay) == "table") then -- for old saves
@@ -578,89 +631,99 @@ function actor_on_before_hit(shit,bone_id, flags)
 			gameplay = alife_storage_manager.get_state().diff_game
 		end
 		game_num = gameplay["type"] or game_num
-		
-		--printf(game_num)
+
+			--printf(game_num)
 		shit.power = shit.power * difficulty_multiplier[game_num]
 
--- Reduce shotguns damage and get ammo AP power
-	if (shit.type == hit.fire_wound) then
+	-- Reduce shotguns damage and get ammo AP power
+		if (shit.type == hit.fire_wound) then
 
-		wpn = level.object_by_id(shit.weapon_id)
+			wpn = level.object_by_id(shit.weapon_id)
 
-		if wpn == nil then return end
+			if wpn == nil then return end
 
-		local sec = wpn:section()
-		local wpn_id = wpn:id()
+			local sec = wpn:section()
+			local wpn_id = wpn:id()
 
-		local ammo_type_number = wpn:get_ammo_type()
-		local ammo_list = utils_item.get_ammo(sec, wpn_id)
-		local ammo_section = ammo_list[ammo_type_number+1]
+			local ammo_type_number = wpn:get_ammo_type()
+			local ammo_list = utils_item.get_ammo(sec, wpn_id)
+			local ammo_section = ammo_list[ammo_type_number+1]
 
-		if ammo_section == nil then return end
-	
-		if (string.find(ammo_section, "buck")) then
-			printf("/// Reducing buckshots damage")
-			shit.power = shit.power / 3
+			if ammo_section == nil then return end
+
+			if (string.find(ammo_section, "buck")) then
+				printf("/// Reducing buckshots damage")
+				shit.power = shit.power / 3
+			end
+
+			if (string.find(ammo_section, "23x75")) then
+				printf("/// Reducing KS23 damage")
+				shit.power = shit.power / 5
+			end
+
+			if (string.find(ammo_section, "dart")) then
+				printf("/// Reducing AP Slugs damage")
+				shit.power = shit.power / 2
+			end
+
+			if (string.find(ammo_section, "zhekan")) then
+				printf("/// Reducing Slugs damage")
+				shit.power = shit.power / 2
+			end
+
+			if (string.find(ammo_section, "pkm")) then
+				printf("/// Reducing PKM damage")
+				shit.power = shit.power / 4
+			end
+
+			k_ap = ini_sys:r_float_ex(ammo_section, "k_ap") or 0
+
+			shit_booster(shit,bone_id, k_ap)
 		end
 
-	    if (string.find(ammo_section, "23x75")) then
-			printf("/// Reducing KS23 damage")
-			shit.power = shit.power / 5
-		end
-		
-		if (string.find(ammo_section, "dart")) then
-			printf("/// Reducing AP Slugs damage")
-			shit.power = shit.power / 2
-		end
-		
-		if (string.find(ammo_section, "zhekan")) then
-			printf("/// Reducing Slugs damage")
-			shit.power = shit.power / 2
-		end
-		
-		if (string.find(ammo_section, "pkm")) then
-			printf("/// Reducing PKM damage")
-			shit.power = shit.power / 4
+		if (shit.type == hit.wound) then
+			shit_booster(shit,bone_id)
+			flags.ret_value = false
 		end
 
-		k_ap = ini_sys:r_float_ex(ammo_section, "k_ap") or 0
+		if (shit.type == hit.strike) then
+			shit_booster(shit,bone_id)
+		end
 
-		shit_booster(shit,bone_id, k_ap)	
-	end
+		if (shit.type == hit.explosion) then
+			shit_booster(shit,bone_id)
+		end
 
-	if (shit.type == hit.wound) then
-		shit_booster(shit,bone_id)
-	end
+		if shit.type == hit.light_burn then
+			elemental_damage(shit.draftsman:id(), shit, bone_id, flags)
+		end
 
-	if (shit.type == hit.strike) then
-		shit_booster(shit,bone_id)
-	end
+		if shit.type == hit.burn then
+			elemental_damage(shit.draftsman:id(), shit, bone_id, flags)
+		end
 
-	if (shit.type == hit.explosion) then
-		shit_booster(shit,bone_id)
-	end	
-	
-	if shit.type == hit.telepatic then
-		shit_booster(shit,bone_id)
-	end
+		if shit.type == hit.shock then
+			elemental_damage(shit.draftsman:id(), shit, bone_id, flags)
+		end
 
-	if shit.type == hit.light_burn then
-		elemental_damage(draftman_sec, shit, bone_id, flags)
+		if shit.type == hit.chemical_burn then
+			elemental_damage(shit.draftsman:id(), shit, bone_id, flags)
+		end
 	end
+end
 
-	if shit.type == hit.burn then
-		elemental_damage(draftman_sec, shit, bone_id, flags)
-	end
 
-	if shit.type == hit.shock then
-		elemental_damage(draftman_sec, shit, bone_id, flags)
+function actor_on_first_update()
+	gameplay = alife_storage_manager.get_state().diff_game
+	if not (type(gameplay) == "table") then -- for old saves
+		alife_storage_manager.get_state().diff_game = {}
+		alife_storage_manager.get_state().diff_game["type"] = game_num
+		gameplay = alife_storage_manager.get_state().diff_game
 	end
-
-	if shit.type == hit.chemical_burn then
-		elemental_damage(draftman_sec, shit, bone_id, flags)
-	end
+	game_num = gameplay["type"] or game_num
 end
 
 function on_game_start()
 	RegisterScriptCallback("actor_on_before_hit",actor_on_before_hit)
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
 end
