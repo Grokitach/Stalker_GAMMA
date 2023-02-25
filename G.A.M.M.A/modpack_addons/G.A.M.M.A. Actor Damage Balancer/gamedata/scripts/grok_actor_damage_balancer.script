@@ -562,15 +562,43 @@ end
 
 local trigger2 = 0
 local delay2 = 33
+local rad_grace = 1000
+local rad_damage = 10000
+local rad_trigger = 0
 
 function actor_on_before_hit(shit,bone_id, flags)
 	local damage = 0
 	local skip = 0
+	tg = time_global()
+	
 	if shit.type == hit.radiation then
-		skip = 1
+		if rad_trigger == 0 then
+			rad_grace_delay = tg + rad_grace
+			rad_grace_cancel = tg + rad_damage
+			rad_trigger = 1
+			printf("starting radiation protection")
+			shit.power = 0
+			flags.ret_value = false
+			return
+		end
+		
+		if tg > rad_grace_cancel then
+			rad_trigger = 0
+			shit.power = 0
+			flags.ret_value = false
+			return
+		end
+		
+		if (rad_trigger == 1 and tg > rad_grace_delay and tg < rad_grace_cancel) then
+			shit.power = shit.power * difficulty_multiplier[game_num]
+			return
+		else
+			shit.power = 0
+			flags.ret_value = false
+			return
+		end
 	end
 
-	tg = time_global()
 	if (trigger2 == 0 and skip == 0) then
 		grok_delay2 = tg + delay2
 		trigger2 = 1
@@ -587,10 +615,7 @@ function actor_on_before_hit(shit,bone_id, flags)
 		end
 	end
 
-	if damage == 1 or skip == 1 then
-		draftman = shit.draftsman
-		draftman_sec = draftsman:section()
-
+	if damage == 1 then
 		if shit.draftsman and shit.draftsman:has_info("npcx_is_companion") then
 			shit.power = 0
 			flags.ret_value = false
@@ -670,23 +695,35 @@ function actor_on_before_hit(shit,bone_id, flags)
 		end	
 
 		if shit.type == hit.light_burn then
-			elemental_damage(draftman_sec, shit, bone_id, flags)
+			elemental_damage(shit.draftsman:id(), shit, bone_id, flags)
 		end
 
 		if shit.type == hit.burn then
-			elemental_damage(draftman_sec, shit, bone_id, flags)
+			elemental_damage(shit.draftsman:id(), shit, bone_id, flags)
 		end
 
 		if shit.type == hit.shock then
-			elemental_damage(draftman_sec, shit, bone_id, flags)
+			elemental_damage(shit.draftsman:id(), shit, bone_id, flags)
 		end
 
 		if shit.type == hit.chemical_burn then
-			elemental_damage(draftman_sec, shit, bone_id, flags)
+			elemental_damage(shit.draftsman:id(), shit, bone_id, flags)
 		end
 	end
 end
-	
+
+
+function actor_on_first_update()
+	gameplay = alife_storage_manager.get_state().diff_game
+	if not (type(gameplay) == "table") then -- for old saves
+		alife_storage_manager.get_state().diff_game = {}
+		alife_storage_manager.get_state().diff_game["type"] = game_num
+		gameplay = alife_storage_manager.get_state().diff_game
+	end
+	game_num = gameplay["type"] or game_num
+end
+
 function on_game_start()
 	RegisterScriptCallback("actor_on_before_hit",actor_on_before_hit)
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
 end
