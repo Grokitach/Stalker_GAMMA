@@ -1,0 +1,115 @@
+function init(obj)
+    obj:bind_object(placeable_workshop_binder(obj))
+end
+
+curBoxID = nil
+gc = game.translate_string
+-----------------------------
+local function use_container(id,pid)
+	local box = id and level.object_by_id(id)
+	if (box) then
+		--level.map_add_object_spot(id, "ui_pda2_actor_box_location", "st_ui_pda_actor_box") -- debug
+		curBoxID = pid
+		hide_hud_inventory()
+		box:use(db.actor)
+		return true -- destroy timed event
+	end 
+	return false -- repeat timed event
+end 
+
+-- called from item section in items.ltx
+function access_inventory(obj)
+	local id = obj:id()
+	local m_data = alife_storage_manager.get_state()
+	local se_inv_box = m_data.workshop_stashes and m_data.workshop_stashes[id] and alife_object(m_data.workshop_stashes[id])
+	if not (se_inv_box) then
+		-- position under map
+		local pos = vec_set(obj:position())
+		pos.y = pos.y - 50
+
+		-- create inventory_box_s
+		se_inv_box = alife_create("workshop_stash",pos,obj:level_vertex_id(),obj:game_vertex_id())
+
+	end
+	if (se_inv_box) then
+		-- shouldn't be possible but very safe incase some sort of save corruption
+		if not (IsInvbox(nil,se_inv_box:clsid())) then
+			if m_data.workshop_stashes then
+				m_data.workshop_stashes[id] = nil
+			end
+			return 
+		end
+		
+		-- force strictly online
+		alife():set_switch_online(se_inv_box.id,true)
+		alife():set_switch_offline(se_inv_box.id,false)
+		
+		-- Save container
+		if not (m_data.workshop_stashes) then
+			m_data.workshop_stashes = {}
+		end
+		m_data.workshop_stashes[id] = se_inv_box.id
+		
+		-- Object will come online next update so wait
+		CreateTimeEvent(id,"container",0,use_container,se_inv_box.id,id)
+	end
+end
+--------------------------------------------------------------------------------
+-- Class "placeable_workshop_binder"
+--------------------------------------------------------------------------------
+class "placeable_workshop_binder" (object_binder)
+-- Class constructor
+function placeable_workshop_binder:__init(obj) super(obj)
+	self.object:set_tip_text(gc("st_interact"))
+end
+-- Class update
+function placeable_workshop_binder:update(delta)
+    self.object:set_callback(callback.use_object, placeable_workshop_binder.use_callback, self)
+    object_binder.update(self, delta)
+
+	if not self.init then
+		local phys = self.object:get_physics_shell()
+		if phys then
+			phys:apply_force(0, 1, 0)
+			self.init = true
+		end
+	end
+end
+
+-- Reload object
+function placeable_workshop_binder:reload(section)
+    object_binder.reload(self, section)
+end
+-- Reinitialize object
+function placeable_workshop_binder:reinit()
+    object_binder.reinit(self)
+end
+-- Net spawn
+function placeable_workshop_binder:net_spawn(se_abstract)
+    if not(object_binder.net_spawn(self, se_abstract)) then
+        return false
+    end
+    return true
+end
+-- Net destroy
+function placeable_workshop_binder:net_destroy()
+	-- containers[self.object:id()] = nil
+	object_binder.net_destroy(self)
+end
+-- Standart function for save
+function placeable_workshop_binder:net_save_relevant()
+	return true
+end
+-- Saving container
+function placeable_workshop_binder:save(stpk)
+	object_binder.save(self, stpk)
+end
+-- Loading container
+function placeable_workshop_binder:load(stpk)
+	object_binder.load(self, stpk)
+end
+
+function placeable_workshop_binder:use_callback(obj, who)
+    hide_hud_inventory()
+	ui_furniture_workshop.start_dialog(obj:id())
+end

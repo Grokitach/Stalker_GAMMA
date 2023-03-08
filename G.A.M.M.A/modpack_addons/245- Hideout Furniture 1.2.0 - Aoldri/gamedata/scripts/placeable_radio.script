@@ -1,0 +1,672 @@
+
+--[[
+	Tronex
+	Last edit: 2018/5/22
+	PDA radio/music player
+	
+	==============================================================================================
+	Codes/comments with ( --< can be expanded for more channels >-- ) tag can be edited to add more radio channels
+	Creating new radio channel require editing the other XML and DDS files as well.
+	Using (radio_vol = soundObject.volume) will cause a crash if you didn't give the object a volume value
+	Sounds start always at maxed volume before going down if you declare a volume value before playing the sound
+	Don't use (play_no_feedback) method, it has no controls
+	volume values changes give fractions (for example 0.2 change is actually 0.20000003278255)
+	Codes/comments with ( --< can be expanded for more channels >-- ) tag can be edited to add more radio channels
+	==============================================================================================
+--]]
+------------------------------------------------------------
+-- Controls
+------------------------------------------------------------
+-- Files links & controls
+local ini_radio    		 = ini_file("plugins\\radio_zone_fm.ltx")		-- File control: reading the ltx file that controls the hotkeys
+local num_of_ch          = 0									--< can be expanded for more channels >--- Number of Radio channels 
+local num_of_noise       = 8									-- File control: number of files with name (white_noise_heavy_horror_)
+local num_of_mixdown     = 4									-- File control: number of files with name (radio_mixdown)
+local path_radio_ch      = {} 									-- File control: the path to channel x tracks
+local path_radio_session = {} 									-- File control: the path to channel x sessions
+local radio_ch_names = {}
+local radio_frequencies = {}
+
+local ini_channels = ini_file_ex("plugins\\placeable_radio\\base.ltx")
+local i = 1
+for _, section in pairs(ini_channels:get_sections()) do
+    path_radio_ch[i] = ini_channels:r_string_ex(section, "program")
+	path_radio_session[i] = ini_channels:r_string_ex(section, "intermission")
+	radio_ch_names[i] = ini_channels:r_string_ex(section, "name")
+	radio_frequencies[i] = ini_channels:r_string_ex(section, "frequency")
+	
+	num_of_ch = num_of_ch + 1
+	i = i + 1
+end
+
+local fileList, count, file									-- Variables for file reading
+
+
+-- Volume controls
+local radio_vol = 0.5										-- In-game control: Radio volume - first value
+local vol_max   = 0.98										-- In-game control: Max volume value (1.1 - anything beyond 1.0 has no additional effect)
+local vol_min   = 0.12										-- In-game control: Min volume value (0.1 - still hearable)
+local vol_step  = 0.2										-- In-game control: Volume change per click
+local psi_vol   = 0											-- This value get subtracted from the main volume value, it become >0 on emissions to reduce the total radio volume
+
+-- Others
+local safety_lock     = false									-- become "true" after making change. while true, it prevents any possible additional changes done by user for a brief amount of time until the code is over. basically a safety procedure to prevent codes from interfering with each others (locked = true, free to go = false)
+local white_noise_now = 1										-- Current index of the white noise
+local psi_start_lock  = false									-- used to separate stages of for emission noise effects
+local psi_time        = time_global() or 0						-- period between radio volume shifts for emission/underground noise effects
+local indoor_lvls     = {}										-- Table: contains names of underground levels
+local gini            = game_ini()
+local levels          = utils_data.collect_section(gini,"level_maps_single")
+for i=1,#levels do
+	wthr = gini:r_string_ex(levels[i],"weathers")
+	if (wthr == "indoor") then
+		indoor_lvls[levels[i]] = true
+	end
+end
+
+
+-- Hotkeys
+local opt = {}
+function update_settings()
+	opt.emission_noise         = ui_options.get("sound/radio/emission_intereferences")
+	opt.underground_noise      = ui_options.get("sound/radio/underground_intereferences")
+	opt.display_names          = ui_options.get("sound/radio/display_tracks")
+end
+
+------------------------------------------------------------
+-- Binder
+------------------------------------------------------------
+function init(obj)
+    obj:bind_object(placeable_radio_binder(obj))
+end
+--------------------------------------------------------------------------------
+-- Class "placeable_radio_binder"
+--------------------------------------------------------------------------------
+class "placeable_radio_binder" (object_binder)
+-- Class constructor
+function placeable_radio_binder:__init(obj) super(obj)
+	-- Radio
+	self.radio_ch    = {}										-- Multi-dimensional table: Radio channels, every channel has its tracks
+	self.radio_ch_out = {}										-- Similar, used for outer radios
+	self.radio_index = {}										-- Multi-dimensional table: Radio channels indexes, every channel index has its track indexes
+	self.radio_now   = {}										-- Table: to determine the current track for each channel
+	for x = 1, num_of_ch do										-- Reading the files for radio channels
+		self.radio_ch[x] = {}
+		self.radio_ch_out[x] = {}
+		self.radio_index[x] = {}
+		self.radio_now[x] = 1
+		fileList = getFS():file_list_open("$game_sounds$", path_radio_ch[x], bit_or(FS.FS_ListFiles, FS.FS_RootOnly))		-- Reading the file list in channel x
+		count = fileList and fileList:Size() or 0																			-- Get the number of files per channel x
+		if (count > 0) then
+			for i = 1, count do
+				file = fileList:GetAt(i - 1):sub(1, -5)								-- Get red off the extension
+				self.radio_ch[x][i] = sound_object(path_radio_ch[x] .. file)				-- Creating sound objects, every track in every channel
+				self.radio_ch_out[x][i] = sound_object(path_radio_ch[x] .. file)
+				self.radio_index[x][i] = i												-- Creating track index
+			end
+		else																		-- if no files found
+			self.radio_ch[x][1] = sound_object("radio\\no_sound")							-- assign no sound, a small hack to prevent the game from crashing
+			self.radio_ch_out[x][1] = sound_object("radio\\no_sound")
+			self.radio_index[x][1] = 1
+		end
+	end
+	self.radio_state         = false							-- Radio on/off state (off = false, on = true)
+	self.radio_selected      = 0								-- Selected Radio channel (0 means nothing is selected)
+	self.radio_hotkey_switch = false							-- Safety switch for (Play/Stop Radio) Hotkey
+
+
+	-- Radio sessions
+	self.radio_session      = {}								-- Multi-dimensional table: Radio channels commercial sessions, every channel has its sessions
+	self.radio_session_out  = {}								-- Similar, used for outer radios
+	self.radio_session_now  = {}								-- Current session per channel
+	self.radio_session_lock = {}								-- Boolean table: used to make sure that only 1 session is being played between tracks
+	for x = 1, num_of_ch do										-- assign sound files for sessions
+		self.radio_session[x] = {}
+		self.radio_session_out[x] = {}
+		self.radio_session_now[x] = 1
+		self.radio_session_lock[x] = false
+		fileList = getFS():file_list_open("$game_sounds$", path_radio_session[x], bit_or(FS.FS_ListFiles, FS.FS_RootOnly))	-- Reading the file list in channel x sessions
+		count = fileList and fileList:Size() or 0				-- Get the number of files per channel x
+		if (count > 0) then
+			for i = 1, count do
+				file = fileList:GetAt(i - 1):sub(1, -5)
+				self.radio_session[x][i] = sound_object(path_radio_session[x] .. file)
+				self.radio_session_out[x][i] = sound_object(path_radio_session[x] .. file)
+			end
+		else
+			self.radio_session[x][1] = sound_object("radio\\no_sound")
+			self.radio_session_out[x][1] = sound_object("radio\\no_sound")
+		end
+	end
+	-- Sound effects
+	self.snd_radio_mixdown            = {}
+	self.snd_white_noise_heavy_horror = {}
+	self.snd_radio_on                 = sound_object("radio\\interact\\radio_on")
+	self.snd_radio_off                = sound_object("radio\\interact\\radio_off")
+	self.snd_white_noise_light        = sound_object("radio\\white_noise\\white_noise_light")
+	self.snd_white_noise_heavy        = sound_object("radio\\white_noise\\white_noise_heavy")
+	self.snd_white_noise_heavy_start  = sound_object("radio\\white_noise\\white_noise_heavy_fade_in")
+	self.snd_white_noise_heavy_end    = sound_object("radio\\white_noise\\white_noise_heavy_fade_out")
+	for i = 1, num_of_mixdown do
+		self.snd_radio_mixdown[i] = sound_object("radio\\interact\\radio_mixdown_" .. tostring(i))
+		self.snd_radio_mixdown[i].volume = 2
+	end
+	for i = 1, num_of_noise do
+		self.snd_white_noise_heavy_horror[i] = sound_object("radio\\white_noise\\White_noise_heavy_horror_" .. tostring(i))
+	end
+	self.snd_radio_on.volume  = 2
+	self.snd_radio_off.volume = 2
+
+	self.object:set_tip_text(game.translate_string("st_interact"))
+end
+-- Class update
+function placeable_radio_binder:update(delta)
+    object_binder.update(self, delta)
+	self.object:set_callback(callback.use_object, placeable_radio_binder.use_callback, self)
+
+	if not self.init then
+		local phys = self.object:get_physics_shell()
+		if phys then
+			phys:apply_force(0, 1, 0)
+			self.init = true
+		end
+	end
+
+	-- Radio (no channel) part
+	if self.radio_state and (self.radio_selected == 0) then
+		if not self.snd_white_noise_light:playing() then
+			self.snd_white_noise_light:play_at_pos(self.object, self.object:position(), 0, sound_object.s3d)
+			self.snd_white_noise_light.volume = 0.4
+		end
+	else
+		self.snd_white_noise_light:stop()
+	end
+
+	-- Consume power from PDA if radio/player is ON
+	-- change obj:condition()
+
+
+	if (not safety_lock) then
+		-- Radio part
+		if (not self:is_snd_playing()) then
+			for i=1,num_of_ch do
+				if (not self.radio_ch[i][self.radio_now[i]]:playing()) and (not self.radio_session[i][self.radio_session_now[i]]:playing()) then	 	-- if no track and no session is playing in channel (i)
+					if (math.random(3) == 1) and (not self.radio_session_lock[i]) then		-- chance of playing a session between tracks (%30)
+						self.radio_session_now[i] = math.random(#self.radio_session[i])	-- pick a session from channel i
+						self.radio_session[i][self.radio_session_now[i]]:play_at_pos(self.object, self.object:position(), 0, sound_object.s3d)	-- play it
+						self.radio_session_lock[i] = true
+					else	-- if no session is picked, go for radio tracks
+						self.radio_now[i] = self:radio_pick (self.radio_index[i], #self.radio_ch[i])	-- pick a track from channel i
+						self.radio_ch[i][self.radio_now[i]]:play_at_pos(self.object, self.object:position(), 0, sound_object.s3d)	-- play it
+						self.radio_session_lock[i] = false
+					end
+				end
+				
+				if self.radio_state and (self.radio_selected == i) then												
+					self.radio_ch[i][self.radio_now[i]].volume = radio_vol - psi_vol
+					self.radio_session[i][self.radio_session_now[i]].volume = radio_vol - psi_vol
+				else
+					self.radio_ch[i][self.radio_now[i]].volume = 0
+					self.radio_session[i][self.radio_session_now[i]].volume = 0
+				end
+			end
+		end
+	end
+
+	-- Emission part
+	if opt.emission_noise then
+		if  xr_conditions.surge_started() or psi_storm_manager.is_started() then 
+			if not psi_start_lock then 	-- lock to make sure this condition happen once per emission
+				psi_start_lock = true
+				self.snd_white_noise_heavy_start:play_at_pos(self.object, self.object:position(), 0, sound_object.s3d)
+			end
+			if (not self.snd_white_noise_heavy_start:playing()) and (not self.snd_white_noise_heavy_horror[white_noise_now]:playing()) then
+				white_noise_now = math.random(#self.snd_white_noise_heavy_horror)
+				self.snd_white_noise_heavy_horror[white_noise_now]:play_at_pos(self.object, self.object:position(), 0, sound_object.s3d)
+			end
+			if (math.floor(psi_time + 1500) < time_global()) then
+				psi_time = time_global()
+				psi_vol = math.random(2,8)/10
+			end
+		elseif psi_start_lock then
+			if (xr_conditions.surge_complete() or psi_storm_manager.is_finished()) and (not self.snd_white_noise_heavy_horror[white_noise_now]:playing()) and (not self.snd_white_noise_heavy_start:playing()) and (not self.snd_white_noise_heavy_end:playing()) then -- if emission ended AND start/end sound are not playing AND emission lock is on 
+				self.snd_white_noise_heavy_end:play_at_pos(self.object, self.object:position(), 0, sound_object.s3d)
+				psi_start_lock = false
+				psi_vol = 0
+			end
+		end
+	else
+		self.snd_white_noise_heavy_horror[white_noise_now]:stop()
+		self.snd_white_noise_heavy_start:stop()
+		self.snd_white_noise_heavy_end:stop()
+		psi_start_lock = false
+		psi_vol = 0
+	end
+
+	-- Underground part
+	if indoor_lvls[level.name()] then
+		if opt.underground_noise then
+			if (not self.snd_white_noise_heavy:playing()) then
+				self.snd_white_noise_heavy:play_at_pos(self.object, self.object:position(), 0, sound_object.s3d)
+			end
+			if (math.floor(psi_time + 1500) < time_global()) then
+				psi_time = time_global()
+				psi_vol = math.random(5,8)/10
+			end
+		else
+			psi_vol = 0
+		end
+	end
+
+	if self.radio_state then 
+		self.snd_white_noise_heavy_horror[white_noise_now].volume = radio_vol
+		self.snd_white_noise_heavy_start.volume = radio_vol
+		self.snd_white_noise_heavy_end.volume = radio_vol
+		self.snd_white_noise_heavy.volume = radio_vol
+	else
+		self.snd_white_noise_heavy_horror[white_noise_now].volume = 0
+		self.snd_white_noise_heavy_start.volume = 0
+		self.snd_white_noise_heavy_end.volume = 0
+		self.snd_white_noise_heavy.volume = 0
+	end
+end
+
+-- Reload object
+function placeable_radio_binder:reload(section)
+    object_binder.reload(self, section)
+end
+-- Reinitialize object
+function placeable_radio_binder:reinit()
+    object_binder.reinit(self)
+end
+-- Net spawn
+function placeable_radio_binder:net_spawn(se_abstract)
+    if not(object_binder.net_spawn(self, se_abstract)) then
+        return false
+    end
+    return true
+end
+-- Net destroy
+function placeable_radio_binder:net_destroy()
+	object_binder.net_destroy(self)
+end
+-- Standart function for save
+function placeable_radio_binder:net_save_relevant()
+	return true
+end
+-- Saving container
+function placeable_radio_binder:save(stpk)
+	object_binder.save(self, stpk)
+end
+-- Loading container
+function placeable_radio_binder:load(stpk)
+	object_binder.load(self, stpk)
+end
+function placeable_radio_binder:use_callback(obj, who)
+    hide_hud_inventory()
+	start_radio_dialog(obj:id())
+end
+
+------------------------------------------------------------
+-- Functionality
+------------------------------------------------------------
+function placeable_radio_binder:action_radio_ch(n) -- Rule: Switch to Channel (n)
+	if self.radio_state and (not safety_lock) and (not self:is_snd_playing()) and (self.radio_selected ~= n) then
+		safety_lock = true
+		-- get_ui():SwitchChannel(n)
+		self:radio_setVolume(0) -- set volume 0 to the previous channel
+		self.radio_selected = n
+		--snd_click:play_at_pos(self.object, self.object:position(), 0, sound_object.s3d)
+		self.snd_radio_mixdown[math.random(#self.snd_radio_mixdown)]:play_at_pos(self.object, self.object:position(), 0, sound_object.s3d)
+		safety_lock = false
+
+		return true
+	end
+	return false
+end
+
+function placeable_radio_binder:action_radio_v_down() -- Rule: Reduce the radio volume
+	if (radio_vol > vol_min) and self.radio_state and (not safety_lock) and (not self:is_snd_playing()) then
+		safety_lock = true
+		--snd_click:play_at_pos(self.object, self.object:position(), 0, sound_object.s3d)
+		radio_vol = radio_vol - vol_step
+		self:radio_setVolume(radio_vol - psi_vol)
+		safety_lock = false
+	end
+end
+
+function placeable_radio_binder:action_radio_v_up() -- Rule: Increase the radio volume
+	if (radio_vol < vol_max) and self.radio_state and (not safety_lock) and (not self:is_snd_playing()) then
+		safety_lock = true
+		--snd_click:play_at_pos(self.object, self.object:position(), 0, sound_object.s3d)
+		radio_vol = radio_vol + vol_step
+		self:radio_setVolume(radio_vol - psi_vol)
+		safety_lock = false
+	end
+end
+
+function placeable_radio_binder:action_radio_stop() -- Rule: Stop the radio
+	if self.radio_state and (not safety_lock) and (not self:is_snd_playing()) then
+		safety_lock = true
+		self.radio_state = false
+		--snd_click:play_at_pos(self.object, self.object:position(), 0, sound_object.s3d)
+		self.snd_radio_off:play_at_pos(self.object, self.object:position(), 0, sound_object.s3d)
+		self:radio_setVolume(0)
+		safety_lock = false
+	end
+end
+
+function placeable_radio_binder:action_radio_start() -- Rule: Start the radio
+
+	if (not self.radio_state)
+	and (not safety_lock)
+	and (not self:is_snd_playing())
+	then
+		safety_lock = true
+		self.radio_state = true
+		--snd_click:play_at_pos(self.object, self.object:position(), 0, sound_object.s3d)
+		self.snd_radio_on:play_at_pos(self.object, self.object:position(), 0, sound_object.s3d)
+		self:radio_setVolume(radio_vol - psi_vol)
+		safety_lock = false
+	end
+end
+
+----------------------------------------------------------------------------------------
+
+function placeable_radio_binder:is_snd_playing() -- Rule: check if some interacting sound is currently playing | it prevents any changes done by the player until that sound is over (no sound interfering)
+	if self.snd_radio_on:playing() or self.snd_radio_off:playing() then
+		return true	
+	end
+	for j = 1, #self.snd_radio_mixdown do
+		if self.snd_radio_mixdown[j]:playing() then
+			return true
+		end
+	end
+	return false
+end
+
+function placeable_radio_binder:radio_setVolume(radio_vol) -- Rule: set volume for selected channel
+	-- This might seem unnecessary at first glance since the volume get modified always through (actor_on_update) callback
+	-- but tests showed that volume changes slowly, not instantly. 
+	-- with bigger code snippets between the sound play and volume change, its even slower. 
+	-- This function make things faster for volume changes.
+	
+	if (self.radio_selected ~= 0) then
+		self.radio_ch[self.radio_selected][self.radio_now[self.radio_selected]].volume = radio_vol
+		self.radio_session[self.radio_selected][self.radio_session_now[self.radio_selected]].volume = radio_vol
+	end
+end
+
+function placeable_radio_binder:radio_pick(radio_index_i, number_of_tracks) -- Rule: pick a random index for radio channels, get rid of the picked index afterwards so it doesn't get chosen again until a new cycle is called
+	if (#radio_index_i == 0) then
+		for i=1,number_of_tracks do	
+			radio_index_i[i] = i
+		end
+	end
+	local j = math.random(#radio_index_i)
+	local k = radio_index_i[j]
+	table.remove(radio_index_i, j)
+	return k
+end
+
+function placeable_radio_binder:get_playing_object(i) -- called from ph_sound to play current track on the radio on radio objects
+	local sound_obj = self.radio_session_out[i][self.radio_session_now[i]]
+	if (self.radio_session[i][self.radio_session_now[i]]:playing()) then
+		return sound_obj
+	end
+	
+	sound_obj = self.radio_ch_out[i][self.radio_now[i]]
+	if (self.radio_ch[i][self.radio_now[i]]:playing()) then
+		return sound_obj
+	end
+	
+	return
+end
+
+------------------------------------------------------------
+-- GUI
+------------------------------------------------------------
+local SINGLETON = nil
+
+function start_radio_dialog(obj_id) -- get called from pressing the tab
+	SINGLETON = SINGLETON or UIFurnitureRadio()
+	SINGLETON:TestAndShow(obj_id)
+end
+
+class "UIFurnitureRadio" (CUIScriptWnd)
+
+function UIFurnitureRadio:__init() super()
+	self.snd_click = sound_object("radio\\interact\\click")
+
+	self.radio_display_ch = {}
+	-- for i=1,num_of_ch do
+	-- 	self.radio_display_ch[i] = false -- If true, it will display channel i red marker 
+	-- end
+	self.frequency_min = 88
+	self.frequency_max = 110
+	self.frequency_min_x = 14
+	self.frequency_max_x = 397
+
+	self.frequency = 88
+
+	self:InitControls()
+	self:InitCallbacks()
+end
+
+function UIFurnitureRadio:__finalize() 
+	SINGLETON = nil
+end
+
+function UIFurnitureRadio:TestAndShow(obj_id)
+    self.obj_id = obj_id
+	self:ShowDialog(true)
+	Register_UI("UIFurnitureRadio","ui_radio_dialog")
+end
+
+function UIFurnitureRadio:Pickup()
+	local obj = get_object_by_id(self.obj_id)
+	local item_section = ini_sys:r_string_ex(obj:section(), "item_section") or "device_gas_lamp"
+	-- local condition = obj:binded_object().fuel
+	alife_create_item(item_section, db.actor)
+	-- local item = alife():create(item_section, db.actor:position(), 1, db.actor:game_vertex_id(), db.actor:id())
+	-- get_object_by_id(item.id):set_condition(obj:binded_object().fuel)
+
+	alife_release(obj)
+	self:Close()
+end
+
+function UIFurnitureRadio:InitControls() -- Rule: Prepare the UI	
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_furniture_radio.xml")
+	
+	
+	-- Main frame
+	self:SetWndRect(Frect():set(0, 0, 1024, 768))
+	xml:InitFrame("background", self)
+	-- xml:InitFrame("frame1", self)
+	-- xml:InitFrame("frame2", self)
+	-- xml:InitFrame("frame3", self)
+	
+	-- xml:InitStatic("frame2:caption", self)
+	-- xml:InitStatic("frame3:caption", self)
+	
+	-- xml:InitStatic("interface_plyr", self)
+	
+	-- Text
+	-- self.playing_text = xml:InitStatic("playing", self):TextControl()
+	-- self.playlist_text = xml:InitStatic("playlist_state", self):TextControl()
+	-- self.time_text = xml:InitStatic("time_left", self):TextControl()
+	-- self.suffle_text = xml:InitStatic("suffle_state", self):TextControl()
+	-- self.loop_text = xml:InitStatic("loop_state", self):TextControl()
+
+	self.btn_pickup = xml:Init3tButton("btn_pickup", self)
+	self:Register(self.btn_pickup, "btn_pickup")
+
+	self.btn_close = xml:Init3tButton("btn_close", self)
+	self:Register(self.btn_close, "btn_close")
+	
+	-- Radio channels
+	self.frequency_bg = xml:InitStatic("interface_radio_bg", self)
+	self.frequency_needle = xml:InitStatic("interface_radio_needle", self.frequency_bg)
+
+	self.btn_radio_ch = {}
+
+	self.list_channel = xml:InitComboBox("list_channel", self)
+	self:Register(self.list_channel, "list_channel")
+	
+	for i=1,num_of_ch do
+		self.list_channel:AddItem(game.translate_string(radio_ch_names[i]), i)
+	end
+	
+	local index = prevChannel or 1
+	self.list_channel:SetText(game.translate_string(radio_ch_names[index]))
+	
+	-- Radio buttons
+	self.btn_radio_v_down = xml:Init3tButton("btn_radio_v_down", self)
+	self:Register(self.btn_radio_v_down, "btn_radio_v_down")
+	
+	self.btn_radio_v_up = xml:Init3tButton("btn_radio_v_up", self)
+	self:Register(self.btn_radio_v_up, "btn_radio_v_up")
+		
+	self.btn_radio_stop = xml:Init3tButton("btn_radio_stop", self)
+	self:Register(self.btn_radio_stop, "btn_radio_stop")
+	
+	self.btn_radio_start = xml:Init3tButton("btn_radio_start", self)
+	self:Register(self.btn_radio_start, "btn_radio_start")
+end
+
+function UIFurnitureRadio:InitCallbacks()
+	-- Radio
+	-- for i=1,num_of_ch do
+	-- 	self:AddCallback("btn_radio_ch_" .. i, ui_events.BUTTON_CLICKED, self["On_Radio_Channel_" .. i], self)
+	-- end
+	self:AddCallback("btn_close",  ui_events.BUTTON_CLICKED, self.Close, self)
+	self:AddCallback("btn_pickup",    ui_events.BUTTON_CLICKED, self.Pickup,   self)
+
+	self:AddCallback("list_channel", ui_events.LIST_ITEM_SELECT, self.OnSelectChannel, self)
+	self:AddCallback("btn_radio_stop",    ui_events.BUTTON_CLICKED, self.On_Radio_Stop,        self)
+	self:AddCallback("btn_radio_start",   ui_events.BUTTON_CLICKED, self.On_Radio_Start,       self)
+	self:AddCallback("btn_radio_v_down",  ui_events.BUTTON_CLICKED, self.On_Radio_Volume_Down, self)
+	self:AddCallback("btn_radio_v_up",    ui_events.BUTTON_CLICKED, self.On_Radio_Volume_Up,   self)
+end
+
+function UIFurnitureRadio:Update()	-- Rule: called automatically to update the PDA UI
+	CUIScriptWnd.Update(self)
+	
+	local pos = vector2():set(0, 0)
+	local range_freq = self.frequency_max - self.frequency_min
+	local percent = (self.frequency - self.frequency_min) / range_freq
+
+	local ui_range = self.frequency_max_x - self.frequency_min_x
+	pos.x = self.frequency_min_x + (ui_range * percent) - (self.frequency_needle:GetWidth()/2)
+	self.frequency_needle:SetWndPos(pos)
+
+	local needle_pos = self.frequency_needle:GetWndPos(pos)
+end
+
+function UIFurnitureRadio:SwitchChannel(freq)
+	self.frequency = freq
+	-- for i=1,num_of_ch do
+	-- 	if (i == n) then
+	-- 		self.radio_display_ch[i] = true
+	-- 	else
+	-- 		self.radio_display_ch[i] = false
+	-- 	end
+	-- end
+end
+
+function UIFurnitureRadio:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (res == false) then
+		local bind = dik_to_bind(dik)
+		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+		
+			if dik == DIK_keys.DIK_ESCAPE then
+				self:Close()
+			end
+
+		end
+	end
+
+	return res
+end
+
+function UIFurnitureRadio:Close()
+	if (self:IsShown()) then
+		self:HideDialog()
+	end
+	--self.object:give_info_portion("tutorial_sleep")
+	
+	Unregister_UI("UIFurnitureRadio")
+end
+
+-- Callbacks
+function UIFurnitureRadio:OnSelectChannel()
+	local channel_id = self.list_channel:CurrentID()
+	
+	local obj = get_object_by_id(self.obj_id)
+	local binder = obj:binded_object()
+	local result = binder:action_radio_ch(channel_id)
+	if result then
+		self:SwitchChannel(radio_frequencies[channel_id])
+		self.snd_click:play(db.actor, 0, sound_object.s2d)
+	end
+end
+
+function UIFurnitureRadio:On_Radio_Channel_1()
+	local obj = get_object_by_id(self.obj_id)
+	local binder = obj:binded_object()
+	local result = binder:action_radio_ch(1)
+	if result then
+		self:SwitchChannel(1)
+		self.snd_click:play(db.actor, 0, sound_object.s2d)
+	end
+end
+
+function UIFurnitureRadio:On_Radio_Channel_2()
+	local obj = get_object_by_id(self.obj_id)
+	local binder = obj:binded_object()
+	local result = binder:action_radio_ch(2)
+	if result then
+		self:SwitchChannel(2)
+		self.snd_click:play(db.actor, 0, sound_object.s2d)
+	end
+end
+--< can be expanded for more channels >-- you need to make new function for each new channel
+
+function UIFurnitureRadio:On_Radio_Volume_Down()
+	local obj = get_object_by_id(self.obj_id)
+	local binder = obj:binded_object()
+	binder:action_radio_v_down()
+	self.snd_click:play(db.actor, 0, sound_object.s2d)
+end	
+
+function UIFurnitureRadio:On_Radio_Volume_Up()
+	local obj = get_object_by_id(self.obj_id)
+	local binder = obj:binded_object()
+	binder:action_radio_v_up()
+	self.snd_click:play(db.actor, 0, sound_object.s2d)
+end
+
+function UIFurnitureRadio:On_Radio_Stop()
+	local obj = get_object_by_id(self.obj_id)
+	local binder = obj:binded_object()
+	binder:action_radio_stop()
+	self.snd_click:play(db.actor, 0, sound_object.s2d)
+end
+
+function UIFurnitureRadio:On_Radio_Start()
+	local obj = get_object_by_id(self.obj_id)
+	local binder = obj:binded_object()
+	binder:action_radio_start()
+	self.snd_click:play(db.actor, 0, sound_object.s2d)
+end
+
+
+function on_game_start()
+	local function on_game_load()
+		update_settings()
+	end
+	RegisterScriptCallback("on_option_change",update_settings)
+	RegisterScriptCallback("on_game_load",on_game_load)
+end

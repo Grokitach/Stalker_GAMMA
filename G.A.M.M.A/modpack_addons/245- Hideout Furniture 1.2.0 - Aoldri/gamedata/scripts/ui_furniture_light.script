@@ -1,0 +1,204 @@
+local gc = game.translate_string
+local ratio = utils_xml.screen_ratio()
+
+local use_ingame_time = true
+GUI = nil -- instance, don't touch
+
+class "UIFurnitureLight" (CUIScriptWnd)
+
+function UIFurnitureLight:__init() super()
+	self:InitControls()
+	self:InitCallbacks()
+end
+
+function UIFurnitureLight:__finalize()
+	GUI = nil
+end
+
+function UIFurnitureLight:InitControls()
+	self:SetWndRect(Frect():set(0,0,1024,768))
+	self.wide = (device().width/device().height) > (1024/768 + 0.01)
+	
+	self:SetAutoDelete(true)
+
+	local xml = CScriptXmlInit()
+	-- xml:ParseFile("ui_sleep_dialog.xml")
+    xml:ParseFile("ui_furniture_light_dialog.xml")
+
+	self.back = xml:InitFrame("background", self)
+
+	self.icon = xml:InitStatic("icon", self.back)
+	self.icon:SetWndSize(vector2():set( self.icon:GetWidth(), self.icon:GetWidth() / ratio ))
+
+    self.light_duration = xml:InitTextWnd("light_duration", self.back)
+
+	self.btn_pickup = xml:Init3tButton("btn_pickup", self.back)
+	self:Register(self.btn_pickup, "btn_pickup")
+
+    self.btn_close = xml:Init3tButton("btn_close", self.back)
+	self:Register(self.btn_close, "btn_close")
+
+	self.btn_turn_on = xml:Init3tButton("btn_turn_on", self.back)
+	self:Register(self.btn_turn_on, "btn_turn_on")
+
+
+    self.btn_add_fuel = xml:Init3tButton("btn_add_fuel", self.back)
+	self:Register(self.btn_add_fuel, "btn_add_fuel")
+end
+
+function UIFurnitureLight:ToggleLight()
+    local lamp = get_object_by_id(self.light_id):get_hanging_lamp()
+    if lamp then
+        if lamp:is_on() then
+            -- printf("turned off lamp")
+            lamp:turn_off()
+        else
+			local req_matches = ini_sys:r_bool_ex(self.section, "require_matches") or false
+			if req_matches then
+				local obj_item = db.actor:object("matches") or db.actor:object("box_matches")
+				if obj_item then
+					-- printf("turned on lamp")
+					utils_item.discharge(obj_item)
+					lamp:turn_on()
+				else
+					actor_menu.set_msg(1, game.translate_string("st_ui_campfire_prereq"),3)
+				end
+			else
+				lamp:turn_on()
+			end
+        end
+    else
+        -- printf("no lamp???")
+    end
+    self:Close()
+end
+
+function UIFurnitureLight:Pickup()
+	local obj = get_object_by_id(self.light_id)
+	local item_section = ini_sys:r_string_ex(self.section, "item_section") or "device_gas_lamp"
+	local condition = obj:binded_object().fuel
+	-- printf("PICKED UP ITEM, CONDITION: " .. condition)
+	alife_create_item(item_section, db.actor, {cond=condition})
+	-- local item = alife():create(item_section, db.actor:position(), 1, db.actor:game_vertex_id(), db.actor:id())
+	-- get_object_by_id(item.id):set_condition(obj:binded_object().fuel)
+
+	alife_release(obj)
+	self:Close()
+end
+
+function UIFurnitureLight:Refuel()
+	local fuel_type = ini_sys:r_string_ex(self.section, "fuel_section") or "charcoal"
+	if db.actor:object(fuel_type) then
+		itms_manager.relocate_item_from_actor(db.actor, nil, fuel_type, 1)
+		local obj = get_object_by_id(self.light_id)
+		obj:binded_object().fuel = 1.0
+	else
+		actor_menu.set_msg(1, "I don't have any fuel for this.",3)
+	end
+	self:Close()
+end
+
+function UIFurnitureLight:InitCallbacks()
+	self:AddCallback("btn_turn_on", ui_events.BUTTON_CLICKED, self.ToggleLight, self)
+	self:AddCallback("btn_pickup", ui_events.BUTTON_CLICKED, self.Pickup, self)
+	self:AddCallback("btn_add_fuel", ui_events.BUTTON_CLICKED, self.Refuel, self)
+	self:AddCallback("btn_close", ui_events.BUTTON_CLICKED, self.Close, self)
+end
+
+function UIFurnitureLight:Initialize()
+	self.section = get_object_by_id(self.light_id):section()
+	-- printf("Width: " .. self.icon:GetWidth() .. "| Height: " .. self.icon:GetHeight())
+	local icon = ini_sys:r_string_ex(self.section, "ui_texture")
+	-- printf("Light Section: " .. self.section)
+	if icon then
+		-- printf("Light Icon: " .. icon)
+		self.icon:InitTexture(icon)
+	end
+end
+
+function UIFurnitureLight:TestAndShow(obj_id)
+    self.light_id = obj_id
+	self:Initialize()
+	self:ShowDialog(true)
+	Register_UI("UIFurnitureLight","ui_sleep_dialog")
+end
+
+function UIFurnitureLight:Update()
+	CUIScriptWnd.Update(self)
+	local binder = get_object_by_id(self.light_id):binded_object()
+	local time_secs = binder.fuel * binder.max_duration
+	if not use_ingame_time then
+		time_secs = time_secs / level.get_time_factor()
+	end
+	
+	local days = math.floor(time_secs/86400)
+	local hours = math.floor(math.mod(time_secs, 86400)/3600)
+	local minutes = math.floor(math.mod(time_secs,3600)/60)
+	local time_str = string.format("%dd %02dh %02dm",days,hours,minutes)
+
+	local fuel_percent = math.ceil(binder.fuel * 100)
+	local clr = utils_xml.get_color_con(binder.fuel*100)
+	local clr_grey  = utils_xml.get_color("ui_gray_1")
+
+    self.light_duration:SetText(clr .. gc("st_duration") .. ": " .. time_str .. " (" .. fuel_percent .. "%)")
+
+	if binder.last_state then
+		self.btn_turn_on:TextControl():SetText(gc("st_turn_off"))
+	else
+		self.btn_turn_on:TextControl():SetText(gc("st_turn_on"))
+	end
+end
+
+function UIFurnitureLight:OnTrackButton()
+end
+
+function UIFurnitureLight:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (res == false) then
+		local bind = dik_to_bind(dik)
+		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+		
+			if dik == DIK_keys.DIK_ESCAPE then
+				self:Close()
+			end
+
+		end
+	end
+
+	return res
+end
+
+function UIFurnitureLight:Close()
+	if (self:IsShown()) then
+		self:HideDialog()
+	end
+	--db.actor:give_info_portion("tutorial_sleep")
+	
+	Unregister_UI("UIFurnitureLight")
+end
+
+-------
+function start_light_dialog(obj_id)
+	if (GUI == nil) then
+		GUI = UIFurnitureLight()
+	end
+	GUI:TestAndShow(obj_id)
+	--return GUI
+end
+
+-------
+function on_option_change(mcm)
+	if mcm then
+		use_ingame_time = ui_mcm.get("aol_hf/use_ingame_time")
+		if use_ingame_time then
+			-- printf("use_ingame_time: TRUE")
+		else
+			-- printf("use_ingame_time: FALSE")
+		end
+	end
+end
+
+function on_game_start()
+    RegisterScriptCallback("on_option_change",on_option_change)
+    on_option_change(ui_mcm and ui_mcm.key_hold)
+end
