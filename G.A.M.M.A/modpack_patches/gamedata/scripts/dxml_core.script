@@ -1,0 +1,1199 @@
+-- DXML Core script
+
+-- IMPORTS
+local string_find 	= string.find
+local string_format	= string.format
+local string_gmatch	= string.gmatch
+local string_gsub	= string.gsub
+local string_match 	= string.match
+local string_rep	= string.rep
+local string_sub 	= string.sub
+
+local table_concat 	= table.concat
+local table_insert 	= table.insert
+local table_remove 	= table.remove
+local table_sort 	= table.sort
+
+local math_huge		= math.huge
+
+-- UTILS
+_G.spairs = function(t, order)
+    -- collect the keys
+    local keys = {}
+    for k in pairs(t) do keys[#keys+1] = k end
+
+    -- if order function given, sort by it by passing the table and keys a, b,
+    -- otherwise just sort the keys
+    if order and type(order) == "function" then
+        table_sort(keys, function(a,b) return order(t, a, b) end)
+    else
+        table_sort(keys)
+    end
+
+    -- return the iterator function
+    local i = 0
+    return function()
+        i = i + 1
+        if keys[i] then
+            return keys[i], t[keys[i]]
+        end
+    end
+end
+
+-- str_explode with limit on items to split
+-- n is the amount of times to split
+-- str_explode("1,2,3,4", ",", 1) = {"1", "2,3,4"}
+_G.str_explode_lim = function(str, sep, n, plain)
+	local n = n or math_huge
+	if not (str and sep) then
+		printe("!ERROR str_explode | missing parameter str = %s, sep = %s",str,sep)
+		callstack()
+	end
+	if not (sep ~= "" and string_find(str,sep,1,plain) and n > 0) then
+		return { str }
+	end
+	local t = {}
+	local rest = {}
+	local size = 0
+	for s in str:gsplit(sep,plain) do 
+		size = size + 1
+		if size > n then
+			rest[#rest + 1] = s
+		else
+			t[size] = trim(s)
+		end
+	end
+	if is_not_empty(rest) then
+		local rest_s = table_concat(rest, sep)
+		t[#t + 1] = rest_s
+	end
+	return t
+end
+
+-- Inserts character into string
+function string.insert(str1, str2, pos)
+    return str1:sub(1,pos)..str2..str1:sub(pos+1)
+end
+
+-- Reduces multiple consecutive spaces in string to one
+_G.one_space = function(s)
+	return string_gsub(s, "  *", " ")
+end
+
+-- Removes newline characters from string
+_G.one_line = function(s)
+    return s:gsub("[\n\r]", "")
+end
+
+-- Iterative print of tables with optional sorting for spairs, formatting is similar to PHP print_r
+_G.print_r = function(t, sort, sorting_func)
+	if not t then return end
+
+	local function vec_to_str(t)
+		if t.w then
+			return string_format("%s,%s,%s,%s", t.x, t.y, t.z, t.w)
+		elseif t.z then
+			return string_format("%s,%s,%s", t.x, t.y, t.z)
+		elseif t.y then
+			return string_format("%s,%s", t.x, t.y)
+		elseif t.x then
+			return string_format("%s", t.x)
+		end
+	end
+
+	if type(t) ~= "table" then
+		if type(t) == "userdata" then
+			local vec = vec_to_str(t)
+			if vec then
+				return printf("%s", vec)
+			end
+		end
+		return printf("%s", t)
+	end
+
+	local function sort_func(t, a, b)
+		if type(a) == "number" and type(b) == "number" then
+			return a < b
+		else
+			return tostring(a) < tostring(b)
+		end
+	end
+
+	sorting_func = sorting_func or sort_func
+
+	local iterator_func = sort and spairs or pairs
+
+    local print_r_cache={}
+    local stack = {}
+    local saved_pos = {}
+    local indent = ""
+    table_insert(stack, t)
+    while #stack > 0 do
+    	local t = table_remove(stack)
+    	if not saved_pos[t] then
+    		saved_pos[t] = {}
+    	end
+    	local new_table = false
+    	for k, v in iterator_func(t, sort_func) do
+    		local key = k
+    		if type(k) == "userdata" then
+    			key = vec_to_str(k) or "userdata"
+    		end
+    		if saved_pos[t][k] then
+    			-- Do nothing
+ 			elseif type(v) == "table" and print_r_cache[tostring(v)] then
+ 				printf(indent.."["..key.."] => ".."*"..tostring(v))
+            elseif type(v) == "table" then
+            	table_insert(stack, t)
+            	table_insert(stack, v)
+            	printf(indent.."["..key.."] => "..tostring(v).." {")
+            	indent = indent..string_rep(" ", 2)
+            	new_table = true
+            	print_r_cache[tostring(t)] = true
+            elseif type(v) == "userdata" then
+				printf(indent.."["..key.."] => "..(vec_to_str(v) or "userdata"))
+            else
+            	printf(indent.."["..key.."] => "..tostring(v))
+            end
+            saved_pos[t][k] = true
+            if new_table then
+                break
+            end
+		end
+		print_r_cache[tostring(t)] = true
+	    if not new_table then
+        	indent = indent:sub(1, -3)
+        	if #stack > 0 then
+        		printf(indent.."}")
+        	end
+    	    -- saved_pos[t] = nil
+    	end
+    end
+    printf(" ")
+end
+
+_G.try = function(func, ...)
+    local status, error_or_result = pcall(func, ...)
+    if not status then
+        printf(error_or_result)
+        return false, status, error_or_result
+    else
+        return error_or_result, status
+    end
+end
+
+-- DXML MAIN
+if AddScriptCallback then
+	AddScriptCallback("on_loading_screen_key_prompt")
+	AddScriptCallback("on_loading_screen_dismissed")
+	AddScriptCallback("on_specific_character_dialog_list")
+	AddScriptCallback("on_specific_character_init")
+	AddScriptCallback("on_xml_read")
+else
+	printf("! AddScriptCallback function not found, DXML is unavailable")
+end
+
+-- Called from GamePersistent.cpp
+-- Callback for when loading screen happens and "Press Any Key to Continue" prompt appears
+_G.OnLoadingScreenKeyPrompt = function()
+	SendScriptCallback("on_loading_screen_key_prompt")
+end
+
+-- Callback for when player dismisses loading screen after "Press Any Key to Continue" pressed
+_G.OnLoadingScreenDismissed = function()
+	SendScriptCallback("on_loading_screen_dismissed")
+end
+
+local function dialogs_obj(dialog_list)
+	local d = dialog_list
+	local cl = {}
+	cl.find = function(self, dialog)
+		for i = #d, 1, -1 do
+			if string_find(d[i], dialog) then
+				return d[i], i
+			end
+		end
+	end
+
+	cl.has = function(self, dialog)
+		for i = #d, 1, -1 do
+			if d[i] == dialog then
+				return i
+			end
+		end
+	end
+
+	cl.add = function(self, dialog, pos)
+		if self:has(dialog) then return end
+
+		if not pos then
+			local break_dialog, break_pos = self:find("break_dialog")
+			if break_pos then
+				pos = break_pos
+			else
+				pos = #d + 1
+			end
+		else
+			pos = clamp(pos, 1, #d + 1)
+		end
+
+		table_insert(d, pos, dialog)
+		return pos
+	end
+
+	cl.add_first = function(self, dialog)
+		return self:add(dialog, 1)
+	end
+
+	cl.add_last = function(self, dialog)
+		return self:add(dialog, #d + 1)
+	end
+
+	cl.remove = function(self, dialog)
+		local pos = self:has(dialog)
+		if pos then
+			local el = table_remove(d, pos)
+			return el, pos
+		end
+	end
+
+	cl.get_dialogs = function(self)
+		return dup_table(d)
+	end
+
+	return cl
+end
+
+-- Called from specific_character.cpp
+-- Allows to manipulate available actor dialog list defined in characted_desc...xml files in <actor_dialog> tags
+_G.CSpecificCharacterDialogList = function(character_id, dialog_list)
+	SendScriptCallback("on_specific_character_dialog_list", character_id, dialogs_obj(dialog_list))
+	return dialog_list
+end
+
+-- Called from specific_character.cpp
+-- Allows to manipulate specific character data from characted_desc...xml files
+-- Available fields in "data" table, similar to defined in xmls:
+--[[
+	name
+	bio
+	community
+	icon
+	start_dialog
+	panic_threshold
+	hit_probability_factor
+	crouch_type
+	mechanic_mode
+	critical_wound_weights
+	supplies
+	visual
+	npc_config
+	snd_config
+	terrain_sect
+	rank_min
+	rank_max
+	reputation_min
+	reputation_max
+	money_min
+	money_max
+	money_infinitive
+--]]
+_G.CSpecificCharacterInit = function(character_id, data)
+	SendScriptCallback("on_specific_character_init", character_id, data)
+	return data
+end
+
+-- Manipulate xml nodes through modxml_...script files
+-- Gather all files
+do
+	printf("init gathering modxml_... scripts")
+	local ignore = { 
+		["_g.script"] = true,
+	}
+	
+	local t = {}
+	local size_t = 0 
+	local f	= getFS()
+	local flist = f:file_list_open_ex("$game_scripts$",bit_or(FS.FS_ListFiles,FS.FS_RootOnly),"modxml_*.script")
+	local f_cnt = flist:Size()
+	for	it=0, f_cnt-1 do
+		local file = flist:GetAt(it)
+		local file_name = file:NameShort()
+		--printf("%s size=%s",file_name,file:Size())
+		if (file:Size() > 0 and ignore[file_name] ~= true) then
+			file_name = file_name:sub(0,file_name:len()-7)
+			if (_G[file_name] and _G[file_name].on_xml_read) then
+				printf("gathering %s.script", file_name)
+				size_t = size_t + 1 
+				t[size_t] = file_name -- load all scripts first
+			end
+		end
+	end
+	table_sort(t)
+	for i=1, #t do
+		local file_name = t[i]
+		_G[file_name].on_xml_read()
+	end
+end
+
+-- Cache parsed files
+local xml_string_cache_enabled = false
+local xml_string_debug_enabled = false
+local xml_string_cache = {}
+
+local function print_xml_error(xml_file_name, s, ...)
+	return printf("!COnXmlRead Error, file " .. xml_file_name .. " : " .. s, ...)
+end
+
+local function print_parser_msg(xml_file_name, s, ...)
+	if xml_string_debug_enabled then
+		return printf("COnXmlRead Parser, file " .. xml_file_name .. " : " .. s, ...)
+	end
+end
+
+local function print_parser_error(xml_file_name, s, ...)
+	return printf("!COnXmlRead Parser Error, file " .. xml_file_name .. " : " .. s, ...)
+end
+
+local function print_r_xml(...)
+	if xml_string_debug_enabled then
+		return print_r(...)
+	end
+end
+
+local function xml_walk(walk_table, callback)
+	for i, v in ipairs(walk_table) do
+		if callback(v, i, walk_table) then
+			return
+		end
+		if v.kids then
+			xml_walk(v.kids, callback)
+		end
+	end
+end
+
+_G.table_walk = function(walk_table, callback)
+	for k, v in pairs(walk_table) do
+		if callback(v, k, walk_table) then
+			return
+		end
+		if type(v) == "table" then
+			table_walk(v, callback)
+		end
+	end
+end
+
+_G.table_merge = function(t1, ...)
+	local ts = {...}
+	for i, t in ipairs(ts) do
+		for k, v in pairs(t) do
+			t1[k] = v
+		end
+	end
+	return t1
+end
+
+_G.table_equals = function(actual, expected, cycleDetectTable)
+    local type_a, type_e = type(actual), type(expected)
+
+    if type_a ~= type_e then
+        return false -- different types won't match
+    end
+
+    if type_a ~= 'table' then
+        -- other types compare directly
+        return actual == expected
+    end
+
+    cycleDetectTable = cycleDetectTable or { actual={}, expected={} }
+    if cycleDetectTable.actual[ actual ] then
+        -- oh, we hit a cycle in actual
+        if cycleDetectTable.expected[ expected ] then
+            -- uh, we hit a cycle at the same time in expected
+            -- so the two tables have similar structure
+            return true
+        end
+
+        -- cycle was hit only in actual, the structure differs from expected
+        return false
+    end
+
+    if cycleDetectTable.expected[ expected ] then
+        -- no cycle in actual, but cycle in expected
+        -- the structure differ
+        return false
+    end
+
+    -- at this point, no table cycle detected, we are
+    -- seeing this table for the first time
+
+    -- mark the cycle detection
+    cycleDetectTable.actual[ actual ] = true
+    cycleDetectTable.expected[ expected ] = true
+
+
+    local actualKeysMatched = {}
+    for k, v in pairs(actual) do
+        actualKeysMatched[k] = true -- Keep track of matched keys
+        if not table_equals(v, expected[k], cycleDetectTable) then
+            -- table differs on this key
+            -- clear the cycle detection before returning
+            cycleDetectTable.actual[ actual ] = nil
+            cycleDetectTable.expected[ expected ] = nil
+            return false
+        end
+    end
+
+    for k, v in pairs(expected) do
+        if not actualKeysMatched[k] then
+            -- Found a key that we did not see in "actual" -> mismatch
+            -- clear the cycle detection before returning
+            cycleDetectTable.actual[ actual ] = nil
+            cycleDetectTable.expected[ expected ] = nil
+            return false
+        end
+        -- Otherwise actual[k] was already matched against v = expected[k].
+    end
+
+    -- all key match, we have a match !
+    cycleDetectTable.actual[ actual ] = nil
+    cycleDetectTable.expected[ expected ] = nil
+    return true
+end
+
+local parser = slaxml.SLAXML()
+local parser_options = {stripWhitespace = true}
+
+local function xml_object(xml_file_name, xml_string, xml_table)
+	local t = {
+		xml_string = xml_string,
+		xml_table = xml_table,
+	}
+
+	-- Check if node is Processing Instruction
+	t.isPi = function(self, el)
+		return el.el:sub(1, 1) == "?"
+	end
+
+	-- Check if node is DOM element
+	t.isElement = function(self, el)
+		return el.el:sub(1, 1) == "<"
+	end
+
+	-- Check if node is text
+	t.isText = function(self, el)
+		return el.el:sub(1, 1) == "#"
+	end
+
+	-- Get element name
+	t.getElementName = function(self, el)
+		if self:isElement(el) then
+			local name = str_explode(el.el:sub(2), " ")
+			return name[1]
+		end
+	end
+
+	-- Get element name and attributes
+	-- If attribute has value - it will be string type, convert to number in your scripts if you need to
+	t.getElement = function(self, el)
+		if self:isElement(el) then
+			local res = {}
+			local e = str_explode_lim(el.el:sub(2), " ", 1)
+			res.name = e[1]
+			res.attr = {}
+			if e[2] then
+				local attrs = str_explode(e[2], " ")
+				for i, attr in ipairs(attrs) do
+					local a = str_explode(attr, "=")
+					if not a[2] then
+						res.attr[a[1]] = true
+					else
+						res.attr[a[1]] = a[2]
+					end
+				end
+			end
+			return res
+		end
+	end
+
+	-- Get xml root
+	-- If xml has single child element of !doc node (for example <w> tag in ui_options.xml), this child will be considered the root
+	-- Otherwise the root will be !doc node
+	t.getRoot = function(self)
+		local root_pos = 1
+		if not self.xml_table.kids[root_pos] then
+			return self.xml_table
+		end
+
+		if self:isPi(self.xml_table.kids[root_pos]) then
+			root_pos = 2
+		end
+
+		if self.xml_table.kids[root_pos].el then
+			if self.xml_table.kids[root_pos + 1] then
+				return self.xml_table
+			end
+			return self.xml_table.kids[root_pos]
+		end
+
+		return self.xml_table
+	end
+
+	-- Find element by information in args table
+	-- args table may have structures:
+	--[[
+		args = {
+			name = "element_name",
+			attr = {
+				attr1 = 32,
+				attr2 = "myattr",
+			}
+		}
+
+		OR (for multiple query search)
+
+		args = {
+			{
+				name = "element_name",
+				attr = {
+					attr1 = 32,
+					attr2 = "myattr",
+				},
+			},
+			{
+				name = "element_name2",
+				attr = {
+					attr1 = 544,
+				},
+			},
+			...
+		}
+	--]]
+	-- one of <name, attr> fields must exist in args table
+	-- where argument is optional and specifies sub-table in self.xml_table to search
+	-- returns table that contains elements sub-tables from self.xml_table that matches args
+	t.findElement = function(self, args, where)
+		if is_empty(args) then
+			print_parser_error(xml_file_name, "args query table is empty")
+			return
+		end
+
+		-- Convert to multiple args table
+		if args.name or args.attr then
+			args = {args}
+		end
+
+		where = where and where.kids or self:getRoot().kids		
+		local res = {}
+
+		xml_walk(where, function(v)
+			local el = self:getElement(v)
+			if not el then
+				return
+			end
+
+			for i = 1, #args do
+				local arg = args[i]
+				if self:checkElement(v, arg) then
+					res[#res + 1] = v
+					break
+				end
+			end
+		end)
+
+		if is_empty(res) then
+			if xml_string_debug_enabled then
+				print_parser_error(xml_file_name, "no elements were found with supplied query")
+				print_r_xml(args)
+			end
+			return
+		end
+		return res
+	end
+
+	-- Check if element is fulfilling the args table query
+	-- Args structure is similar to findElement function
+	t.checkElement = function(self, el, args)
+		-- Filter element to match query
+		local check_table = {}
+		local arg = args
+		local v = el
+		local el = self:getElement(v)
+		if not el then return end
+
+		for key, value in pairs(el) do
+			if arg[key] then
+				check_table[key] = value
+			end
+		end
+
+		-- If arg table and filtered element is equal - found element
+		local found = true
+		if arg.name and arg.name ~= check_table.name then
+			found = false
+		elseif check_table.attr then
+			for arg_key, arg_value in pairs(arg.attr) do
+				if arg_value ~= check_table.attr[arg_key] then
+					found = false
+				end
+			end
+		end
+		if found then
+			return el
+		end
+	end
+
+	-- Iterate children elements of element
+	-- callback is function(v, i), v is current child element, i - child number
+	-- return true in callback function will stop iteration
+	t.iterateChildren = function(self, el, callback)
+		if not callback then
+			print_parser_error(xml_file_name, "callback not specified for iterateChildren")
+			return
+		end
+		for i, v in ipairs(el.kids) do
+			if callback(v, i) then
+				return
+			end
+		end
+	end
+
+	-- Find siblinds of the element by information in args table
+	-- Args structure is similar to findElement function
+	t.findSiblings = function(self, el, args, first)
+		if not el.parent then return end
+
+		-- Convert to multiple args table
+		if args.name or args.attr then
+			args = {args}
+		end
+
+		local res = {}
+		local el_pos
+		self:iterateChildren(el.parent, function(v, i)
+			if v == el then
+				el_pos = i
+				return
+			end
+			if el_pos and i > el_pos then
+				for i = 1, #args do
+					local arg = args[i]
+					if self:checkElement(v, arg) then
+						res[#res + 1] = v
+						return first
+					end
+				end
+			end
+		end)
+
+		if is_empty(res) then
+			print_parser_error(xml_file_name, "no siblings were found with supplied query")
+			print_r_xml(args)
+			return
+		end
+
+		return res
+	end
+
+	-- Find closest sibling of the element by information in args table
+	-- Args structure is similar to findElement function
+	t.findFirstSibling = function(self, el, args)
+		return self:findSiblings(el, args, true)
+	end
+
+	local function concat_attr(attr, sep)
+		if is_empty(attr) then
+			return ""
+		end
+
+		sep = sep or " "
+		local res = ""
+		for k, v in pairs(attr) do
+			res = res .. sep .. k .. '=' .. v
+		end
+		return res:sub(sep:len() + 1)
+	end
+
+	-- Get position of element relative to others
+	t.getElementPosition = function(self, el)
+		local pos
+		self:iterateChildren(el.parent, function(v, i)
+			if v == el then
+				pos = i
+				return true
+			end
+		end)
+		return pos
+	end
+
+	-- Convert table structure of element to suitable for xml_table
+	-- Args structure is similar to 
+	t.convertElement = function(self, args)
+		if is_empty(args) or not args.name then
+			print_parser_error(xml_file_name, "you trying to convert empty table")
+			return
+		end
+
+		args.attr = args.attr or {}
+		local attr_string = concat_attr(args.attr)
+		local res = {
+			el = "<" .. args.name .. (attr_string:len() > 0 and (" " .. attr_string) or ""),
+			kids = args.kids or {},
+		}
+		return res
+	end
+
+	-- Gets attributes of element
+	t.getElementAttr = function(self, el)
+		return self:getElement(el).attr
+	end
+
+	t.setElementAttr = function(self, el, args)
+		if is_empty(args) then
+			print_parser_error(xml_file_name, "you trying to set empty arguments to element")
+			return
+		end
+
+		local data = self:getElement(el)
+		if not data.attr then
+			data.attr = {}
+		end
+		for k, v in pairs(args) do
+			data.attr[k] = v
+		end
+		local convertedData = self:convertElement(data)
+		el.el = convertedData.el
+	end
+
+	-- Removes attributes of element
+	-- Args is a list of attributes to remove {"attr1", "attr2"}
+	t.removeElementAttr = function(self, el, args)
+		if is_empty(args) then
+			print_parser_error(xml_file_name, "you trying to remove arguments to element")
+			return
+		end
+
+		for i, v in ipairs(args) do
+			args[v] = true
+			args[i] = nil
+		end
+
+		local data = self:getElement(el)
+		if not data.attr then
+			return
+		end
+		for k, v in pairs(args) do
+			if v then
+				data.attr[k] = nil
+			end
+		end
+		local convertedData = self:convertElement(data)
+		el.el = convertedData.el
+	end
+
+	-- Insert element into xml table
+	-- where argument is optional and specifies an element subtable of self.xml_table to insert (default - root element)
+	-- pos argument is optional and specifies position to insert (default - in the end of node)
+	t.insertElement = function(self, args, where, pos)
+		if is_empty(args) then
+			print_parser_error(xml_file_name, "you are trying to insert empty table")
+			return
+		end
+
+		if not (args.name or args.el) then
+			print_parser_error(xml_file_name, "you are trying to insert non-element node")
+			print_r_xml(args)
+			return
+		end
+
+		where = where or self:getRoot()
+		if not where.kids then
+			where.kids = {}
+		end
+		if args.name then
+			args = self:convertElement(args)
+		end
+		pos = pos and clamp(pos, 1, #where.kids + 1) or #where.kids + 1
+		table_insert(where.kids, pos, args)
+		return where.kids[pos], pos
+	end
+
+	-- Insert new element before element into xml table
+	t.insertElementBefore = function(self, args, el, after)
+		if is_empty(args) then
+			print_parser_error(xml_file_name, "you are trying to insert empty table")
+			return
+		end
+
+		if not (args.name or args.el) then
+			print_parser_error(xml_file_name, "you are trying to insert non-element node")
+			print_r_xml(args)
+			return
+		end
+
+		if args.name then
+			args = self:convertElement(args)
+		end
+
+		local pos
+		self:iterateChildren(el.parent, function(v, i)
+			if v == el then
+				pos = after and i + 1 or i
+				table_insert(el.parent, pos, args)
+				return true
+			end
+		end)
+		if not pos then
+			print_parser_error(xml_file_name, "failed to insert element " .. (after and "after" or "before") .. "specified element")
+			print_parser_error(xml_file_name, "input element")
+			print_r_xml(args)
+			print_parser_error(xml_file_name, "target element")
+			print_r_xml(el)
+			return
+		end
+		return el[pos], pos
+	end
+
+	-- Insert new element after element into xml table
+	t.insertElementAfter = function(self, args, el)
+		return self:insertElementBefore(args, el, true)
+	end
+
+	-- Parse xml from string into table similar to xml_table
+	t.parseXMLString = function(self, xml_string)
+		local dom = parser:simple_dom(xml_string, {stripWhitespace = true, parseIncludes = true})
+		return xml_object("parseXMLString", xml_string, dom)
+	end
+
+	-- Insert from XML string into xml_table
+	-- where argument is optional and specifies an element subtable of self.xml_table to insert (default - root element)
+	-- pos argument is optional and specifies position to insert (default - to the end)
+	-- Returns the position of first inserted element in "where"
+	-- This function is identical to #include directive in xml files
+	t.insertFromXMLString = function(self, xml_string, where, pos)
+		where = where or self:getRoot()
+		local xml_obj = self:parseXMLString(xml_string)
+		local xml_obj_root = xml_obj.xml_table
+		local n_pos
+		for i, v in ipairs(xml_obj_root.kids) do
+			v.parent = where
+			local ins = pos and clamp(pos, 1, #where.kids + 1) or #where.kids + 1
+			local p = table_insert(where.kids, ins, v)
+			if not n_pos then
+				n_pos = p
+			end
+		end
+		return where.kids[n_pos], n_pos
+	end
+
+	-- Get text inside of element
+	-- Returns text if element contains only #text node and prints errors otherwise
+	t.getText = function(self, el)
+		if is_empty(el.kids) then
+			print_parser_error(xml_file_name, "element %s doesnt have children", el.el)
+			print_r_xml(el)
+			return
+		end
+
+		if #el.kids > 1 then
+			print_parser_error(xml_file_name, "element %s is not text only", el.el)
+			print_r_xml(el)
+			return
+		end
+
+		if not self:isText(el.kids[1]) then
+			print_parser_error(xml_file_name, "element %s child is not text node", el.el)
+			print_r_xml(el)
+			return
+		end
+
+		return el.kids[1].el:sub(2)
+	end
+
+	-- Set text inside of element
+	t.setText = function(self, el, text)
+		if not self:isElement(el) then
+			print_parser_error(xml_file_name, "you are trying to insert text into non-element node")
+			print_r_xml(el)
+			return
+		end
+
+		if not el.kids then
+			el.kids = {}
+		end
+		if is_empty(el.kids) then
+			el.kids[1] = {
+				el = "#"
+			}
+		end
+		if self:getText(el) then
+			el.kids[1].el = "#" .. text
+		end
+	end
+
+	-- Removes element from xml_table
+	-- the el argument is a sub-table from xml_table which is received by findElement function
+	-- in other words, the pointers should be same, otherwise it wont do anything
+	t.removeElement = function(self, el)
+		local res, pos
+		self:iterateChildren(el.parent, function(v, i)
+			if v == el then
+				res = table_remove(el.parent.kids, i)
+				pos = i
+				return true
+			end
+		end)
+		return res, pos
+	end
+
+	-- Find element by CSS-like selector
+	local function cssQuery(query)
+		-- Parse query
+		local query_table = {}
+		local function add_element(type, value)
+			table_insert(query_table, {
+				type = type,
+				value = value,
+				attr = {},
+			})
+		end
+		local current_element = ""
+		local current_selector = ""
+		local current_attr_key = ""
+		local current_attr_value = ""
+		local q_state = ""
+		query = trim(one_space(query))
+		for i = 1, query:len() + 1 do
+			local c = query:sub(i, i)
+			if q_state == "" then
+				if c:find("[%a_]") then
+					q_state = "element"
+					current_element = current_element .. c
+				end
+			elseif q_state == "element" then
+				if c:find("[%w_]") then
+					-- Still reading element
+					current_element = current_element .. c
+				elseif c:find("[%s>+~]") then
+					q_state = "selector"
+					add_element("element", current_element)
+					current_selector = c
+					current_element = ""
+				elseif c == "[" then
+					q_state = "attr"
+					add_element("element", current_element)
+					current_element = ""
+				elseif c == "" then
+				    add_element("element", current_element)  
+				end
+			elseif q_state == "attr" then
+				if c == "]" then
+					q_state = "attr_end"
+				elseif c:find("[%a_]") then
+					q_state = "attr_key"
+					current_attr_key = current_attr_key .. c
+				end
+			elseif q_state == "attr_key" then
+				if c == "=" then
+					q_state = "attr_value"
+				elseif c:find("[%w_]") then
+					-- Still reading attribute key
+					current_attr_key = current_attr_key .. c
+				end
+			elseif q_state == "attr_value" then
+				if c == "]" then
+					q_state = "attr_end"
+					current_attr_value = trim(current_attr_value)
+					if current_attr_value:sub(1,1):find("['\"]") then
+						current_attr_value = current_attr_value:sub(2)
+					end
+					if current_attr_value:sub(-1):find("['\"]") then
+						current_attr_value = current_attr_value:sub(1, -2)
+					end
+					query_table[#query_table].attr[current_attr_key] = current_attr_value
+					current_attr_key = ""
+					current_attr_value = ""
+				else
+					current_attr_value = current_attr_value .. c
+				end
+			elseif q_state == "attr_end" then
+				if c:find("[%s>+~]") then
+					q_state = "selector"
+					current_selector = c
+				elseif c == "[" then
+					q_state = "attr"
+				end
+			elseif q_state == "selector" then
+				if c:find("[>+~]") then
+					current_selector = c
+				elseif c == "[" then
+					q_state = "attr"
+				elseif c:find("[%a_]") then
+					add_element("selector", current_selector)
+					q_state = "element"
+					current_element = current_element .. c
+				end
+			end
+		end
+		return query_table
+	end
+
+	t.selector_functions = {
+		[" "] = function(xml_obj, args, where)
+			local res = xml_obj:findElement(args, where)
+			return is_not_empty(res) and res or {}
+		end,
+		[">"] = function(xml_obj, args, where)
+			local res = {}
+			xml_obj:iterateChildren(where, function(v, i)
+				if xml_obj:checkElement(v, args) then
+					table_insert(res, v)
+				end
+			end)
+			return res
+		end,
+		["+"] = function(xml_obj, args, where)
+			local res = {}
+			local r = xml_obj:findFirstSibling(where, args)
+			if r then
+				res[1] = r
+			end
+			return res
+		end,
+		["~"] = function(xml_obj, args, where)
+			local res = xml_obj:findSiblings(where, args)
+			return is_not_empty(res) and res or {}
+		end,
+	}
+
+	t.query = function(self, query, where)
+		local query_table = cssQuery(query)
+		if is_empty(query_table) then
+			return
+		end
+
+		local stack = {where or self:getRoot()}
+		local selector = self.selector_functions[" "]
+		for i, v in ipairs(query_table) do
+			if v.type == "element" then
+				local new_stack = {}
+				for _, el in ipairs(stack) do
+					local res = selector(self, {
+						name = v.value,
+						attr = v.attr
+					}, el)
+					if is_empty(res) then
+						break
+					end
+					for i, v in ipairs(res) do
+						table_insert(new_stack, v)
+					end
+				end
+				stack = new_stack
+				if is_empty(stack) then
+					if xml_string_debug_enabled then
+						print_parser_error(xml_file_name, "no elements were found matching query %s", query)
+					end
+					return {}
+				end
+			elseif v.type == "selector" then
+				selector = self.selector_functions[v.value]
+				if not selector then
+					print_parser_error(xml_file_name, "encountered unknown selector %s in query %s, abort", v.value, query)
+					return {}
+				end
+			end
+		end
+		return stack
+	end
+
+	-- Some convenient functions targeting specific XMLs
+	-- Add unique actor_dialog line for specific_character element in character_desc
+	-- pos is optional and defines where to insert the line (default - before <actor_break_dialog> line)
+	t.insertActorDialog = function(self, character_id, dialog_line, pos)
+		if not string_find(xml_file_name, "character_desc_") then
+			return
+		end
+		local el = self:query(string_format("specific_character[id=%s]", character_id))
+		el = el[1]
+		print_parser_msg(xml_file_name, "found specific_character by id %s", character_id)
+		local already_has_dialog
+		local actor_break_dialog_pos
+		self:iterateChildren(el, function(v, i)
+			if self:getElementName(v) == "actor_dialog" then
+				local d = self:getText(v)
+				if d == dialog_line then
+					print_parser_error(xml_file_name, "character_id %s already has actor_dialog %s", character_id, dialog_line)
+					already_has_dialog = true
+					return true
+				end
+				if d:find("break_dialog") then
+					print_parser_msg(xml_file_name, "character_id %s found actor_break_dialog at %s", character_id, i)
+					actor_break_dialog_pos = i
+				end
+			end 
+		end)
+		if not already_has_dialog then
+			pos = pos and clamp(pos, 1, #el.kids + 1) or actor_break_dialog_pos
+			print_parser_msg(xml_file_name, "character_id %s inserting actor_dialog %s, pos %s", character_id, dialog_line, pos)
+			local n_el, n_pos = self:insertElement({name = "actor_dialog"}, el, pos)
+			if n_el then
+				print_parser_msg(xml_file_name, "character_id %s success inserted actor_dialog %s, pos %s", character_id, dialog_line, n_pos)
+				self:setText(n_el, dialog_line)
+				return n_el, n_pos
+			else
+				print_parser_error(xml_file_name, "character_id %s failed to insert actor_dialog %s, pos %s", character_id, dialog_line, pos)
+				return
+			end
+		end
+	end
+
+	return t
+end
+
+-- Called from ScriptXMLInit.cpp
+-- Allows to manipulate xml content through xml parser
+_G.COnXmlRead = function(xml_file_name, xml_string)
+
+	-- Do not process language strings other than "eng/rus", no support yet
+	if xml_file_name:find([[^text\]]) 
+	and	not ( xml_file_name:match([[^text\(eng)\]]) or xml_file_name:match([[^text\(rus)\]]) )
+	then
+		return xml_string
+	end
+	
+	-- Special case for character_desc_general.xml files since it can be huge
+	if xml_file_name == [[gameplay\character_desc_general.xml]] then
+		return xml_string
+	end
+
+	if xml_string_cache_enabled and xml_string_cache[xml_file_name] then
+		print_parser_msg(xml_file_name, "cache found, load cache")
+		return xml_string_cache[xml_file_name]
+	end
+
+	print_parser_msg(xml_file_name, "loaded")
+
+	local xml_table = try(parser.simple_dom, parser, xml_string, parser_options)
+	if not xml_table then
+		print_parser_error(xml_file_name, "error parsing")
+		return xml_string
+	end
+	local xml_obj = try(xml_object, xml_file_name, xml_string, xml_table)
+	if not xml_obj then
+		print_parser_error(xml_file_name, "error creating xml_obj")
+		return xml_string
+	end
+	print_parser_msg(xml_file_name, "parsed")
+
+	SendScriptCallback("on_xml_read", xml_file_name, xml_obj)
+	print_parser_msg(xml_file_name, "callback")
+
+	xml_string = parser:simple_xml(xml_table)
+
+	-- Cache parsed file
+	if xml_string_cache_enabled then
+		xml_string_cache[xml_file_name] = xml_string
+	end
+	return xml_string
+end

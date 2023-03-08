@@ -1,0 +1,54 @@
+AddScriptCallback("game_object_on_net_spawn")
+AddScriptCallback("game_object_on_net_destroy")
+_G.CGameObject_NetSpawn = function(obj)
+	SendScriptCallback("game_object_on_net_spawn", obj)
+end
+
+_G.CGameObject_NetDestroy = function(obj)
+	SendScriptCallback("game_object_on_net_destroy", obj)
+end
+
+-- Game objects registry
+gameobjects_registry = {}
+function game_object_on_net_spawn(obj)
+	gameobjects_registry[obj:id()] = obj
+end
+function game_object_on_net_destroy(obj)
+	gameobjects_registry[obj:id()] = nil
+end
+function on_game_start()
+	RegisterScriptCallback("game_object_on_net_spawn", game_object_on_net_spawn)
+	RegisterScriptCallback("game_object_on_net_destroy", game_object_on_net_destroy)
+end
+
+-- Game objects iterator
+_G.game_objects_iter = function()
+	local k = nil
+	local obj = nil
+	return function()
+		k, obj = next(gameobjects_registry, k)
+		return obj
+	end
+end
+
+-- Pseudogiant callbacks
+AddScriptCallback("pseudogiant_on_start_stomp_animation")
+AddScriptCallback("pseudogiant_before_stomp")
+AddScriptCallback("pseudogiant_on_stomp")
+
+_G.CPseudoGigant__OnStartStompAnimation = function(victim, who)
+	SendScriptCallback("pseudogiant_on_start_stomp_animation", victim, who)
+	-- printf("pseudogiant_on_start_stomp_animation: %s, %s", victim:name(), who:name())
+end
+
+_G.CPseudoGigant__BeforeHitCallback = function(victim, who, shit, boneId)
+	local flags = { ret_value = true }
+	SendScriptCallback("pseudogiant_before_stomp", victim, who, shit, boneId, flags)
+	-- printf("pseudogiant_before_stomp: %s, %s, %s, %s", victim:name(), who:name(), shit.power, flags.ret_value)
+	return flags.ret_value
+end
+
+_G.CPseudoGigant__HitCallback = function(victim, who, shit, boneId)
+	-- printf("pseudogiant_on_stomp: %s, %s, %s", victim:name(), who:name(), shit.power)
+	SendScriptCallback("pseudogiant_on_stomp", victim, who, shit, boneId)
+end
