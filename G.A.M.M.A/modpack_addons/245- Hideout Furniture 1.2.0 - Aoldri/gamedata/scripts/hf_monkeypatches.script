@@ -1,0 +1,76 @@
+local stash_sections = {}
+local function itr_for_stashes(section)
+	local placeable_type = ini_sys:r_string_ex(section, "placeable_type") or "prop"
+    if placeable_type == "stash" then
+        stash_sections[section] = true
+    end
+end
+ini_sys:section_for_each(itr_for_stashes)
+
+local function remove_stash(box)
+    if not box then return end
+	if (stash_sections[box:section()]) then
+		if (box:is_inv_box_empty()) then
+			hide_hud_inventory()
+			
+			local data = {
+				stash_id = box:id(),
+				cancel = false,
+			}
+			SendScriptCallback("actor_on_stash_remove",data)
+			if data.cancel then
+				return
+			end
+			
+			local id = box:id()
+
+			level.map_remove_object_spot(id, "treasure")
+			local se_obj = alife_object(id)
+			if se_obj then
+				alife_release(se_obj)
+			end
+			
+			local m_data = alife_storage_manager.get_state()
+			if (m_data.player_created_stashes and m_data.player_created_stashes[id]) then 
+				local section = m_data.player_created_stashes[id]
+				alife_create_item(section, db.actor)
+				m_data.player_created_stashes[id] = nil
+			end
+		end
+	end
+end
+
+function ui_inventory.UIInventory:LMode_TakeAll()
+	self:Print(nil, "LMode_TakeAll")
+	
+	local npc = self:GetPartner()
+	if (not npc) then
+		return
+	end
+	
+	local cc = self.CC["npc_bag"]
+	if (not cc) then
+		return
+	end
+	
+    local has_items = false
+	for id,idx in pairs(cc.indx_id) do
+        has_items = true
+		local ci = cc:GetCell_ID(id)
+		if ci then
+			-- Transfer item
+			local obj = level.object_by_id(id)
+			if self:Cond_Move(obj, "npc_bag") then
+				self:Action_Move(obj, "npc_bag")
+			end
+		end
+	end
+
+	-- Update info
+	self.update_info = true
+
+    if not has_items then
+        local stash = self:GetPartner()
+        remove_stash(stash)
+    end
+end
