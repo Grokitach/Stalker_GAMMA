@@ -1,0 +1,197 @@
+--[[
+Wrapper class to let you autoinject things via monkey patch to all traders, respecting the restock time.
+How to use: Monkey patch the update function here in your script.
+ex:
+TraderAuto = trader_autoinject.update
+function trader_autoinject.update(npc)
+    TraderAuto(npc)
+    add_custom_crap(npc) -- you define this function ok
+end
+
+Some functions provided below for convenience.
+Note: If you want to iterate NPC inventory to check for items, fire a time event to allow the items to register on new game.
+--]] --
+
+
+find = string.find
+local function t2c(t)
+	if not t then return nil end
+	local ct = game.CTime()
+	ct:set(t.Y,t.M,t.D,t.h,t.m,t.s,t.ms)
+	return ct
+end
+
+local function c2t(ct)
+	if not ct then return nil end
+	-- printf('%s, %s',ct,type(ct))
+	local Y, M, D, h, m, s, ms = 0, 0, 0, 0, 0, 0, 0
+	Y, M, D, h, m, s, ms = ct:get(Y, M, D, h, m, s, ms)
+	return { Y=Y, M=M, D=D, h=h, m=m, s=s, ms=ms }
+end
+
+TraderUpdate = trade_manager.update
+function trade_manager.update(npc, force_refresh)
+    local id = npc:id()
+    
+    if not npc:alive() then
+        return default
+    end
+    local reup_time = trade_manager.get_trade_profile(id, "resupply_time")
+    TraderUpdate(npc, force_refresh)
+    local restock_time = game_difficulties.get_eco_factor("restock") or 24
+    if force_refresh then restock_time = 0 end
+	if reup_time and game.get_game_time():diffSec(t2c(reup_time)) < (restock_time * 3600)  then
+		-- print_dbg("Not time to resupply yet!")
+        return
+	end
+    disable_info("sleep_active")
+    CreateTimeEvent("custom_update"..npc:id(), "custom_resupply"..npc:id(), 0.1, timed_update, npc)
+end
+
+function timed_update(npc)
+    update(npc)
+    return true
+end
+
+-- monkeypatch me
+function update(npc)
+end
+
+-- util functions to help with monkey patching
+
+function get_faction_goodwill(faction)
+end
+
+COMPANION = 0   -- companions got special trade logic, this is just to catch errors
+MECHANIC = 1    -- mechanics/techs
+BARMAN = 2      -- exclusive food suppliers like Spirit
+MEDIC = 3       -- medics 
+SUPPLIER = 4    -- everyone else that sells crap
+-- return trader type as int, or nil if error
+function get_trader_type(npc)
+    local st = db.storage[npc:id()]
+    if not st then return -1 end
+    local trader = false
+    if npc:character_community() == "trader" or npc:clsid() == clsid.script_trader or npc:clsid() == clsid.trader then
+        trader = true
+    end
+    if find(npc:section(),"trader") then
+        trader = true
+    end
+    local cini = st.ini
+    local logic = st.section_logic
+    if not logic and not trader then return -1 end
+    local trade_logic = cini and cini:r_string_ex(logic, "trade")
+    if not trade_logic then return -1 end
+    if find(trade_logic, "companion") then
+        return COMPANION
+    elseif find(trade_logic, "trade_generic_mechanic") then
+        return MECHANIC
+    elseif find(trade_logic, "trade_generic_barman") then
+        return BARMAN
+    elseif find(trade_logic, "trade_generic_medic") then
+        return MEDIC
+    else
+        return SUPPLIER
+    end
+end
+
+-- return supply level of npc, like suppy_1, supply_2, etc
+-- as_number removes the supply_ prefix and only returns as int
+function supply_level(npc, as_number)
+
+    local profile = trade_manager.get_trade_profile(npc:id(), "cfg_ltx")
+    -- printf("Profile is %s", profile)
+    local config = trade_manager.get_trade_cfg(profile)    
+    if not config then return end
+	local str = config:r_string_ex("trader", "buy_supplies")
+	if not (str) then 
+		return -- no buy_supplies this is normal
+	end
+
+	local condlist = xr_logic.parse_condlist(npc, "trader", "buy_supplies", str)
+	str = condlist and xr_logic.pick_section_from_condlist(db.actor, npc, condlist)
+    if as_number then
+        local num = str_explode(str, "_")
+        return tonumber(num[2])
+    else   
+        return str
+    end
+end
+
+-- collapse several tables into one table, the way sections work in ltx files
+-- tables should be in section -> amount format
+-- precedence goes up to last table, meaning whatever is in the last table will be the last changes applied
+function merge_tables(tables)
+    local final_table = {}
+    if #tables > 0 then
+        copy_table(final_table, tables[1])
+        if #tables > 1 then
+            for i=2, #tables do
+                for k,v in pairs(tables[i]) do
+                    final_table[k] = v
+                end
+            end
+        end
+    end
+    return final_table
+end
+
+
+local furniture = {
+    ["esc_m_trader"] = true,
+    ["red_m_lesnik"] = true
+}
+
+local blacklisted_comms = {
+    ["trader"] = true,
+    ["monster"] = true
+}
+
+-- used to get the real community of the NPC by checking spawn id
+-- author: HarukaSai
+function get_real_community(npc, default)
+
+	if furniture[npc:name()] then
+		return "stalker"
+	end
+	local community = character_community(npc)
+	if not blacklisted_comms[community] then
+		return community
+	end
+	local squad_community = get_object_squad(npc):get_squad_community()
+	if not blacklisted_comms[squad_community] then
+		return squad_community
+	else
+		return default
+	end
+end
+
+
+-- to_spawn should be table of sections to amount
+-- if check_existing is true, only spawns up to that amount in trader inventory. else arbitrarily spawns
+
+function spawn_items(npc, to_spawn, check_existing)
+    local npc_name = npc:name()
+    local alive_or_furniture = xr_conditions.is_alive(db.actor, npc) or furniture[npc_name]
+    if not alive_or_furniture then return end
+    local supply_table = {}
+    copy_table(supply_table, to_spawn)
+    if check_existing then
+		local function itr_inv(temp, item)
+			if supply_table[item:section()] and supply_table[item:section()] > 0 then
+				-- printf("Found 1 of %s", item:section())
+                supply_table[item:section()] = supply_table[item:section()] - 1
+			end
+		end
+		npc:iterate_inventory(itr_inv)
+    end
+    
+    for k,v in pairs(supply_table) do
+        -- printf("Creating %s of %s", v, k)
+        for i=1, v do
+            -- printf("Created %s", k)
+            alife_create_item(k, npc)
+        end
+    end
+end

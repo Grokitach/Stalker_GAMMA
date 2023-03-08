@@ -1,0 +1,399 @@
+gc = game.translate_string
+local function pr(...)
+    local debug = false
+    if debug then
+        printf("placeable_furniture: " .. ...)
+    end
+end
+
+-- keybinds
+local mcm_keybinds = ui_mcm and ui_mcm.key_hold
+local key_rotate_left = DIK_keys.DIK_LEFT
+local key_rotate_right = DIK_keys.DIK_RIGHT
+local key_move_up = DIK_keys.DIK_UP
+local key_move_down = DIK_keys.DIK_DOWN
+local key_place = DIK_keys.DIK_F
+local key_toggle_collision = DIK_keys.DIK_TAB
+
+
+local states = {
+    IDLE=1,
+    HOLDING=2,
+}
+local state = states.IDLE
+
+local check_collision = true
+
+local disable_bbox = false
+
+local place_coordinates = nil
+local place_sound = xr_sound.get_safe_sound_object( "interface\\place_object" )
+local rotation_offset = 0
+local place_obj_id = nil
+local cur_obj_id = nil
+local phy_obj_section = nil
+
+local base_rot = 0
+local vertical_offset = 0.1
+
+local condition = nil
+conditions = {}
+
+function createObject(world_obj)
+    pr("createObject: " .. world_obj)
+    if world_obj == nil then
+        pr("Could not find associated object with item")
+        actor_menu.set_msg(1, "ERROR: Could not find object to place",3)
+        return
+    end
+
+    local obj = alife_create(world_obj, place_coordinates, db.actor:level_vertex_id(), db.actor:game_vertex_id())
+    local item_section = get_object_by_id(place_obj_id):section()
+    if obj.id then
+        pr("initlightid")
+    end
+	if (obj) then
+        local placeable_type = ini_sys:r_string_ex(item_section, "placeable_type") or "prop"
+        if placeable_type == "light" then
+            pr("Placed down light: creating light data")
+            createLightData(obj, world_obj)
+            CreateTimeEvent("PlaceableLight","TurnOffLight" .. obj.id, 0, turn_off_light, obj.id)
+        elseif placeable_type == "stash" then
+            -- Save stash data
+            local m_data = alife_storage_manager.get_state()
+            if not (m_data.player_created_stashes) then
+                m_data.player_created_stashes = {}
+            end
+            m_data.player_created_stashes[obj.id] = item_section
+
+            -- Send script callback (not used in vanilla)
+            local data = {
+                stash_id = obj.id,
+                stash_name = item_section,
+                stash_section = item_section
+            }
+            SendScriptCallback("actor_on_stash_create", data)
+        end
+        local rot = ((base_rot+rotation_offset) * math.pi) / 180
+        rot = rot + device().cam_dir:getH()
+        obj.angle = vector():set(0,rot,0)
+        pr("rot="..rot)
+
+        cur_obj_id = obj.id
+        pr("cur_obj_id="..cur_obj_id)
+        return obj.id
+	end
+
+    
+end
+
+function createLightData(obj, section)
+    pr("createLightData")
+
+    local data = utils_stpk.get_lamp_data(obj)
+    
+    local light_section = ini_sys:r_string_ex(section, "light_section", "glowstick_definition")
+	
+	data.visual_name = ini_sys:r_string_ex(section, "visual", "dynamics\\placeable\\gas_lamp")
+    local type = ini_sys:r_float_ex(light_section, "type", 2) -- 1-Point 2-Spot
+    if type == 1 then
+        data.light_flags = 45 -- Change to 47 for shadows, 63 for spot and shadows
+    elseif type == 2 then
+        data.light_flags = 61
+    end
+
+    if (ini_sys:r_bool_ex(light_section, "has_shadows", false)) then
+        data.light_flags = data.light_flags + 2
+    end
+	
+	-- Volumetric light
+	if (ini_sys:r_bool_ex(light_section, "volumetric", false)) then
+		data.light_flags = data.light_flags + 64 
+		
+		data.volumetric_quality = ini_sys:r_float_ex(light_section, "volumetric_quality", 0.5)
+		data.volumetric_intensity = ini_sys:r_float_ex(light_section, "volumetric_intensity", 0.5)
+		data.volumetric_distance = ini_sys:r_float_ex(light_section, "volumetric_distance", 0.5)
+	end
+	
+	-- Color
+	local color_s = ini_sys:r_string_ex(light_section, "color", "0.5,0.5,0.5,0.5")
+	local _s = str_explode(color_s,",")
+	
+	for i=1,#_s do
+		_s[i] = clamp(round(tonumber(_s[i]) * 255), 0, 255)
+	end
+	
+	local function lshift(x, by)
+		return x * 2 ^ by
+	end
+	
+	data.main_color = lshift(bit_and(_s[4],0xff), 24) + lshift(bit_and(_s[1],0xff), 16) + lshift(bit_and(_s[2],0xff), 8) + bit_and(_s[3],0xff)
+	data.main_brightness = 1.0
+	
+	data.main_color_animator = ini_sys:r_string_ex(light_section, "color_animator", "empty")
+	data.main_bone = ini_sys:r_string_ex(light_section, "main_bone", "bone_light")
+    data.main_cone_angle = ini_sys:r_float_ex(light_section, "cone_angle", 0)
+	data.main_range = ini_sys:r_float_ex(light_section, "range", 15)
+
+    utils_stpk.set_lamp_data(data, obj)
+
+    if condition then
+        conditions[obj.id] = condition
+        condition = nil
+    end
+
+    return true
+
+end
+
+local bbox = nil
+local bbox_drawer = aol_bbox.bbox_renderer()
+local function actor_on_update()
+    if state == states.HOLDING then
+        local pos = vector()
+        pos:mad(device().cam_pos,device().cam_dir,level.get_target_dist())
+        pos.y = pos.y + vertical_offset
+        
+        local rot = device().cam_dir:getH() + (((base_rot+rotation_offset) * math.pi) / 180)
+        bbox:SetWorldOrigin(pos)
+        bbox.world_rotation = rot
+        
+        bbox:UpdateBBox()
+        if check_collision and not disable_bbox then
+            bbox:CheckForCollisions()
+        else
+            bbox.is_colliding = false
+        end
+    
+        bbox_drawer:DrawBBoxCollider(bbox)
+
+        place_coordinates = pos
+    end
+end
+
+local direction_keys = {
+	[key_bindings.kFWD] = true,
+	[key_bindings.kBACK] = true,
+	[key_bindings.kL_STRAFE] = true,
+	[key_bindings.kR_STRAFE] = true,
+	[key_bindings.kCROUCH] = true,
+	[key_bindings.kACCEL] = true,
+    [key_bindings.kWPN_FIRE] = true,
+    [key_bindings.kWPN_ZOOM] = true,
+    [key_bindings.kL_LOOKOUT] = true,
+    [key_bindings.kR_LOOKOUT] = true,
+    [key_bindings.kJUMP] = true,
+	[7] = true,
+}
+local function onKeyPress(dik)
+    if dik == key_place then
+        if state == states.HOLDING then
+            pr("PRESSING Z WHILE HOLDING")
+            if level.get_target_dist() > 5 then
+                actor_menu.set_msg(1, gc("st_far_popup"),3)
+                pr("Cannot place object that far away - max range of 5 units")
+                return
+            end
+
+            if bbox.is_colliding and not disable_bbox then
+                actor_menu.set_msg(1, gc("st_collision_warning"), 1)
+                return
+            end
+            
+            createObject(phy_obj_section)
+            
+            place_sound:play_no_feedback(obj, sound_object.s3d, 0, place_coordinates, 1.0, 1.0)
+            bbox_drawer:Stop()
+
+            rotation_offset = 0
+            condition = nil
+            base_rot = 0
+            phy_obj_section = nil
+
+            if place_obj_id then
+                alife():release(alife():object(place_obj_id), true)
+                place_obj_id = nil
+            end
+
+            state = states.IDLE
+            pr("state=PLACING")
+        end
+    elseif dik == key_rotate_left then
+        if state == states.HOLDING then
+            rotation_offset = rotation_offset + 15
+            actor_menu.set_msg(1, gc("st_rotation_label") .. ": " .. rotation_offset,3)
+        end
+    elseif dik == key_rotate_right then
+        if state == states.HOLDING then
+            rotation_offset = rotation_offset - 15
+            actor_menu.set_msg(1, gc("st_rotation_label") .. ": " .. rotation_offset,3)
+        end
+    elseif dik == key_move_up then
+        if state == states.HOLDING then
+            vertical_offset = vertical_offset + 0.1
+            actor_menu.set_msg(1, gc("st_vertical_label") .. ": " .. vertical_offset,3)
+        end
+    elseif dik == key_move_down then
+        if state == states.HOLDING then
+            vertical_offset = vertical_offset - 0.1
+            actor_menu.set_msg(1, gc("st_vertical_label") .. ": " .. vertical_offset,3)
+        end
+    elseif dik == key_toggle_collision then
+        if state == states.HOLDING then
+            check_collision = not check_collision
+            if check_collision then
+                actor_menu.set_msg(1, gc("st_enable_collision"),3)
+            else
+                actor_menu.set_msg(1, gc("st_disable_collision"),3)
+            end
+        end
+    else
+        local bind = dik_to_bind(dik)
+        if state ~= states.IDLE and not direction_keys[bind] then
+            pr("Interrupting placement")
+            state = states.IDLE
+        end
+    end
+end
+
+local function on_item_drag_dropped(obj_b, obj_d, slot_from, slot_to)
+	
+	-- Check capability
+	if not (slot_from == EDDListType.iActorBag and (slot_to == EDDListType.iActorBag or slot_to == EDDListType.iActorSlot)) then
+        return
+    end
+	
+	local sec_b = obj_b:section() -- fuel
+	local sec_d = obj_d:section() -- light source
+
+    local req_fuel = ini_sys:r_string_ex(sec_d, "fuel_section")
+	if req_fuel and (sec_b == req_fuel) then
+        if sec_b == "batteries_dead" then
+            alife_create_item("batteries_dead", db.actor, {cond=obj_d:condition()})
+            obj_d:set_condition(obj_b:condition())
+        else
+            utils_item.discharge(obj_b, 1)
+            obj_d:set_condition(1.0)
+        end
+		
+		utils_obj.play_sound("interface\\items\\inv_items_generic_1")
+	end
+end
+
+function turn_off_light(obj_id)
+    local obj = get_object_by_id(obj_id)
+    if not (obj) then
+        return
+    end
+    if not (obj.get_hanging_lamp) then
+        return
+    end
+
+    local lamp = obj:get_hanging_lamp()
+    if not lamp then
+        return
+    end
+
+    if lamp:is_on() then lamp:turn_off() end
+    return true
+end
+------
+
+function place_item(obj)
+    return gc("st_place_furniture")
+end
+
+function func_place_item(obj)
+    place_obj_id = obj:id()
+    condition = obj:condition()
+    if state == states.IDLE then
+        db.actor:activate_slot(0)
+        hide_hud_inventory()
+        pr("USING ITEM TO PLACE")
+        state = states.HOLDING
+        pr("state=HOLDING")
+        actor_menu.set_msg(1, gc("st_place_popup"),3)
+        phy_obj_section = ini_sys:r_string_ex(obj:section(), "placeable_section") or nil
+        if phy_obj_section == nil then
+            pr("No section of physical object to place")
+        end
+
+        if disable_bbox then
+            bbox = aol_bbox.bbox_collider(0.5, 0.5, 0.5,
+                                          nil,
+                                          vector():set(0, 0.25, 0))
+        else
+            local bbox_size_str = ini_sys:r_string_ex(phy_obj_section, "bounding_box_size", "0.5,0.5,0.5")
+            local bbox_size = str_explode(bbox_size_str,",")
+            local bbox_origin_str = ini_sys:r_string_ex(phy_obj_section, "bounding_box_origin", "0,0.25,0")
+            local bbox_origin = str_explode(bbox_origin_str,",")
+            base_rot = ini_sys:r_float_ex(phy_obj_section, "base_rotation", 0) or 0
+    
+            bbox = aol_bbox.bbox_collider(tonumber(bbox_size[1]), tonumber(bbox_size[2]), tonumber(bbox_size[3]),
+                                          nil,
+                                          vector():set(tonumber(bbox_origin[1]), tonumber(bbox_origin[2]), tonumber(bbox_origin[3])),
+                                          nil,
+                                          nil,
+                                          base_rot)
+
+        end
+
+        vertical_offset = 0.1
+    end
+end
+
+------
+-- Helper to determine if item is a placeable furniture that requires fuel
+-- function is_fueled_furniture(obj)
+--     local section = obj and obj:section() or false
+--     if section then
+--         return SYS_GetParam(0, section, "placeable_type") and SYS_GetParam(0, section, "use_condition")
+--     end
+--     return false
+-- end
+
+-- Monkey patch for adding fuel amount on items // DEPRECATED: using item_device binder instead, which makes these items devices
+-- local clr_r  = utils_xml.get_color("d_red")
+-- local clr_g  = utils_xml.get_color("d_green")
+-- local clr_y  = utils_xml.get_color("yellow")
+
+-- local clr_2  = utils_xml.get_color("ui_gray_1")
+-- original_build_desc_header = ui_item.build_desc_header
+-- function ui_item.build_desc_header(obj, sec, str)
+-- 	local _str = ""
+-- 	local _str2 = original_build_desc_header(obj, sec, str)
+	
+--     -- display power + psu
+-- 	if obj and is_fueled_furniture(obj) then
+--         local fuel = math.ceil(obj:condition() * 100)
+--         local clr = utils_xml.get_color_con(fuel)
+--         _str = clr .. " � " .. clr_2 .. gc("st_fuel") .. ": " .. clr .. tostring(fuel) .. "%" .. "\\n \\n" .. clr_2
+--     end
+-- 	_str = _str .. _str2
+
+-- 	return _str
+-- end
+
+function on_option_change(mcm) --new in mcm 1.6.0 mcm passes true to the on_option_change callback
+	if mcm then
+		key_rotate_left = ui_mcm.get("aol_hf/bind_left") or key_rotate_left
+        key_rotate_right = ui_mcm.get("aol_hf/bind_right") or key_rotate_right
+        key_move_up = ui_mcm.get("aol_hf/bind_up") or key_move_up
+        key_move_down = ui_mcm.get("aol_hf/bind_down") or key_move_down
+
+        key_place = ui_mcm.get("aol_hf/bind_place") or key_place
+        key_toggle_collision = ui_mcm.get("aol_hf/bind_collision") or key_toggle_collision
+        disable_bbox = ui_mcm.get("aol_hf/disable_bbox")
+	end
+end
+
+-------
+
+function on_game_start()
+    RegisterScriptCallback("on_option_change",on_option_change)
+    on_option_change(mcm_keybinds)
+
+	RegisterScriptCallback("on_key_press", onKeyPress)
+    RegisterScriptCallback("actor_on_update", actor_on_update)
+    RegisterScriptCallback("ActorMenu_on_item_drag_drop", on_item_drag_dropped)
+end

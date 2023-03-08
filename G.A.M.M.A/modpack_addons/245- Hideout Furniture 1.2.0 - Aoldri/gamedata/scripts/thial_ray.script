@@ -1,0 +1,55 @@
+class "geometry_ray"
+
+--[[
+(At least one range parameter should be specified)
+ray_range:
+    Defines the total range of the ray. If you want to attach the ray to
+    a fast moving object it is good to extend the ray so that you can reduce
+    the polling rate by using the get function.
+contact_range:
+    Defines the distance at which the result will report being in contact.
+    You can skip it or set it to a value lower than the ray_range to
+    still be able to get the intersection position from the result while
+    marking the ray as not being in contact yet
+distance_offset:
+    Defines how much the intersection position is offset.
+    You can use both positive and negative values or you can leave it blank.
+flags (bit map = values can be added together for combined effect):
+    0 : None
+    1 : Objects
+    2 : Statics
+    4 : Shapes
+    8 : Obstacles
+]]--
+function geometry_ray:__init(ray_range, contact_range, distance_offset, flags)
+    if ray_range == nil and contact_range == nil then
+        return nil
+    end
+
+    self.ray_range = ray_range or contact_range
+    self.contact_range = contact_range or ray_range
+    self.distance_offset = distance_offset ~= nil and distance_offset or 0
+    self.ray = ray_pick()
+    self.ray:set_flags(flags or 2)
+    self.ray:set_range(self.ray_range)      
+end
+
+--[[
+position:
+    position from which the ray will start
+direction:
+    direction in which the ray will be fired
+]]--
+function geometry_ray:get(position, direction)    
+    if position == nil or direction == nil then
+        return nil
+    end
+
+    self.ray:set_position(position)
+    self.ray:set_direction(direction)
+    local distance = self.ray:query() and self.ray:get_distance() or self.ray_range
+    local result = {}
+    result.in_contact = distance <= self.contact_range
+    result.position = position:add(direction:mul(distance + self.distance_offset))
+    return result
+end
