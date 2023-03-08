@@ -1,3 +1,18 @@
+function turn_off_lamp(obj_id)
+	local obj = get_object_by_id(obj_id)
+    if not (obj) then
+        return
+    end
+    if not (obj.get_hanging_lamp) then
+        return
+    end
+
+	if not hf_obj_manager.get_data(obj_id).is_on then
+		obj:get_hanging_lamp():turn_off()
+	end
+    return true
+end
+
 local function get_time_elapsed()
     return game.get_game_time():diffSec(level.get_start_time())
 end
@@ -37,12 +52,12 @@ function need_flicker(lamp_obj)
 end
 
 function init(obj)
-    obj:bind_object(placeable_light_binder(obj))
+    obj:bind_object(placeable_light_wrapper(obj).binder)
 end
 
 ---------------------------------------------------------------------------------------------
-class "placeable_light_binder" (object_binder)
-function placeable_light_binder:__init(obj) super(obj)
+class "placeable_light_wrapper" (bind_hf_base.hf_binder_wrapper)
+function placeable_light_wrapper:__init(obj) super(obj)
 
 	lights[obj:id()] = "light_flicker"
 
@@ -54,74 +69,44 @@ function placeable_light_binder:__init(obj) super(obj)
 	self.particle_path = ini_sys:r_string_ex(section,"particle")
 	self.hide_bone_off = ini_sys:r_string_ex(section,"hide_bone_off")
 	
-	if self.humming_snd_path then
-		self.humming = sound_object(self.humming_snd_path)
-		self.humming:play_at_pos(self.object, self.object:position(), 0, sound_object.s3d + sound_object.looped)
-		self.humming.volume = 0.0
-		self.humming_max = time_global() + 5000
-	end
-	
 	if self.particle_path then
 		self.particles = particles_object(self.particle_path)
 	end
 	
-	if obj:section() ~= "placeable_gas_lamp_gamma" then
-		self.object:set_tip_text(gc("st_interact"))
-	end
+	self.object:set_tip_text(gc("st_interact"))
 	
-	self.last_state = self.object:get_hanging_lamp():is_on()
 	
-	if obj:section() == "placeable_gas_lamp_gamma" then
-		self.fuel = 0
-		return
-	end
-		
 	self.tg = time_global()
 	
 	self.time_last = get_time_elapsed() -- used to keep track of time difference in between updates
 	self.max_duration = ini_sys:r_string_ex(section,"fuel_duration")*3600
 	
-	local condition = placeable_furniture.conditions[obj:id()]
-	if condition then
-		self.fuel = condition
-	else
-		self.fuel = 1
-	end
-
-end
-
-function placeable_light_binder:reload(section)
-end
-
-function placeable_light_binder:reinit()
-end
-
-function placeable_light_binder:update(delta)
-	self.object:set_callback(callback.hit, placeable_light_binder.hit_callback, self)
-	self.object:set_callback(callback.death, placeable_light_binder.death_callback, self)
-	self.object:set_callback(callback.use_object, placeable_light_binder.use_callback, self)
-
-	if not self.init then
-		local phys = self.object:get_physics_shell()
-		if phys then
-			phys:apply_force(0, 1, 0)
-			self.init = true
-		end
-	end
+	-- get data
+	local data = hf_obj_manager.get_data(obj:id())
 	
-	if self.object:section() == "placeable_gas_lamp_gamma" then
-		local lamp_obj = self.object:get_hanging_lamp()
-		local is_on = lamp_obj:turn_off()
-		return
-	end
+	self.fuel = data and data.condition or 1
+	self.infinite_fuel = data and data.is_world_obj
+	self.last_state = data and data.is_on or false
+
+	-- Turn off lamp is light is turned off
+	CreateTimeEvent("hf_light", "turn_off_"..obj:id(), 0, turn_off_lamp, obj:id())
+end
+
+function placeable_light_wrapper:update(delta)
+	bind_hf_base.hf_binder_wrapper.update(self, delta)
+	self.object:set_callback(callback.death, placeable_light_wrapper.death_callback, self)
 	
 	local lamp_obj = self.object:get_hanging_lamp()
-	if self.fuel <= 0.0 then
-		lamp_obj:turn_off()
-	end
-	local is_flickering = lamp_obj:is_flickering()
-	local is_on = lamp_obj:is_on()
 	
+	local is_flickering = lamp_obj:is_flickering()
+	local is_on = hf_obj_manager.get_data(self.object:id()).is_on
+	if (self.fuel <= 0.0 or not is_on) then
+		if lamp_obj:is_on() then lamp_obj:turn_off() end
+	else
+		if not lamp_obj:is_on() then
+			 lamp_obj:turn_on()
+		end
+	end
 	
 	if (self.last_state ~= is_on) then
 	
@@ -183,9 +168,6 @@ function placeable_light_binder:update(delta)
 	if (self.humming ~= nil and self.humming:playing()) then
 		self.humming:set_position(self.object:position())
 	end
-
-
-
 	
 	local time_current = get_time_elapsed()
 	local time_diff = time_current - self.time_last
@@ -199,7 +181,9 @@ function placeable_light_binder:update(delta)
 		end
 		
 		-- Deplete light fuel by adjusting condition
+		if not self.infinite_fuel then
 		self.fuel = self.fuel - (time_diff / self.max_duration)
+		end
 	else
 		-- Stop particles if turned off
 		if self.particles and self.particles:playing() then
@@ -208,12 +192,12 @@ function placeable_light_binder:update(delta)
 	end
 
 	self.time_last = time_current
+	self:save_data()
 end
 
-function placeable_light_binder:net_spawn(data)
-end
-
-function placeable_light_binder:net_destroy()
+function placeable_light_wrapper:net_destroy()
+	self:save_data()
+	
 	if (self.humming) then
 		self.humming:stop()
 		self.humming = nil
@@ -224,32 +208,20 @@ function placeable_light_binder:net_destroy()
 	end
 
 	lights[self.object:id()] = nil
+
 end
 
-function placeable_light_binder:net_save_relevant()
-	return true
-end
-
-function placeable_light_binder:save(packet)
-end
-
-function placeable_light_binder:load(reader)
-end
-
-function placeable_light_binder:use_callback(obj, who)
-	if obj:section() == "placeable_gas_lamp_gamma" then return end
-	hide_hud_inventory()
-	ui_furniture_light.start_light_dialog(obj:id())
-end
-
-function placeable_light_binder:hit_callback(obj, amount, local_direction, who, bone_index)
-end
-
-function placeable_light_binder:death_callback(victim, who)
+function placeable_light_wrapper:death_callback(victim, who)
 	if (self.humming) then
 		self.humming:stop()
 		self.humming = nil
 	end
 	
 	lights[self.object:id()] = nil
+end
+
+function placeable_light_wrapper:save_data()
+	hf_obj_manager.update_data(self.object:id(), {
+		condition = self.fuel
+	})
 end
