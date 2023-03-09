@@ -1,0 +1,1149 @@
+gc = game.translate_string
+
+local sound_object_by_path = {}
+--' ������� ������ �������, ������������ �������� ������.
+function get_safe_sound_object(path)
+	if sound_object_by_path[path] == nil then
+		local snd_obj = sound_object(path)
+		sound_object_by_path[path] = {snd_obj}
+		return snd_obj
+	end
+	
+	for i, snd_obj in ipairs(sound_object_by_path[path]) do
+		if not snd_obj:playing() then
+			return snd_obj
+		end
+	end
+
+	local snd_obj = sound_object(path)
+	table.insert(sound_object_by_path, snd_obj)
+	return snd_obj
+end
+
+function stop_all_sound_object()
+	for k,v in pairs(sound_object_by_path) do
+		if v then
+			for i, snd_obj in pairs(v) do
+				snd_obj:stop()
+			end
+		end
+	end
+	sound_object_by_path = {}
+end
+
+local notes = {
+	"C1",
+	"C#1",
+	"D1",
+	"D#1",
+	"E1",
+	"F1",
+	"F#1",
+	"G1",
+	"G#1",
+	"A1",
+	"A#1",
+	"B1",
+	"C2",
+	"C#2",
+	"D2",
+	"D#2",
+	"E2",
+	"F2",
+	"F#2",
+	"G2",
+	"G#2",
+	"A2",
+	"A#2",
+	"B2",
+	"C3",
+	"C#3",
+	"D3",
+	"D#3",
+	"E3",
+	"F3",
+	"F#3",
+	"G3",
+	"G#3",
+	"A3",
+	"A#3",
+	"B3",
+	"C4",
+	"C#4",
+	"D4",
+	"D#4",
+	"E4",
+	"F4",
+	"F#4",
+	"G4",
+	"G#4",
+	"A4",
+	"A#4",
+	"B4",
+	"C5",
+	"C#5",
+	"D5",
+	"D#5",
+	"E5",
+	"F5",
+	"F#5",
+	"G5",
+	"G#5",
+	"A5",
+	"A#5",
+	"B5",
+	"C6",
+	"C#6",
+	"D6",
+	"D#6",
+	"E6",
+	"F6",
+	"F#6",
+	"G6",
+	"G#6",
+	"A6",
+	"A#6",
+	"B6",
+	"C7",
+	"C#7",
+	"D7",
+	"D#7",
+	"E7",
+	"F7",
+	"F#7",
+	"G7",
+	"G#7",
+	"A7",
+	"A#7",
+	"B7",
+	"C8",
+}
+local note2i = {}
+local whitenote2i = {}
+local sharpnote2i = {}
+local i = 1
+local note_i = 1
+local sharp_i = 1
+for k,v in pairs(notes) do
+	if string.find(v, "#") then
+		sharpnote2i[v] = sharp_i
+		sharp_i = sharp_i + 1
+	else
+		whitenote2i[v] = note_i
+		note_i = note_i + 1
+	end
+	note2i[v]=i
+
+	i = i + 1
+end
+
+-- local ini_instruments = ini_file_ex("plugins\\playable_piano\\instruments\\instrument_piano.ltx")
+local ini_instruments = ini_file_ex("plugins\\playable_piano\\instruments\\instruments.ltx")
+local instruments = {}
+local note2snd = {}
+-- for i, note_str in ipairs(notes) do
+-- 	note2snd[note_str] = ini_instruments:r_string_ex("instrument_piano", note_str)
+-- end
+for i, section in pairs(ini_instruments:get_sections()) do
+	instruments[i] = {}
+	instruments[i]["name"] = ini_instruments:r_string_ex(section, "name")
+	for _, note_str in ipairs(notes) do
+		instruments[i][note_str] = ini_instruments:r_string_ex(section, note_str)
+	end
+end
+note2snd = instruments[1]
+
+local dik2note = {
+	[DIK_keys.DIK_1] = "C2",
+	[DIK_keys.DIK_2] = "D2",
+	[DIK_keys.DIK_3] = "E2",
+	[DIK_keys.DIK_4] = "F2",
+	[DIK_keys.DIK_5] = "G2",
+	[DIK_keys.DIK_6] = "A2",
+	[DIK_keys.DIK_7] = "B2",
+	[DIK_keys.DIK_8] = "C3",
+	[DIK_keys.DIK_9] = "D3",
+	[DIK_keys.DIK_0] = "E3",
+	[DIK_keys.DIK_Q] = "F3",
+	[DIK_keys.DIK_W] = "G3",
+	[DIK_keys.DIK_E] = "A3",
+	[DIK_keys.DIK_R] = "B3",
+	[DIK_keys.DIK_T] = "C4",
+	[DIK_keys.DIK_Y] = "D4",
+	[DIK_keys.DIK_U] = "E4",
+	[DIK_keys.DIK_I] = "F4",
+	[DIK_keys.DIK_O] = "G4",
+	[DIK_keys.DIK_P] = "A4",
+	[DIK_keys.DIK_A] = "B4",
+	[DIK_keys.DIK_S] = "C5",
+	[DIK_keys.DIK_D] = "D5",
+	[DIK_keys.DIK_F] = "E5",
+	[DIK_keys.DIK_G] = "F5",
+	[DIK_keys.DIK_H] = "G5",
+	[DIK_keys.DIK_J] = "A5",
+	[DIK_keys.DIK_K] = "B5",
+	[DIK_keys.DIK_L] = "C6",
+	[DIK_keys.DIK_Z] = "D6",
+	[DIK_keys.DIK_X] = "E6",
+	[DIK_keys.DIK_C] = "F6",
+	[DIK_keys.DIK_V] = "G6",
+	[DIK_keys.DIK_B] = "A6",
+	[DIK_keys.DIK_N] = "B6",
+	[DIK_keys.DIK_M] = "C7",
+}
+
+local mod_dik2note = {
+	[DIK_keys.DIK_1] = "C#2",
+	[DIK_keys.DIK_2] = "D#2",
+	[DIK_keys.DIK_4] = "F#2",
+	[DIK_keys.DIK_5] = "G#2",
+	[DIK_keys.DIK_6] = "A#2",
+
+	[DIK_keys.DIK_8] = "C#3",
+	[DIK_keys.DIK_9] = "D#3",
+	[DIK_keys.DIK_Q] = "F#3",
+	[DIK_keys.DIK_W] = "G#3",
+	[DIK_keys.DIK_E] = "A#3",
+
+	[DIK_keys.DIK_T] = "C#4",
+	[DIK_keys.DIK_Y] = "D#4",
+	[DIK_keys.DIK_I] = "F#4",
+	[DIK_keys.DIK_O] = "G#4",
+	[DIK_keys.DIK_P] = "A#4",
+
+	[DIK_keys.DIK_S] = "C#5",
+	[DIK_keys.DIK_D] = "D#5",
+	[DIK_keys.DIK_G] = "F#5",
+	[DIK_keys.DIK_H] = "G#5",
+	[DIK_keys.DIK_J] = "A#5",
+
+	[DIK_keys.DIK_L] = "C#6",
+	[DIK_keys.DIK_Z] = "D#6",
+	[DIK_keys.DIK_C] = "F#6",
+	[DIK_keys.DIK_V] = "G#6",
+	[DIK_keys.DIK_B] = "A#6",
+}
+
+local mod_dik = DIK_keys.DIK_LSHIFT
+local mod_held = false
+
+local autokey2note = {
+	-- White keys
+	["1"] = "C2",
+	["2"] = "D2",
+	["3"] = "E2",
+	["4"] = "F2",
+	["5"] = "G2",
+	["6"] = "A2",
+	["7"] = "B2",
+	["8"] = "C3",
+	["9"] = "D3",
+	["0"] = "E3",
+	["q"] = "F3",
+	["w"] = "G3",
+	["e"] = "A3",
+	["r"] = "B3",
+	["t"] = "C4",
+	["y"] = "D4",
+	["u"] = "E4",
+	["i"] = "F4",
+	["o"] = "G4",
+	["p"] = "A4",
+	["a"] = "B4",
+	["s"] = "C5",
+	["d"] = "D5",
+	["f"] = "E5",
+	["g"] = "F5",
+	["h"] = "G5",
+	["j"] = "A5",
+	["k"] = "B5",
+	["l"] = "C6",
+	["z"] = "D6",
+	["x"] = "E6",
+	["c"] = "F6",
+	["v"] = "G6",
+	["b"] = "A6",
+	["n"] = "B6",
+	["m"] = "C7",
+
+	-- Black keys
+	["!"] = "C#2",
+	["@"] = "D#2",
+	["$"] = "F#2",
+	["%"] = "G#2",
+	["^"] = "A#2",
+
+	["*"] = "C#3",
+	["("] = "D#3",
+	["Q"] = "F#3",
+	["W"] = "G#3",
+	["E"] = "A#3",
+
+	["T"] = "C#4",
+	["Y"] = "D#4",
+	["I"] = "F#4",
+	["O"] = "G#4",
+	["P"] = "A#4",
+
+	["S"] = "C#5",
+	["D"] = "D#5",
+	["G"] = "F#5",
+	["H"] = "G#5",
+	["J"] = "A#5",
+
+	["L"] = "C#6",
+	["Z"] = "D#6",
+	["C"] = "F#6",
+	["V"] = "G#6",
+	["B"] = "A#6",
+}
+local bpm = 100
+local transpose = 0
+local volume = 1.0
+local sheets = {}
+local sheets_index = 1
+local delay = {
+	WHOLENOTE = 1,
+	HALFNOTE = 2,
+	QUARTERNOTE = 4,
+	EIGHTHNOTE = 8
+}
+
+local function wait2secs(note)
+	if note == nil then
+		return nil
+	end
+	-- Converts note to seconds according to type of note (see enum notes) and current bpm
+	local spb = 60/bpm
+	return spb / note
+end
+
+function getSheetsWithTags(tags, tag2sheets)
+    local matching_sheets = {}
+    local tag_indexes = {}
+    for _, val in pairs(tags) do
+        -- Contains current index for access at a particular tag
+        tag_indexes[val] = 1
+    end
+    
+    local selected_tag = tags[1]
+    local keep_looping = true
+    while keep_looping do
+        local selected_sheet = tag2sheets[selected_tag][tag_indexes[selected_tag]]
+        -- print(selected_sheet)
+        if selected_sheet == nil then
+            keep_looping = false
+        end
+        if keep_looping then
+            
+            local next_tag = selected_tag
+            local is_matching = true
+            for _, tag in pairs(tags) do
+                -- Ignore comparison with the selected tag
+                if tag ~= selected_tag then
+                    -- Check if tag has the same sheet as the selected one
+                    local sheet = tag2sheets[tag][tag_indexes[tag]]
+                    -- print("COMPARING:" .. selected_sheet .. "v" .. sheet)
+                    if sheet ~= selected_sheet then
+                        -- No match, pick tag with lowest sheet
+                        is_matching = false
+                        if sheet < selected_sheet then next_tag = tag end
+                    end
+                end
+            end
+            -- found sheet with the same tags
+            if is_matching then
+                table.insert(matching_sheets, selected_sheet)
+            end
+            
+            -- continue incrementing selected tag index
+            selected_tag = next_tag
+            tag_indexes[selected_tag] = tag_indexes[selected_tag] + 1
+        end
+    end
+    
+    return matching_sheets
+end
+
+
+function getTags()
+	local ini_tags = ini_file_ex("plugins\\playable_piano\\tags\\categories.ltx")
+	local tags_info = {}
+	for _, section in pairs(ini_tags:get_sections()) do
+		local priority = ini_tags:r_float_ex(section, "priority")
+		table.insert(tags_info, {
+			["priority"] = priority,
+			["tag"] = section
+		})
+	end
+	table.sort(tags_info, function(a,b) return a["priority"] < b["priority"] end)
+
+	local tags = {}
+	local tag2sheets = {}
+	for i,v in ipairs(tags_info) do
+		table.insert(tags, v["tag"])
+		tag2sheets[v["tag"]] = {}
+	end
+	
+	return tags, tag2sheets
+end
+
+local ini_sheets = ini_file_ex("plugins\\playable_piano\\sheets\\sheets.ltx")
+-- local tags = getTags()
+-- local tag2sheets = {}
+local tags, tag2sheets = getTags()
+
+local i = 1
+for _, section in pairs(ini_sheets:get_sections()) do
+	local bpm = ini_sheets:r_float_ex(section, "bpm")
+	local title = ""
+	local sheet_path = ini_sheets:r_string_ex(section, "sheet")
+	local transpose = ini_sheets:r_float_ex(section, "transpose") or 0
+	local tags_str = ini_sheets:r_string_ex(section, "tags") or ""
+
+	-- Build inverted index of tags to list of sheets
+	local tags_list = str_explode(tags_str,",")
+	for j=1,#tags_list do
+		local tag = tags_list[j]
+		if tag2sheets[tag] == nil then
+			table.insert(tags, tag)
+			tag2sheets[tag] = {}
+		end
+		table.insert(tag2sheets[tag], i)
+	end
+
+	local file_reader = getFS():r_open("$game_config$", sheet_path)
+	local file_data = ""
+	local prev_char = nil
+	local simult_flag = false
+	local simult_notes = {}
+	local music_chart = {}
+	local read_modes = {
+		title=0,
+		subtitle=1,
+		sheet=2
+	}
+	local mode = read_modes.title
+	while not file_reader:r_eof() do
+		local raw_data = file_reader:r_u8()
+		local data = string.char(raw_data)
+		-- -- printf("CHAR: " .. data .. "|CODE: " .. raw_data)
+		
+		if mode == read_modes.title then
+			if data == "\n" then
+				-- Transition to reading subtitles
+				title = file_data
+				file_data = ""
+				mode = read_modes.subtitle
+			else
+				file_data = file_data .. data
+			end
+			
+		elseif mode == read_modes.subtitle then
+			if data == "\n" then
+				-- Transition to reading sheet
+				file_data = ""
+				mode = read_modes.sheet
+			end
+			-- Ignore subtitle text for now
+			
+		-- -- printf("TITLE: " .. title)
+		elseif mode == read_modes.sheet then
+			if autokey2note[data] then
+				if simult_flag then
+					-- Collect notes together
+					table.insert(simult_notes, autokey2note[data])
+				else
+					-- Add quarternote pause for consecutive notes (jjjj)
+					if autokey2note[prev_char] or prev_char == "]" then
+						table.insert(music_chart, {
+							type = "wait", -- "note", "wait"
+							wait = delay.QUARTERNOTE
+						})
+					end
+					-- Play note (j)
+					table.insert(music_chart, {
+						type = "note", -- "note", "wait"
+						note = autokey2note[data]
+					})
+				end
+	
+			elseif data == " " then
+				if simult_flag then
+					-- Add eighthnote pause for spaces in brackets ([j j j j])
+					if #simult_notes ~= 0 then
+						table.insert(music_chart, {
+							type = "notes",
+							notes = simult_notes
+						})
+
+						simult_notes = {}
+					end
+					table.insert(music_chart, {
+						type = "wait",
+						wait = delay.EIGHTHNOTE
+					})
+				else
+					-- Add halfnote pause for spaces (j j j j)
+					table.insert(music_chart, {
+						type = "wait",
+						wait = delay.HALFNOTE
+					})
+				end
+			elseif data == "|" then
+				-- Add wholenote pause for pipes (j|j|j|j)
+				table.insert(music_chart, {
+					type = "wait",
+					wait = delay.WHOLENOTE
+				})
+			-- -- ASCII code for carriage return (NOTE: newlines are done with codes 13, 10 in sequence)
+			elseif raw_data == 10 then
+				if prev_char == "\n" then
+					-- Add total of 2 whole note pause for 2 new lines (previous \n already added halfnote)
+					table.insert(music_chart, {
+						type = "wait",
+						wait = delay.HALFNOTE
+					})
+					table.insert(music_chart, {
+						type = "wait",
+						wait = delay.WHOLENOTE
+					})
+				else
+					-- Add halfnote pause for newlines
+					table.insert(music_chart, {
+						type = "wait",
+						wait = delay.HALFNOTE
+					})
+				end
+			elseif data == "[" then
+				if prev_char ~= " " and prev_char ~= "|" and prev_char ~= "\n" then
+					table.insert(music_chart, {
+						type = "wait", -- "note", "wait"
+						wait = delay.QUARTERNOTE
+					})
+				end
+				simult_flag = true
+			elseif data == "]" then
+				table.insert(music_chart, {
+					type = "notes",
+					notes = simult_notes
+				})
+	
+				simult_flag = false
+				simult_notes = {}
+			end
+			-- if data == "\n" then
+			if raw_data == 10 then
+				file_data = file_data .. " \\n"
+				prev_char = data
+			elseif raw_data == 13 then
+				-- ignore carriage returns
+			else
+				file_data = file_data .. data
+				prev_char = data
+			end
+	
+		end
+	end
+
+	table.insert(sheets, {
+		title = title,
+		bpm = bpm,
+		chart = music_chart,
+		transpose = transpose,
+		score = file_data,
+	})
+	i = i + 1
+end
+
+-- Functions for autoplaying music
+function PlaySound(note)
+	-- Transpose note
+	local i = note2i[note]
+	i = i + transpose
+	local new_note = notes[i]
+
+	-- Play note
+	local snd = get_safe_sound_object(note2snd[new_note])
+	if snd then
+		snd:play(db.actor, 0, sound_object.s2d)
+		snd.volume = volume
+	else
+		-- printf("could not play sound")
+	end
+end
+
+
+local music_index = nil
+local prev_part = nil
+
+
+function UpdateChartMetadata()
+	bpm = sheets[sheets_index].bpm
+	transpose = sheets[sheets_index].transpose
+	music_index = 1
+	-- printf("BPM: " .. bpm)
+	-- printf("Score: " .. sheets[sheets_index].score)
+
+	if GUI then
+		GUI.tempo_trackbar:SetFValue((bpm - 40) / 200)
+		GUI.tempo_value:SetText(bpm)
+		
+		GUI.transpose_trackbar:SetFValue((12+transpose) / 24)
+		GUI.transpose_value:SetText(transpose)
+
+		GUI.volume_trackbar:SetFValue((volume) / 2)
+		GUI.volume_value:SetText(volume)
+
+	end
+end
+function IterateOverChart()
+	-- printf("IterateOverChart")
+	local music_chart = sheets[sheets_index].chart
+	if music_index == nil then
+		music_index = 1
+	end
+
+	local part = music_chart[music_index]
+
+	-- Animate key release
+	if prev_part and GUI then
+		local time_eighthnote = (60/bpm) / 8
+		if prev_part.notes then
+			for i, note in ipairs(prev_part.notes) do
+				local isSharp = false
+				if sharpnote2i[note] then
+					isSharp = true
+				end
+				local wait = part and wait2secs(part.wait) or time_eighthnote
+				wait = wait - (time_eighthnote / 2)
+				CreateTimeEvent("PlayablePiano","ReleaseKey-" .. note, wait, GUI.AnimateKeyRelease, GUI, note, isSharp)
+			end
+		end
+		if prev_part.note then
+			local isSharp = false
+			if sharpnote2i[prev_part.note] then
+				isSharp = true
+			end
+			local wait = part and wait2secs(part.wait) or time_eighthnote
+			wait = wait - (time_eighthnote / 2)
+			CreateTimeEvent("PlayablePiano","ReleaseKey-" .. prev_part.note, wait, GUI.AnimateKeyRelease, GUI, prev_part.note, isSharp)
+		end
+	end
+
+	if part == nil then
+		music_index = nil
+		prev_part = nil
+		-- printf("No more part")
+		return true
+	end
+
+	if part.type == "note" then
+		PlaySound(part.note)
+		if GUI then
+			local isSharp = false
+			if sharpnote2i[part.note] then
+				isSharp = true
+			end
+			GUI:AnimateKeyPress(part.note, isSharp)
+		end
+		-- printf("Play note: " .. part.note)
+	elseif part.type == "wait" then
+		-- printf("Wait for: " .. wait2secs(part.wait))
+		ResetTimeEvent("PlayablePiano","IterateChart",wait2secs(part.wait))
+	elseif part.type == "notes" then
+		-- printf("Play multiple notes")
+		for i, note in ipairs(part.notes) do
+			-- printf("Play note(multiple): " .. note)
+			PlaySound(note)
+			if GUI then
+				local isSharp = false
+				if sharpnote2i[note] then
+					isSharp = true
+				end
+				GUI:AnimateKeyPress(note, isSharp)
+			end
+		end
+	end
+
+	music_index = music_index + 1
+	prev_part = part
+	return false
+	
+end
+
+-- UI for Piano Object
+
+GUI = nil -- instance, don't touch
+
+class "UIFurniturePiano" (CUIScriptWnd)
+
+function UIFurniturePiano:__init() super()
+	self:InitControls()
+	self:InitCallbacks()
+end
+
+function UIFurniturePiano:__finalize()
+	GUI = nil
+end
+
+function UIFurniturePiano:InitControls()
+	self:SetWndRect(Frect():set(0,0,1024,768))
+	self.wide = (device().width/device().height) > (1024/768 + 0.01)
+	
+	self:SetAutoDelete(true)
+
+	local xml = CScriptXmlInit()
+	-- xml:ParseFile("ui_sleep_dialog.xml")
+    xml:ParseFile("ui_furniture_piano_dialog.xml")
+
+	-- controls
+	self.autoplay_btn = xml:InitCheck("autoplay_btn", self)
+	self.autoplay_btn_text = xml:InitTextWnd("autoplay_btn:txt", self.autoplay_btn)
+	self.autoplay_btn_text:SetText(gc("st_autoplay"))
+	self:Register(self.autoplay_btn, "toggle_autoplay")
+
+	-- button toggle
+	self.piano_config_btn = xml:InitCheck("piano_config_btn", self)
+	self.piano_config_btn_text = xml:InitTextWnd("piano_config_btn:txt", self.piano_config_btn)
+	self.piano_config_btn_text:SetText(gc("st_configure"))
+	self:Register(self.piano_config_btn, "toggle_piano_config")
+
+	-- Config Background
+	self.piano_config_bg = xml:InitFrame("piano_config_bg", self)
+	self.piano_config_bg:Show(false)
+	self.piano_config_scroll = xml:InitScrollView("piano_config_scroll", self.piano_config_bg)
+
+	-- Tempo
+	self.tempo_container = xml:InitStatic("trackbar_container", self.piano_config_scroll)
+	self.tempo_caption = xml:InitTextWnd("trackbar_container:caption", self.tempo_container)
+	self.tempo_caption:SetText(gc("st_tempo"))
+	self.tempo_trackbar = xml:InitTrackBar("trackbar_container:trackbar", self.tempo_container)
+	self.tempo_value = xml:InitTextWnd("trackbar_container:value", self.tempo_container)
+
+	self.tempo_trackbar:SetStep(1/200)
+	self:Register(self.tempo_trackbar, "tempo")
+
+	-- Transpose
+	self.transpose_container = xml:InitStatic("trackbar_container", self.piano_config_scroll)
+	self.transpose_caption = xml:InitTextWnd("trackbar_container:caption", self.transpose_container)
+	self.transpose_caption:SetText(gc("st_transpose"))
+	self.transpose_trackbar = xml:InitTrackBar("trackbar_container:trackbar", self.transpose_container)
+	self.transpose_value = xml:InitTextWnd("trackbar_container:value", self.transpose_container)
+
+	self.transpose_trackbar:SetStep(1/24) -- Range: -12 to +12
+	self:Register(self.transpose_trackbar, "transpose")
+
+	-- Volume
+	self.volume_container = xml:InitStatic("trackbar_container", self.piano_config_scroll)
+	self.volume_caption = xml:InitTextWnd("trackbar_container:caption", self.volume_container)
+	self.volume_caption:SetText(gc("st_volume"))
+	self.volume_trackbar = xml:InitTrackBar("trackbar_container:trackbar", self.volume_container)
+	self.volume_value = xml:InitTextWnd("trackbar_container:value", self.volume_container)
+
+	self.volume_trackbar:SetStep(1/20) -- Range: 0.0 to 2.0
+	self.volume_trackbar:SetFValue(volume/2)
+	self:Register(self.volume_trackbar, "volume")
+
+	-- Instrument Select
+	self.instrument_container = xml:InitStatic("select_container", self.piano_config_scroll)
+	self.instrument_caption = xml:InitTextWnd("select_container:caption", self.instrument_container)
+	self.instrument_caption:SetText(gc("st_instrument"))
+	self.instrument_select = xml:InitComboBox("select_container:select", self.instrument_container)
+	self:Register(self.instrument_select, "instrument")
+	local i = 1
+	for instrument, notes2str in pairs(instruments) do
+		self.instrument_select:AddItem(notes2str["name"], i)
+		i = i+1
+	end
+	self.instrument_select:SetText(gc(instruments[1].name))
+
+	-- Sheet
+	self.sheet_bg = xml:InitFrame("sheet_bg", self)
+
+	
+	-- Sheet Select
+	self.sheet_select = xml:InitComboBox("sheet_select", self)
+	self:Register(self.sheet_select, "sheet_select")
+	self.filtered_sheets = {}
+	for i=1,#sheets do
+		self.sheet_select:AddItem(sheets[i].title, i)
+		self.filtered_sheets[i] = i
+	end
+	self.sheet_select:SetText(sheets[1].title)
+	
+	-- Tag Select
+	-- button toggle
+	self.tag_select_btn = xml:InitCheck("tag_select_btn", self)
+	self.tag_select_btn_text = xml:InitTextWnd("tag_select_btn:txt", self.tag_select_btn)
+	self.tag_select_btn_text:SetText(gc("st_filter_by_tag"))
+	self:Register(self.tag_select_btn, "toggle_tags")
+	
+	self.tag_select_bg = xml:InitFrame("tag_select_bg", self)
+	self.tag_select_bg:Show(false)
+	self.tag_select_scroll = xml:InitScrollView("tag_select_scroll", self.tag_select_bg)
+	self.tag_checkboxes = {}
+	for i=1,#tags do
+		local tag_wnd = xml:InitStatic("tag_select", self.tag_select_scroll)
+		
+		local tag_cap = xml:InitTextWnd("tag_select:cap_tag", tag_wnd)
+		tag_cap:SetText(gc(tags[i]))
+		local tag_check = xml:InitCheck("tag_select:check_tag",	tag_wnd)
+		tag_check:SetCheck(false)
+		
+		self:Register(tag_check, "tag_checkbox")
+		
+		table.insert(self.tag_checkboxes, {
+			container = tag_wnd,
+			caption = tag_cap,
+			check = tag_check,
+			tag_name = tags[i]
+		})
+	end
+	
+	self.score_scroll = xml:InitScrollView("score_scroll", self.sheet_bg)
+	
+	self.title = xml:InitTextWnd("title", self.score_scroll)
+	self.title:SetText(sheets[sheets_index].title)
+	self.title:SetAutoDelete(false)
+	-- self.score_scroll:AddWindow(self.title, true)
+	
+	self.score = xml:InitTextWnd("score", self.score_scroll)
+	self.score:SetText(sheets[sheets_index].score)
+	self.score:AdjustHeightToText()
+	self.score:SetAutoDelete(false)
+	-- self.score_scroll:AddWindow(self.score, true)
+	
+
+	self.piano_bg = xml:InitStatic("piano_bg", self)
+	self.white_keys = {}
+	for i = 1, 36, 1 do
+		table.insert(self.white_keys, xml:InitStatic("white_key", self))
+		local new_pos = self.white_keys[i]:GetWndPos()
+		new_pos.x = new_pos.x + (self.white_keys[i]:GetWidth() * (i-1))
+		self.white_keys[i]:SetWndPos(new_pos)
+	end
+
+	local skip_key = {[3] = true,
+					[7] = true,
+					[10] = true,
+					[14] = true,
+					[17] = true,
+					[21] = true,
+					[24] = true,
+					[28] = true,
+					[31] = true,
+	}
+	self.black_keys = {}
+	local count = 1
+	for i = 1, 34, 1 do
+		if skip_key[i] ~= true then
+			table.insert(self.black_keys, xml:InitStatic("black_key", self))
+			local new_pos = self.black_keys[count]:GetWndPos()
+			new_pos.x = new_pos.x + (self.white_keys[1]:GetWidth() * (i-1))
+			self.black_keys[count]:SetWndPos(new_pos)
+			count = count + 1
+		end
+	end
+
+
+	self.btn_pickup = xml:Init3tButton("btn_pickup", self)
+	self:Register(self.btn_pickup, "btn_pickup")
+
+    self.btn_close = xml:Init3tButton("btn_close", self)
+	self:Register(self.btn_close, "btn_close")
+
+end
+
+function UIFurniturePiano:Pickup()
+	local obj = get_object_by_id(self.obj_id)
+	local item_section = ini_sys:r_string_ex(obj:section(), "item_section") or "device_gas_lamp"
+	alife_create_item(item_section, db.actor)
+	-- local item = alife():create(item_section, db.actor:position(), 1, db.actor:game_vertex_id(), db.actor:id())
+	-- get_object_by_id(item.id):set_condition(obj:binded_object().fuel)
+
+	alife_release(obj)
+	self:Close()
+end
+
+function UIFurniturePiano:UpdateTempo()
+	local tempo = self.tempo_trackbar:GetFValue()
+	-- printf("Tempo (Float): " .. tempo)
+	-- printf("Tempo (BPM): " .. 40+(tempo*200))
+	bpm = round(40+(tempo*200))
+	self.tempo_value:SetText(bpm)
+end
+
+function UIFurniturePiano:UpdateTranspose()
+	local transpose_tb = self.transpose_trackbar:GetFValue()
+	-- printf("transpose (Float): " .. transpose_tb)
+	-- printf("transpose (BPM): " .. -12+(transpose_tb*24))
+	transpose = round(-12+(transpose_tb*24))
+	self.transpose_value:SetText(transpose)
+end
+
+function UIFurniturePiano:UpdateVolume()
+	local volume_tb = self.volume_trackbar:GetFValue()
+	-- printf("volume (Float): " .. volume_tb)
+	-- printf("volume (BPM): " .. (round(volume_tb*2*10))/10)
+	volume = (round(volume_tb*2*10))/10
+	self.volume_value:SetText(volume)
+
+end
+
+function UIFurniturePiano:OnInstrumentSelect()
+	-- printf("OnInstrumentSelect()")
+	local instrument_id = self.instrument_select:CurrentID()
+	local note_sounds = instruments[instrument_id]
+	note2snd = note_sounds
+
+	-- printf("OnInstrumentSelect() - COMPLETE")
+end
+
+function UIFurniturePiano:OnSheetSelect()
+	local channel_id = self.sheet_select:CurrentID()
+	sheets_index = self.filtered_sheets[channel_id]
+	UpdateChartMetadata()
+	RemoveTimeEvent("PlayablePiano","IterateChart")
+	self.autoplay_btn:SetCheck(false)
+
+	self.title:SetText(sheets[sheets_index].title)
+	self.score:SetText(sheets[sheets_index].score)
+
+	self.score:AdjustHeightToText()
+	self.score:SetWndSize(vector2():set(self.score:GetWidth(), self.score:GetHeight()))
+
+	self.score_scroll:Clear()
+	self.score_scroll:AddWindow(self.title, true)
+	self.title:SetAutoDelete(false)
+	self.score_scroll:AddWindow(self.score, true)
+	self.score:SetAutoDelete(false)
+
+end
+
+function UIFurniturePiano:OnTagSelect()
+	local tags = {}
+	for i=1,#self.tag_checkboxes do
+		local is_checked = self.tag_checkboxes[i].check:GetCheck()
+		if is_checked then
+			table.insert(tags, self.tag_checkboxes[i].tag_name)
+			-- printf("CHECKBOX TICKED (" .. self.tag_checkboxes[i].caption:GetText() .. "): " .. i)
+		end
+	end
+	if next(tags) then
+		self.filtered_sheets = getSheetsWithTags(tags, tag2sheets)
+		self.sheet_select:ClearList()
+		for i, sheet in ipairs(self.filtered_sheets) do
+			self.sheet_select:AddItem(sheets[sheet].title, i)
+		end
+	else
+		self.filtered_sheets[i] = {}
+		self.sheet_select:ClearList()
+		for i, sheet in ipairs(sheets) do
+			self.sheet_select:AddItem(sheets[i].title, i)
+			self.filtered_sheets[i] = i
+		end
+	end
+end
+
+function UIFurniturePiano:ToggleAutoplay()
+	local autoplay = self.autoplay_btn:GetCheck()
+	if autoplay then
+		CreateTimeEvent("PlayablePiano","IterateChart", 0, IterateOverChart)
+	else
+		RemoveTimeEvent("PlayablePiano","IterateChart")
+	end
+end
+
+function UIFurniturePiano:TogglePianoConfig()
+	self.piano_config_bg:Show(self.piano_config_btn:GetCheck())
+end
+
+function UIFurniturePiano:ToggleTags()
+	self.tag_select_bg:Show(self.tag_select_btn:GetCheck())
+end
+
+function UIFurniturePiano:InitCallbacks()
+	-- piano controls
+	self:AddCallback("tempo", ui_events.BUTTON_CLICKED, self.UpdateTempo, self)
+	self:AddCallback("transpose", ui_events.BUTTON_CLICKED, self.UpdateTranspose, self)
+	self:AddCallback("volume", ui_events.BUTTON_CLICKED, self.UpdateVolume, self)
+	self:AddCallback("instrument", ui_events.LIST_ITEM_SELECT, self.OnInstrumentSelect, self)
+
+	self:AddCallback("toggle_autoplay", ui_events.BUTTON_CLICKED, self.ToggleAutoplay, self)
+	self:AddCallback("toggle_piano_config", ui_events.BUTTON_CLICKED, self.TogglePianoConfig, self)
+	self:AddCallback("toggle_tags", ui_events.BUTTON_CLICKED, self.ToggleTags, self)
+
+	-- sheet controls
+	self:AddCallback("sheet_select", ui_events.LIST_ITEM_SELECT, self.OnSheetSelect, self)
+	self:AddCallback("tag_checkbox", ui_events.BUTTON_CLICKED, self.OnTagSelect, self)
+
+	self:AddCallback("btn_pickup", ui_events.BUTTON_CLICKED, self.Pickup, self)
+	self:AddCallback("btn_close", ui_events.BUTTON_CLICKED, self.Close, self)
+end
+
+function UIFurniturePiano:Initialize()
+end
+
+function UIFurniturePiano:TestAndShow(obj_id)
+	-- printf("awf")
+    self.obj_id = obj_id
+	self:Initialize()
+	self:ShowDialog(true)
+	Register_UI("UIFurniturePiano","ui_piano_dialog")
+end
+
+function UIFurniturePiano:Update()
+	CUIScriptWnd.Update(self)
+
+	-- self.title:SetText(sheets[sheets_index].title)
+	-- self.score:SetText(sheets[sheets_index].score)
+end
+
+function UIFurniturePiano:OnTrackButton()
+end
+
+function UIFurniturePiano:AnimateKeyPress(note, isSharp)
+	local note_static = nil
+	if isSharp then
+		local index = sharpnote2i[note] - 5
+		-- printf("Index: " .. index)
+		note_static = self.black_keys[index]
+		if not note_static then
+			-- printf("Could not find image static for note.")
+			return
+		end
+		note_static:InitTexture("ui_inGame2_piano_blackkey_on")
+	else
+		local index = whitenote2i[note] - 7
+		-- printf("Index: " .. index)
+		note_static = self.white_keys[index]
+		if not note_static then
+			-- printf("Could not find image static for note.")
+			return
+		end
+		note_static:InitTexture("ui_inGame2_piano_whitekey_on")
+	end
+end
+
+function UIFurniturePiano:AnimateKeyRelease(note, isSharp)
+	local note_static = nil
+	if isSharp then
+		local index = sharpnote2i[note] - 5
+		-- printf("Index: " .. index)
+		note_static = self.black_keys[index]
+		if not note_static then
+			-- printf("Could not find image static for note.")
+			return true
+		end
+		note_static:InitTexture("ui_inGame2_piano_blackkey_off")
+	else
+		local index = whitenote2i[note] - 7
+		-- printf("Index: " .. index)
+		note_static = self.white_keys[index]
+		if not note_static then
+			-- printf("Could not find image static for note.")
+			return true
+		end
+		note_static:InitTexture("ui_inGame2_piano_whitekey_off")
+	end
+
+	return true
+end
+
+function UIFurniturePiano:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (res == false) then
+		local bind = dik_to_bind(dik)
+		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+			if dik == mod_dik then
+				mod_held = true
+			end
+		
+			if dik == DIK_keys.DIK_ESCAPE then
+				self:Close()
+			end
+
+			-- -- Hotkey for changing sheets
+			-- if dik == DIK_keys.DIK_RIGHT then
+			-- 	if sheets_index < #sheets then
+			-- 		sheets_index = sheets_index + 1
+			-- 	end
+			-- 	UpdateChartMetadata()
+			-- 	-- printf("Selected: " .. sheets[sheets_index].title)
+			-- end
+			-- if dik == DIK_keys.DIK_LEFT then
+			-- 	if sheets_index > 1 then
+			-- 		sheets_index = sheets_index - 1
+			-- 	end
+			-- 	UpdateChartMetadata()
+			-- 	-- printf("Selected: " .. sheets[sheets_index].title)
+			-- end
+
+			-- -- Hotkey for transpose
+			-- if dik == DIK_keys.DIK_UP then
+			-- 	if transpose < 12 then transpose = transpose + 1 end
+			-- 	-- printf("Transpose: " .. transpose)
+			-- end
+			-- if dik == DIK_keys.DIK_DOWN then
+			-- 	if transpose > 1 then transpose = transpose - 1 end
+			-- 	-- printf("Transpose: " .. transpose)
+			-- end
+
+			-- Hotkey for autoplay
+			-- if dik == DIK_keys.DIK_HOME then
+			-- 	-- printf("Pressed HOME key")
+			-- 	CreateTimeEvent("PlayablePiano","IterateChart", 0, IterateOverChart)
+			-- end
+
+			if (not mod_held) and dik2note[dik] then
+				local note = dik2note[dik]
+				PlaySound(note)
+				self:AnimateKeyPress(note, false)
+			elseif mod_held and mod_dik2note[dik] then
+				local note = mod_dik2note[dik]
+				PlaySound(note)
+				self:AnimateKeyPress(note, true)
+			end
+		elseif keyboard_action == ui_events.WINDOW_KEY_RELEASED then
+			if dik == mod_dik then
+				mod_held = false
+			end
+
+			if (not mod_held) and dik2note[dik] then
+				local note = dik2note[dik]
+				self:AnimateKeyRelease(note, false)
+			elseif mod_held and mod_dik2note[dik] then
+				local note = mod_dik2note[dik]
+				self:AnimateKeyRelease(note, true)
+			end
+		end
+	end
+
+	return res
+end
+
+function UIFurniturePiano:Close()
+	if (self:IsShown()) then
+		self:HideDialog()
+	end
+	RemoveTimeEvent("PlayablePiano","IterateChart")
+	music_index = 1
+	-- CreateTimeEvent("PlayablePiano","ClearSound", 5, stop_all_sound_object)
+	--db.actor:give_info_portion("tutorial_sleep")
+	disable_info("actor_is_sleeping")
+	disable_info("sleep_active")
+	
+	Unregister_UI("UIFurniturePiano")
+end
+
+-------
+function start_dialog(obj_id)
+	-- printf("awf")
+	if (GUI == nil) then
+		GUI = UIFurniturePiano()
+	end
+	GUI:TestAndShow(obj_id)
+	UpdateChartMetadata()
+	--return GUI
+end

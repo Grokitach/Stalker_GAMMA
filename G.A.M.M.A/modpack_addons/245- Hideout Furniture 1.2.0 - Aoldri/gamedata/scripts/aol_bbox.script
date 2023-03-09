@@ -1,0 +1,247 @@
+local function pr(...)
+    local debug = false
+    if debug then
+        printf("aol_bbox_collision: " .. ...)
+    end
+end
+-- helper functions
+local function diagonal_length(a,b)
+    return math.sqrt((a*a) + (b*b))
+end
+
+-- used to generate coordinates in local space of bounding box from dimensions
+-- each index corresponds to a vertex
+-- local space origin is at center of box
+local box_local_matrix = {
+    vector():set(-0.5, -0.5, -0.5), -- bottom, top right
+    vector():set(0.5, -0.5, -0.5), -- bottom, top left
+    vector():set(-0.5, -0.5, 0.5), -- bottom, bottom right
+    vector():set(0.5, -0.5, 0.5), -- bottom, bottom left
+    vector():set(-0.5, 0.5, -0.5), -- top, top right
+    vector():set(0.5, 0.5, -0.5), -- top, top left
+    vector():set(-0.5, 0.5, 0.5), -- top, bottom right
+    vector():set(0.5, 0.5, 0.5), -- top, bottom left
+}
+
+local ray_pairs = {
+    -- Orthogonals
+    -- bottom plane
+    {1,2},
+    {1,3},
+    {2,4},
+    {3,4},
+    -- top plane
+    {5,6},
+    {5,7},
+    {6,8},
+    {7,8},
+    -- upward edges
+    {1,5},
+    {3,7},
+    {4,8},
+    {2,6},
+
+    -- Diagonals
+    -- bottom plane
+    {1,4},
+    {2,3},
+    -- top plane
+    {6,7},
+    {5,8},
+    -- front plane
+    {3,8},
+    {4,7},
+    -- back plane
+    {1,6},
+    {2,5},
+    -- left plane
+    {2,8},
+    {4,6},
+    -- right plane
+    {1,7},
+    {3,5}
+}
+
+function get_midpoint(vec1, vec2)
+    return vector():set((vec1.x+vec2.x)/2, (vec1.y+vec2.y)/2, (vec1.z+vec2.z)/2)
+end
+
+-- Class for handling collisions with a bounding box, defined by its dimensions and origin
+class "bbox_collider"
+
+function bbox_collider:__init(width, length, height, world_origin, world_offset, local_origin, local_rotation, world_rotation)
+    pr("init")
+    -- Stores dimensions of the bounding box
+    self.bbox_dims = {
+        width = width,
+        length = length,
+        height = height,
+    }
+    -- Coordinates of the origin in local space
+    self.local_origin = local_origin or vector():set(0,0,0)
+
+    -- Coordinates of the entire box's origin in world space
+    self.world_origin = world_origin or vector():set(0,0,0)
+
+    -- Coordinates of offset from origin in world space, useful for maintaining offset while varying world_origin
+    self.world_offset = world_offset or vector():set(0,0,0)
+
+    self.local_rotation = local_rotation or 0
+
+    self.world_rotation = world_rotation or 0
+    
+    self.is_colliding = false
+
+    -- Coordinates of bbox's vertices in local space
+    self.vertices = {}
+
+    -- Coordinates of bbox vertices in world space
+    self.bbox = {}
+    
+    for i=1,8 do
+        self.vertices[i] = vec_add(box_local_matrix[i], self.local_origin)
+        self.bbox[i] = vector():set(0,0,0)
+    end
+
+    self.ray_pair_i2length = {
+        -- Orthogonals
+        -- bottom plane
+        [1] = self.bbox_dims.width,
+        [2] = self.bbox_dims.length,
+        [3] = self.bbox_dims.length,
+        [4] = self.bbox_dims.width,
+        -- top plane
+        [5] = self.bbox_dims.width,
+        [6] = self.bbox_dims.length,
+        [7] = self.bbox_dims.length,
+        [8] = self.bbox_dims.width,
+        -- upward edges
+        [9] = self.bbox_dims.height,
+        [10] = self.bbox_dims.height,
+        [11] = self.bbox_dims.height,
+        [12] = self.bbox_dims.height,
+    
+        -- Diagonals
+        -- bottom plane
+        [13] = diagonal_length(self.bbox_dims.width,self.bbox_dims.length),
+        [14] = diagonal_length(self.bbox_dims.width,self.bbox_dims.length),
+        -- top plane
+        [15] = diagonal_length(self.bbox_dims.width,self.bbox_dims.length),
+        [16] = diagonal_length(self.bbox_dims.width,self.bbox_dims.length),
+        -- front plane
+        [17] = diagonal_length(self.bbox_dims.width,self.bbox_dims.height),
+        [18] = diagonal_length(self.bbox_dims.width,self.bbox_dims.height),
+        -- back plane
+        [19] = diagonal_length(self.bbox_dims.width,self.bbox_dims.height),
+        [20] = diagonal_length(self.bbox_dims.width,self.bbox_dims.height),
+        -- left plane
+        [21] = diagonal_length(self.bbox_dims.length,self.bbox_dims.height),
+        [22] = diagonal_length(self.bbox_dims.length,self.bbox_dims.height),
+        -- right plane
+        [23] = diagonal_length(self.bbox_dims.length,self.bbox_dims.height),
+        [24] = diagonal_length(self.bbox_dims.length,self.bbox_dims.height)
+    }
+    pr("end")
+
+    self:UpdateBBox()
+end
+
+function bbox_collider:UpdateBBox()
+    -- Get position of vertices in bounding box in world space
+    for i, local_vertex in ipairs(self.vertices) do
+        -- local space
+        local local_position = vector():set(local_vertex.x*self.bbox_dims.width, local_vertex.y*self.bbox_dims.height, local_vertex.z*self.bbox_dims.length)
+
+        -- rotate in local space
+        if self.local_rotation ~= 0 then
+            local_position = vector_rotate_y(local_position, self.local_rotation/ 0.017453292519943295769236907684886) -- TODO: replace with rotation code to avoid expensive division
+        end
+
+        -- world space
+        local world_position = local_position:add(self.world_offset)
+
+        -- rotate in world space
+        if self.world_rotation ~= 0 then
+            world_position = vector_rotate_y(world_position, self.world_rotation/ 0.017453292519943295769236907684886) -- TODO: replace with rotation code to avoid expensive division
+        end
+
+        world_position = world_position:add(self.world_origin)
+
+        -- store vertices coordinates in world space of bbox
+        self.bbox[i] = world_position
+    end
+    
+end
+
+function bbox_collider:SetLocalOrigin(new_pos)
+    self.local_origin = vec_set(new_pos)
+
+    -- update vertices of bbox in local space
+    for i=1,8 do
+        self.vertices[i] = vec_add(box_local_matrix[i], self.local_origin)
+    end
+end
+
+function bbox_collider:SetWorldOrigin(new_pos)
+    self.world_origin = vec_set(new_pos)
+end
+
+function bbox_collider:CheckForCollisions()
+    -- Check for collisions by ray casting between vertex pairs
+    -- Pairs are specified in ray_pairs
+    -- Ray cast in both directions in case the ray goes into the world (rays only register collisions when hitting onto a normal plane)
+    local collision_found = false
+    for i, ray_pair in ipairs(ray_pairs) do
+        -- Exit early if there is no collision
+        if not collision_found then
+            local ray_length = self.ray_pair_i2length[i]
+            local ray = thial_ray.geometry_ray(4, ray_length, 0, (1+2+4+8))
+            local ray_direction = vec_sub(self.bbox[ray_pair[1]], self.bbox[ray_pair[2]])
+            ray_direction = ray_direction:normalize()
+
+            local ray_result_rev = ray:get(vec_set(self.bbox[ray_pair[1]]), vec_set(ray_direction):invert())
+            local ray_result = ray:get(vec_set(self.bbox[ray_pair[2]]), vec_set(ray_direction))
+
+            if ray_result.in_contact or ray_result_rev.in_contact then
+                collision_found = true
+            end
+        end
+    end
+
+    self.is_colliding = collision_found
+
+    return collision_found
+end
+
+-- Class for rendering bounding boxes with particles
+class "bbox_renderer"
+
+function bbox_renderer:__init()
+    self.particles = {}
+    for i=1,8 do
+        self.particles[i] = particles_object("_samples_particles_\\place_indicator")
+    end
+end
+
+function bbox_renderer:DrawBBoxCollider(bbox)
+    for i, particle in ipairs(self.particles) do
+        if not particle:playing() then
+            particle:play()
+        end
+        -- Move particles to crosshair if bbox collides with something
+        if bbox.is_colliding then
+                particle:move_to(bbox.world_origin, VEC_Z)
+        -- Move particles to vertices of bbox if there is no collision
+        else
+            particle:move_to(bbox.bbox[i], VEC_Z)
+        end
+    end
+end
+
+function bbox_renderer:Stop(bbox)
+    for i, particle in ipairs(self.particles) do
+        if particle then
+            particle:stop_deffered()
+        end
+    end
+end

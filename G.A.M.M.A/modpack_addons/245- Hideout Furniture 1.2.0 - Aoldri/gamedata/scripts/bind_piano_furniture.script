@@ -1,0 +1,62 @@
+function init(obj)
+    obj:bind_object(placeable_piano_binder(obj))
+end
+gc = game.translate_string
+--------------------------------------------------------------------------------
+-- Class "placeable_piano_binder"
+--------------------------------------------------------------------------------
+class "placeable_piano_binder" (object_binder)
+-- Class constructor
+function placeable_piano_binder:__init(obj) super(obj)
+    self.object:set_tip_text(gc("st_interact"))
+end
+-- Class update
+function placeable_piano_binder:update(delta)
+    object_binder.update(self, delta)
+    self.object:set_callback(callback.use_object, placeable_piano_binder.use_callback, self)
+
+    if not self.init then
+		local phys = self.object:get_physics_shell()
+		if phys then
+			phys:apply_force(0, 1, 0)
+			self.init = true
+		end
+	end
+end
+
+-- Reload object
+function placeable_piano_binder:reload(section)
+    object_binder.reload(self, section)
+end
+-- Reinitialize object
+function placeable_piano_binder:reinit()
+    object_binder.reinit(self)
+end
+-- Net spawn
+function placeable_piano_binder:net_spawn(se_abstract)
+    if not(object_binder.net_spawn(self, se_abstract)) then
+        return false
+    end
+    return true
+end
+-- Net destroy
+function placeable_piano_binder:net_destroy()
+	object_binder.net_destroy(self)
+end
+-- Standart function for save
+function placeable_piano_binder:net_save_relevant()
+	return true
+end
+-- Saving container
+function placeable_piano_binder:save(stpk)
+	object_binder.save(self, stpk)
+end
+-- Loading container
+function placeable_piano_binder:load(stpk)
+	object_binder.load(self, stpk)
+end
+
+function placeable_piano_binder:use_callback(obj, who)
+    hide_hud_inventory()
+	ui_furniture_piano.start_dialog(obj:id())
+end
