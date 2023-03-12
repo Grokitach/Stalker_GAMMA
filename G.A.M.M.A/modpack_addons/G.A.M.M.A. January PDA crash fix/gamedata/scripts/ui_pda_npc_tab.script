@@ -1,0 +1,802 @@
+--[[
+	Overrides function generate_date in ui_pda_npc_tab.script from base Anomaly 1.5.2.
+	Fixes crash that occurs when looting corpses when in-game date is in January. This can occur in any in-game year, but usually first occurs when in-game date reaches Jan 2019.
+
+	Typical error message when the game crashes:
+	ui_pda_npc_tab.script:380: attempt to perform arithmetic on local 'D' (a nil value)
+
+	The error is caused by the logic for generating random messages in PDAs looted from NPCs.
+
+	There will be between 1 and 3 messages generated in NPC PDAs. Each message is generated with a date.
+	For the first message, a random number of days is subtracted from the current game time.
+	For each following message, a random number of days is subtracted from the previous message date.
+
+	Subtracting days may move the date to the previous month, so 1 is subtracted from the month.
+	However, there is no check preventing the resulting month from becoming less than 1.
+
+	If the month becomes negative, the code in function `generate_date` fails to parse the date from the previous message and sets year, month, and date values to nil.
+	`D` contains the day and is used before the month and year values, hence the error message `attempt to perform arithmetic on local 'D' (a nil value)`.
+
+	So when the in-game date is Jan 2019, the game will crash when a NPC PDA randomly generates with 3 messages with dates going back a month for each message.
+	Month becomes 0 for the first message, -1 for the second message, and then the game crashes when calling generate_date for the third message.
+
+	Chance of crashing is highest on January 1st. The probability decreases each day until the messages can no longer generate a date with -1 month on the second message.
+--]]
+
+--[[
+	Made by Tronex
+	Last edit: 2020/2/24
+	Stalkers PDA UI
+--]]
+
+
+local SINGLETON = nil
+function get_ui(info)
+	SINGLETON = SINGLETON or pda_npc_tab(info)
+	SINGLETON:Reset(info)
+	return SINGLETON
+end
+
+
+-------------------------------------------------------------------
+-- Controls
+-------------------------------------------------------------------
+local map_tbl = {
+	"agr","bar","cit","dsc","esc","gar","gen","jup","kat","lim","mar","mil","out","pol","pri","rad","red","ros","trc","val","yan","zat"
+}
+local faction_encyption = {
+	["army"] = 30 , ["bandit"] = 0 , ["csky"] = 20 , ["dolg"] = 40 , ["ecolog"] = 30 , ["freedom"] = 20 , ["killer"] = 40 , ["stalker"] = 10 , ["monolith"] = 50 , --["renegade"] = 10 , --["greh"] = 30 , --["isg"] = 50,
+}
+local faction_lookup = { -- List of factions used in PDA messages
+	"stalker" , "dolg" , "freedom" , "csky" , "ecolog" , "killer" , "army" , "bandit" , "monolith" , --"renegade" , --"greh" , --"isg",
+}
+local stash_factor_per_pda = {
+	["itm_pda_common"] = 1 , ["itm_pda_uncommon"] = 2 , ["itm_pda_rare"] = 3,
+}
+local route_factor_per_pda = {
+	["itm_pda_common"] = 10 , ["itm_pda_uncommon"] = 15 , ["itm_pda_rare"] = 20,
+}
+local rf_factor_per_pda = {
+	["itm_pda_common"] = 15 , ["itm_pda_uncommon"] = 20 , ["itm_pda_rare"] = 30,
+}
+local faction_no_rf = {
+	["monolith"] = true , ["greh"] = true,
+}
+local directions = {
+	"st_dyn_news_near","st_dyn_news_close","st_dyn_news_east","st_dyn_news_north_east","st_dyn_news_north","st_dyn_news_north_west","st_dyn_news_west","st_dyn_news_south_west","st_dyn_news_south","st_dyn_news_south_east"
+}
+
+
+-------------------------------------------------------------------
+-- Item menu
+-------------------------------------------------------------------
+function menu_view(obj)
+	local p = obj:parent()
+	if not (p and p:id() == AC_ID) then return end
+	
+	return game.translate_string("st_ui_inventory_view")
+end
+
+function use_view(obj)
+	local p = obj:parent()
+	if not (p and p:id() == AC_ID) then
+		return
+	end
+	
+	hide_hud_inventory()
+	
+	if (get_console_cmd(1,"g_3d_pda")) then
+		db.actor:make_item_active(obj)
+		ActorMenu.get_pda_menu():SetActiveSubdialog("eptNPC")
+	else
+		db.actor:move_to_slot(obj, 14)
+		CreateTimeEvent(0, "delay_2d_pda_draw", 0, function() ActorMenu.get_pda_menu():ShowDialog(true) ActorMenu.get_pda_menu():SetActiveSubdialog("eptNPC") return true end )
+	end
+end
+
+function actor_on_update(actor, info)
+
+	local check = (get_console_cmd(1,"g_3d_pda") and db.actor:active_slot() == 14 or ActorMenu.get_pda_menu():IsShown())
+
+	if not check then
+		local pda = db.actor:item_in_slot(14)
+		if pda then
+			db.actor:move_to_ruck(pda)
+		end
+		UnregisterScriptCallback("actor_on_update",actor_on_update)
+	end
+end
+
+-------------------------------------------------------------------
+-- Constructing info
+-------------------------------------------------------------------
+function register_pda(npc, pda_sec, pda_id) -- called from death_manager
+	-- Contact info
+	local contact = {
+		name = npc:character_name(),
+		comm = npc:character_community(),
+		icon = npc:character_icon(),
+		rank = ranks.get_obj_rank_name(npc),
+		repu = npc:character_reputation(),
+	}
+	
+	-- PDA state
+	local state = "default"
+	if (math.random(1,100) <= 1) and (not has_alife_info("kill_the_strelok_pda_found")) then
+		state = "kill_the_strelok"
+	elseif (pda_sec == "itm_pda_rare") or (faction_encyption[contact.comm] and (math.random(1,100) < faction_encyption[contact.comm])) then 
+		state = "encrypted"
+	end
+	
+	
+	-- Stash message possibility
+	local stash = false
+	local stash_chance = game_difficulties.get_eco_factor("stash_chance") or 0.4
+	local stash_factor = stash_factor_per_pda[pda_sec] or 1
+	if ( math.random(1,100) < ((stash_chance * 100) * stash_factor) ) then
+		stash = true
+	end
+	
+	-- Map message possibility
+	local map_route = false
+	if (math.random(1,100) < (route_factor_per_pda[pda_sec] or 10))
+	and (not alife_storage_manager.get_state().opened_routes)
+	and txr_routes.is_route_left()
+	then
+		local locked_routes = {}
+		for i=1,#map_tbl do
+			for j=1,#map_tbl do
+				if (map_tbl[i] ~= map_tbl[j]) and txr_routes.is_map_connected(map_tbl[i],map_tbl[j]) and (not txr_routes.is_route_discovered (map_tbl[i],map_tbl[j])) then
+					locked_routes[#locked_routes + 1] = {map_tbl[i],map_tbl[j]}
+				end
+			end
+		end
+		if (#locked_routes > 0) then
+			map_route = locked_routes[math.random(#locked_routes)]
+		end
+	end
+	
+	-- RF source message possibility
+	local rf_source = false
+	local rf_sources = item_radio.RF_stashes
+	if 
+		(math.random(1,100) < (rf_factor_per_pda[pda_sec] or 15))
+		and (not faction_no_rf[contact.comm])
+		and is_not_empty(rf_sources)
+	then
+		local key_map = random_key_table(rf_sources)
+		if is_not_empty(rf_sources[key_map]) then
+			local key_id = random_key_table(rf_sources[key_map])
+			rf_source = { key_id , rf_sources[key_map][key_id] }
+		end
+	end
+	
+	-- Generate messages
+	local msg = {}
+	if (state ~= "kill_the_strelok") then
+		local msg_count = math.random(1,3)
+		for i=1,msg_count do
+			local older_date = (#msg > 0) and msg[#msg].msg_date or false
+			local special = (stash and "stash") or (map_route and "route") or (rf_source and "rf_source") or false
+			local special_functor = ((special == "route") and map_route) or ((special == "rf_source") and rf_source)
+			local curr_msg = generate_msg(contact, older_date, special, special_functor)
+			if curr_msg and curr_msg.topic and curr_msg.topic_title then
+				msg[#msg + 1] = curr_msg
+				if stash and curr_msg.stash then stash = false end -- 1 stash message only
+				if map_route and curr_msg.route then map_route = false end -- 1 map route message only
+				if rf_source and curr_msg.rf_freq then rf_source = false end -- 1 rf source message only
+			end
+		end
+	end
+	
+	se_save_var( pda_id, nil, "info", { state = state , contact = contact , msg = msg } )
+end
+
+function generate_msg(contact, older_date, special, special_functor)
+
+	if (not faction_encyption[contact.comm]) then
+		return
+	end
+	
+	local info = {}
+	local name = {}
+	for word in string.gmatch(contact.name, "%a+") do 
+		name[#name + 1] = word
+	end
+	
+	-- Gather NPC info
+	local f = faction_expansions.faction[contact.comm]
+	info.msg_date = generate_date(older_date)
+	info.fname = name[1]
+	info.lname = name[2]
+	info.c1_fname = generate_fname(contact.comm, "name")
+	info.c1_lname = generate_fname(contact.comm, "lname")
+	info.c2_fname = generate_fname(contact.comm, "name")
+	info.c2_lname = generate_fname(contact.comm, "lname")
+	info.base = f["territory"]
+	info.leader = f["leader_name"]
+	info.trader = f["trader_name"]
+	info.mechanic = f["mechanic_name"]
+	local level_presence = f["level_presence"]
+	info.map = random_key_table(level_presence) -- can this fail?
+	info.pointer = get_pointer(info.map)
+	info.directional = directions[math.random(#directions)]
+	info.enemy = get_enemy(contact.comm, info.map)
+	
+	info.pic = "encyclopedia_pda_general_image"
+	
+	-- Stash
+	if (special == "stash") then
+		local pick = tostring(1)
+		local stash_id, stash_name, stash_desc, stash_hint = treasure_manager.get_random_stash(nil , game.translate_string("st_stash_of") .. " " .. contact.name , true)
+		local topic_title =  utils_data.collect_translations("st_msg_stash_title_" .. pick .. "_")
+		local topic =  gather_parts("st_msg_stash_" .. pick .. "_")
+		
+		if stash_id then
+			info.stash = stash_id
+			info.stash_read = false
+			info.topic_title = stash_name or topic_title[math.random(#topic_title)]
+			info.topic = stash_desc and { stash_desc } or topic
+			info.pic = "encyclopedia_pda_stash_" .. tostring(math.random(1,7)) .. "_image"
+			
+			return info
+		end
+	end
+	
+	-- Map route
+	if (special == "route") then
+		local pick = tostring(1)
+		local topic_title =  utils_data.collect_translations("st_msg_map_title_" .. pick .. "_")
+		local topic =  gather_parts("st_msg_map_" .. pick .. "_")
+		
+		if special_functor then
+			info.route = special_functor
+			info.topic_title = topic_title[math.random(#topic_title)]
+			info.topic = topic
+			info.pic = "encyclopedia_pda_route_image"
+			
+			return info
+		end
+	end
+	
+	-- RF source
+	if (special == "rf_source") then
+		local pick = tostring(1)
+		local topic_title =  utils_data.collect_translations("st_msg_rf_title_" .. pick .. "_")
+		local topic =  gather_parts("st_msg_rf_" .. pick .. "_")
+		local sim = alife()
+		local se_obj = special_functor and special_functor[1] and alife_object(special_functor[1])
+		if se_obj then
+			info.rf_map = alife():level_name(game_graph():vertex(se_obj.m_game_vertex_id):level_id())
+			info.rf_freq = special_functor[2]
+			info.topic_title = topic_title[math.random(#topic_title)]
+			info.topic = topic
+			info.pic = "encyclopedia_pda_rf_image"
+	
+			return info
+		end
+	end
+	
+	-- Pick topic
+	local topic_tbl = f["pda_topic"]
+	local mission_tbl = f["pda_topic_mission"]
+	local n = 0
+	n = n + topic_tbl.mission
+	n = n + topic_tbl.chitchat
+	n = n + topic_tbl.joke
+	local mission_chance  = math.ceil(100 * (topic_tbl.mission / n))
+	local chitchat_chance = math.ceil(100 * (topic_tbl.chitchat / n))
+	local joke_chance     = math.ceil(100 * (topic_tbl.joke / n))
+	local mission_bar  = { 1 , (mission_chance + 1) }
+	local chitchat_bar = { (mission_chance + 1) , (mission_chance + chitchat_chance + 2) }
+	local joke_bar     = { (mission_chance + chitchat_chance + 3) , (mission_chance + chitchat_chance + joke_chance + 4) }
+	--printf("-mission_bar(%s,%s) - chitchat_bar(%s,%s) - joke_bar(%s,%s)",mission_bar[1],mission_bar[2],chitchat_bar[1],chitchat_bar[2],joke_bar[1],joke_bar[2])
+	local topic_rnd = math.random(1,100)
+	local topic_type = (topic_rnd > mission_bar[1] and topic_rnd < mission_bar[2] and "mission") or (topic_rnd > chitchat_bar[1] and topic_rnd < chitchat_bar[2] and "chitchat") or (topic_rnd > joke_bar[1] and topic_rnd < joke_bar[2] and "joke") or "mission"
+	local topic
+	if (topic_type == "mission") then
+		topic = topic_type .. "_" .. mission_tbl[math.random(#mission_tbl)]
+	else
+		topic = topic_type
+	end
+	
+	-- Read available message parts
+	local pick = tostring(1)
+	local topic_title = utils_data.collect_translations("st_msg_" .. topic .. "_title_" .. pick .. "_")
+	local topic_str = gather_parts("st_msg_" .. topic .. "_" .. pick .. "_")
+
+	info.topic_title = topic_title[math.random(#topic_title)]
+	info.topic = topic_str
+	
+	return info
+end
+
+function get_pointer(map)
+	local pointers = utils_data.collect_translations("st_dyn_" .. map .. "_daleko_")
+	if pointers then
+		return pointers[math.random(#pointers)]
+	end
+	return ""
+end
+
+function get_enemy(faction, map)
+
+	-- Collect enemy factions
+	local enemy = {}
+	for i=1,#faction_lookup do
+		if game_relations.is_factions_enemies(faction, faction_lookup[i]) then
+			enemy[#enemy + 1] = faction_lookup[i]
+		end
+	end
+	
+	-- See map presense with topic's faction
+	local lvl_enemy = {}
+	local lvl_p = dynamic_news_helper.GetFaction(faction,"level_presence")
+	for i=1,#enemy do
+		local lvl_pi = dynamic_news_helper.GetFaction(enemy[i],"level_presence")
+		for k,_ in pairs(lvl_pi) do
+			if lvl_p[k] and (k == map) then
+				lvl_enemy[#lvl_enemy + 1] = enemy[i]
+				break
+			end
+		end
+	end
+
+	local pick
+	if (#lvl_enemy > 0) then
+		pick = lvl_enemy[math.random(#lvl_enemy)]
+	else
+		pick = enemy[math.random(#enemy)]
+	end
+	
+	
+	if pick then
+		return "st_dyn_news_comm_" .. pick .. "_8"
+	end
+	return "st_dyn_news_enemy_foces"
+end
+
+function gather_parts(str) -- str(m_n)
+	local part = {}
+	local m = 0
+	while true do
+		m = m + 1
+		local temp = utils_data.collect_translations(str .. tostring(m) .. "_")
+		if (not temp) then 
+			break
+		else
+			part[m] = temp
+		end
+	end
+	
+	-- Gather message parts
+	local str_parts = {}
+	if (#part > 0) then
+		for i=1,#part do
+			str_parts[#str_parts + 1] = part[i][math.random(#part[i])]
+		end
+	end
+	
+	return str_parts
+end
+
+function generate_fname(comm,key)
+	local key2 = "stalker"
+	if comm == "bandit" then key2 = "bandit"
+	elseif comm == "ecolog" then key2 = "science"
+	end --elseif comm == "dolg" or "army" then key2 = "private" or "sergeant" or "lieutenant" end
+
+	local name_list = utils_data.collect_translations(key .. "_" .. key2 .. "_" , true)
+	return name_list[math.random(#name_list)]
+end
+
+function generate_date(last_msg_date)
+	local Y1, M1, D1 = 0, 0, 0
+
+	local Y, M, D, h, m, s, ms = 0, 0, 0, 0, 0, 0, 0
+	if last_msg_date then
+		Y, M, D = string.match(last_msg_date, "(%d+)/(%d+)/(%d+)")
+		Y = tonumber(Y)
+		M = tonumber(M)
+		D = tonumber(D)
+	else
+		Y, M, D, h, m, s, ms = game.get_game_time():get(Y, M, D, h, m, s, ms)
+	end
+
+	-- Subtract random number (between 1 and 29, inclusive) from day
+	local diff = D - math.random(1,29)
+
+	-- If diff is a valid day, use it. Otherwise, add diff to 29.
+	-- Result of adding diff to 29 will be positive. Lowest possible value of diff is 1 - 29 = -28. Highest possible value of diff is 31 - 1 = 30.
+	D1 = (diff >= 1) and diff or (diff + 29)
+
+    -- If new day is greater than old day (i.e. date was moved to previous month), subtract 1 from the month.
+    -- However, if month is 1 then it should be changed to 12 instead of having 1 subtracted.
+    -- Base anomaly logic allowed for month to become 0 or negative:
+	-- M1 = (D1 > D) and M - 1 or M
+	M1 = (D1 > D) and (M > 1 and M - 1 or 12) or M
+
+	-- If new month is greater than old month (i.e. new month is 12 and old month is 1), subtract 1 from the year.
+	Y1 = (M1 > M) and Y - 1 or Y
+
+	if M1 == 2 and D1 > 28 then
+		D1 = 28
+	end
+
+	local str = strformat( "%s/%s/%s" , tostring(Y1) , tostring(M1) , tostring(D1) )
+	return str
+end
+
+function get_encrypted_pdas()
+	local encrypted_pdas = {}
+	
+	local function search(temp, obj)
+		if item_device.device_npc_pda[obj:section()] then
+			local info = se_load_var(obj:id(), obj:name(), "info")
+			if info and (info.state == "encrypted") then
+				encrypted_pdas[#encrypted_pdas + 1] = obj:id()
+			end
+		end
+	end
+	db.actor:iterate_inventory(search, nil)
+
+	return encrypted_pdas
+end
+
+function can_own_pda(npc)
+	local comm = npc:character_community()
+	local is_special = get_object_story_id(npc:id()) and true or false
+	return faction_encyption[comm] and (not is_special)
+end
+
+
+-------------------------------------------------------------------
+-- Dialog
+-------------------------------------------------------------------
+function have_encrypted_pda(first_speaker, second_speaker)
+	local encrypted_pdas = get_encrypted_pdas()
+	if (#encrypted_pdas > 0) then
+		return true
+	end
+	return false
+end
+
+function have_encrypted_pda_money(first_speaker, second_speaker)
+	local encrypted_pdas = get_encrypted_pdas()
+	local num = #encrypted_pdas
+	return mlr_utils.have_money(500 * num)
+end
+
+function take_encrypted_pda_money(first_speaker, second_speaker)
+	local encrypted_pdas = get_encrypted_pdas()
+	local num = #encrypted_pdas
+	dialogs.relocate_money_from_actor(first_speaker, second_speaker, 500 * num) 
+end
+
+function unlock_encrypted_pda(first_speaker, second_speaker)
+	local encrypted_pdas = get_encrypted_pdas()
+	for i=1,#encrypted_pdas do
+		local id = encrypted_pdas[i]
+		local info = se_load_var(id, nil, "info")
+		if info then
+			info.state = "default"
+			se_save_var( id, nil, "info", info )
+		end
+	end
+end
+
+
+-------------------------------------------------------------------
+-- GUI
+-------------------------------------------------------------------
+class "pda_message_entry" (CUIListBoxItem)
+
+function pda_message_entry:__init(title, sender, msg_date, indx) super(title, sender, msg_date, indx)
+	self:GetTextItem():SetText("")
+	
+	self.title = title
+	self.sender = sender
+	self.msg_date = msg_date
+	self.indx = indx
+	
+	self.str_title = self:AddTextField("",1) --self:GetTextItem()
+	self.str_title:SetWndRect(Frect():set(5, 0, 300, 17))
+	self.str_title:SetTextColor(GetARGB(255, 200, 200, 200))
+	self.str_title:SetFont(GetFontLetterica18Russian())
+	self.str_title:SetWndSize(vector2():set(400, 20))
+	self.str_title:SetEllipsis(true)
+	self.str_title:SetText(self.title)
+	
+	self.str_sender = self:AddTextField("",1) --self:GetTextItem()
+	self.str_sender:SetWndRect(Frect():set(5, 15, 300, 17))
+	self.str_sender:SetTextColor(GetARGB(255, 150, 150, 180))
+	self.str_sender:SetFont(GetFontLetterica16Russian())
+	self.str_sender:SetWndSize(vector2():set(400, 20))
+	self.str_sender:SetEllipsis(true)
+	self.str_sender:SetText(self.sender)
+
+	self.str_date = self:AddTextField("",1) --self:GetTextItem()
+	self.str_date:SetWndRect(Frect():set(5, 30, 300, 17))
+	self.str_date:SetTextColor(GetARGB(255, 150, 150, 180))
+	self.str_date:SetFont(GetFontLetterica16Russian())
+	self.str_date:SetWndSize(vector2():set(400, 20))
+	self.str_date:SetEllipsis(true)
+	self.str_date:SetText(self.msg_date)
+end
+
+-------------------------------------------------------------------
+class "pda_npc_tab" (CUIScriptWnd)
+
+function pda_npc_tab:__init() super()
+	self:InitControls()
+	self:InitCallBacks()
+end
+
+function pda_npc_tab:__finalize()
+end
+
+function pda_npc_tab:InitControls()
+	self:SetWndRect			(Frect():set(0,0,1024,768))
+
+	local xml = CScriptXmlInit()
+	xml:ParseFile			("pda_npc.xml")
+
+	self.form				= xml:InitStatic("npc_pda",self)
+	self.form_text 			= xml:InitTextWnd("npc_pda:state", self.form)
+	self.dialog = xml:InitStatic("npc_pda:info", self.form)
+	
+	-- Borders
+	xml:InitFrame			("npc_pda:info:border",self.dialog)
+	
+	-- Contact Info
+	self.contact_box = xml:InitStatic("npc_pda:info:contact", self.dialog)
+	self.contact_info = {
+		icon = xml:InitStatic("npc_pda:info:contact:icon", self.contact_box),
+		name = xml:InitTextWnd("npc_pda:info:contact:name", self.contact_box),
+		comm = xml:InitTextWnd("npc_pda:info:contact:comm", self.contact_box),
+		rank = xml:InitTextWnd("npc_pda:info:contact:rank", self.contact_box),
+		repu = xml:InitTextWnd("npc_pda:info:contact:rep", self.contact_box),
+	}
+	self.contact_info.icon:InitTexture("ui\\ui_noise")
+	self.contact_info.icon:SetStretchTexture(true)
+	
+	self.contact_info.name:SetText("Unknown")
+	
+	-- Messages list
+	self.message_list = xml:InitListBox("npc_pda:info:message_list", self.dialog)
+	self:Register(self.message_list, "message_list")
+	
+	-- Text information, footer image (and container), and the scrollbar.
+	self.desc_box = xml:InitStatic("npc_pda:info:description", self.dialog)
+	self.information = xml:InitTextWnd("npc_pda:info:description:information", nil)
+	self.information2 = xml:InitTextWnd("npc_pda:info:description:information2", nil)
+	self.image_container = xml:InitStatic("npc_pda:info:description:image_container", nil)
+	self.image = xml:InitStatic("npc_pda:info:description:image_container:image", self.image_container)
+	self.image_frame = xml:InitStatic("npc_pda:info:description:image_frame", self.image_container)
+	self.scrollbar = xml:InitScrollView("npc_pda:info:description:scrollbar", self.desc_box)
+	
+	-- Add components to the scrollbar.
+	self.scrollbar:AddWindow(self.information, true)
+	self.scrollbar:AddWindow(self.information2, true)
+	self.scrollbar:AddWindow(self.image_container, true)
+	
+	-- Prevent components being deleted while used.
+	self.information:SetAutoDelete(false)
+	self.information2:SetAutoDelete(false)
+	self.image_container:SetAutoDelete(false)
+	self.image:SetAutoDelete(false)
+end
+
+function pda_npc_tab:InitCallBacks()
+	self:AddCallback("message_list",ui_events.LIST_ITEM_CLICKED,self.OnSelectMessage,self)
+end
+
+function pda_npc_tab:Update()
+	CUIScriptWnd.Update(self)
+end
+
+function pda_npc_tab:Reset(info)
+
+	RegisterScriptCallback("actor_on_update",actor_on_update)
+	self:Reset_data()
+	
+	if (not info) then
+		return
+	end
+	
+	self.state = info.state
+	self.msg = info.msg
+	self.contact = info.contact
+	self.time = time_global() + 10
+	
+	-- Encrypted
+	if (self.state == "encrypted") then
+		self.form_text:SetText(game.translate_string("ui_st_npc_pda_access_denied"))
+		self.form_text:SetTextColor(GetARGB(255, 155, 155, 1))
+		self.dialog:Show(false)
+		self.form_text:Show(true)
+		return
+		
+	-- Kill the Strelok
+	elseif (self.state == "kill_the_strelok") then -- ;)
+		self.form_text:SetText(game.translate_string("ui_st_npc_pda_strelok"))
+		if (not has_alife_info("kill_the_strelok_pda_found")) then
+			give_info("kill_the_strelok_pda_found")
+		end
+		self.form_text:SetTextColor(GetARGB(255, 155, 155, 1))
+		self.dialog:Show(false)
+		self.form_text:Show(true)
+		return
+	end
+	
+	if (self.state ~= "default") then
+		return
+	end
+	
+	-- Normal mode
+	self.dialog:Show(true)
+	self.form_text:Show(false)
+	self.message_list:RemoveAll()
+	--utils_obj.play_sound("interface\\inv_pda_on")
+	
+	-- Set up name
+	local name = string.gsub(self.contact.name, "Junior", "Jr.")
+	name = string.gsub(name, "Senior", "Sr.")
+	name = string.gsub(name, "Master ", "M.")
+	name = string.gsub(name, "Private", "Pvt.")
+	name = string.gsub(name, "Sergeant", "Sgt.")
+	name = string.gsub(name, "Lieutenant", "Lt.")
+	name = string.gsub(name, "Captain", "Cpt.")
+	name = string.len(name) <= 22 and name or string.sub(name, 0, 19) .. "..."
+	
+	-- Fill contact info
+	self.contact_info.icon:InitTexture(self.contact.icon)
+	self.contact_info.name:SetText(name)
+	self.contact_info.comm:SetText(game.translate_string("ui_st_community") .. ": " .. game.translate_string(self.contact.comm))
+	self.contact_info.rank:SetText(game.translate_string("ui_st_rank") .. ": " .. game.translate_string("st_rank_" .. self.contact.rank))
+	self.contact_info.repu:SetText(game.translate_string("ui_st_reputation") .. ": " .. game.translate_string(utils_obj.get_reputation_name(self.contact.repu)))
+	
+	-- Fill messages list
+	local st_date = game.translate_string("date")
+	for i=1,#self.msg do
+		local title = self.msg[i].topic_title
+		local msg_date = strformat( (st_date .. ": %s") , self.msg[i].msg_date)
+		local sender = (not self.msg[i].stash) and strformat("%s %s" , self.msg[i].c1_fname , self.msg[i].c1_lname) or name
+		item = pda_message_entry(game.translate_string(title), sender, msg_date, i)
+		self.message_list:AddExistingItem(item)
+	end
+end
+
+function pda_npc_tab:Reset_data()
+	self.dialog:Show(true)
+	self.form_text:Show(false)
+	self.message_list:RemoveAll()
+	self.scrollbar:Clear()
+	
+	local pda_menu = ActorMenu.get_pda_menu()
+	pda_menu:GetTabControl():Show(false)
+		
+	local str = game.translate_string("st_dyn_news_unknown_contact")
+	self.contact_info.icon:InitTexture("ui\\ui_noise")
+	self.contact_info.name:SetText(str)
+	self.contact_info.comm:SetText(game.translate_string("ui_st_community") .. ": " .. str)
+	self.contact_info.rank:SetText(game.translate_string("ui_st_rank") .. ": " .. str)
+	self.contact_info.repu:SetText(game.translate_string("ui_st_reputation") .. ": " .. str)
+end
+
+function pda_npc_tab:OnSelectMessage()
+	if self.message_list:GetSize()==0 then return end
+
+	local item = self.message_list:GetSelectedItem()
+	if not (item) then
+		return
+	end
+	
+	local indx = item.indx
+	local finale_content = ""
+	local keys = {}
+	
+	local topic = self.msg[indx].topic
+	local content = ""
+	for i=1,#topic do
+		content = content .. " \\n" .. game.translate_string(topic[i])
+	end
+	
+	keys["fname"]       = self.msg[indx].fname
+	keys["lname"]       = self.msg[indx].lname
+	keys["c1_fname"]    = self.msg[indx].c1_fname
+	keys["c1_lname"]    = self.msg[indx].c1_lname
+	keys["c2_fname"]    = self.msg[indx].c2_fname
+	keys["c2_lname"]    = self.msg[indx].c2_lname
+	keys["leader"]      = game.translate_string(self.msg[indx].leader)
+	keys["base"]        = game.translate_string(self.msg[indx].base)
+	keys["trader"]      = game.translate_string(self.msg[indx].trader)
+	keys["mechanic"]    = game.translate_string(self.msg[indx].mechanic)
+	keys["map"]         = game.translate_string(self.msg[indx].map)
+	keys["pointer"]     = game.translate_string(self.msg[indx].pointer)
+	keys["directional"] = game.translate_string(self.msg[indx].directional)
+	keys["enemy"]       = game.translate_string(self.msg[indx].enemy)
+	
+	-- Map route messages
+	if self.msg[indx].route then
+		local route = self.msg[indx].route
+		txr_routes.open_route(route[1],route[2])
+		keys["map_route_1"] = game.translate_string(txr_routes.get_section(route[1]))
+		keys["map_route_2"] = game.translate_string(txr_routes.get_section(route[2]))
+	end
+	
+	-- RF source messages
+	if self.msg[indx].rf_map and self.msg[indx].rf_freq then
+		keys["rf_map"] = game.translate_string(self.msg[indx].rf_map)
+		keys["rf_freq"] = tostring(self.msg[indx].rf_freq)
+	end
+	
+	finale_content = utils_data.parse_string_keys(content, keys)
+	
+	-- Stash messages
+	if self.msg[indx].stash and (not self.msg[indx].stash_read) then
+		local hint = "%c[255,255,160,0]" .. game.translate_string(self.msg[indx].topic_title) .. "\\n%c[default]" .. (finale_content or "") .. "\\n%c[160,100,100,200]" .. game.translate_string("st_stash_of") .. " " .. self.contact.name
+		treasure_manager.set_random_stash( nil , hint , nil , self.msg[indx].stash)
+		self.msg[indx].stash_read = true
+		self.msg[indx].topic[1] = self.msg[indx].topic[1] or (game.translate_string("st_stash_of") .. " " .. self.contact.name)
+	end
+
+	if self.msg[indx].pic then
+		-- Set the message's image.
+		-- A bit hacky, but to allow for dynamic width/height we have to initialise the texture twice.
+		-- We load the texture, grab its dimensions, set the window size then reinitialise it a second time.
+		-- If we don't do this then for whatever weird and wonderful reason the image refuses to draw on the UI.
+		self.image:InitTexture(self.msg[indx].pic)
+		
+		-- Grab the dimensions of the image to resize the container.
+		local image_width = self.image_frame:GetWidth() --self.image:GetTextureRect().x2 - self.image:GetTextureRect().x1
+		local image_height = self.image_frame:GetHeight() --self.image:GetTextureRect().y2 - self.image:GetTextureRect().y1
+		
+		-- Offset is used to add "padding" around the image when text is present.
+		-- If images appear above text and there is no height to the image, then use no offset.
+		local image_offset = (image_height > 0 and 7 or 0) 
+		
+		-- Resize the image and container, and then reinitialise the texture so it gets drawn.
+		-- The x_coefficient variable is used to fix image stretchiness when using widescreen resolutions.
+		local x_coefficient = (device().height / device().width) / (768 / 1024)
+		self.image_container:SetWndSize(vector2():set(image_width, image_height + image_offset))
+		self.image:SetWndSize(vector2():set(image_width, image_height))
+		self.image:SetStretchTexture(true)
+		self.image:InitTexture(self.msg[indx].pic)
+	end
+
+	local information_offset = 10
+	
+	-- Adjust the text component size.
+	self.information:SetText(finale_content)
+	self.information:AdjustHeightToText()
+	self.information:SetWndSize(vector2():set(self.information:GetWidth(), self.information:GetHeight() + information_offset))
+	self.information2:SetText("")
+	self.information2:AdjustHeightToText()
+	self.information2:SetWndSize(vector2():set(self.information2:GetWidth(), self.information2:GetHeight() + information_offset))
+	
+	-- Clear the scrollbar.
+	self.scrollbar:Clear()
+	
+	-- Add the text and image to the article window.
+	if self.msg[indx].pic then
+		self.scrollbar:AddWindow(self.image_container, true)
+		self.image_container:SetAutoDelete(false)
+		self.image:SetAutoDelete(false)
+	end
+	self.scrollbar:AddWindow(self.information, true)
+	self.information:SetAutoDelete(false)
+	self.scrollbar:AddWindow(self.information2, true)
+	self.information2:SetAutoDelete(false)
+end
+
+function pda_npc_tab:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (res == false) then
+		local bind = dik_to_bind(dik)
+		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+		
+		end
+	end
+	return res
+end

@@ -65,10 +65,17 @@ function placeable_light_binder:__init(obj) super(obj)
 		self.particles = particles_object(self.particle_path)
 	end
 	
-	self.object:set_tip_text(gc("st_interact"))
+	if obj:section() ~= "placeable_gas_lamp_gamma" then
+		self.object:set_tip_text(gc("st_interact"))
+	end
 	
 	self.last_state = self.object:get_hanging_lamp():is_on()
 	
+	if obj:section() == "placeable_gas_lamp_gamma" then
+		self.fuel = 0
+		return
+	end
+		
 	self.tg = time_global()
 	
 	self.time_last = get_time_elapsed() -- used to keep track of time difference in between updates
@@ -102,12 +109,19 @@ function placeable_light_binder:update(delta)
 		end
 	end
 	
+	if self.object:section() == "placeable_gas_lamp_gamma" then
+		local lamp_obj = self.object:get_hanging_lamp()
+		local is_on = lamp_obj:turn_off()
+		return
+	end
+	
 	local lamp_obj = self.object:get_hanging_lamp()
 	if self.fuel <= 0.0 then
 		lamp_obj:turn_off()
 	end
 	local is_flickering = lamp_obj:is_flickering()
 	local is_on = lamp_obj:is_on()
+	
 	
 	if (self.last_state ~= is_on) then
 	
@@ -223,6 +237,7 @@ function placeable_light_binder:load(reader)
 end
 
 function placeable_light_binder:use_callback(obj, who)
+	if obj:section() == "placeable_gas_lamp_gamma" then return end
 	hide_hud_inventory()
 	ui_furniture_light.start_light_dialog(obj:id())
 end
