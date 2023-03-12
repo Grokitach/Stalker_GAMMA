@@ -531,24 +531,13 @@ end
 
 
 local trigger = 0
-local delay = 1000
-local delay_mine = 10
+local delay = 500
 
 function elemental_damage(draftman_sec, shit, bone_id, flags)
 	if string.find(draftman_sec,"field") then
 		tg = time_global()
 		if trigger == 0 then
 			grok_delay = tg + delay
-			trigger = 1
-		end
-		if (trigger == 1 and tg > grok_delay) then
-			trigger = 0
-			shit_booster(shit,bone_id)
-		end
-	else
-		tg = time_global()
-		if trigger == 0 then
-			grok_delay = tg + delay_mine
 			trigger = 1
 		end
 		if (trigger == 1 and tg > grok_delay) then
@@ -598,20 +587,32 @@ function actor_on_before_hit(shit,bone_id, flags)
 		end
 	end
 
-	if (trigger2 == 0) then
-		grok_delay2 = tg + delay2
-		damage = 1
-		trigger2 = 1
-	end
-	if (trigger2 == 1) then
-		if (tg < grok_delay2) then
-			shit.power = 0
-			flags.ret_value = false
-			return
-		else
+	if 	shit.type == hit.fire_wound or shit.type == hit.wound or shit.type == hit.wound_2 or shit.type == hit.strike or shit.type == hit.explosion then
+		if (trigger2 == 0) then
+			grok_delay2 = tg + delay2
 			damage = 1
-			trigger2 = 0
+			trigger2 = 1
+			first_hit = 1
 		end
+		if (trigger2 == 1) then	
+			if (tg < grok_delay2 and first_hit == 0) then
+				shit.power = 0
+				flags.ret_value = false
+				return
+			else
+				damage = 1
+				first_hit = 0
+			end
+			
+			if (first_hit = 0 and tg > grok_delay2) then
+				trigger2 = 0
+				damage = 1
+			end
+		end
+	end
+	
+	if shit.type == hit.chemical_burn or shit.type == hit.shock or shit.type == hit.burn or shit.type == hit.light_burn then
+		damage = 1
 	end
 
 	if damage == 1 then
