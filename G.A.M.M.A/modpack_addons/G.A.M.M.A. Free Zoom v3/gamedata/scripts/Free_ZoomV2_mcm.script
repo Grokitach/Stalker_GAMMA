@@ -1,101 +1,37 @@
+-- KEYBINDINGS MANAGEMENT AND MCM --
+
 KEY_TOGGLE_ZOOM = 341 -- Thumb mouse button
 
 local mcm_keybinds = ui_mcm and ui_mcm.key_hold
 
 function on_mcm_load()
-    return {
-        id = "free_zoom",
-        sh = true,
-        gr = {
-            -- LuaFormatter off
-            {id = "title", type = "slide", link = "ui_options_slider_player", text = "ui_mcm_menu_free_zoom", size = {512, 50}, spacing = 20},
-            {id = "key_bind_toggle", type = "key_bind", val = 2, def = KEY_TOGGLE_ZOOM}
-            -- LuaFormatter on
-        }
-    }
+	return {
+		id = "free_zoom",
+		sh = true,
+		gr = {
+			-- LuaFormatter off
+			{id = "title", type = "slide", link = "ui_options_slider_player", text = "ui_mcm_menu_free_zoom", size = {512, 50}, spacing = 20},
+			{id = "key_bind_toggle", type = "key_bind", val = 2, def = KEY_TOGGLE_ZOOM}
+			-- LuaFormatter on
+		}
+	}
 end
 
 function on_option_change(mcm)
 	fov_before = get_console_cmd(2, "fov")
 	hud_fov_before = get_console_cmd(2, "hud_fov")
 	mouse_sens_before = get_console_cmd(2, "mouse_sens")
-    if mcm then
-        KEY_TOGGLE_ZOOM = ui_mcm.get("free_zoom/key_bind_toggle") or KEY_TOGGLE_ZOOM
-    end
+	if mcm then
+		KEY_TOGGLE_ZOOM = ui_mcm.get("free_zoom/key_bind_toggle") or KEY_TOGGLE_ZOOM
+	end
 end
 
-local get_fov = 0
-local get_hud_fov = 0
-local get_mouse_sens= 0
+
+-- UTILITY --
+
 local pressed = 0
 local released = 0
 local custom_zoom = false
-
-
-function actor_on_first_update()
-	fov_before = get_console_cmd(2, "fov")
-	hud_fov_before = get_console_cmd(2, "hud_fov")
-	mouse_sens_before = get_console_cmd(2, "mouse_sens")
-end
-
-function on_key_press(key)
-    if not (key == KEY_TOGGLE_ZOOM) then return end
-	pressed = 1
-	released = 0
-	exec_console_cmd("fov " .. fov_before * 0.61)
-	exec_console_cmd("hud_fov " .. hud_fov_before * 0.61)
-	exec_console_cmd("mouse_sens " .. mouse_sens_before * 0.61)
-    custom_zoom = true
-    local run_coef = 0.6
-    local sprint_coef = 0.95
-    speed.add_speed("freezoom_speed_run", run_coef, false, true)
-    speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
-end
-
-function on_key_release(key)
-    if not (key == KEY_TOGGLE_ZOOM) then return end
-    if not (custom_zoom) then return end
-
-    custom_zoom = false
-    local run_coef = 1
-    local sprint_coef = 1
-    speed.add_speed("freezoom_speed_run", run_coef, false, true)
-    speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
-	
-	pressed = 0
-	released = 1
-	
-	CreateTimeEvent(0, "reset_fov_to_normal", 0.075, reset_fov_to_normal, fov_before)
-	CreateTimeEvent(0, "reset_hud_fov_to_normal", 0.075, reset_hud_fov_to_normal, hud_fov_before)
-	CreateTimeEvent(0, "reset_mouse_sens_to_normal", 0.075, reset_mouse_sens_to_normal, mouse_sens_before)
-end
-
-function actor_on_weapon_fired()
-	printf("ok")
-	if released == 1 then
-		printf("bingo")
-		current_fov = get_console():get_float(fov)
-		current_hud_fov = get_console():get_float(hud_fov)
-		current_mouse_sense = get_console():get_float(mouse_sens)
-		
-		if current_fov < fov_before then
-			CreateTimeEvent(0, "reset_fov_to_normal", 0.075, reset_fov_to_normal, fov_before)
-		end
-
-		if current_hud_fov < hud_fov_before then
-			CreateTimeEvent(0, "reset_hud_fov_to_normal", 0.075, reset_fov_to_normal, hud_fov_before)
-		end
-
-		if current_mouse_sense < mouse_sens_before then
-			CreateTimeEvent(0, "reset_mouse_sens_to_normal", 0.075, reset_fov_to_normal, mouse_sens_before)
-		end	
-		
-		local run_coef = 1
-		local sprint_coef = 1
-		speed.add_speed("freezoom_speed_run", run_coef, false, true)
-		speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
-	end
-end
 
 function reset_fov_to_normal(fov_val)
 	exec_console_cmd("fov " .. fov_val)
@@ -112,14 +48,80 @@ function reset_mouse_sens_to_normal(fov_val)
 	return true
 end
 
-function actor_on_before_death()
-    local run_coef = 1
-    local sprint_coef = 1
-    speed.add_speed("freezoom_speed_run", run_coef, false, true)
-    speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
+
+-- CALLBACKS FUNCTIONS --
+
+function actor_on_first_update()
+	fov_before = get_console_cmd(2, "fov")
+	hud_fov_before = get_console_cmd(2, "hud_fov")
+	mouse_sens_before = get_console_cmd(2, "mouse_sens")
+end
+
+function on_key_press(key)
+	if not (key == KEY_TOGGLE_ZOOM) then return end
+	pressed = 1
+	released = 0
+	exec_console_cmd("fov " .. fov_before * 0.61)
+	exec_console_cmd("hud_fov " .. hud_fov_before * 0.61)
+	exec_console_cmd("mouse_sens " .. mouse_sens_before * 0.61)
+	custom_zoom = true
+	local run_coef = 0.6
+	local sprint_coef = 0.95
+	speed.add_speed("freezoom_speed_run", run_coef, false, true)
+	speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
+end
+
+function on_key_release(key)
+	if not (key == KEY_TOGGLE_ZOOM) then return end
+	if not custom_zoom then return end
+
+	custom_zoom = false
+	local run_coef = 1
+	local sprint_coef = 1
+	speed.add_speed("freezoom_speed_run", run_coef, false, true)
+	speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
+
+	pressed = 0
+	released = 1
+
 	CreateTimeEvent(0, "reset_fov_to_normal", 0.075, reset_fov_to_normal, fov_before)
-	CreateTimeEvent(0, "reset_hud_fov_to_normal", 0.075, reset_fov_to_normal, hud_fov_before)
-	CreateTimeEvent(0, "reset_mouse_sens_to_normal", 0.075, reset_fov_to_normal, mouse_sens_before)
+	CreateTimeEvent(0, "reset_hud_fov_to_normal", 0.075, reset_hud_fov_to_normal, hud_fov_before)
+	CreateTimeEvent(0, "reset_mouse_sens_to_normal", 0.075, reset_mouse_sens_to_normal, mouse_sens_before)
+end
+
+function actor_on_weapon_fired()
+	if released == 1 then
+		current_fov = get_console():get_float(fov)
+		current_hud_fov = get_console():get_float(hud_fov)
+		current_mouse_sense = get_console():get_float(mouse_sens)
+
+		if current_fov < fov_before then
+			CreateTimeEvent(0, "reset_fov_to_normal", 0.075, reset_fov_to_normal, fov_before)
+		end
+
+		if current_hud_fov < hud_fov_before then
+			CreateTimeEvent(0, "reset_hud_fov_to_normal", 0.075, reset_hud_fov_to_normal, hud_fov_before)
+		end
+
+		if current_mouse_sense < mouse_sens_before then
+			CreateTimeEvent(0, "reset_mouse_sens_to_normal", 0.075, reset_mouse_sens_to_normal, mouse_sens_before)
+		end
+
+		local run_coef = 1
+		local sprint_coef = 1
+		speed.add_speed("freezoom_speed_run", run_coef, false, true)
+		speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
+	end
+end
+
+function actor_on_before_death()
+	local run_coef = 1
+	local sprint_coef = 1
+	speed.add_speed("freezoom_speed_run", run_coef, false, true)
+	speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
+	CreateTimeEvent(0, "reset_fov_to_normal", 0.075, reset_fov_to_normal, fov_before)
+	CreateTimeEvent(0, "reset_hud_fov_to_normal", 0.075, reset_hud_fov_to_normal, hud_fov_before)
+	CreateTimeEvent(0, "reset_mouse_sens_to_normal", 0.075, reset_mouse_sens_to_normal, mouse_sens_before)
 end
 
 function actor_on_weapon_zoom_out()
@@ -129,18 +131,18 @@ function actor_on_weapon_zoom_out()
 		speed.add_speed("freezoom_speed_run", run_coef, false, true)
 		speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
 		CreateTimeEvent(0, "reset_fov_to_normal", 0.075, reset_fov_to_normal, fov_before)
-		CreateTimeEvent(0, "reset_hud_fov_to_normal", 0.075, reset_fov_to_normal, hud_fov_before)
-		CreateTimeEvent(0, "reset_mouse_sens_to_normal", 0.075, reset_fov_to_normal, mouse_sens_before)
+		CreateTimeEvent(0, "reset_hud_fov_to_normal", 0.075, reset_hud_fov_to_normal, hud_fov_before)
+		CreateTimeEvent(0, "reset_mouse_sens_to_normal", 0.075, reset_mouse_sens_to_normal, mouse_sens_before)
 	end
 end
 
 function on_game_start()
-    RegisterScriptCallback("on_option_change",on_option_change)
+	RegisterScriptCallback("on_option_change",on_option_change)
 	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
-    RegisterScriptCallback("on_key_press",on_key_press)
-    RegisterScriptCallback("on_key_release",on_key_release)
+	RegisterScriptCallback("on_key_press",on_key_press)
+	RegisterScriptCallback("on_key_release",on_key_release)
 	RegisterScriptCallback("actor_on_weapon_fired",actor_on_weapon_fired)
 	RegisterScriptCallback("actor_on_before_death",actor_on_before_death)
 	RegisterScriptCallback("actor_on_weapon_zoom_out",actor_on_weapon_zoom_out)
-    on_option_change(mcm_keybinds)
+	on_option_change(mcm_keybinds)
 end
