@@ -1,0 +1,54 @@
+local victim = {}
+local hitter = {}
+local hit_id = -1
+
+function bullet_on_impact(bullet)
+    hit_id = bullet.bullet_id
+end
+
+local gbo_npc = grok_bo.npc_on_before_hit
+local gbo_cre = grok_bo.monster_on_before_hit
+local gbo_adb = grok_actor_damage_balancer.actor_on_before_hit
+
+function grok_bo.npc_on_before_hit(npc, shit, bone_id, flags)
+    if victim[npc:id()] == hit_id then
+        flags.ret_value = false
+        shit.power = 0.0
+        shit.bone_id = 65535
+        return
+    else
+        victim[npc:id()] = hit_id
+    end
+
+    gbo_npc(npc, shit, bone_id)
+end
+
+function grok_bo.monster_on_before_hit(monster, shit, bone_id, flags)
+    if victim[monster:id()] == hit_id then
+        flags.ret_value = false
+        shit.power = 0.0
+        shit.bone_id = 65535
+        return
+    else
+        victim[monster:id()] = hit_id
+    end
+
+    gbo_cre(monster, shit, bone_id)
+end
+
+function grok_actor_damage_balancer.actor_on_before_hit(shit, bone_id, flags)
+    if hitter[shit.draftsman:id()] == hit_id then
+        flags.ret_value = false
+        shit.power = 0.0
+        shit.bone_id = 65535
+        return
+    else
+        hitter[shit.draftsman:id()] = hit_id
+    end
+
+    gbo_adb(shit, bone_id, flags)
+end
+
+function on_game_start()
+    RegisterScriptCallback("bullet_on_impact", bullet_on_impact)
+end
