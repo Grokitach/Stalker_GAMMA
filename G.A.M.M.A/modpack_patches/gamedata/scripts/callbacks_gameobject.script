@@ -52,3 +52,79 @@ _G.CPseudoGigant__HitCallback = function(victim, who, shit, boneId)
 	-- printf("pseudogiant_on_stomp: %s, %s, %s", victim:name(), who:name(), shit.power)
 	SendScriptCallback("pseudogiant_on_stomp", victim, who, shit, boneId)
 end
+
+-- Bullet callbacks
+local function BulletTable(position, dir, speed, fly_dist, catridgeSection, bullet_id, weapon_id, parent_id, targetID, materialName)
+	return {
+		position = position,
+		direction = dir,
+		speed = speed, -- Speed will be 0 in bullet_on_remove callback if the bullet hitted the target and stayed inside of it
+		distance = fly_dist,
+		section = catridgeSection,
+		bullet_id = bullet_id,
+		weapon_id = weapon_id,
+		parent_id = parent_id,
+		target_id = targetID,
+		material = materialName
+	}
+end
+
+AddScriptCallback("bullet_on_impact")
+AddScriptCallback("bullet_on_remove")
+
+-- Available fields in bullet object
+-- position = position of impact,
+-- direction = direction of impact,
+-- speed = speed of impact -- Speed will be 0 in bullet_on_remove callback if the bullet hitted the target and stayed inside of it
+-- distance - flew distance before impact
+-- section - section of bullet
+-- bullet_id = unique id of the bullet, its NOT GAME OBJECT ID
+-- weapon_id = game object id of weapon that shot bullet
+-- parent_id = game object id of actor that has a weapon that shot bullet
+-- target_id = game object id of entity the bullet hit (it will be 65535 if bullet hit the terrain or vanished)
+-- material = name of material that bullet hit
+
+-- Called when bullet hits something (terrain, object, npcs)
+_G.CBulletOnImpact = function(...)
+	local bullet = BulletTable(...)
+	SendScriptCallback("bullet_on_impact", bullet)
+end
+
+-- Called when bullet is destroyed
+_G.CBulletOnRemove = function(...)
+	local bullet = BulletTable(...)
+	SendScriptCallback("bullet_on_remove", bullet)
+end
+
+-- AddScriptCallback("bullet_on_update")
+-- Called when bullet is flying
+-- _G.CBulletOnUpdate = function(bullet)
+-- 	SendScriptCallback("bullet_on_update", bullet)
+-- 	return bullet
+-- end
+
+-- AddScriptCallback("rocket_on_update")
+-- Called when rocket is flying
+-- _G.CRocketOnUpdate = function(rocket)
+-- 	SendScriptCallback("rocket_on_update", rocket)
+-- 	return rocket
+-- end
+
+-- function on_game_start()
+-- 	RegisterScriptCallback("rocket_on_update", function(rocket)
+-- 		printf("rocket is flying")
+-- 		local speed = rocket.speed
+-- 		printf("speed %s", speed)
+-- 		-- rocket.engine_active = true
+-- 		if rocket.engine_active then
+-- 			rocket.speed = 15
+-- 		end
+-- 		local targetDist = level.get_target_dist()
+-- 		local targetPos = vector():mad(device().cam_pos, device().cam_dir, targetDist)
+-- 		local pos = vector():set(rocket.position)
+-- 		local targetRocketDir = targetPos:sub(pos):normalize()
+-- 		-- rocket.direction = targetRocketDir
+-- 		rocket.body_direction = targetRocketDir
+-- 		print_r(rocket)
+-- 	end)
+-- end
