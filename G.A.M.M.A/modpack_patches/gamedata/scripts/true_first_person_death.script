@@ -1,0 +1,135 @@
+local function throttle(func, tg_throttle)
+    local tg = 0
+    if not tg_throttle or tg_throttle == 0 then
+        return function(...)
+            local t = time_global()
+            if t ~= tg then
+                tg = t
+                return func(...)
+            end
+        end
+    else
+        return function(...)
+            local t = time_global()
+            if t < tg then return end
+            tg = t + tg_throttle
+            return func(...)
+        end
+    end
+end
+
+local fpCamEffectorId = 10005
+local fpCamEffectorTg
+local fpCamEffectorTime = 15000 --Actual time is about half of it
+local fpCamEffectorMin = 0.005
+function getFpCamEffectorId()
+	return fpCamEffectorId
+end
+
+-- Throttle changing sound since it is smoothed in the engine
+setSound = throttle(function(v)
+	level.set_snd_volume(v)
+	if level.set_music_volume then level.set_music_volume(v) end
+end, 500)
+
+function fadeToBlack()
+	level.set_snd_volume(0)
+	if level.set_music_volume then level.set_music_volume(0) end
+	level.set_pp_effector_factor(getFpCamEffectorId(), 1)
+end
+
+function startCam()
+	level.add_pp_effector("black_infinite.ppe", getFpCamEffectorId(), true)
+	level.set_pp_effector_factor(getFpCamEffectorId(), fpCamEffectorMin)
+	fpCamEffectorTg = time_global()
+	AddUniqueCall(updateCam)
+	RegisterScriptCallback("main_menu_on_init", main_menu_on_init)
+	RegisterScriptCallback("main_menu_on_quit", main_menu_on_quit)
+end
+
+function reset()
+	level.set_snd_volume(1)
+	if level.set_music_volume then level.set_music_volume(1) end
+	exec_console_cmd("time_factor 1")
+end
+
+function main_menu_on_init()
+	reset()
+end
+
+function main_menu_on_quit()
+	reset()
+	level.remove_pp_effector(getFpCamEffectorId())
+	RemoveUniqueCall(updateCam)
+	UnregisterScriptCallback("main_menu_on_init", main_menu_on_init)
+	UnregisterScriptCallback("main_menu_on_quit", main_menu_on_quit)
+end
+
+function actor_on_first_update()
+	reset()
+end
+
+function updateCam()
+	if not db.actor then
+		fadeToBlack()
+		return
+	end
+
+	local k = math.min(1, normalize(time_global(), fpCamEffectorTg, fpCamEffectorTg + fpCamEffectorTime) + fpCamEffectorMin)
+
+	if k == 1 then
+		fadeToBlack()
+		return
+	end
+
+	-- Fade out sounds
+	local sound_k = math.max(0, 1 - normalize(k, 0, 0.6))
+	setSound(sound_k)
+
+	-- Time factor change
+	local time_k = 1 - 0.4 * math.min(1, normalize(k, 0, 0.6))
+	exec_console_cmd(("time_factor %s"):format(time_k))
+
+	-- Pulsating effect
+	k = (math.sin(k * (math.pi / 2) * 48)) / 30 + k
+	level.set_pp_effector_factor(getFpCamEffectorId(), k)
+end
+
+function checkCam()
+	RemoveTimeEvent("true_first_person_death", "checkCam")
+	CreateTimeEvent("true_first_person_death", "checkCam", 0, function(tg)
+		if not get_console_cmd(1, "first_person_death") then
+			return true
+		end
+
+		if time_global() - tg > 5000 then
+			return true
+		end
+
+		if not db.actor then
+			return true
+		end
+
+		if db.actor:alive() then
+			return false
+		end
+
+		startCam()
+		return true
+	end, time_global())
+end
+
+function on_key_press(dik)
+	if dik == DIK_keys.DIK_K then
+		if db.actor:alive() then
+			db.actor:kill(db.actor)
+		end
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("actor_on_before_death", checkCam)
+	-- RegisterScriptCallback("on_key_press", on_key_press)
+end
+                        
