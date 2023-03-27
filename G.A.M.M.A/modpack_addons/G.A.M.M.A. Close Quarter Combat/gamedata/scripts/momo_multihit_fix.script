@@ -1,9 +1,13 @@
 local victim = {}
 local hitter = {}
-local hit_id = -1
+local hit_id = -1   -- bullet id
+local golden = -1   -- the golden rule
 
 function bullet_on_impact(bullet)
     hit_id = bullet.bullet_id
+    if bullet.section then
+        golden = ini_sys:r_float_ex(bullet.section, "buck_shot") and ini_sys:r_float_ex(bullet.section, "buck_shot") or 0
+    end
 end
 
 local gbo_npc = grok_bo.npc_on_before_hit
@@ -11,39 +15,51 @@ local gbo_cre = grok_bo.monster_on_before_hit
 local gbo_adb = grok_actor_damage_balancer.actor_on_before_hit
 
 function grok_bo.npc_on_before_hit(npc, shit, bone_id, flags)
-    if victim[npc:id()] == hit_id then
-        flags.ret_value = false
-        shit.power = 0.0
-        shit.bone_id = 65535
-        return
-    else
-        victim[npc:id()] = hit_id
+    if shit.type == hit.fire_wound then         -- make sure we're dealing with bullet damage
+        if golden <= 1 then
+            if victim[npc:id()] == hit_id then  -- check the table
+                flags.ret_value = false         -- set flags to return false to be extra clean
+                shit.power = 0.0                -- set damage to 0 just in case something goes wrong
+                shit.bone_id = 65535            -- set the hit location to a dummy bone
+                return                          -- and then kill the function
+            else
+                victim[npc:id()] = hit_id       -- add the last bullet id to a table and assign it to the victim's id
+            end
+        end
     end
 
-    gbo_npc(npc, shit, bone_id)
+    gbo_npc(npc, shit, bone_id)             -- if everything goes through, proceed with gboobs
 end
 
 function grok_bo.monster_on_before_hit(monster, shit, bone_id, flags)
-    if victim[monster:id()] == hit_id then
-        flags.ret_value = false
-        shit.power = 0.0
-        shit.bone_id = 65535
-        return
-    else
-        victim[monster:id()] = hit_id
+    if shit.type == hit.fire_wound then
+        if golden <= 1 then
+            if victim[monster:id()] == hit_id then
+                flags.ret_value = false
+                shit.power = 0.0
+                shit.bone_id = 65535
+                return
+            else
+                victim[monster:id()] = hit_id
+            end
+        end
     end
 
     gbo_cre(monster, shit, bone_id)
 end
 
 function grok_actor_damage_balancer.actor_on_before_hit(shit, bone_id, flags)
-    if hitter[shit.draftsman:id()] == hit_id then
-        flags.ret_value = false
-        shit.power = 0.0
-        shit.bone_id = 65535
-        return
-    else
-        hitter[shit.draftsman:id()] = hit_id
+    if shit.type == hit.fire_wound then
+        if golden <= 1 then
+            if hitter[shit.draftsman:id()] == hit_id then
+                flags.ret_value = false
+                shit.power = 0.0
+                shit.bone_id = 65535
+                return
+            else
+                hitter[shit.draftsman:id()] = hit_id
+            end
+        end
     end
 
     gbo_adb(shit, bone_id, flags)
