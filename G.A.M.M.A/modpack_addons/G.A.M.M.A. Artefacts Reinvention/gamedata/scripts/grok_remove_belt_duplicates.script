@@ -1,0 +1,92 @@
+-- Adapted by Grok from arti_slot_control from OAO addon by Artifax.
+-- get_artefact_from_container from PBA addon by Demonized
+
+local categories = {
+	["af_kevlar"]           = "plate",
+	["af_plates"]           = "plate",
+	["af_kevlar_up"]        = "plate",
+	["af_plates_up"]        = "plate",
+	["af_camelbak"]         = "camel",
+	["af_camelbak_up"]      = "camel",
+	["af_grid"]             = "grid",
+	["af_grid_up"]          = "grid",
+	["af_frames"]           = "frame",
+	["af_frames_up"]        = "frame",
+	["af_surge"]            = "surge",
+	["af_surge_up"]         = "surge",
+	["af_cooler"]           = "cooler",
+	["af_cooler_up"]        = "cooler",
+	["af_freon"]            = "freon",
+	["af_freon_up"]         = "freon"
+}
+
+function get_artefact_from_container(sec)
+	local sec = sec
+	local cont
+	if (string_find(sec, "(lead.-_box)",3)) then
+		sec = sec:gsub("_lead_box", "")
+		cont = "lead_box"
+	elseif (string_find(sec, "(af.-_iam)",3)) then
+		sec = sec:gsub("_af_iam", "")
+		cont = "af_iam"
+	elseif (string_find(sec, "(af.-_aac)",3)) then
+		sec = sec:gsub("_af_aac", "")
+		cont = "af_aac"
+	elseif (string_find(sec, "(af.-_aam)",3)) then
+		sec = sec:gsub("_af_aam", "")
+		cont = "af_aam"
+	end
+	return sec, cont
+end
+
+function set_on_slot(slot_item)
+	slot_item_sec = slot_item:section()
+	if SYS_GetParam(0, slot_item_sec, "kind", "") == "i_arty_junk" then return end
+	
+	itm_tbl={}
+	db.actor:iterate_belt(
+		function (owner, obj)
+			local id = obj:id()
+			local section = obj:section()
+
+			if SYS_GetParam(0, section, "kind", "") == "i_arty_cont" then
+				section = get_artefact_from_container(section)
+			end
+
+			if itm_tbl[section] then
+				itm_tbl[section] = itm_tbl[section] + 1
+			else
+				itm_tbl[section] = 1
+			end 
+
+			if categories[section] then
+				cat = categories[section]
+				if itm_tbl[cat] then
+					itm_tbl[cat] = itm_tbl[cat] + 1
+				else
+					itm_tbl[cat] = 1
+				end
+			end
+		end)
+
+	if itm_tbl[slot_item_sec] then
+		if itm_tbl[slot_item_sec] >= 2 then
+			remove_item_from_slot(slot_item)
+		end
+	end
+
+	if categories[slot_item_sec] then
+		cat_to_check = categories[slot_item_sec]
+		if itm_tbl[cat_to_check] >= 2 then
+			remove_item_from_slot(slot_item)
+		end
+	end
+end
+
+function remove_item_from_slot(slot_item)
+	db.actor:move_to_ruck(slot_item)
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_item_to_belt", set_on_slot)
+end
