@@ -16,7 +16,7 @@ GAMMA is a large project using the work of many talented modders, and each and e
 
 ## Description
 
-G.A.M.M.A. stands for Grok's Automated Modular Modpack for Anomaly.
+G.A.M.M.A. stands for Gigantic Automated Modular Modpack for Anomaly.
 
 G.A.M.M.A. aims at providing a balanced survival, scavenging, cooking, crafting and repairing focused experience with a long progression and smooth gameplay.
 
