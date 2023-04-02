@@ -120,7 +120,7 @@ function remove_psu(obj)
     alife_create_item(data.supply.name, db.actor)
     data.supply = nil
     set_data(id, data)
-    adjust_weight(obj)
+    -- adjust_weight(obj)
 end
 
 function install_psu(suit, data, psu)
@@ -133,7 +133,7 @@ function install_psu(suit, data, psu)
         data.supply = dup_table(cache[sec_p])
         print_dbg("Installing PSU %s with drain %s, capacity %s", data.supply.name, data.supply.drain, data.supply.max)
         set_data(suit:id(), data)
-        adjust_weight(suit)
+        -- adjust_weight(suit)
         alife_release(psu)
         -- play some sound?
     	xr_sound.set_sound_play(AC_ID,"inv_aam_open")
@@ -141,33 +141,33 @@ function install_psu(suit, data, psu)
 end
 
 -- Update the weight of an exoskeleton factoring in the weight of the PSU
-function adjust_weight(obj)
-    print_dbg("begin adjust weight for %s", obj:section())
-    if not is_exo(obj) then return end
+-- function adjust_weight(obj)
+--     print_dbg("begin adjust weight for %s", obj:section())
+--     if not is_exo(obj) then return end
 
-    local base_weight = SYS_GetParam(2, obj:section(), "inv_weight")
-    local upgrades = utils_item.get_upgrades_installed(obj)
-    local add_inv_weight = 0
-    for _, upgrade in pairs(upgrades) do
-        local section = ini_sys:r_string_ex(upgrade, "section")
-        local weight_adj = ini_sys:r_string_ex(section,"inv_weight")
-        if weight_adj then
-            local op = string.sub(weight_adj, 1, 1)
-            local val = tonumber(string.sub(weight_adj, 2))
+--     local base_weight = SYS_GetParam(2, obj:section(), "inv_weight")
+--     local upgrades = utils_item.get_upgrades_installed(obj)
+--     local add_inv_weight = 0
+--     for _, upgrade in pairs(upgrades) do
+--         local section = ini_sys:r_string_ex(upgrade, "section")
+--         local weight_adj = ini_sys:r_string_ex(section,"inv_weight")
+--         if weight_adj then
+--             local op = string.sub(weight_adj, 1, 1)
+--             local val = tonumber(string.sub(weight_adj, 2))
 
-            add_inv_weight = op == "+" and add_inv_weight + val or add_inv_weight - val
-        end
-        --printf(add_inv_weight)
-    end
+--             add_inv_weight = op == "+" and add_inv_weight + val or add_inv_weight - val
+--         end
+--         --printf(add_inv_weight)
+--     end
 
-    local data = exo_devices[obj:id()]
-    base_weight = base_weight + add_inv_weight
-    if data and data.supply and data.supply.name then
-        base_weight = base_weight + SYS_GetParam(2, data.supply.name, "inv_weight")
-    end
-    print_dbg("set weight of %s to %s", obj:section(), base_weight)
-    obj:set_weight(base_weight)
-end
+--     local data = exo_devices[obj:id()]
+--     base_weight = base_weight + add_inv_weight
+--     if data and data.supply and data.supply.name then
+--         base_weight = base_weight + SYS_GetParam(2, data.supply.name, "inv_weight")
+--     end
+--     print_dbg("set weight of %s to %s", obj:section(), base_weight)
+--     obj:set_weight(base_weight)
+-- end
 
 -- charge exo with battery
 
@@ -248,11 +248,11 @@ end
 
 local current_outfit
 
-function on_move(obj)
-    if is_exo(obj) then
-        adjust_weight(obj)
-    end
-end
+-- function on_move(obj)
+--     if is_exo(obj) then
+--         adjust_weight(obj)
+--     end
+-- end
 
 function actor_on_first_update()
     init()
@@ -268,6 +268,7 @@ local function on_item_drag_dropped(obj_d, obj_o, slot_from, slot_to)
 	if not (slot_from == EDDListType.iActorBag and (slot_to == EDDListType.iActorBag or slot_to == EDDListType.iActorSlot)) then
         return
     end
+    if ui_inventory.GUI and ui_inventory.GUI.mode == "trade" then return end
 	
 	local sec_d = obj_d:section() -- battery or device
     local sec_o = obj_o:section() -- suit
@@ -347,7 +348,7 @@ local function modify_drain(base_drain, data)
 	elseif IsMoveState("mcAnyMove") then
 		return base_drain * drain_mult
 	end
-    if data.supply and data.supply.ability == "recharge" then return -0.001
+    if data.supply and data.supply.ability == "recharge" then return -0.05
     else return 0 end
 end
 
@@ -379,10 +380,7 @@ end
 
 CanRepair = inventory_upgrades.can_repair_item
 function inventory_upgrades.can_repair_item( sec, cond, mechanic )
-	local kind = ini_sys:r_string_ex(sec,"kind")
     if sec == "batteries_exo" then return false
-    elseif IsItem("helmet",sec) or IsItem("outfit",sec) then return false
-	elseif kind == "i_arty_cont" then return false
     else return CanRepair(sec, cond, mechanic) end
 end
 
@@ -400,7 +398,7 @@ end
 ActionCustom = ui_inventory.UIInventory.Action_Custom
 function ui_inventory.UIInventory:Action_Custom(obj, bag, temp, i)
 	obj = self:CheckItem(obj,"Action_Custom " .. i)
-	if i == 3 and is_exo(obj) then -- menu field strip
+	if i == 3 and is_exo(obj) then 
 		remove_psu(obj)
 	else
 		ActionCustom(self, obj, bag, temp, i)
@@ -426,7 +424,7 @@ function ui_item.build_desc_header(obj, sec, str)
         local power = string.format("%.2f", data.power)
         local max_power = data.supply and data.supply.max or 100
         local clr = utils_xml.get_color_con((data.power/max_power) * 100)
-        display_str =  display_str .."  " .. clr_y .. gc("st_dot") .. " " .. clr_2 ..  gc("st_power") .. " ".. clr .. data.power .. "/" .. max_power .. "\\n"
+        display_str =  display_str .."  " .. clr_y .. gc("st_dot") .. " " .. clr_2 ..  gc("st_power") .. " ".. clr .. power .. "/" .. max_power .. "\\n"
         local psu = gc("st_equipped_none")
         clr = clr_r
         if data.supply then
@@ -453,10 +451,6 @@ end
 
 local function load_state(mdata) 
 	exo_devices = mdata.exo_devices or {}
-end
-
-function custom_recipes()
-    
 end
 
 function on_game_start()
