@@ -182,6 +182,45 @@ _G.try = function(func, ...)
     end
 end
 
+-- Patches
+local xmlCallbacks = {}
+
+RSC = _G.RegisterScriptCallback
+_G.RegisterScriptCallback = function(name,func_or_userdata)
+	if name == "on_xml_read" then
+		for i = #xmlCallbacks, 1, -1 do
+			local v = xmlCallbacks[i]
+			if v == func_or_userdata then
+				return
+			end
+		end
+
+		table.insert(xmlCallbacks, func_or_userdata)
+		return
+	end
+	RSC(name, func_or_userdata)
+end
+
+URSC = _G.UnregisterScriptCallback
+_G.UnregisterScriptCallback = function(name,func_or_userdata)
+	if name == "on_xml_read" then
+		for i = #xmlCallbacks, 1, -1 do
+			local v = xmlCallbacks[i]
+			if v == func_or_userdata then
+				table.remove(xmlCallbacks, i)
+			end
+		end
+		return
+	end
+	URSC(name, func_or_userdata)
+end
+
+function xmlDispatch(xml_file_name, xml_obj)
+	for i, v in ipairs(xmlCallbacks) do
+		v(xml_file_name, xml_obj)
+	end
+end
+
 -- DXML MAIN
 if AddScriptCallback then
 	AddScriptCallback("on_loading_screen_key_prompt")
@@ -334,6 +373,20 @@ do
 		local file_name = t[i]
 		_G[file_name].on_xml_read()
 	end
+
+	-- Force load some other non modxml scripts
+	local force_load = {
+		["ui_options_modded_exes"] = true
+	}
+	k2t_table(force_load)
+	table_sort(force_load)
+
+	for _, k in ipairs(force_load) do
+		if (_G[k] and _G[k].on_xml_read) then
+			local s = _G[k]
+			s.on_xml_read()
+		end
+	end
 end
 
 -- Cache parsed files
@@ -464,7 +517,7 @@ end
 local parser = slaxml.SLAXML()
 local parser_options = {stripWhitespace = true}
 
-local function xml_object(xml_file_name, xml_string, xml_table)
+function xml_object(xml_file_name, xml_string, xml_table)
 	local t = {
 		xml_string = xml_string,
 		xml_table = xml_table,
@@ -868,12 +921,17 @@ local function xml_object(xml_file_name, xml_string, xml_table)
 	-- Insert from XML string into xml_table
 	-- where argument is optional and specifies an element subtable of self.xml_table to insert (default - root element)
 	-- pos argument is optional and specifies position to insert (default - to the end)
+	-- useRootNode argument is optional and will hint DXML to insert contents inside the root node if it has one instead of whole string
 	-- Returns the position of first inserted element in "where"
 	-- This function is identical to #include directive in xml files
-	t.insertFromXMLString = function(self, xml_string, where, pos)
+	t.insertFromXMLString = function(self, xml_string, where, pos, useRootNode)
+		if xml_string == "" then
+			return
+		end
+
 		where = where or self:getRoot()
 		local xml_obj = self:parseXMLString(xml_string)
-		local xml_obj_root = xml_obj.xml_table
+		local xml_obj_root = useRootNode and xml_obj:getRoot() or xml_obj.xml_table
 		local n_pos
 		for i, v in ipairs(xml_obj_root.kids) do
 			v.parent = where
@@ -884,6 +942,18 @@ local function xml_object(xml_file_name, xml_string, xml_table)
 			end
 		end
 		return where.kids[n_pos], n_pos
+	end
+
+	-- Insert from XML file
+	-- path argument should be a path to the file WITH EXTENSION (example: "gameplay\\npc_profiles.xml")
+	-- This function opens XML file inside gamedata/configs/<path> folder and inserts the contents through insertFromXMLString function
+	t.insertFromXMLFile = function(self, path, where, pos, useRootNode)
+		local p = getFS():update_path('$game_config$', '') .. path
+		local f, status, code = io.open(p, "r")
+		assert(f, ("\n\nDXML ERROR: insertFromXMLFile\nCan't read file by path %s %s"):format(p, status and status:gsub(p, "") or "nil"))
+		local contents = f:read('*all')
+		f:close()
+		return self:insertFromXMLString(contents, where, pos, useRootNode)
 	end
 
 	-- Get text inside of element
@@ -1186,7 +1256,7 @@ _G.COnXmlRead = function(xml_file_name, xml_string)
 	end
 	print_parser_msg(xml_file_name, "parsed")
 
-	SendScriptCallback("on_xml_read", xml_file_name, xml_obj)
+	xmlDispatch(xml_file_name, xml_obj)
 	print_parser_msg(xml_file_name, "callback")
 
 	xml_string = parser:simple_xml(xml_table)

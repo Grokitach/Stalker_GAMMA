@@ -123,7 +123,7 @@ hud_blink_timer.leftleg=0
 hud_blink_timer.rightleg=0
 hud_blink_timer.blinktime=1000
 
-local medkits={}
+medkits={}
 medkits.lastregen=time_global()
 medkits.timedhealth=60000
 medkits.morphine={head=8,torso=5,rightleg=4,leftleg=4,rightarm=4,leftarm=4,timeregen=60000}
@@ -143,7 +143,7 @@ medkits.survival_kit={torso=11,rightleg=3,leftleg=3,rightarm=3,leftarm=3,timereg
 medkits.bandage={torso=3,rightleg=3,leftleg=3,rightarm=3,leftarm=3,timeregen=40000}
 
 
-local healhelp={}
+healhelp={}
 healhelp.drug_anabiotic	= {head=11,torso=11,rightleg=11,leftleg=11,rightarm=11,leftarm=11}
 healhelp.rebirth	= {head=8,torso=8,rightleg=5,leftleg=5,rightarm=5,leftarm=5}
 healhelp.survival_kit	= {head=5,torso=5,rightleg=3,leftleg=3,rightarm=3,leftarm=3}
@@ -387,23 +387,28 @@ function shaking_hands()
 	local max_arms_sum = (maxhp.rightarm + maxhp.leftarm) * effects_mult
 
 	if arms_sum < (max_arms_sum * (zzz_player_injuries_mcm.get_config("arm_penalty_minimum_hp") * 0.1)) then
-		if (left_arm < right_arm / 1.5) or (right_arm < left_arm / 1.5) then
-			cam_power = 1.15 * weight / arms_sum
-			cam_power = (body_state == "crouch") and (0.8 * weight / arms_sum) or cam_power
-			cam_power = (body_state == "low_crouch") and (0.4 * weight / arms_sum) or cam_power
-		else
-			cam_power = 0.8 * weight / arms_sum
-			cam_power = (body_state == "crouch") and (0.55 * weight / arms_sum) or cam_power
-			cam_power = (body_state == "low_crouch") and (0.3 * weight / arms_sum) or cam_power
-		end
+		cam_power = 0.65 * weight / arms_sum
+		cam_power = (body_state == "crouch") and (0.60 * weight / arms_sum) or cam_power
+		cam_power = (body_state == "low_crouch") and (0.55 * weight / arms_sum) or cam_power
 
 		cam_power = clamp(cam_power, 0, 3)
 		cam_power = cam_power * (zzz_player_injuries_mcm.get_config("arm_animation_power"))
-		local cam_power_scope = cam_power * 0.2
+		local cam_power_scope = cam_power * 0.27
 		if item_in_slot:weapon_is_scope() then
 			cam_power = cam_power_scope
 		end
 		-- play anm
+		level.add_cam_effector("camera_effects\\" .. aim_anm[math.random(#aim_anm)] .. ".anm", 9921, true, "", 0, true, cam_power)
+	else
+		cam_power = 0.18 * weight / max_arms_sum
+		cam_power = (body_state == "crouch") and (0.17 * weight / max_arms_sum) or cam_power
+		cam_power = (body_state == "low_crouch") and (0.16 * weight / max_arms_sum) or cam_power
+		cam_power = clamp(cam_power, 0, 3)
+		cam_power = cam_power * (zzz_player_injuries_mcm.get_config("arm_animation_power"))
+		local cam_power_scope = cam_power * 0.27
+		if item_in_slot:weapon_is_scope() then
+			cam_power = cam_power_scope
+		end
 		level.add_cam_effector("camera_effects\\" .. aim_anm[math.random(#aim_anm)] .. ".anm", 9921, true, "", 0, true, cam_power)
 	end
 	--	news_manager.send_tip(db.actor, r(cam_power), 0, nil, 1500)
@@ -513,7 +518,7 @@ function bhs_concussion()
 --	actor_menu.set_msg(1, strformat("head.tbl.volume: %s, console_volume: %s, stage: %s", r(head_tbl.volume), r(get_console_cmd(2,"snd_volume_eff")), r(head_tbl.stage)))
 
 	-- removing effects if hp between previous and current yellow or blue (or dead)
-	if (previous == current) or (current <= 0) then
+	if head_tbl.stage ~= 0 and ((previous == current) or (current <= 0)) then
 		exec_console_cmd("snd_volume_eff " .. head_tbl.volume)
 		level.remove_pp_effector(99133)
 		head_tbl.stage = 0
@@ -691,7 +696,7 @@ local function recieved_damage(amount)
 	if choosen_hitbox=="head" then
 		hud_blink_timer.head=time_global()
 		health.head=health.head-damage_head
-		if health.head<=0 then health.head=0 actor_menu.set_msg(1, "Head fatally damaged!", 8) end
+--		if health.head<=0 then health.head=0 actor_menu.set_msg(1, "Head fatally damaged!", 8) end
 		utils_obj.save_var(db.actor,"health.head",health.head)
 		-- xcvb
 		if damage_head > (zzz_player_injuries_mcm.get_config("head_penalty_minimum_hp") - 1) then
@@ -702,39 +707,39 @@ local function recieved_damage(amount)
 	elseif choosen_hitbox=="torso" then
 		hud_blink_timer.torso=time_global()
 		health.torso=health.torso-damage
-		if health.torso<=0 then health.torso=0 actor_menu.set_msg(1, "Torso fatally damaged!", 8) end
+--		if health.torso<=0 then health.torso=0 actor_menu.set_msg(1, "Torso fatally damaged!", 8) end
 		utils_obj.save_var(db.actor,"health.torso",health.torso)
 		
 	elseif choosen_hitbox=="leftarm" then
 		hud_blink_timer.leftarm=time_global()
 		health.leftarm=health.leftarm-damage
-		if health.leftarm<=0 then health.leftarm=0 actor_menu.set_msg(1, "Right arm damaged!", 8) end
+--		if health.leftarm<=0 then health.leftarm=0 actor_menu.set_msg(1, "Right arm damaged!", 8) end
 		utils_obj.save_var(db.actor,"health.leftarm",health.leftarm)
 		
 	elseif choosen_hitbox=="rightarm" then
 		hud_blink_timer.rightarm=time_global()
 		health.rightarm=health.rightarm-damage
-		if health.rightarm<=0 then health.rightarm=0 actor_menu.set_msg(1, "Left arm damaged!", 8) end
+--		if health.rightarm<=0 then health.rightarm=0 actor_menu.set_msg(1, "Left arm damaged!", 8) end
 		utils_obj.save_var(db.actor,"health.rightarm",health.rightarm)
 		
 	elseif choosen_hitbox=="leftleg" then
 		hud_blink_timer.leftleg=time_global()
 		health.leftleg=health.leftleg-damage
-		if health.leftleg<=0 then 
-			if health.rightleg>0 then
-				health.leftleg=0 actor_menu.set_msg(1, "Right leg damaged!", 8) 
-			end
-		end
+--		if health.leftleg<=0 then 
+--			if health.rightleg>0 then
+--				health.leftleg=0 actor_menu.set_msg(1, "Right leg damaged!", 8) 
+--			end
+--		end
 		utils_obj.save_var(db.actor,"health.leftleg",health.leftleg)
 		
 	elseif choosen_hitbox=="rightleg" then
 		hud_blink_timer.rightleg=time_global()
 		health.rightleg=health.rightleg-damage
-		if health.rightleg<=0 then 
-			if health.leftleg>0 then
-				health.rightleg=0 actor_menu.set_msg(1, "Left leg damaged!", 8) 
-			end
-		end
+--		if health.rightleg<=0 then 
+--			if health.leftleg>0 then
+--				health.rightleg=0 actor_menu.set_msg(1, "Left leg damaged!", 8) 
+--			end
+--		end
 		utils_obj.save_var(db.actor,"health.rightleg",health.rightleg)
 		
 	end
