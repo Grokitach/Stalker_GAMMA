@@ -1,0 +1,758 @@
+
+--====================================================================
+-- Utilities for dealing with XML
+--====================================================================
+
+
+----------------------------------------------------------------------
+-- Utilities
+----------------------------------------------------------------------
+local string_find   = string.find
+local string_sub    = string.sub
+local string_gsub   = string.gsub
+local string_format = string.format
+local string_byte   = string.byte
+local string_char   = string.char
+
+
+----------------------------------------------------------------------
+-- Files
+----------------------------------------------------------------------
+local XML_HUD
+function get_hud_xml()
+	if (not XML_HUD) then
+		XML_HUD = CScriptXmlInit()
+		XML_HUD:ParseFile("ui_hud.xml")
+	end
+	return XML_HUD
+end
+
+local XML_MHUD
+function get_Mhud_xml()
+	if (not XML_MHUD) then
+		XML_MHUD = CScriptXmlInit()
+		XML_MHUD:ParseFile("ui_custom_msgs.xml")
+	end
+	return XML_MHUD
+end
+
+
+----------------------------------------------------------------------
+-- Color
+----------------------------------------------------------------------
+local clr_table = { -- Colors from color_defs.xml
+	-- Strong
+	["white"] = {255,255,255,255},
+	["green"]  = {255,0,255,0},
+	["yellow"] = {255,255,255,0},
+	["red"]    = {255,255,0,0},
+	["orange"] = {255,250,150,0},
+	
+	-- Colors used in common UI
+	["d_orange"] = {255,238,153,26},
+	["d_red"]    = {255,204,0,51},
+	["d_cyan"]   = {255,153,255,255},
+	["d_purple"] = {255,93,0,116},
+	["d_green"]  = {255,51,255,102},
+	["d_blue"]    = {255,100,100,255},
+	
+	["ui_gray_1"] = {255,170,170,170},
+	["ui_gray_2"]   = {255,140,140,140},
+		
+	-- Colors used in encyclopedia
+	["pda_green"] = {255,56,209,115},
+	["pda_blue"] = {255,56,166,209},
+	["pda_yellow"] = {255,209,209,56},
+	["pda_white"] = {255,250,250,250},
+}
+
+function get_color(name, to_code)
+	local color = name and clr_table[name] or {255, 170, 170, 170}
+	if to_code then
+		return GetARGB(color[1],color[2],color[3],color[4])
+	end
+	
+	return strformat("%c[%s,%s,%s,%s]",color[1],color[2],color[3],color[4])
+end
+
+function get_color_con(condition, to_code)
+	if condition then
+		if condition < 20 then return get_color("d_red", to_code)
+		elseif condition < 40 then return get_color("d_orange", to_code)
+		elseif condition < 60 then return get_color("d_orange", to_code)
+		elseif condition < 80 then return get_color("d_green", to_code)
+		end
+	end
+	return get_color("green", to_code)
+end
+
+function get_color_con_extended(condition, sec, to_code)
+	local treshold = 60
+	if string.find(sec, "prt_o_") then
+		treshold = 50
+	end
+		
+	if condition then
+		if condition < 20 then return get_color("d_red", to_code)
+		elseif condition < treshold then return get_color("d_orange", to_code)
+		elseif condition < 80 then return get_color("d_green", to_code)
+		end
+	end
+	return get_color("green", to_code)
+end
+
+function get_icons_texture(section)
+	return section and ini_sys:r_string_ex(section,"icons_texture") or "ui\\ui_icon_equipment"
+end
+
+function lerp_color(val, mi, md, mx)
+-- mil: Min / md: Middle / mx: Max = {A,R,G,B,value}
+
+	local m1,m2
+	if (val >= mi[5]) and (val < md[5]) then
+		m1 = mi
+		m2 = md
+	elseif (val >= md[5]) and (val <= mx[5]) then
+		m1 = md
+		m2 = mx
+	end
+	if not (m1 and m2) then
+		return GetARGB(255,255,255,255)
+	end
+	
+	local t = {}
+	for i=1,4 do
+		if m1[i] == m2[i] then
+			t[i] = m1[i]
+		else
+			t[i] = math.floor( m1[i] + ((m2[i] - m1[i]) * normalize(val, m1[5], m2[5])) )
+			--printf(" [%s] %s = %s [ %s , %s ] | diff: %s - normalize: %s", self.section, i, t[i], m1[i], m2[i], (m2[i] - m1[i]), 1 - normalize(val, m1[5], m2[5]))
+		end
+	end
+	return GetARGB(t[1],t[2],t[3],t[4])
+end
+
+
+----------------------------------------------------------------------
+-- Axis
+----------------------------------------------------------------------
+function correct_ratio(element, main_dialog)
+	local ratio_w = 1024/(device().width)
+	local ratio_h = 768/(device().height)
+	
+	local pos = element:GetWndPos()
+	local w = element:GetWidth()
+	local h = element:GetHeight()
+
+	element:SetWndSize(vector2():set( (w * ratio_w) , (h * ratio_h) ))
+	element:SetWndPos(vector2():set( main_dialog and (1024 - (w * ratio_w)) or (pos.x * ratio_w) , (pos.y * ratio_h) ))
+end
+
+function move_element(element, x, y)
+	local pos = element:GetWndPos()
+	pos.x = pos.x + (x or 0)
+	pos.y = pos.y + (y or 0)
+	element:SetWndPos( pos )
+end
+
+function sync_pos(base, element)
+	element:SetWndPos( base:GetWndPos() )
+end
+
+function sync_size(base, element, offset_x, offset_y)
+	local w = base:GetWidth()
+	local h = base:GetHeight()
+	element:SetWndSize(vector2():set( w + (offset_x or 0), h + (offset_y or 0) ))
+end
+
+function sync_element(element, base)
+	element:SetWndPos( base:GetWndPos() )
+	element:SetWndSize(vector2():set( base:GetWidth() , base:GetHeight() ))
+end
+
+function sync_cursor(base, element, offset_x, offset_y)
+	local cpos = GetCursorPosition()
+	local w = element and element:GetWidth() or base:GetWidth()
+	local h = element and element:GetHeight() or base:GetHeight()
+	
+	-- Default pos at cursor is top/left corner
+	
+	-- case: element pos to right is smaller than its width
+	if (1024 - cpos.x < w) then
+		cpos.x = cpos.x - w
+	end
+	
+	-- case: element pos to bottom is smaller than its height
+	if (768 - cpos.y < h) then
+		-- after switch: make sure element doesn't go above the view
+		local y = cpos.y - h
+		cpos.y = y < 0 and 0 or y
+	end
+	
+	base:SetWndPos(vector2():set( cpos.x + (offset_x or 0) , cpos.y + (offset_y or 0) ))
+end
+
+function align_to_center(element, base, offset_x, offset_y)
+-- if this doesn't work, use old pos and remove alignment c
+	element:SetWndPos( vector2():set( ((base:GetWidth() / 2) + (offset_x or 0)) , ((base:GetHeight() / 2) + (offset_y or 0)) ))
+end
+
+function adjust_pos_to_element(element, offset_x, offset_y, ...)
+	local p = {...}
+	local pos = element:GetWndPos()
+	for i=1,#p do
+		local pos_i = p[i]:GetWndPos()
+		p[i]:SetWndPos(vector2():set(pos_i.x + pos.x + offset_x , pos_i.y + pos.y + offset_y))
+	end
+end
+
+function adjust_size_to_element(element, _w, _h, ...)
+	local p = {...}
+	local w = element:GetWidth()
+	local h = element:GetHeight()
+	for i=1,#p do
+		p[i]:SetWndSize(vector2():set( w + _w , h + _h ))
+	end
+end
+
+function get_item_axis(section, grid_size, unpacked)
+
+-- Rule: get item axis out of info from its section
+-- Input: section of the target item (string)
+-- Output: table of item's axis (x1, y1, x2, y2, width, height)
+
+	grid_size = grid_size or 50
+	local inv_grid_x = ini_sys:r_float_ex (section,"inv_grid_x") or 0
+	local inv_grid_y = ini_sys:r_float_ex (section,"inv_grid_y") or 0
+	local inv_grid_width = ini_sys:r_float_ex (section,"inv_grid_width") or 0
+	local inv_grid_height = ini_sys:r_float_ex (section,"inv_grid_height") or 0
+	
+	local x1 = inv_grid_x * grid_size
+	local y1 = inv_grid_y * grid_size
+	local w = inv_grid_width * grid_size
+	local h = inv_grid_height * grid_size
+	local x2 = x1 + w
+	local y2 = y1 + h
+	
+	if unpacked then
+		return x1, y1, x2, y2
+	end
+	return { x1=x1, y1=y1, x2=x2, y2=y2, w=w, h=h }
+end
+
+function is_widescreen()
+	return (device().width/device().height>1024/768+0.01)
+end
+
+function screen_ratio()
+	return ((1024/768) / (device().width/device().height))
+end
+
+function hide_menu()
+	hide_hud_inventory()
+end
+
+
+----------------------------------------------------------------------
+-- Text
+----------------------------------------------------------------------
+function get_name_cond(condition, is_wpn, section)
+	if game_difficulties.get_eco_factor("percentage_parts") then
+		return (tostring(condition) .. "%")
+	end
+
+	local typ = is_wpn and "w" or "o"
+	if section then
+		if string_find(section,"fabrics") or string_find(section,"retardant") or string_find(section,"ballistic") or string_find(section,"support") then
+			typ = "o"
+		else
+			typ = "w"
+		end
+	end
+	
+	if condition then
+		if condition <= 25 then return game.translate_string("st_cap_con_25_" .. typ)
+		elseif condition <= 50 then return game.translate_string("st_cap_con_50_" .. typ)
+		elseif condition <= 75 then return game.translate_string("st_cap_con_75_" .. typ)
+		end
+	end
+	return game.translate_string("st_cap_con_100_" .. typ)
+end
+
+function set_msg(str, ignore)
+	if (not ignore) then
+		hide_hud_inventory()
+	end
+
+	actor_menu.set_msg(1, game.translate_string(str) , 3 )
+end
+
+function get_special_txt(str)
+	if str == "l03_agroprom"          then return "Agroprom"                end
+	if str == "l03u_agr_underground"  then return "Agroprom Underground"    end
+	if str == "l07_military"          then return "Army Warehouses"         end
+	if str == "l12_stancia_2"         then return "Chernobyl NPP North"     end
+	if str == "l12_stancia"           then return "Chernobyl NPP South"     end
+	if str == "l01_escape"            then return "Cordon"                  end
+	if str == "l04_darkvalley"        then return "Dark Valley"             end
+	if str == "k01_darkscape"         then return "Darkscape"               end
+	if str == "l09_deadcity"          then return "Dead City"               end
+	if str == "l11_hospital"          then return "Deserted Hospital"       end
+	if str == "l02_garbage"           then return "Garbage"                 end
+	if str == "l13_generators"        then return "Generators"              end
+	if str == "k00_marsh"             then return "Great Swamp"             end
+	if str == "jupiter"               then return "Jupiter"                 end
+	if str == "jupiter_underground"   then return "Jupiter Underground"     end
+	if str == "l08u_brainlab"         then return "Lab X-16"                end
+	if str == "l04u_labx18"           then return "Lab X-18"                end
+	if str == "l10u_bunker"           then return "Lab X-19"                end
+	if str == "labx8"                 then return "Lab X-8"                 end
+	if str == "l10_limansk"           then return "Limansk"                 end
+	if str == "l12u_control_monolith" then return "Monolith Control Center" end
+	if str == "l13u_warlab"           then return "Monolith War Lab"        end
+	if str == "pripyat"               then return "Pripyat Outskirts"       end
+	if str == "l11_pripyat"           then return "Pripyat"                 end
+	if str == "l10_radar"             then return "Radar"                   end
+	if str == "l10_red_forest"        then return "Red Forest"              end
+	if str == "l05_bar"               then return "Rostok"                  end
+	if str == "l12u_sarcofag"         then return "Sarcophagus"             end
+	if str == "k02_trucks_cemetery"   then return "Truck Cemetery"          end
+	if str == "l06_rostok"            then return "Wild Territory"          end
+	if str == "l08_yantar"            then return "Yantar"                  end
+	if str == "zaton"                 then return "Zaton"                   end
+	if str == "y04_pole"              then return "Meadow"                  end
+	
+	if str == "actor"                 then return "Free Stalker"            end
+	if str == "actor_bandit"          then return "Bandit"                  end
+	if str == "actor_csky"            then return "Clear Sky"               end
+	if str == "actor_dolg"            then return "Duty"                    end
+	if str == "actor_ecolog"          then return "Ecologist"               end
+	if str == "actor_freedom"         then return "Freedom"                 end
+	if str == "actor_killer"          then return "Mercenary"               end
+	if str == "actor_stalker"         then return "Loner"                   end
+	if str == "actor_army"            then return "Military"                end
+	if str == "actor_monolith"        then return "Monolith"                end
+	if str == "actor_renegade"        then return "Renegade"                end
+	if str == "actor_greh"            then return "Sin"                     end
+	if str == "actor_isg"             then return "UNISG"                   end
+	if str == "actor_monster"         then return "Mutant"                  end
+	if str == "actor_zombied"         then return "Zombified"               end
+	
+	return ""
+end
+
+----------------------------------------------------------------------
+-- Icons
+----------------------------------------------------------------------
+local clr_icon_1 = GetARGB(255, 255, 255, 255)
+local clr_icon_2 = GetARGB(70, 255, 255, 255)
+local ico_size, rw, rh, _le = 0.7,1,1,50
+local ico_width
+
+function set_icon(sec, hidden, XML_temp, XML_box, XML_box_small)
+	ico_width = ico_width or (is_widescreen() and 0.8 or 1)
+	
+	if not (XML_temp and XML_box) then
+		callstack()
+		printe("!ERROR utils_xml.set_icon | XML_box or XML_temp doesn't exist")
+		return
+	end
+	
+	if not (sec and ini_sys:section_exist(sec)) then
+		XML_box:Show(false)
+		
+		callstack()
+		printe("!ERROR utils_xml.set_icon | section [%s] doesn't exist in system ini", sec)
+		return
+	end
+	
+	-- Icon
+	local ico = get_item_axis(sec)
+	XML_box:InitTexture( get_icons_texture(sec) )
+	XML_box:SetTextureRect(Frect():set(ico.x1, ico.y1, ico.x2, ico.y2))
+	XML_box:SetTextureColor( hidden and clr_icon_2 or clr_icon_1 )
+	XML_box:SetStretchTexture(true)
+	XML_box:Show(true)
+	
+	local pos = XML_temp:GetWndPos()
+	local _w = XML_temp:GetWidth()
+	local _h = XML_temp:GetHeight()
+	
+	local ratio = ico.w/ico.h
+	local h, w
+	ico.w = ico.w * ico_size * ico_width
+	ico.h = ico.h * ico_size
+	
+	for i=1,2 do
+		local w_t, h_t = 0, 0
+		local resize = false
+		if (ico.w > _w) then -- if icon width is bigger than frame width
+			w_t = ico.w - _w
+			resize = true	
+		end 
+		if (ico.h > _h) then -- if icon height is bigger than frame height
+			h_t = ico.h - _h 
+			resize = true	
+		end 
+		
+		if resize then -- resize is required
+			if (w_t >= h_t) then -- if icon width is the big number (or square), use it as a base for resizing
+				w = _w
+				h = w / ratio
+			elseif (w_t < h_t) then -- if icon width is the big number, use it as a base for resizing
+				h = _h
+				w = h * ratio
+			end
+		else -- no resize
+			w = ico.w
+			h = ico.h
+		end
+	end
+	
+	local offset_x = (_w - w)/2
+	local offset_y = (_h - h)/2
+	XML_box:SetWndSize(vector2():set(w , h))
+	XML_box:SetWndPos(vector2():set(pos.x + offset_x , pos.y + offset_y))
+	
+	local ico_layer = ini_sys:r_string_ex(sec,"1icon_layer")
+	if XML_box_small and ico_layer then
+		local ico_layer_x = ini_sys:r_float_ex(sec,"1icon_layer_x")
+		local ico_layer_y = ini_sys:r_float_ex(sec,"1icon_layer_y")
+		local ico_layer_scale = ini_sys:r_float_ex(sec,"1icon_layer_scale")
+		if (ico_layer_x == 0) and (ico_layer_y == 0) and (ico_layer_scale == 1) then
+			set_icon(ico_layer, hidden, XML_temp, XML_box_small)
+		end
+	end
+end
+
+local upgr_chk = {
+	["weapon"] = {
+		{ x = 1724 , y = 802 , w = 167 , h = 159 }
+	},
+	["outfit"] = {
+		{ x = 716 , y = 824 , w = 198 , h = 129 },
+		{ x = 814 , y = 579 , w = 159 , h = 137 },
+		{ x = 90 , y = 818 , w = 185 , h = 140 }
+	},
+}
+function set_upgr_icon(obj, sec, XML_box, XML_temp)
+	ico_width = ico_width or (utils_xml.is_widescreen() and 0.8 or 1)
+	
+	local upgr_x = ini_sys:r_float_ex(sec,"upgr_icon_x")
+	local upgr_y = ini_sys:r_float_ex(sec,"upgr_icon_y")
+	local upgr_w = ini_sys:r_float_ex(sec,"upgr_icon_width")
+	local upgr_h = ini_sys:r_float_ex(sec,"upgr_icon_height")
+	if not (upgr_x and upgr_y and upgr_w and upgr_h) then
+		set_icon(sec, nil, XML_temp, XML_box)
+		return
+	end
+	
+	-- Get upgrade dds
+	local upgr_path = ini_sys:r_string_ex(sec,"upgr_icon_path")
+	upgr_path = upgr_path or IsWeapon(obj) and "ui\\ui_actor_weapons" or "ui\\ui_actor_armor"
+	
+	-- Decide if it should use normal icon instead
+	local use_ico = false
+	local t = {}
+	if IsWeapon(obj) then
+		for i=1,#upgr_chk["weapon"] do
+			t = upgr_chk["weapon"][i]
+			if (t.x == upgr_x) and (t.y == upgr_y) and (t.w == upgr_w) and (t.h == upgr_h) then
+				use_ico = true
+				break
+			end
+		end
+	elseif IsOutfit(obj) then
+		for i=1,#upgr_chk["outfit"] do
+			t = upgr_chk["outfit"][i]
+			if (t.x == upgr_x) and (t.y == upgr_y) and (t.w == upgr_w) and (t.h == upgr_h) then
+				use_ico = true
+				break
+			end
+		end
+	end
+	if use_ico then
+		set_icon(sec, nil, XML_temp, XML_box)
+		return
+	end
+	
+	
+	local ico = {}
+	ico.x1 = upgr_x
+	ico.y1 = upgr_y
+	ico.x2 = upgr_x + upgr_w
+	ico.y2 = upgr_y + upgr_h
+	ico.w = upgr_w
+	ico.h = upgr_h
+	
+	
+	XML_box:InitTexture(upgr_path)
+	XML_box:SetTextureRect(Frect():set(ico.x1, ico.y1, ico.x2, ico.y2))
+	XML_box:SetStretchTexture(true)
+	XML_box:Show(true)
+	
+	local pos = XML_temp:GetWndPos()
+	local _w = XML_temp:GetWidth()
+	local _h = XML_temp:GetHeight()
+	
+	local ratio = ico.w/ico.h
+	local h, w
+	ico.w = ico.w * ico_size * ico_width
+	ico.h = ico.h * ico_size
+	
+	for i=1,2 do
+		local w_t, h_t = 0, 0
+		local resize = false
+		if (ico.w > _w) then -- if icon width is bigger than frame width
+			w_t = ico.w - _w
+			resize = true	
+		end 
+		if (ico.h > _h) then -- if icon height is bigger than frame height
+			h_t = ico.h - _h 
+			resize = true	
+		end 
+		
+		if resize then -- resize is required
+			if (w_t >= h_t) then -- if icon width is the big number (or square), use it as a base for resizing
+				w = _w
+				h = w / ratio
+			elseif (w_t < h_t) then -- if icon width is the big number, use it as a base for resizing
+				h = _h
+				w = h * ratio
+			end
+		else -- no resize
+			w = ico.w
+			h = ico.h
+		end
+	end
+	
+	local offset_x = (_w - w)/2
+	local offset_y = (_h - h)/2
+	XML_box:SetWndSize(vector2():set(w , h))
+	XML_box:SetWndPos(vector2():set(pos.x + offset_x , pos.y + offset_y))
+end
+
+local last_row = 0
+function set_grid_element(p, grid, ...)
+	local ele = {...}
+	local pos = { x = 1 , y = 1 }
+	local ignore,stop
+	local functor = function(t,a,b) return a < b end		-- smallest -> biggest
+	for y,v1 in spairs(grid, functor) do 					-- scan all grid rows
+		for x,v2 in spairs(v1, functor) do 					-- scan all grid coloumns
+			--printf("~Inv UI (%s)| scanning grid x:[%s] y:[%s]", p.id, x, y)
+			if (v2 == true) then							-- if unoccupied grid is found
+				for _y = y, (y + (p.h-1)) do				-- scan item rows in this grid
+					for _x = x, (x + (p.w-1)) do 			-- scan item coloumns in this grid
+						--printf("~Inv UI (%s)| scanning item grid x:[%s] y:[%s]", p.id, _x, _y)
+						if not (grid[_y] and grid[_y][_x]) then
+							--printf("!Inv UI (%s)| item grid x:[%s] y:[%s] is occupied! break", p.id, _x, _y)
+							ignore = true
+						end
+						if ignore then break end
+					end
+					if ignore then break end
+				end
+				
+				-- if grid is not occupied, put item here and occupy
+				if (not ignore) then
+					--printf("-Inv UI (%s)| found good pos - x:[%s] y:[%s], break", p.id, x, y)
+					pos = { x = x , y = y }
+					for _y = y, (y + (p.h-1)) do		
+						for _x = x, (x + (p.w-1)) do 
+							--printf("-Inv UI (%s)| occupying item grid x:[%s] y:[%s]! break", p.id, _x, _y)
+							grid[_y][_x] = false
+						end
+					end
+					stop = true
+				end
+				ignore = false
+			end
+			if stop then break end
+		end
+		if stop then break end
+	end
+	
+	
+	-- clean totally occupied rows
+	for y,v1 in spairs(grid, functor) do 
+		local remov = true
+		for x,v2 in spairs(v1, functor) do 
+			if v2 then
+				remov = false
+			end
+		end
+		if remov then
+			grid[y] = nil
+			--printf("-Inv UI (%s)| cleaned occupied row: %s", p.id, y)
+		end
+		last_row = y
+	end
+	
+	-- add more rows if needed
+	if (last_row - pos.y < 4) then
+		for y=1,3 do
+			for x=1,p.g_row do
+				grid[last_row + y] = grid[last_row + y] or {}
+				grid[last_row + y][x] = true
+			end
+			--printf("-Inv UI (%s)| added new row: %s", p.id, last_row + y)
+		end
+	end
+	
+	-- set item in its new pos and size
+	for i=1,#ele do
+		ele[i]:SetWndSize(vector2():set( p.g_w * p.w , p.g_h * p.h ))
+		--printf("-Inv UI (%s)| set item size w:[%s] h:[%s]", p.id,  p.g_w * p.w , p.g_h * p.h)
+		ele[i]:SetWndPos(vector2():set( p.g_w * (pos.x - 1) , p.g_h * (pos.y - 1)))
+		--printf("-Inv UI (%s)| set item in pos x:[%s] y:[%s]", p.id, p.g_w * (pos.x - 1) , p.g_h * (pos.y - 1))
+	end
+	
+	return last_row
+end
+
+
+----------------------------------------------------------------------
+-- XML parser 
+----------------------------------------------------------------------
+XmlParser = {}
+function XmlParser:ToXmlString(value)
+	value = string_gsub(value, "&", "&amp;"); -- '&' -> "&amp;"
+	value = string_gsub(value, "<", "&lt;"); -- '<' -> "&lt;"
+	value = string_gsub(value, ">", "&gt;"); -- '>' -> "&gt;"
+	value = string_gsub(value, "\"", "&quot;"); -- '"' -> "&quot;"
+	value = string_gsub(value, "([^%w%&%;%p%\t% ])",
+		function(c)
+			return string_format("&#x%X;", string_byte(c))
+		end);
+	return value;
+end
+function XmlParser:FromXmlString(value)
+	value = string_gsub(value, "&#x([%x]+)%;",
+		function(h)
+			return string_char(tonumber(h, 16))
+		end);
+	value = string_gsub(value, "&#([0-9]+)%;",
+		function(h)
+			return string_char(tonumber(h, 10))
+		end);
+	value = string_gsub(value, "&quot;", "\"");
+	value = string_gsub(value, "&apos;", "'");
+	value = string_gsub(value, "&gt;", ">");
+	value = string_gsub(value, "&lt;", "<");
+	value = string_gsub(value, "&amp;", "&");
+	return value;
+end
+function XmlParser:ParseArgs(s)
+	local arg = {}
+	string_gsub(s, "(%w+)=([\"'])(.-)%2", function(w, _, a)
+		arg[w] = self:FromXmlString(a);
+	end)
+	return arg
+end
+function XmlParser:ParseXmlText(xmlText,path)
+	local stack = {}
+	local top = {Name=nil,Value=nil,Attributes={},ChildNodes={}}
+	table.insert(stack, top)
+	local ni,c,label,xarg, empty
+	local i, j = 1, 1
+	while true do
+		ni,j,c,label,xarg, empty = string_find(xmlText, "<(%/?)([%w_:]+)(.-)(%/?)>", i)
+		if not ni then break end
+		local text = string_sub(xmlText, i, ni-1);
+		if not string_find(text, "^%s*$") then
+			top.Value=(top.Value or "")..self:FromXmlString(text);
+		end
+		if empty == "/" then  -- empty element tag
+			table.insert(top.ChildNodes, {Name=label,Value=nil,Attributes=self:ParseArgs(xarg),ChildNodes={}})
+		elseif c == "" then   -- start tag
+			top = {Name=label, Value=nil, Attributes=self:ParseArgs(xarg), ChildNodes={}}
+			table.insert(stack, top)   -- new level
+		else  -- end tag
+			local toclose = table.remove(stack)  -- remove top
+			top = stack[#stack]
+			if #stack < 1 then
+				printf("XmlParser: nothing to close with "..label)
+			end
+			if toclose.Name ~= label then
+				printf("XmlParser: trying to close "..toclose.Name.." with "..label)
+			end
+			table.insert(top.ChildNodes, toclose)
+		end
+		i = j+1
+	end
+	local text = string_sub(xmlText, i);
+	if not string_find(text, "^%s*$") then
+		stack[#stack].Value=(stack[#stack].Value or "")..self:FromXmlString(text);
+	end
+	if #stack > 1 then
+		printf("XmlParser: unclosed "..stack[stack.n].Name)
+	end
+	return stack[1].ChildNodes[1];
+end
+function XmlParser:loadFile(path)
+	local hFile, err = io.open(path, "r");
+	if hFile and not err then
+		local xmlText = hFile:read("*a"); -- read file content
+		io.close(hFile);
+		return self:ParseXmlText(xmlText), nil;
+	else
+		printf(err)
+		return nil
+	end
+end
+
+---- utils 
+function XmlFindNodeWithAttribute(n,node_name,prop_name,val)
+	local node = n.ChildNodes
+	local deepest,p,c
+	local stack = {}
+	while not deepest do
+		if (node and #node > 0) then
+			for i=1,#node do
+				if (node[i].Name == node_name and node[i].Attributes[prop_name] == val) then
+					return node[i]
+				end
+				c = node[i].ChildNodes
+				if (c and #c > 0) then
+					table.insert(stack,node[i].ChildNodes)
+				end
+			end
+		end
+
+		if (#stack > 0) then
+			node = stack[#stack]
+			stack[#stack] = nil
+		else
+			deepest = true
+		end
+	end
+end
+function XmlFindNextNodeByName(n,node_name)
+	if (n.ChildNodes and #n.ChildNodes > 0) then
+		for k,v in pairs(n.ChildNodes) do
+			if (v.Name == node_name) then
+				return n.ChildNodes[k]
+			end
+		end
+	end
+end
+function XmlGetNodeValue(n,node_name)
+	if (n.ChildNodes and #n.ChildNodes > 0) then
+		for k,v in pairs(n.ChildNodes) do
+			if (v.Name == node_name) then
+				return n.ChildNodes[k].Value
+			end
+		end
+	end
+end
+function XmlGetNodeAttribute(n,node_name,attribute)
+	if (n.ChildNodes and #n.ChildNodes > 0) then
+		for k,v in pairs(n.ChildNodes) do
+			if (v.Name == node_name) then
+				return n.ChildNodes[k].Attributes[attribute]
+			end
+		end
+	end
+end
+--------
