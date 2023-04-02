@@ -1,0 +1,139 @@
+--[[
+Stacking control
+Fixes a bug in utils_ui that allowed things to stack incorectly when the full stacking rules are applied.
+Provides a mechanisiam to invoke the full stacking rules on specified items under specified conditions 
+06Jun2021
+This work is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License
+Author: RavenAscendant
+--]]
+
+
+
+local registered_rules = {}
+local expanded_rules = {}
+-- section_func is a function that when passed a section returns true, if that section should be exempted from the normal forced stack all and have more complex stacking rules applied including custom rules included in the functor
+--obj_functor should take an object return true if that particualr object should have the complex staking rules applied, false if that object should not stack with other objects of the same section regardless of other stacking rules.  
+-- if multiple rules for same 
+  function register(section_func, obj_functor ) 	  
+	  if not section_func  then return end    
+	  registered_rules[section_func] = obj_functor 
+	  expanded_rules = {} --clear caching on new rule
+  end
+
+
+
+local function get_rules(section)
+	--printf("get_rules1:%s %s", section, type(expanded_rules[section]) )	
+	if expanded_rules[section] or expanded_rules[section] == false then return expanded_rules[section] end --false indicates no rules for section, nil is section has not been evaluated
+	expanded_rules[section] = {}
+	for k,v in pairs(registered_rules) do
+		--printf("get_rules2:%s %s", section, k(section) )
+		if k(section) then
+			
+			expanded_rules[section][#expanded_rules[section]+1] = v or false --nil is not the same as false
+		end
+	end
+	if #expanded_rules[section]<1 then expanded_rules[section] = false end --don't want to keep an empty list, as empty list is not false
+	return expanded_rules[section]
+end
+
+local function check_rules(obj)
+	--
+	local rules = get_rules(obj:section())
+	if not rules then return false end
+	local stack = true
+	for _,v in ipairs(rules) do
+		stack = stack and (v and v(obj)) --any rule says don't stack it doesn't stack.  
+	end
+	return not stack
+end
+
+
+function utils_ui.UICellContainer:ValidateSimilar(obj, sec)
+	if not (obj or sec) then	
+		printe("!ERROR UICellContainer:ValidateSimilar | no data recieved!")
+		return false
+	end
+
+	
+	local sec = obj:section()
+	
+	if get_rules(sec) and check_rules(obj) then
+		return false
+	end
+
+	
+	-- Ignore search if multiuse item is used
+	local max_uses = IsItem("multiuse",sec)
+	if max_uses and obj:get_remaining_uses() ~= max_uses then
+		return false
+	end
+	
+	
+	-- Ignore search if item has upgrades
+	if utils_item.has_upgrades(obj) then
+		return false
+	end
+	return true -- no opbjections let it go
+end
+
+
+
+
+function utils_ui.UICellContainer:FindSimilar(obj, sec)
+	--printf("find similar")
+	if not (obj or sec) then	
+		printe("!ERROR UICellContainer:FindSimilar | no data recieved!")
+		return false
+	end
+
+	-- Ignore search if item isn't meant to stack
+	if SYS_GetParam(1,sec,"dont_stack") then
+		return false
+	end
+
+	
+	if self.disable_stack then
+		return false
+	end
+
+	if  self.showcase or self.stack_all and (not get_rules(sec)) then
+		return self:GetCell_SEC(sec)
+	end
+	
+	local sec = obj:section() --not sure the importance of this, but tronex had it so make sure it fits.
+
+	if not self:ValidateSimilar(obj, sec) then
+		return false
+	end
+	
+	
+	-- items with no condition can stack, return a cell with same section
+	local clsid = obj:clsid()
+	local use_cond = SYS_GetParam(1,sec,"use_condition") or IsWeapon(nil,clsid) or IsOutfit(nil,clsid) or IsHeadgear(nil,clsid)
+	if (not use_cond) and (not get_rules(sec)) then
+		return self:GetCell_SEC(sec)
+	end
+
+	
+	-- items with condition, full search
+	for idx,ci in pairs(self.cell) do
+		local obj_2 = ci.ID and level.object_by_id(ci.ID)
+		if (ci.section == sec and obj_2 and self:ValidateSimilar(obj_2, ci.section)) then
+			-- full multiuse item can stack
+			if max_uses then
+				return ci 
+				
+			-- item with similar condition can stack
+			else
+				local cond = obj:condition()
+				if obj_2 and math.abs(obj_2:condition() - cond) < 0.1 then
+					return ci
+				end
+			end
+		end
+	end
+	
+	-- no similar item found
+	return false
+end
