@@ -1,0 +1,287 @@
+--==============================================================================================
+--Yet Another Winter Mod snowfall script
+--Original Author: Daedalus-Prime
+--EXPEDITION WEATHERS EDIT
+--Edited by FabioConte for Stalker Anomaly Seasons (01/03/2023)
+--Edited by Hippobot for Stalker Anomaly: Atmospherics Version 1.54++
+--Edited by Grok 09/03/2023, actor_on_update optimisation and map restrictions for certain effects like blowing leaves
+--==============================================================================================
+local weather_particles_heatfog = particles_object("lanforse\\fog_mist")	--set particles to variables
+local weather_particles_flyingleaves = particles_object("lanforse\\storm_heavy")
+local weather_particles_fogheavy = particles_object("lanforse\\fog_mist")
+local weather_particles_torchbugs = particles_object("lanforse\\dust_particles")
+local weather_particles_fogdust = particles_object("lanforse\\fog_dust")
+local weather_particles_nightfog = particles_object("lanforse\\fog_light")
+-- local daytime = (current_hour >= 5) and (current_hour < 20) and true or false
+
+local leaves_maps = {
+    ["k00_marsh"] = 0,
+    ["l01_escape"] = 0,
+    ["l05_bar"] = 0,
+    ["l02_garbage"] = 0,
+    ["k01_darkscape"] = 0,
+    ["l04_darkvalley"] = 0,
+    ["k02_trucks_cemetery"] = 0,
+    ["l09_deadcity"] = 0,
+    ["l03_agroprom"] = 0,
+    ["l06_rostok"] = 0,
+    ["l07_military"] = 0,
+    ["l08_yantar"] = 0,
+    ["jupiter"] = 0,
+    ["l03u_agr_underground"] = 0,
+    ["l10_limansk"] = 0,
+    ["l08u_brainlab"] = 0,
+    ["l10_red_forest"] = 0,
+    ["labx8"] = 0,
+    ["l12_stancia"] = 0,
+    ["zaton"] = 0,
+    ["l12_stancia_2"] = 0,
+    ["l11_hospital"] = 0,
+    ["jupiter_underground"] = 0,
+    ["l10u_bunker"] = 0,
+    ["l10_radar"] = 0,
+    ["l04u_labx18"] = 0,
+    ["l11_pripyat"] = 0,
+    ["l12u_sarcofag"] = 0,
+    ["l12u_control_monolith"] = 0,
+    ["l13_generators"] = 0,
+    ["l13u_warlab"] = 0,
+    ["pripyat"] = 0,
+    ["y04_pole"] = 0,
+}
+
+
+
+function on_game_start()
+	RegisterScriptCallback("on_game_load",on_game_load)
+	RegisterScriptCallback("actor_on_update",actor_on_update)
+end
+
+function on_game_load()
+	
+end
+
+
+trigger = 0
+delay = 100 -- time in milliseconds between each update. By default actor_on_update is run *every frame*.
+function actor_on_update()
+	tg = time_global()
+
+	if trigger == 0 then
+       		grok_delay = tg + delay
+		trigger = 1
+	end
+	
+	if (trigger == 1 and tg > grok_delay) then
+		trigger = 0
+		local sim = alife()
+		local gg = game_graph()
+		local actor_level = sim:level_name(gg:vertex(sim:actor().m_game_vertex_id):level_id())
+		play_leaves = leaves_maps[actor_level]
+
+		local weather = level.get_weather() --check current weather
+		local is_inside = GetEvent("current_safe_cover") --set variable for whether the player is in an emission safe zone or not
+		local is_underground = GetEvent("underground") --set variable for whether the player is in an underground level or not
+		snowfall(weather, is_inside, is_underground, play_leaves)
+	end
+end
+
+function snowfall(weather, is_inside, is_underground, play_leaves)
+	if not is_underground then --check if underground
+		if not is_inside then --check if in emission safe zone
+			local pos = db.actor:position() --set actor position to variable
+
+--===============================================
+--FLYING LEAVES DURING RAIN
+--===============================================
+
+
+			   if (level_weathers.get_weather_manager():get_curr_ambient() == "rain_day" and play_leaves == 1) then --check if it's currently very light snow
+			   
+					if weather_particles_heatfog:playing() then 
+						weather_particles_heatfog:stop_deffered()
+					end
+					if weather_particles_fogheavy:playing() then 
+						weather_particles_fogheavy:stop_deffered()
+					end
+					if weather_particles_torchbugs:playing() then 
+						weather_particles_torchbugs:stop_deffered()
+					end
+					if weather_particles_fogdust:playing() then 
+						weather_particles_fogdust:stop_deffered()
+					end
+					if weather_particles_nightfog:playing() then --stop playing particles if weather is not snowy
+						weather_particles_nightfog:stop_deffered()
+					end
+					
+					
+					if not weather_particles_flyingleaves:playing() then 
+						weather_particles_flyingleaves:play_at_pos(pos)
+					end
+					if weather_particles_flyingleaves:playing() then
+						weather_particles_flyingleaves:move_to(pos,vector():set(0,0,0)) --if the particle effect is playing, keep centering it on the player
+					end
+
+--===============================================
+--FLYING LEAVES DURING RAIN
+--===============================================
+
+
+			   elseif (level_weathers.get_weather_manager():get_curr_ambient() == "rain_day" and play_leaves == 1) then --check if it's currently very light snow
+			   
+					if weather_particles_heatfog:playing() then 
+						weather_particles_heatfog:stop_deffered()
+					end
+					if weather_particles_fogheavy:playing() then 
+						weather_particles_fogheavy:stop_deffered()
+					end
+					if weather_particles_torchbugs:playing() then 
+						weather_particles_torchbugs:stop_deffered()
+					end
+					if weather_particles_fogdust:playing() then 
+						weather_particles_fogdust:stop_deffered()
+					end
+					if weather_particles_nightfog:playing() then --stop playing particles if weather is not snowy
+						weather_particles_nightfog:stop_deffered()
+					end
+					
+					
+					if not weather_particles_flyingleaves:playing() then 
+						weather_particles_flyingleaves:play_at_pos(pos)
+					end
+					if weather_particles_flyingleaves:playing() then
+						weather_particles_flyingleaves:move_to(pos,vector():set(0,0,0)) --if the particle effect is playing, keep centering it on the player
+					end
+
+--===============================================
+--DUST IN THE FOG
+--===============================================
+
+
+			   elseif (level_weathers.get_weather_manager():get_curr_ambient() == "tuman") then --check if it's currently very light snow
+			
+				if weather_particles_heatfog:playing() then 
+					weather_particles_heatfog:stop_deffered()
+				end
+				if weather_particles_fogheavy:playing() then 
+					weather_particles_fogheavy:stop_deffered()
+				end
+				if weather_particles_torchbugs:playing() then 
+					weather_particles_torchbugs:stop_deffered()
+				end
+				if weather_particles_flyingleaves:playing() then 
+					weather_particles_flyingleaves:stop_deffered()
+				end
+				if weather_particles_nightfog:playing() then --stop playing particles if weather is not snowy
+					weather_particles_nightfog:stop_deffered()
+				end
+				
+				
+				if not weather_particles_fogdust:playing() then 
+					weather_particles_fogdust:play_at_pos(pos)
+				end
+				if weather_particles_fogdust:playing() then
+					weather_particles_fogdust:move_to(pos,vector():set(0,0,0)) --if the particle effect is playing, keep centering it on the player
+				end
+
+--===============================================
+--TURBULENT LEAVES DURING STORM
+--===============================================
+
+
+			   elseif (level_weathers.get_weather_manager():get_curr_ambient() == "storm_day" and play_leaves == 1) then --check if it's currently very light snow
+			
+				if weather_particles_flyingleaves:playing() then 
+					weather_particles_flyingleaves:stop_deffered()
+				end
+				if weather_particles_heatfog:playing() then 
+					weather_particles_heatfog:stop_deffered()
+				end
+				if weather_particles_torchbugs:playing() then 
+					weather_particles_torchbugs:stop_deffered()
+				end
+				if weather_particles_fogdust:playing() then 
+					weather_particles_fogdust:stop_deffered()
+				end
+				if weather_particles_nightfog:playing() then --stop playing particles if weather is not snowy
+					weather_particles_nightfog:stop_deffered()
+				end
+				
+				
+				if not weather_particles_fogheavy:playing() then 
+					weather_particles_fogheavy:play_at_pos(pos)
+				end
+				if weather_particles_fogheavy:playing() then
+					weather_particles_fogheavy:move_to(pos,vector():set(0,0,0)) --if the particle effect is playing, keep centering it on the player
+				end
+
+--===============================================
+--NIGHT FOG
+--===============================================
+
+			   elseif (level_weathers.get_weather_manager():get_curr_ambient() == "dusk") then 
+			
+				if weather_particles_flyingleaves:playing() then 
+					weather_particles_flyingleaves:stop_deffered()
+				end
+				if weather_particles_fogheavy:playing() then 
+					weather_particles_fogheavy:stop_deffered()
+				end
+				if weather_particles_torchbugs:playing() then 
+					weather_particles_torchbugs:stop_deffered()
+				end
+				if weather_particles_fogdust:playing() then 
+					weather_particles_fogdust:stop_deffered()
+				end
+				if weather_particles_heatfog:playing() then 
+					weather_particles_heatfog:stop_deffered()
+				end
+				
+				
+				if not weather_particles_nightfog:playing() then 
+					weather_particles_heatfog:play_at_pos(pos)
+				end
+				if weather_particles_nightfog:playing() then
+					weather_particles_nightfog:move_to(pos,vector():set(0,0,0)) --if the particle effect is playing, keep centering it on the player
+				end
+				
+				
+			else
+				if weather_particles_heatfog:playing() then --stop playing particles if weather is not snowy
+					weather_particles_heatfog:stop_deffered()
+				end
+				if weather_particles_flyingleaves:playing() then
+					weather_particles_flyingleaves:stop_deffered()
+				end
+				if weather_particles_fogheavy:playing() then
+					weather_particles_fogheavy:stop_deffered()
+				end
+				if weather_particles_torchbugs:playing() then
+					weather_particles_torchbugs:stop_deffered()
+				end
+				if weather_particles_fogdust:playing() then 
+					weather_particles_fogdust:stop_deffered()
+				end
+				if weather_particles_nightfog:playing() then --stop playing particles if weather is not snowy
+					weather_particles_nightfog:stop_deffered()
+				end
+			end
+			
+			
+			
+		elseif is_inside then --stop playing particle effect if player is in emission safe zone
+			if weather_particles_flyingleaves:playing() then
+				weather_particles_flyingleaves:stop()
+			end
+			if weather_particles_fogheavy:playing() then
+				weather_particles_fogheavy:stop()
+			end
+			if weather_particles_torchbugs:playing() then
+				weather_particles_torchbugs:stop()
+			end
+				if weather_particles_fogdust:playing() then 
+					weather_particles_fogdust:stop_deffered()
+			end
+		end
+	end
+end

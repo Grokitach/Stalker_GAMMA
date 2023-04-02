@@ -1,0 +1,169 @@
+--[[
+	Safer artifact crafting - melter or empty leads absorb radiation ☢.
+	30/11/2022
+	This work is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License
+	Author: Flueno
+--]]
+
+local mod_disabled = false
+
+local leads_absorb_enabled = true
+local leads_absorb_enabled_wshop_only = false
+local melter_absorb_enabled = false
+
+local melter_is_in_use = false
+
+local check_each_ms = 1000--200
+
+local radiation_cure = -0.01
+local keep_after = 9000 --(ms) have some time for safe unloading of artefacts
+
+local last_rad_absorb_processed_ts = 0
+local melter_wshop_closed_ts = 0
+
+
+function actor_on_update(bind, delta)
+	if mod_disabled then return end
+	if not leads_absorb_enabled and not melter_absorb_enabled then return end
+
+	local now = time_global()
+	if ((now - last_rad_absorb_processed_ts) < check_each_ms) then return end
+
+	if leads_absorb_enabled then disable_rad_when_lead_present() end
+	if melter_absorb_enabled then cure_when_melter_with_workshop() end
+
+	last_rad_absorb_processed_ts = now
+end
+
+
+local pseudo_boxed_af = {}
+
+function disable_rad_when_lead_present()
+	if not leads_absorb_enabled then return end
+
+	if not db.actor then return end
+	local leads_cnt = utils_item.get_amount(db.actor, "lead_box")
+	local boxed_af = {}--reuse pseudo_boxed_af?
+
+	if not leads_absorb_enabled_wshop_only or  melter_is_in_use then
+		db.actor:iterate_inventory(function(npc, item)
+			local sec = item:section()
+			local af_name = item:name()
+			if IsItem("artefact", sec) then
+				local cobj = item:cast_Artefact()
+				local rad_val = cobj.m_fRadiationRestoreSpeed or 0
+				local is_safe = (rad_val <= 0)
+
+				if leads_cnt > 0 and not is_safe
+						and utils_item.in_actor_ruck(item) -- ignore belt artifacts
+				then
+					boxed_af[af_name] = rad_val
+					leads_cnt = leads_cnt - 1
+				end
+
+			end
+		end, db.actor)
+	end
+	pseudo_boxed_af = boxed_af
+end
+
+--local rad_factor = 0.5 -- multiplier to artefact rad effect in ruck
+local rad_tg_step = 300 --[ms] (expected to be close with value from item_artefact.script)
+function af_update_delegatee(self, delta) end
+
+function af_update_wrapper(self, delta)
+	af_update_delegatee(self, delta)
+
+	local tg = time_global()
+	if not self._tmr_norad then self._tmr_norad = tg end
+	local obj = self.object
+	local af_name = obj:name()
+	local cobj = obj:cast_Artefact()
+	if (not cobj) then return end
+
+	if (tg > self._tmr_norad) then
+		self._tmr_norad = tg + rad_tg_step
+		if pseudo_boxed_af[af_name] then
+			self.no_rad = true
+		else
+			self.no_rad = nil -- reset and let original processing
+		end
+		--local rad_delta = pseudo_boxed_af[af_name] * rad_factor
+		--db.actor:change_radiation(-rad_delta)
+	end
+
+end
+
+function cure_when_melter_with_workshop()
+	local now = time_global()
+	if not is_melter_in_inventory() then return end
+
+	local is_within_after_closed_gap = ((now - melter_wshop_closed_ts) < keep_after)
+	if not melter_is_in_use and not is_within_after_closed_gap then return end
+
+	--local radiation = db.actor.radiation
+	db.actor:change_radiation(radiation_cure)
+end
+
+local art_melter_name = "itm_artefactskit"
+function is_melter_in_inventory()
+	return db.actor:object(art_melter_name)
+end
+
+function on_GUI_hide(name, path)
+	if not melter_absorb_enabled and not leads_absorb_enabled_wshop_only then return end
+	if name ~= "UIWorkshop" and name ~= "UIRepair" then return end
+	melter_is_in_use = false
+	if is_melter_in_inventory() then
+		melter_wshop_closed_ts = time_global()
+	end
+end
+
+function on_GUI_show(name, path)
+	if not melter_absorb_enabled and not leads_absorb_enabled_wshop_only then return end
+	if name ~= "UIWorkshop" and name ~= "UIRepair" then return end
+
+	if is_melter_in_inventory() then
+		melter_is_in_use = true
+	end
+end
+
+function on_option_change()
+	if ui_mcm then
+		melter_absorb_enabled = ui_mcm.get("safe_af_craft/melter_absorb_enabled")
+		leads_absorb_enabled = ui_mcm.get("safe_af_craft/empty_lead_absorb_enabled")
+		leads_absorb_enabled_wshop_only = ui_mcm.get("safe_af_craft/empty_lead_absorb_wshop_only")
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("GUI_on_show", on_GUI_show)
+	RegisterScriptCallback("GUI_on_hide", on_GUI_hide)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	on_option_change()
+
+	af_update_delegatee = item_artefact.artefact_binder.update
+	item_artefact.artefact_binder.update = af_update_wrapper
+end
+
+function on_mcm_load()
+	op = { id = "safe_af_craft",
+		   text = "Safer artefact melting",
+		   sh = true,
+		   gr = {
+			   { id = "title", type = "title", text = "ui_mcm_safe_af_craft_title" },
+			   { id = "safe_af_craft_line", type = "line" },
+			   { id = "empty_lead_absorb_enabled", type = "check",
+				 text = "Enable radiation absorption by empty lead containers", val = 1, def = true },
+			   { id = "empty_lead_absorb_wshop_only", type = "check",
+				 text = "Empty lead will absorb only when workshop is opened", val = 1, def = false },
+			   { id = "safe_af_craft_line", type = "line" },
+			   { id = "melter_absorb_enabled", type = "check",
+				 text = "Enable radiation absorption by melter", val = 1, def = false },
+		   }
+	}
+	return op
+end
+
+
