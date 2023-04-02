@@ -1,0 +1,240 @@
+--[[
+Small tweak to item sorting to favor readymags>magazines>everythihng else
+--]]
+if aaa_rax_icon_override_mcm then end --force load order.
+
+is_magazine					= magazine_binder.is_magazine
+is_carried_mag				= magazine_binder.is_carried_mag
+print_dbg                   = magazines.print_dbg
+
+
+ini = ini_sys
+
+
+ui_catagories = {}
+item_order = {}
+
+ab_w, ab_h, ab_k = {}, {}, {}
+a_sec, a_w, a_h, a_k = nil, nil, nil, nil
+b_sec, b_w, b_h, b_k = nil, nil, nil, nil
+
+
+
+
+
+-- Item order
+
+function set_item_order()
+	local n = ini:line_count("item_kind_order")
+	for i=0,n-1 do
+		local result, kind, order = ini:r_line_ex("item_kind_order",i,"","")
+		if kind and order then
+			item_order[kind] = tonumber(order) or 30
+		end
+	end
+	item_order["na"] = size_table(item_order) + 1
+end
+set_item_order()
+
+
+function sort_info(asec, bsec)
+	-- A
+	a_sec = asec
+	axis = utils_xml.get_item_axis(a_sec,1)
+	if (not ab_w[a_sec]) then ab_w[a_sec] = axis.w end
+	if (not ab_h[a_sec]) then ab_h[a_sec] = axis.h end
+	if (not ab_k[a_sec]) then
+		ab_k[a_sec] = SYS_GetParam(0,a_sec,"kind","na")
+		if (not item_order[ab_k[a_sec]]) then
+			ab_k[a_sec] = "na"
+		end
+	end
+	a_w = ab_w[a_sec]
+	a_h = ab_h[a_sec]
+	a_k = item_order[ab_k[a_sec]]
+	
+	-- B
+	b_sec = bsec
+	axis = utils_xml.get_item_axis(b_sec,1)
+	if (not ab_w[b_sec]) then ab_w[b_sec] = axis.w end
+	if (not ab_h[b_sec]) then ab_h[b_sec] = axis.h end
+	if (not ab_k[b_sec]) then
+		ab_k[b_sec] = SYS_GetParam(0,b_sec,"kind","na")
+		if (not item_order[ab_k[b_sec]]) then
+			ab_k[b_sec] = "na"
+		end
+	end
+	b_w = ab_w[b_sec]
+	b_h = ab_h[b_sec]
+	b_k = item_order[ab_k[b_sec]]
+end
+
+function sort_by_size(t,a,b)
+	if (type(t[a]) == "string") then
+		sort_info(t[a], t[b])
+	else
+		sort_info(t[a]:section(), t[b]:section())
+	end
+	
+	-- Comparison
+	--printf("%s - %s", a_sec, b_sec)
+	if (a_w == b_w) then
+		if (a_h == b_h) then
+			if (a_sec == b_sec) then
+				if (type(t[a]) == "string") then
+					return false --true
+				end
+				return t[a]:id() > t[b]:id()
+			end
+			return a_sec < b_sec -- alphaptic order
+		end
+		return a_h > b_h
+	end
+	return a_w > b_w
+end
+
+function sort_by_kind(t,a,b)
+	if (type(t[a]) == "string") then
+		sort_info(t[a], t[b])
+	else
+		sort_info(t[a]:section(), t[b]:section())
+	end
+	
+	if a_k == b_k then
+		return sort_by_size(t,a,b)
+	end
+	return a_k < b_k
+end
+
+function sort_by_index(t,a,b)
+	return t[a].index < t[b].index
+end
+
+function sort_by_sizekind(t,a,b)
+	local a_id = nil
+	local b_id = nil
+
+	if (type(t[a]) == "string") then
+		sort_info(t[a], t[b])
+	else
+		sort_info(t[a]:section(), t[b]:section())
+		a_id = t[a]:id()
+		b_id = t[b]:id()
+		print_dbg("Sorting objects")
+	end
+	-- Comparison
+	--printf("%s - %s", a_sec, b_sec)
+	
+	if (not(a_id and b_id) or is_carried_mag(a_id) == is_carried_mag(b_id))then
+		if (not(a_id and b_id) or is_magazine(a_id) == is_magazine(b_id))then
+			--\\ bigger width wins
+			if (a_w == b_w) then
+				--\\ bigger height wins
+				if (a_h == b_h) then
+					--\\ important kind wins
+					if a_k == b_k then
+						--\\ alphaptic order wins
+						if (a_sec == b_sec) then
+							--\\ better condition wins
+							if (type(t[a]) == "string") then
+								return false --true
+							end
+							return t[a]:condition() > t[b]:condition()
+						end
+						return a_sec < b_sec
+					end
+					return a_k < b_k
+				end
+				return a_h > b_h
+			end
+			return a_w > b_w
+		end
+		return is_magazine(a_id)
+	end
+	return is_carried_mag(a_id)
+
+
+
+end
+function sort_by_props(t,a,b)
+	-- Only for objects with same sections
+	local sec = t[a]:section()
+	
+	-- For ammo, bigger ammo counts wins
+	if IsItem("ammo",sec) and (not IsItem("grenade_ammo",sec)) then
+		return t[a]:ammo_get_count() > t[b]:ammo_get_count()
+		
+	-- Upgraded items wins
+	elseif utils_item.has_upgrades(t[a]) and (not utils_item.has_upgrades(t[b])) then
+		return true
+	end
+	
+	-- Better condition wins
+	return t[a]:condition() > t[b]:condition()
+end
+
+
+utils_ui.sort_by_props  		= sort_by_props
+utils_ui.sort_by_sizekind 		= sort_by_sizekind
+utils_ui.sort_by_index  		= sort_by_index
+utils_ui.sort_by_kind  			= sort_by_kind
+utils_ui.sort_by_size 			= sort_by_size
+utils_ui.sort_info 				= sort_info
+
+
+function utils_ui.UICellContainer.FindFreeCell(self,obj, sec)
+	if (not sec) then
+		if (not obj) then
+			return false
+		end
+		sec = obj and obj:section()
+	end
+	axis = utils_xml.get_item_axis(sec,1)
+	local w = axis.w
+	local h = axis.h
+
+	-- Avoid icons that don't fit
+	if w > self.cols then
+		return false
+	end
+
+	-- Sorting by kind: when sorting a new kind, always start from last row taken by previous kind
+	if self.sort_method == "kind" then
+		self.rKind.current = item_order[ab_k[sec]]
+		if (self.rKind.last ~= self.rKind.current) then
+			--[[
+			local cnt = self.line_cnt + 1
+			if (not self.line[cnt]) then
+				self.line[cnt] = self.xml:InitStatic(self.path .. ":line", self.st)
+			end
+			
+			local y = (self.row_end) * (self.grid_size + self.grid_line)
+			self.line[cnt]:SetWndPos( vector2():set(0,y - 2.5) )
+			self.line[cnt]:SetWndSize( vector2():set(self.prof:GetWidth(),6) )
+			self.line[cnt]:Show(true)
+			self.line_cnt = cnt
+			--]]
+			
+			self.rKind.last = self.rKind.current
+			self.rKind.row = self.row_end + 1
+		end
+	end
+	
+	local row_s = self.rKind.row
+	local rows = #self.grid
+	local cols = self.cols + 1 - w
+	self:Print(nil, "FindFreeCell for [%s] (rows: %s, cols: %s, W: %s, H: %s)", sec, rows,cols,w,h)
+	for r=row_s, rows do
+		for c=1,cols do
+			if self:IsFreeRoom(r,c,w,h) then
+				return self:TakeRoom(r,c,w,h)
+			end
+		end
+	end
+	
+	self:Grow()
+	
+	return self:FindFreeCell(obj, sec)
+end
+
+

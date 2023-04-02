@@ -1,0 +1,128 @@
+-- -- unused, moved to mag binder
+-- print_dbg                   = magazines.print_dbg
+-- set_data 					= magazine_binder.set_data
+-- get_data 					= magazine_binder.get_data
+-- weapon_default_magazine		= magazine_binder.weapon_default_magazine
+-- validate_wep				= magazine_binder.validate_wep
+-- is_supported_weapon			= magazine_binder.is_supported_weapon
+-- get_weapon_base_type		= magazine_binder.get_weapon_base_type
+-- get_magazine_base_type		= magazine_binder.get_magazine_base_type
+-- get_config					= magazines_mcm.get_config
+-- create_time_event			= magazines.create_time_event
+
+
+-- function server_entity_on_register(se)
+-- 	local id = se.id
+-- 	local section = se:section_name()
+
+-- 	if is_supported_weapon(section) then
+-- 		local mag_data = get_data(id)
+-- 		if valid_mag_data(mag_data) then
+-- 			validate_wep(id, section)
+-- 		end
+-- 		if mag_data == nil then
+-- 			create_time_event("mag_redux", "fill_wep_"..id, 0, timed_fill, id, section)
+-- 		end
+-- 	end
+-- end
+
+-- function timed_fill(id, section)
+-- 	local default_mag = weapon_default_magazine(section)
+-- 	mag_data = {}
+-- 	mag_data.section = default_mag
+-- 	mag_data.loaded = {}
+-- 	local ammo_type = 0
+-- 	local ammo_amt = SYS_GetParam(2, default_mag, "max_mag_size") or SYS_GetParam(2, section, "ammo_mag_size") or 999
+-- 	local obj = level.object_by_id(id)
+-- 	if obj then
+-- 		ammo_type = obj:get_ammo_type()
+-- 		ammo_amt = clamp(obj:get_ammo_in_magazine(), 0, ammo_amt)
+-- 	end
+-- 	-- local ammo_type = obj:get_ammo_type()
+-- 	print_dbg("Weapon %s uses mags, assigning default mag %s with %s rounds, type is %s", section, default_mag, ammo_amt, ammo_type)
+-- 	local ammo_map = utils_item.get_ammo(section, id)
+-- 	-- if mag_cap < ammo_loaded then ammo_loaded = mag_cap end
+-- 	for i=1,ammo_amt do
+-- 		print_dbg("Loading in round of type %s",ammo_map[ammo_type+1])
+-- 		stack.push(mag_data.loaded, ammo_map[ammo_type+1])
+-- 	end
+-- 	set_data(id, mag_data)
+-- 	return true
+-- end
+
+-- function on_game_start()
+-- 	-- RegisterScriptCallback("server_entity_on_register",		server_entity_on_register		)
+-- end
+
+-- class
+-- function bind(obj)
+--     obj:bind_object(wep_binder(obj))
+-- end
+
+-- class "wep_binder" (object_binder)
+
+-- function wep_binder:__init(obj) super(obj)
+--    self.first_update = true
+-- end
+
+
+-- function wep_binder:update(delta)
+-- 	local obj = self.object
+-- 	if  not is_supported_weapon(obj) then
+-- 		self.first_update = false
+-- 		return 
+-- 	end -- only run for supported weapons
+	
+-- 	local id = obj:id()
+-- 	local mag_data = get_data(id)
+-- 	if mag_data and self.first_update then
+-- 		self.first_update = false
+-- 		validate_wep(id, obj:section())
+-- 	end
+-- 	if mag_data == nil and self.first_update then
+-- 		self.first_update = false
+-- 		local ammo_loaded = obj:get_ammo_in_magazine()
+-- 		--if ammo_loaded == 0 then return end -- might not need this now.
+-- 		local default_mag = weapon_default_magazine(obj:section())
+-- 		mag_data = {}
+-- 		mag_data.section = default_mag
+-- 		mag_data.loaded = {}
+-- 		local ammo_type = obj:get_ammo_type()
+-- 		local mag_cap = SYS_GetParam(2, default_mag, "max_mag_size") or SYS_GetParam(2, obj:section(), "ammo_mag_size") or 999
+-- 		print_dbg("Weapon %s uses mags, assigning default mag %s with %s rounds, type is %s", obj:section(), default_mag, ammo_loaded, ammo_type)
+-- 		local ammo_map = utils_item.get_ammo(nil, id)
+-- 		if mag_cap < ammo_loaded then ammo_loaded = mag_cap end
+-- 		if ammo_loaded > 1 then
+-- 			for i=1,ammo_loaded do
+-- 				print_dbg("Loading in round of type %s",ammo_map[ammo_type+1])
+-- 				stack.push(mag_data.loaded, ammo_map[ammo_type+1])
+-- 			end
+-- 		end
+-- 		set_data(id, mag_data)
+-- 	end
+-- end
+
+-- function wep_binder:reload(section)
+--     object_binder.reload(self, section)
+-- end
+
+-- function wep_binder:reinit()
+--     object_binder.reinit(self)
+-- end
+
+-- function wep_binder:net_spawn(se_abstract)
+--     if not(object_binder.net_spawn(self, se_abstract)) then
+--         return false
+--     end
+--     return true
+-- end
+
+-- function wep_binder:net_destroy()
+-- 	object_binder.net_destroy(self)
+-- end
+
+-- function wep_binder:save(stpk)
+-- end
+
+-- function wep_binder:load(stpk)
+-- end

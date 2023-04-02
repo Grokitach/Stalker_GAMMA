@@ -1,0 +1,73 @@
+local new_art = {}
+--[[
+    categories:
+    section -> {
+        section = name of category
+        articles = section name (title, append _text for info)
+    }
+]]
+-- just holds the new categories
+local new_cat = {}
+
+function parse_cat()
+    local ini_cat = ini_file("plugins\\encyclopedia_custom\\categories\\importer.ltx")
+    ini_cat:section_for_each(function(section)
+        printf("category: processing %s", section)
+        table.insert(new_cat, section)
+    end)
+
+    local ini_art = ini_file("plugins\\encyclopedia_custom\\articles\\importer.ltx")
+    ini_art:section_for_each(function(section)
+        printf("article: processing %s", section)
+        local line_count = ini_art:line_count(section) or 0
+        for i=0,line_count-1 do
+            local junk1, article, category = ini_art:r_line(section, i, "", "")
+            if not new_art[category] then new_art[category] = {section = category} end
+            if not new_art[category].articles then new_art[category].articles = {} end
+            table.insert(new_art[category].articles, article)
+        end
+    end)
+end
+
+InitArticles = ui_pda_encyclopedia_tab.pda_encyclopedia_tab.InitArticles
+function ui_pda_encyclopedia_tab.pda_encyclopedia_tab:InitArticles(section_c)
+    InitArticles(self, section_c)
+    if new_art[section_c] then
+        local category = new_art[section_c]
+        local articles = category and category.articles or nil
+        if (not articles) then return end
+        -- Create each article item and add it to the category.
+        local item = nil
+        local section = nil
+        local n = 1
+        for i = 1, #articles do
+            section = articles[i]
+            if (section) then
+                local clr = ui_pda_encyclopedia_tab.UpdateColor(section)
+                item = ui_pda_encyclopedia_tab.pda_encyclopedia_entry(section, n, clr)
+                self.article_list:AddExistingItem(item)
+                n = n + 1
+            end
+        end
+    end
+end
+
+InitCategories = ui_pda_encyclopedia_tab.pda_encyclopedia_tab.InitCategories
+function ui_pda_encyclopedia_tab.pda_encyclopedia_tab:InitCategories()
+    InitCategories(self)
+    printf("there are %s new categories", #new_cat)
+    for k,v in pairs(new_cat) do
+        local clr = ui_pda_encyclopedia_tab.UpdateColor(v)
+        item = ui_pda_encyclopedia_tab.pda_encyclopedia_entry(v, k, clr)
+        self.category_list:AddExistingItem(item)
+    end
+end
+
+function on_game_load()
+	parse_cat()
+end
+
+
+function on_game_start()
+	RegisterScriptCallback("on_game_load",on_game_load)
+end

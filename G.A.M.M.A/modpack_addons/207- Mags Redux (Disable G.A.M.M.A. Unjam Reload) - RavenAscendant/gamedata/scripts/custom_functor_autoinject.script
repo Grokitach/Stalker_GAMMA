@@ -1,0 +1,538 @@
+--[[
+
+Custom Dynamic Functors, written by demonized
+Allows to add/remove item functors dynamically from script
+Can override ltx-defined functors and can remove the override to return back to ltx functor
+
+To use in your script look at example below
+
+---------------------------------------------------------------------------------------------------------------------
+local function name_condition_function(obj, bag, mode)
+	if obj then
+		return true
+	end
+end
+
+local function name_function(obj, bag, mode)
+	return "st_my_functor_string_in_xml"
+end
+
+local function action_condition_function(obj, bag, mode)
+	if obj then
+		return true
+	end
+end
+
+local function action_function(obj, bag, mode)
+	alife_create_item(obj:section(), db.actor)
+end
+
+local add_functor = custom_functor_autoinject.add_functor
+add_functor("my_name_of_functor", name_condition_function, name_function, action_condition_function, action_function, override_bags<true, false>)
+---------------------------------------------------------------------------------------------------------------------
+
+to add your functor you use add_functor function which requires these arguments in order:
+   name: string, your name of your functor, can be any string. 
+         If the name of functor already exists this function will overwrite functions for it
+   name_condition_function: function, the condition at which you will get your right-click option for item
+   name_function: function, the name itself, must return string ID defined in XML files for your option.
+                  if set to return nil, the option won't appear
+   action_condition_function: function, the condition at which the action will be performed, usually its the same as name_condition_function
+   							  you can put nil into argument to use the same function as name_condition_function
+   action_function: function, the action itself to perform
+   override_bags: boolean. If its true, then you can override bags and modes to check for condition, otherwise it will use defaults (mode == "inventory" and bag == "actor_bag" or bag == "actor_equ" or bag == "actor_belt")
+
+functions themselves accept obj, bag and mode arguments
+obj: current object you right-clicked
+bag: current bag, list of possible bags: {"actor_equ","actor_belt","actor_bag","actor_trade_bag","actor_trade","npc_bag","npc_trade","npc_trade_bag"}
+mode: current mode, list of possible modes: {"inventory" , "loot" , "trade" , "repair"}
+bag and mode is not enabled unless you set override_bags flag to true
+
+
+removal of functor is done by calling this
+
+--------------------------------------------------------------------------------------
+local remove_functor = custom_functor_autoinject.remove_functor
+remove_functor("my_name_of_functor")
+--------------------------------------------------------------------------------------
+
+you can also override existing functors defined in item's ltx by using this
+
+---------------------------------------------------------------------------------------------------------------------
+local override_functor = custom_functor_autoinject.override_functor
+override_functor(slot, name_condition_function, name_function, action_condition_function, action_function, override_bags<true, false>)
+---------------------------------------------------------------------------------------------------------------------
+
+arguments are same, except you have to provide the slot (first argument) for your override. The slots are 1-10
+for example if item's ltx have use1_functor and use1_action_functor then
+if you want to override it you have to provide slot 1
+be aware that if your name_condition_function or action_condition_function may return false
+then old functor will be fired
+if you don't want that behaviour, you can define generic "return true" function for those
+and check condition for firing in name_function and action_function
+
+removal of override is done by calling this
+
+--------------------------------------------------------------------------------------
+local remove_override = custom_functor_autoinject.remove_override
+remove_override(slot)
+--------------------------------------------------------------------------------------
+
+--]]
+
+local function func_index(t,a,b)
+	return (t[a].index) < (t[b].index)
+end
+
+local function func_index_reverse(t,a,b)
+	return (t[a].index) > (t[b].index)
+end
+
+local function func_value(t, a, b)
+	return t[a] < t[b]
+end
+
+local spairs = spairs
+local string_find = string.find
+local string_gsub = string.gsub
+local table_remove = table.remove
+local tonumber = tonumber
+local unpack = unpack
+
+--Recursive print of tables similar to PHP print_r function
+local function print_r(t) 
+    local print_r_cache={}
+    local function sub_print_r(t,indent)
+        if (print_r_cache[tostring(t)]) then
+            printf(indent.."*"..tostring(t))
+        else
+            print_r_cache[tostring(t)]=true
+            if (type(t)=="table") then
+                for pos,val in pairs(t) do
+                    if (type(val)=="table") then
+                        printf(indent.."["..pos.."] => "..tostring(t).." {")
+                        sub_print_r(val,indent..string.rep(" ",string.len(pos)+8))
+                        printf(indent..string.rep(" ",string.len(pos)+6).."}")
+                    else
+                        printf(indent.."["..pos.."] => "..tostring(val))
+                    end
+                end
+            else
+                printf(indent..tostring(t))
+            end
+        end
+    end
+    sub_print_r(t,"  ")
+end
+
+local function print_table(table, subs)
+	
+	local sub
+	if subs ~= nil then
+		sub = subs
+	else
+		sub = ""
+	end
+	for k,v in pairs(table) do
+		if type(v) == "table" then
+			print_table(v, sub.."["..k.."]----->")
+		elseif type(v) == "function" then
+			printf(sub.."%s = function",k)
+		elseif type(v) == "userdata" then
+			if (v.x) then
+				printf(sub.."%s = %s",k,utils_data.vector_to_string(v))
+			else
+				printf(sub.."%s = userdata", k)
+			end
+		elseif type(v) == "boolean" then
+					if v == true then
+							if(type(k)~="userdata") then
+									printf(sub.."%s = true",k)
+							else
+									printf(sub.."userdata = true")
+							end
+					else
+							if(type(k)~="userdata") then
+									printf(sub.."%s = false", k)
+							else
+									printf(sub.."userdata = false")
+							end
+					end
+		else
+			if v ~= nil then
+				printf(sub.."%s = %s", k,v)
+			else
+				printf(sub.."%s = nil", k,v)
+			end
+		end
+	end
+	
+end
+
+-- Removing element from table and shifting down both key and value
+-- Modes: 0 - index, 1 - value, 2 - key, 3 - key-index
+local function table_remove_shift(t, val, mode)
+	local removed = false
+	local res
+	if mode == 0 then
+		for k, v in spairs(t, func_index) do
+			if removed then
+				t[k - 1] = v
+				if t[k - 1].index then
+					t[k - 1].index = t[k - 1].index - 1
+				end
+				if t[k - 1].properties_index then
+					t[k - 1].properties_index = t[k - 1].properties_index - 1
+				end
+				t[k] = nil
+			elseif v.index and v.index == val then
+				res = t[k]
+				t[k] = nil
+				removed = true
+			end
+		end
+	elseif mode == 1 then
+		for k, v in spairs(t, func_value) do
+			if removed then
+				t[k - 1] = v - 1
+				t[k] = nil
+			elseif v == val then
+				res = t[k]
+				t[k] = nil
+				removed = true
+			end
+		end
+	elseif mode == 2 then
+		for k, v in spairs(t, func_value) do
+			if removed then
+				t[k] = v - 1
+			elseif v == val then
+				res = t[k]
+				t[k] = nil
+				removed = true
+			end
+		end
+	elseif mode == 3 then
+		for k, v in spairs(t, func_index) do
+			if removed then
+				if t[k].index then
+					t[k].index = t[k].index - 1
+				end
+			elseif v.index and v.index == val then
+				res = t[k]
+				t[k] = nil
+				removed = true
+			end
+		end
+	end
+	return res
+end
+
+local ui_inventory_init = ui_inventory.UIInventory.__init
+ui_inventory.UIInventory.__init = function(self)
+	ui_inventory_init(self)
+	self.custom_functor = {}
+	self.custom_functor_names = {}
+end
+
+local NameCustom = ui_inventory.UIInventory.Name_Custom
+function ui_inventory.UIInventory:Name_Custom(obj, bag, temp, i)
+    obj = self:CheckItem(obj,"Name_Custom " .. i)
+    if self.custom_functor[i] and self.custom_functor[i].cond_name(obj, bag, self.mode) then
+        return self.custom_functor[i].func_name(obj, bag, self.mode)
+    else
+        return NameCustom(self, obj, bag, temp, i)
+    end
+end
+
+local ActionCustom = ui_inventory.UIInventory.Action_Custom
+function ui_inventory.UIInventory:Action_Custom(obj, bag, temp, i)
+    obj = self:CheckItem(obj,"Action_Custom " .. i)
+    if self.custom_functor[i] and self.custom_functor[i].cond_action(obj, bag, self.mode) then
+        return self.custom_functor[i].func_action(obj, bag, self.mode)
+    else
+        return ActionCustom(self, obj, bag, temp, i)
+    end
+end
+
+ui_inventory.UIInventory.get_max_custom_functor = function(self)
+	local max = 0
+	local max_custom = {}
+	local max_index = 0
+	for k, v in pairs(self.properties) do
+	    if string_find(k, "custom_.*") then
+	    	if v.index > max_index then
+				max_index = v.index
+			end
+	        local x = tonumber(string_gsub(k, "custom_(.*)", "%1"), nil)
+	        if x > max then
+	            max = x
+	            max_custom = v
+	        end
+	    end
+	end
+	return max, max_custom, max_index
+end
+
+local modes = {
+	["inventory"] = true,
+	["loot"] = true,
+	["trade"] = true,
+	["repair"] = true
+}
+local bags = {
+	["actor_equ"] = true,
+	["actor_belt"] = true,
+	["actor_bag"] = true,
+	["actor_trade_bag"] = true,
+	["actor_trade"] = true,
+	["npc_bag"] = true,
+	["npc_trade"] = true,
+	["npc_trade_bag"] = true
+}
+
+ui_inventory.UIInventory.Mode_Custom_Functor = function(self, obj, bag, temp, i)
+	return modes[self.mode]
+end
+
+ui_inventory.UIInventory.Cont_Custom_Functor = function(self, obj, bag, temp, i)
+	return bags[bag]
+end
+
+ui_inventory.UIInventory.add_custom_functor = function(self, name, cond_name, func_name, cond_action, func_action, override_bags)
+	local custom_functor_slot
+
+	if self.custom_functor_names[name] then
+		custom_functor_slot = self.custom_functor_names[name]
+		self.custom_functor[custom_functor_slot].cond_name = cond_name
+		self.custom_functor[custom_functor_slot].func_name = func_name
+		self.custom_functor[custom_functor_slot].cond_action = cond_action
+		self.custom_functor[custom_functor_slot].func_action = func_action
+		self.properties["custom_" .. custom_functor_slot].mode_func[1] = override_bags and "Mode_Custom_Functor" or "Mode_Custom"
+		self.properties["custom_" .. custom_functor_slot].cont_func[1] = override_bags and "Cont_Custom_Functor" or "Cont_Custom"
+	else
+		local max, max_custom, max_index = self:get_max_custom_functor()
+		local custom_num = max + 1
+		local properties_num = max_index + 1
+		for k, v in spairs(self.properties, func_index_reverse) do
+	        if v.index > max_index then
+	        	printf("%s, %s", k, v.index)
+	            v.index = v.index + 1
+	        else
+	        	printf("%s, %s, max custom_functor reached", k, v.index)
+	        	break
+	        end
+	    end
+		self.properties["custom_" .. custom_num] = {
+		    index = properties_num,
+		    name_func = {"Name_Custom", max_custom["name_func"][2] + 1},
+		    mode_func = {override_bags and "Mode_Custom_Functor" or "Mode_Custom", max_custom["mode_func"][2] + 1},
+		    cont_func = {override_bags and "Cont_Custom_Functor" or "Cont_Custom", max_custom["cont_func"][2] + 1},
+		    precondition1 = {"Name_Custom", max_custom["precondition1"][2] + 1},
+		    action = {"Action_Custom", max_custom["action"][2] + 1}
+		}
+		custom_functor_slot = custom_num
+		self.custom_functor[custom_functor_slot] = {
+			index = custom_functor_slot,
+			properties_index = properties_num,
+			name = name,
+			cond_name = cond_name,
+			func_name = func_name,
+			cond_action = cond_action,
+			func_action = func_action
+		}
+		self.custom_functor_names[name] = custom_functor_slot
+	end
+end
+
+ui_inventory.UIInventory.remove_custom_functor = function(self, name)
+	if not self.custom_functor_names[name] then return end
+
+	local index = table_remove_shift(self.custom_functor_names, self.custom_functor_names[name], 2)
+	if not index then return end
+
+	local custom_functor = table_remove_shift(self.custom_functor, index, 0)
+	if not custom_functor then return end
+	
+	local removed = false
+	for k, v in spairs(self.properties, func_index) do
+		if string_find(k, "custom_.*") then
+			if removed then
+				local x = tonumber(string_gsub(k, "custom_(.*)", "%1"), nil) - 1
+				self.properties["custom_" .. x] = self.properties[k]
+				self.properties["custom_" .. x].index = self.properties["custom_" .. x].index - 1
+			    self.properties["custom_" .. x].name_func[2] = self.properties["custom_" .. x].name_func[2] - 1
+			    self.properties["custom_" .. x].mode_func[2] = self.properties["custom_" .. x].mode_func[2] - 1
+			    self.properties["custom_" .. x].cont_func[2] = self.properties["custom_" .. x].cont_func[2] - 1
+			    self.properties["custom_" .. x].precondition1[2] = self.properties["custom_" .. x].precondition1[2] - 1
+			    self.properties["custom_" .. x].action[2] = self.properties["custom_" .. x].action[2] - 1
+				self.properties[k] = nil
+			elseif v.index == custom_functor.properties_index then
+				self.properties[k] = nil
+				removed = true
+			end
+		elseif removed then
+			v.index = v.index - 1
+		end
+	end
+end
+
+ui_inventory.UIInventory.override_functor = function(self, slot, cond_name, func_name, cond_action, func_action, override_bags)
+	self.custom_functor[slot] = {
+		cond_name = cond_name,
+		func_name = func_name,
+		cond_action = cond_action,
+		func_action = func_action
+	}
+	self.properties["custom_" .. slot].mode_func[1] = override_bags and "Mode_Custom_Functor" or "Mode_Custom"
+	self.properties["custom_" .. slot].cont_func[1] = override_bags and "Cont_Custom_Functor" or "Cont_Custom"
+end
+
+ui_inventory.UIInventory.remove_override = function(self, slot)
+	self.custom_functor[slot] = nil
+	self.properties["custom_" .. slot].mode_func[1] = "Mode_Custom"
+	self.properties["custom_" .. slot].cont_func[1] = "Cont_Custom"
+end
+
+ui_inventory.UIInventory.get_functor_at_slot = function(self, slot)
+	return self.custom_functor[slot]
+end
+
+ui_inventory.UIInventory.get_functor_by_name = function(self, name)
+	if self.custom_functor_names[name] then
+		return self.custom_functor[self.custom_functor_names[name]], self.custom_functor_names[name]
+	end
+end
+
+-- Adding
+local first_update_pending = true
+local functor_queue = {}
+
+local function add_to_queue(type, ...)
+	functor_queue[#functor_queue + 1] = {
+		type = type,
+		data = {...}
+	}
+end
+
+local function process_queue()
+
+	if not ui_inventory.GUI then
+		ui_inventory.GUI = ui_inventory.UIInventory()
+	end
+
+	printf("Custom functors, processing queue")
+
+	for i, v in ipairs(functor_queue) do
+		printf("Custom functors, type %s", v.type)
+		ui_inventory.GUI[v.type](ui_inventory.GUI, unpack(v.data))
+	end
+
+	functor_queue = {}
+	first_update_pending = false
+end
+
+local function actor_on_first_update()
+	process_queue()
+end
+
+function add_functor(name, cond_name, func_name, cond_action, func_action, override_bags)
+	if not name then return end
+
+	local cond_action = cond_action or cond_name
+	if first_update_pending then 
+		add_to_queue("add_custom_functor", name, cond_name, func_name, cond_action, func_action, override_bags)
+		return
+	end
+
+	ui_inventory.GUI:add_custom_functor(name, cond_name, func_name, cond_action, func_action, override_bags)
+end
+
+function remove_functor(name)
+	if not name then return end
+
+	if first_update_pending then 
+		add_to_queue("remove_custom_functor", name)
+		return
+	end
+
+	ui_inventory.GUI:remove_custom_functor(name)
+end
+
+function override_functor(slot, cond_name, func_name, cond_action, func_action, override_bags)
+	if slot < 1 or slot > 10 then
+		printf("functor slot is not valid, min 1, max 10, your slot: %s", slot)
+		return
+	end
+
+	local cond_action = cond_action or cond_name
+	if first_update_pending then 
+		add_to_queue("override_functor", slot, cond_name, func_name, cond_action, func_action, override_bags)
+		return
+	end
+
+	ui_inventory.GUI:override_functor(slot, cond_name, func_name, cond_action, func_action, override_bags)
+end
+
+function remove_override(slot)
+	if slot < 1 or slot > 10 then
+		printf("functor slot is not valid min 1, max 10, your slot: %s", slot)
+		return
+	end
+
+	if first_update_pending then 
+		add_to_queue("remove_override", slot)
+		return
+	end
+
+	ui_inventory.GUI:remove_override(slot)
+end
+
+function get_functor_at_slot(slot)
+	if first_update_pending then 
+		add_to_queue("get_functor_at_slot", slot)
+		return
+	end
+
+	return ui_inventory.GUI:get_functor_at_slot(slot)
+end
+
+function get_functor_by_name(name)
+	if first_update_pending then 
+		add_to_queue("get_functor_by_name", name)
+		return
+	end
+
+	return ui_inventory.GUI:get_functor_by_name(name)
+end
+
+function print_properties()
+	if not ui_inventory.GUI then
+		ui_inventory.GUI = ui_inventory.UIInventory()
+	end
+
+	for k, v in spairs(ui_inventory.GUI.properties, func_index) do
+		printf("[" .. k .. "] => ")
+		print_r(v)
+	end
+end
+
+function print_custom_functor()
+	if not ui_inventory.GUI then
+		ui_inventory.GUI = ui_inventory.UIInventory()
+	end
+
+	print_r(ui_inventory.GUI.custom_functor)
+end
+
+function print_custom_functor_names()
+	if not ui_inventory.GUI then
+		ui_inventory.GUI = ui_inventory.UIInventory()
+	end
+
+	print_r(ui_inventory.GUI.custom_functor_names)
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+end
