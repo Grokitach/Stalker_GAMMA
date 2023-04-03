@@ -1,22 +1,16 @@
-ini_capture	 = ini_file("creatures\\grok_nes_models_capture.ltx")
-ini_bones		 = ini_file("creatures\\grok_nes_bone_profiles.ltx")
-ini_damage		= ini_file("creatures\\damages.ltx")
-
--- maps with 1 means, no exos in these maps
-
 local whitelisted_maps = {
     ["k00_marsh"] = 1,
     ["l01_escape"] = 1,
-    ["l05_bar"] = 0,
+    ["l05_bar"] = 1,
     ["l02_garbage"] = 1,
     ["k01_darkscape"] = 1,
     ["l04_darkvalley"] = 1,
-    ["k02_trucks_cemetery"] = 0,
+    ["k02_trucks_cemetery"] = 1,
     ["l09_deadcity"] = 0,
-    ["l03_agroprom"] = 0,
+    ["l03_agroprom"] = 1,
     ["l06_rostok"] = 1,
     ["l07_military"] = 0,
-    ["l08_yantar"] = 0,
+    ["l08_yantar"] = 1,
     ["jupiter"] = 0,
     ["l03u_agr_underground"] = 0,
     ["l10_limansk"] = 0,
@@ -37,25 +31,16 @@ local whitelisted_maps = {
     ["l13_generators"] = 0,
     ["l13u_warlab"] = 0,
     ["pripyat"] = 0,
-    ["y04_pole"] = 0,
+    ["y04_pole"] = 1,
 }
 
-
-function Set(t)
-  local s = {}
-  for _,v in pairs(t) do s[v] = true end
-  return s
-end
-
-
-local north_factions = Set {
-	"monolith",
-	"greh",
-	"isg",
+local north_factions = {
+	["monolith"] = 1,
+	["greh"] = 1,
+	["isg"] = 1,
 }
 
 local important_npcs = Set {
-
 								--[[ CORDON ]]--
 	"esc_m_trader",                                             -- Sidorovich
 	"m_trader",                                                 -- Sidorovich
@@ -220,11 +205,16 @@ local important_npcs = Set {
 	"stalker_strelok_hb",
 	"stalker_strelok_oa",
 	"lazarus_stalker",
-
 }
 
+function Set(t)
+	local s = {}
+	for _,v in pairs(t) do s[v] = true end
+	return s
+end
+
 trigger = 0
-delay = 48510
+delay = 34250
 function actor_on_update()
 	tg = time_global()
 	
@@ -232,7 +222,7 @@ function actor_on_update()
        		grok_delay = tg + delay
 		trigger = 1
 	end
-	
+
 	if (trigger == 1 and tg > grok_delay) then
 		trigger = 0
 		local sim = alife()
@@ -246,37 +236,24 @@ function actor_on_update()
 				local st = db.storage[db.OnlineStalkers[i]]
 				local npc = st and st.object
 
-
 				if npc and IsStalker(npc,npc:clsid()) then
-					local npc_id = npc:id()
 					local npc_sec = npc:section()
-					local npc_viz = npc:get_visual_name()
 					local npc_comm = character_community(npc)
+					local actor_comm = get_actor_true_community()
 
 					if not important_npcs[npc_sec] then
-						if npc:has_info("npcx_is_companion") then
-							return
-						end
-						
-						if not ini_capture:section_exist(npc_viz) then
-							return
-						end
+						if npc:has_info("npcx_is_companion") then return end
 
-						local npc_armor_path = ini_capture:r_string(npc_viz,"model_path")	
-						ini_npc_armor = ini_file(npc_armor_path)
-						local npc_armor_section = ini_npc_armor:r_string('bone_protection','bones_protection_sect')
-						npc_bone_profile_name = ini_bones:r_string(npc_armor_section,"bone_profile")
-					
-						if npc_bone_profile_name == "body_damage_035" or npc_bone_profile_name == "body_damage_040" or
-						npc_bone_profile_name == "body_damage_043" or npc_bone_profile_name == "body_damage_045" or
-						npc_bone_profile_name == "body_damage_047" or npc_bone_profile_name == "body_damage_050" then
+						if actor_comm == "isg" then return end
+
+						if north_factions[npc_comm] == 1 then
+							printf("// Deleted a north faction member in the south")
 							alife():release(alife():object(npc:id()))
-							printf("// GNES: An exoskeleton got deleted.")
 						end
 					end
 				end
 			end
-		end 
+		end
 	end
 end
 
@@ -302,21 +279,14 @@ function actor_on_first_update()
 					if npc:has_info("npcx_is_companion") then
 						return
 					end
-						
-					if not ini_capture:section_exist(npc_viz) then
-						return
-					end
 
-					local npc_armor_path = ini_capture:r_string(npc_viz,"model_path")	
-					ini_npc_armor = ini_file(npc_armor_path)
-					local npc_armor_section = ini_npc_armor:r_string('bone_protection','bones_protection_sect')
-					npc_bone_profile_name = ini_bones:r_string(npc_armor_section,"bone_profile")
-					
-					if npc_bone_profile_name == "body_damage_035" or npc_bone_profile_name == "body_damage_040" or
-					npc_bone_profile_name == "body_damage_043" or npc_bone_profile_name == "body_damage_045" or
-					npc_bone_profile_name == "body_damage_047" or npc_bone_profile_name == "body_damage_050" then
+					local actor_comm = character_community(db.actor):sub(7)
+
+					if actor_comm == "isg" then return end
+
+					if north_factions[npc_comm] then
+						printf("// GNES: Deleted a north faction member in the south")
 						alife():release(alife():object(npc:id()))
-						printf("// GNES: An exoskeleton got deleted.")
 					end
 				end
 			end
