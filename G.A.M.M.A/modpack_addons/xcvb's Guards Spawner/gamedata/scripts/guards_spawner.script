@@ -23,7 +23,7 @@ local debugx = false		-- "M" sets update and respawn times to very low and spawn
 local guards_t = {
 --------- Cordon ---------
 	-- rookie village
-	["esc_smart_terrain_2_12"] = { factions = { "stalker" }, max_amount = 1, ranks = { "advanced", "veteran" }, smart_faction = "stalker", squads = {} },
+	["esc_smart_terrain_2_12"] = { factions = { "stalker" }, max_amount = 2, ranks = { "advanced", "veteran" }, smart_faction = "stalker", squads = {} },
 	-- farm
 	["esc_smart_terrain_5_7"] = { factions = { "stalker" }, max_amount = 2, ranks = { "advanced", "veteran" }, smart_faction = "stalker", squads = {} },
 	-- southern military outpost
@@ -32,12 +32,55 @@ local guards_t = {
 --------- Swamps ---------
 	-- clear sky base
 	["mar_smart_terrain_8_11"] = { factions = { "ecolog" }, max_amount = 3, ranks = { "advanced", "veteran" }, smart_faction = "ecolog", squads = {} },
+	["mar_smart_terrain_base"] = { factions = { "csky" }, max_amount = 1, ranks = { "novice", "advanced" }, smart_faction = "csky", squads = {} },
 	-- renegade base
 	["mar_smart_terrain_3_3"] = { factions = { "renegade" }, max_amount = 1, ranks = { "novice", "advanced" }, smart_faction = "renegade", squads = {} },
 
 --------- Garbage ---------
 	-- gates to bar
 	["gar_smart_terrain_5_2"] = { factions = { "dolg" }, max_amount = 1, ranks = { "novice", "advanced" }, smart_faction = "dolg", squads = {} },
+
+--------- Agroprom ---------
+	-- military base middle
+	["agr_smart_terrain_1_6"] = { factions = { "army" }, max_amount = 2, ranks = { "advanced", "veteran" }, smart_faction = "army", squads = {} },
+	-- military base northerth half
+	["agr_smart_terrain_1_6_near_1"] = { factions = { "army" }, max_amount = 1, ranks = { "novice", "advanced" }, smart_faction = "army", squads = {} },
+	-- military base southern half
+	["agr_smart_terrain_1_6_near_2"] = { factions = { "army" }, max_amount = 1, ranks = { "novice", "advanced" }, smart_faction = "army", squads = {} },
+
+--------- Dark Valley ---------
+	-- bandit base north
+	["val_smart_terrain_7_3"] = { factions = { "bandit" }, max_amount = 1, ranks = { "novice", "advanced" }, smart_faction = "bandit", squads = {} },
+	-- bandit base center
+	["val_smart_terrain_7_4"] = { factions = { "bandit" }, max_amount = 1, ranks = { "novice", "advanced" }, smart_faction = "bandit", squads = {} },
+	-- bandit base south
+	["val_smart_terrain_7_5"] = { factions = { "bandit" }, max_amount = 1, ranks = { "advanced", "veteran" }, smart_faction = "bandit", squads = {} },
+	-- bandit base south (outside)
+	["val_smart_terrain_8_6"] = { factions = { "bandit" }, max_amount = 1, ranks = { "novice" }, smart_faction = "bandit", squads = {} },
+	-- lab entrance
+	["val_smart_terrain_1_2"] = { factions = { "army" }, max_amount = 1, ranks = { "advanced", "veteran" }, smart_faction = "army", squads = {} },
+
+--------- Yantar ---------
+	-- bunker
+	["yan_smart_terrain_6_4"] = { factions = { "stalker", "csky", "ecolog" }, max_amount = 2, ranks = { "advanced", "veteran" }, smart_faction = "ecolog", squads = {} },
+
+--------- Warehouses ---------
+	-- merc northwestern outpost
+	["mil_smart_terrain_2_2"] = { factions = { "killer" }, max_amount = 1, ranks = { "novice", "advanced" }, smart_faction = "killer", squads = {} },
+	-- barrier
+	["mil_smart_terrain_3_8"] = { factions = { "freedom" }, max_amount = 2, ranks = { "advanced", "veteran" }, smart_faction = "freedom", squads = {} },
+	-- freedom base north (entrance)
+	["mil_smart_terrain_7_8"] = { factions = { "freedom" }, max_amount = 1, ranks = { "novice", "advanced" }, smart_faction = "freedom", squads = {} },
+	-- freedom base west
+	["mil_smart_terrain_7_10"] = { factions = { "freedom" }, max_amount = 1, ranks = { "novice", "advanced" }, smart_faction = "freedom", squads = {} },
+	-- freedom base east (barracks)
+	["mil_smart_terrain_7_12"] = { factions = { "freedom" }, max_amount = 1, ranks = { "novice", "advanced" }, smart_faction = "freedom", squads = {} },
+	-- freedom base south
+	["mil_smart_terrain_7_7"] = { factions = { "freedom" }, max_amount = 1, ranks = { "novice", "advanced" }, smart_faction = "freedom", squads = {} },
+
+--------- Dead City ---------
+	-- merc base
+	["cit_killers"] = { factions = { "killer" }, max_amount = 2, ranks = { "advanced", "veteran" }, smart_faction = "killer", squads = {} },
 
 --------- Radar ---------
 	-- lab entrance
@@ -65,7 +108,7 @@ local squad_replace = {
 local upd_tmr
 local upd_upd_tmr = 60000
 local prev_time
-local guarded_smarts = {}
+guarded_smarts = {}
 local ctime_to_t = utils_data.CTime_to_table
 local t_to_ctime = utils_data.CTime_from_table
 
@@ -143,7 +186,7 @@ function on_enemy_eval(obj, enemy, flags)
 		for i = 1, #t do
 			local squad = alife_object(t[i])
 
-			if squad and squad:commander_id() then
+			if squad and squad.commander_id then
 				for se_npc in squad:squad_members() do
 					local npc = level.object_by_id(se_npc.id)
 					local smarts_faction = guards_t[smart_name] and guards_t[smart_name].smart_faction
@@ -176,7 +219,7 @@ function on_enemy_eval(obj, enemy, flags)
 						-- guard vs guard
 						for ii = 1, #guarded_smarts[smart_name] do
 							local squad_2 = alife_object(guarded_smarts[smart_name][ii])
-							if squad_2 and squad_2:commander_id() then
+							if squad_2 and squad_2.commander_id then
 								for se_npc_2 in squad_2:squad_members() do
 									local npc_2 = level.object_by_id(se_npc_2.id)
 									if npc_2 and ( (npc:id() == obj:id() and npc_2:id() == enemy:id()) or (npc:id() == enemy:id() and npc_2:id() == obj:id()) ) then
