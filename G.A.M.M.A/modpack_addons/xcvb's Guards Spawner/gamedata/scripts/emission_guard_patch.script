@@ -1,0 +1,51 @@
+function actor_on_first_update()
+	for i = 1, 65534 do
+		local se_obj = alife_object(i)
+		if se_obj and se_obj.commander_id and se_obj.scripted_target and type(tonumber(se_obj.scripted_target)) == "number" then
+			se_obj.scripted_target = tonumber(se_obj.scripted_target)
+		end
+	end
+
+end
+
+function squad_on_update(squad)
+	-- exclude during emissions
+	if xr_conditions.surge_started() then return end
+
+	-- try to fix guards
+	local smart_name = get_guard_smart(squad)
+	if smart_name and squad.scripted_target ~= smart_name and (axr_companions.companion_squads[squad.id] == nil) then
+		squad.scripted_target = smart_name
+		local gg = game_graph()
+		local squad_lid = gg:vertex(squad.m_game_vertex_id):level_id()
+		local squad_lname = alife():level_name(squad_lid)
+		printf("~ fixing squad IS guard: %s, cur_level: %s, send to %s", squad.id, squad_lname, smart_name)
+		return
+	end
+
+	-- fix the rest
+	if type(tonumber(squad.scripted_target)) == "number" then
+		squad.scripted_target = nil
+		printf("~ fixing squad NOT guard, send to nil")
+	end
+
+end
+
+function get_guard_smart(squad)
+	local guard_t = guards_spawner and guards_spawner.guarded_smarts
+	if not guard_t then return end
+
+	for smart_name, sq_a in pairs(guard_t) do
+		for i = 1, #sq_a do
+			if sq_a[i] == squad.id then
+				return smart_name
+			end
+		end
+	end
+
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("squad_on_update", squad_on_update)
+end
