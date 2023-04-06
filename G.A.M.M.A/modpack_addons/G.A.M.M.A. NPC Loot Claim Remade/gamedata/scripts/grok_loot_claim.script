@@ -1,0 +1,83 @@
+if not claimed then
+	claimed = {}
+end
+
+function npc_on_death_callback(victim, killer)
+	local v_id = victim and victim:id()
+	local k_id = killer and killer:id()
+	local k_faction = killer and character_community(killer)
+
+	if k_id == db.actor:id() then
+		printf("body can be looted")
+	elseif get_object_story_id(v_id) then
+		printf("story npc can be looted")
+	elseif v_id == k_id then
+		printf("npc suicided can be looted")
+	else
+		claimed[v_id] = k_id
+		printf("claimed body")
+	end
+end
+
+function on_before_key_press(key, bind, dis, flags)
+    if bind ~= key_bindings.kUSE then return end
+
+	local max_dist = 10
+	local ray = ray_pick()
+	ray:set_flags(3)
+	ray:set_range(max_dist)
+	ray:set_position(device().cam_pos)
+	ray:set_direction(device().cam_dir)
+	ray:set_ignore_object(db.actor)
+	ray:query()
+	result = ray:get_result()
+
+	if result then
+		obj = result.object
+		if obj then
+			id = obj:id()
+			if claimed[id] then
+				sender = level.object_by_id(claimed[obj:id()])
+				if sender then
+					if sender:alive() and IsStalker(sender) then
+						sender_com = character_community(sender)
+						local sender_header = strformat("%s, %s", sender:character_name(), game.translate_string("st_dyn_news_comm_" .. sender_com .. "_" .. 6))
+						local rnd_last = round_idp(math.random()*4)+1
+						local msg = game.translate_string("st_npc_loot_claim_last_"..rnd_last)
+						dynamic_news_helper.send_tip( msg, sender_header, 0, 10, sender:character_icon(), "danger", "npc" )
+						flags.ret_value = false
+					end
+				end
+			end
+		end
+	end
+end
+
+local function save_state(m_data)
+	if claimed then
+		m_data.claimed = claimed
+	end
+end
+
+local function load_state(m_data)
+	claimed = m_data.claimed
+	
+	if not claimed then
+		claimed = {}
+	end
+	
+	nrows = 0
+	for k,v in pairs(claimed) do
+		nrows = nrows + 1
+	end
+
+	if nrows > 60 then
+		claimed = {}
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_before_key_press",on_before_key_press)
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+end
