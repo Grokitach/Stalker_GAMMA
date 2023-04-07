@@ -13,6 +13,8 @@ function npc_on_death_callback(victim, killer)
 		printf("story npc can be looted")
 	elseif v_id == k_id then
 		printf("npc suicided can be looted")
+	elseif killer:has_info("npcx_is_companion") then
+		printf("body can be looted")
 	else
 		claimed[v_id] = k_id
 		printf("claimed body")
@@ -40,12 +42,18 @@ function on_before_key_press(key, bind, dis, flags)
 				sender = level.object_by_id(claimed[obj:id()])
 				if sender then
 					if sender:alive() and IsStalker(sender) then
-						sender_com = character_community(sender)
-						local sender_header = strformat("%s, %s", sender:character_name(), game.translate_string("st_dyn_news_comm_" .. sender_com .. "_" .. 6))
-						local rnd_last = round_idp(math.random()*4)+1
-						local msg = game.translate_string("st_npc_loot_claim_last_"..rnd_last)
-						dynamic_news_helper.send_tip( msg, sender_header, 0, 10, sender:character_icon(), "danger", "npc" )
 						flags.ret_value = false
+						
+						dist = 	sender:position():distance_to(db.actor:position())
+						if dist > 30 then
+							news_manager.send_tip(db.actor, game.translate_string("st_npc_loot_claim_far"), 0, nil, 2000)
+						else
+							sender_com = character_community(sender)
+							local sender_header = strformat("%s, %s", sender:character_name(), game.translate_string("st_dyn_news_comm_" .. sender_com .. "_" .. 6))
+							local rnd_last = round_idp(math.random()*4)+1
+							local msg = game.translate_string("st_npc_loot_claim_last_"..rnd_last)
+							dynamic_news_helper.send_tip( msg, sender_header, 0, 10, sender:character_icon(), "danger", "npc" )
+						end
 					end
 				end
 			end
