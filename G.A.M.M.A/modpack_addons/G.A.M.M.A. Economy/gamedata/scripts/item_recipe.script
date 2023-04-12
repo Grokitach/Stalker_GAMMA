@@ -1,0 +1,320 @@
+--[[
+
+	Tronex
+	2019/9/25
+	Craft recipes viewer
+	
+--]]
+
+
+
+----------------------------------------------------------------------
+-- UI Item Property
+----------------------------------------------------------------------
+function menu_read(obj) -- return "read" name
+	local p = obj:parent()
+	if not (p and p:id() == AC_ID) then return end
+	
+	return game.translate_string("st_item_read")
+end
+
+function func_recipe(obj)
+	local sec = obj:section()
+	if (not IsItem("recipe",sec)) then
+		return
+	end
+	
+	if (not ui_pda_encyclopedia_tab.is_unlocked_note("encyclopedia__notes_" .. sec)) then
+		SendScriptCallback("actor_on_interaction", "notes", nil, sec)
+		alife_release(obj)
+	else
+		actor_menu.set_msg(1, game.translate_string("st_recipe_is_known"),3)
+	end
+	
+	-- effect
+	local hud = get_hud()
+	if (hud) then
+		hide_hud_inventory()
+	end
+	
+	start(sec)
+end
+
+function func_letter(obj)
+	local sec = obj:section()
+	if (not IsItem("letter",sec)) then
+		return
+	end
+	
+	if (not ui_pda_encyclopedia_tab.is_unlocked_note("encyclopedia__notes_" .. sec)) then
+		SendScriptCallback("actor_on_interaction", "notes", nil, sec)
+		alife_release(obj)
+	else
+		actor_menu.set_msg(1, game.translate_string("st_letter_is_known"),3)
+	end
+	
+	-- effect
+	hide_hud_inventory()
+end
+
+
+----------------------------------------------------------------------
+GUI = nil -- instance, don't touch
+function start(sec)
+	if (not sec) then
+		printf("!ERROR item_recipe | no section passed!")
+		return
+	end
+	
+	if (not GUI) then
+		GUI = UIRecipe()
+	end
+	
+	if (GUI) and (not GUI:IsShown()) then
+		GUI:Reset(sec)
+		GUI:ShowDialog(true)
+		Register_UI("UIRecipe","item_recipe")
+	end
+end
+
+
+----------------------------------------------------------------------
+-- UI
+----------------------------------------------------------------------
+
+class "UIRecipe" (CUIScriptWnd)
+
+function UIRecipe:__init() super()
+	self.recipes = {}
+	self.cells = {}
+	self.toolkit = nil
+
+	self:InitControls()
+	self:InitCallBacks()
+end
+
+function UIRecipe:__finalize()
+end
+
+function UIRecipe:InitControls()
+	self:SetWndRect			(Frect():set(0,0,1024,768))
+	self:SetAutoDelete(true)
+	
+	self.xml				= CScriptXmlInit()
+	local xml = self.xml
+	xml:ParseFile			("ui_items_recipe.xml")
+	
+	self.dialog 	= xml:InitStatic("recipe", self)
+	xml:InitStatic("recipe:background", self.dialog)
+	
+	self.cap_shadow 	= xml:InitTextWnd("recipe:cap", self.dialog)
+	self.cap 	= xml:InitTextWnd("recipe:cap", self.dialog)
+
+	local pos = self.cap:GetWndPos()
+	self.cap_shadow:SetWndPos(vector2():set(pos.x+1,pos.y+1))
+	self.cap_shadow:SetTextColor(GetARGB(255, 150, 150, 150))
+	
+	self.scroll = xml:InitScrollView("recipe:scrollbar", self.dialog)
+	
+	self.cells_tool = utils_ui.UICellItem( {path="container" , xml=xml , grid_size=35 } , { path="recipe:toolkit" , base= self.dialog } )
+	self.cells_tool.showcase = 2
+	self.cells_tool.disable_bar = true
+	
+	self.item_info = utils_ui.UIInfoItem(self, 1000)
+end
+
+function UIRecipe:InitCallBacks()
+	--self:AddCallback("btn_ok", ui_events.BUTTON_CLICKED, self.Close, self)
+end
+
+
+function UIRecipe:Reset(section)
+	self.section = section
+
+	local name = ui_item.get_sec_name(section)
+	self.cap_shadow:SetText( name )
+	self.cap:SetText( name )
+
+	-- Reset recipes
+	empty_table(self.recipes)
+	self:LoadRecipes()
+	
+	-- Clear scroll
+	local xml = self.xml
+	self.scroll:Clear()
+	empty_table(self.cells)
+
+	-- Collect valid items
+	local itm_counter = {}
+	db.actor:iterate_inventory( function(temp, item)
+		local sec = item:section()
+		local cnt = IsItem("multiuse",nil,item) and item:get_remaining_uses() or 1
+		itm_counter[sec] = (itm_counter[sec] or 0) + cnt
+	end)
+
+	local fnt = GetFontSmall()
+	for i=1,#self.recipes do
+		local _st = xml:InitStatic("recipe:form", nil)
+		self.cells[i] = {}
+		
+		xml:InitFrame("recipe:list:frame_1", _st)
+		xml:InitFrame("recipe:list:frame_2", _st)
+		--xml:InitStatic("recipe:list:light", _st)
+		--xml:InitStatic("recipe:list:arrow", _st)
+		local line = xml:InitStatic("recipe:list:pic_line",_st)
+		line:InitTexture("ui_itm_line")
+		
+		local j=1
+		while true do
+			if (j ~= 1) and (not self.recipes[i][j-1]) then
+				break
+			end
+			
+			--xml_itm_shadow = xml:InitStatic("recipe:list:itm_" .. tostring(j) .. "_shadow", _st)
+			--xml_itm_shadow:InitTexture("ui_button_light_h")
+			
+			local sec = (j == 1) and self.recipes[i].sec or self.recipes[i][j-1][1]
+			local amount_req = (j == 1) and 1 or self.recipes[i][j-1][2]
+			local multi = 1
+			if IsItem("ammo",sec) then
+				multi = IsItem("ammo",sec)
+			end
+			
+			local txt = ""
+			local clr = GetARGB(255, 255, 255, 255)
+			if (j == 1) then
+				txt = "x" .. (multi * amount_req)
+			else
+				txt = (multi * (itm_counter[sec] or 0)) .. "/" .. (multi * amount_req)
+				if ( (itm_counter[sec] or 0) >= amount_req ) then
+					clr = GetARGB(255, 50, 255, 50)
+				end
+			end
+			
+			self.cells[i][j] = utils_ui.UICellItem( {path="container" , xml=xml , grid_size=35 } , { path="recipe:list:itm_" .. tostring(j) , base= _st } )
+			self.cells[i][j].showcase = 2
+			self.cells[i][j].disable_bar = true
+			self.cells[i][j]:Set(sec)
+			self.cells[i][j]:Add_CustomText( txt, 4, nil, clr, fnt)
+			
+			j = j + 1
+		end
+		
+		self.scroll:AddWindow(_st, true)
+		_st:SetAutoDelete(true)
+	end
+
+	-- Showing toolkit icon
+	if self.toolkit then
+		self.cells_tool:Set(self.toolkit)
+	end
+end
+
+function UIRecipe:LoadRecipes()
+	
+	local ini_craft = itms_manager.ini_craft
+	
+	-- Less parts on achievement
+	local ach = 0
+	if (game_achievements.has_achievement("artificer_eagerness")) then
+		ach = 1
+	end
+
+	local ind = 1
+	while ini_craft:section_exist(tostring(ind)) do
+		local ind_str = tostring(ind)
+		local n = ini_craft:line_count(ind_str) or 0
+		for i=0, n-1 do
+			local result, id, value = ini_craft:r_line(ind_str , i , "", "")
+			id = string.sub(id,3)
+			if ini_sys:section_exist(id) then
+				local t = str_explode(value,",")
+				if ((#t == 6) or (#t == 8) or (#t == 10)) and (t[2] == self.section) then
+					local x = #self.recipes + 1
+					self.recipes[x] = {}
+					self.recipes[x].sec = id
+					self.toolkit = ui_workshop.workshop_toolkits[tonumber(t[1]) or 1]
+					if t[3] and t[4] then -- support item 1
+						if ini_sys:section_exist(tostring(t[3])) then
+							local amt = tonumber(t[4])
+							self.recipes[x][1] = {tostring(t[3]), (amt > 4) and (amt - ach) or amt}
+						else
+							printe("! Workshop UI craft | componenet section [%s] not found for [%s] recipe!", tostring(t[3]), id)
+						end
+					end
+					if t[5] and t[6] then -- support item 2
+						if ini_sys:section_exist(tostring(t[5])) then
+							local amt = tonumber(t[6])
+							self.recipes[x][2] = {tostring(t[5]), (amt > 4) and (amt - ach) or amt}
+						else
+							printe("! workshop_craft_ui:LoadRecipes() | componenet section [%s] not found for [%s] recipe!", tostring(t[5]), id)
+						end
+					end
+					if t[7] and t[8] then -- support item 3
+						if ini_sys:section_exist(tostring(t[7])) then
+							local amt = tonumber(t[8])
+							self.recipes[x][3] = {tostring(t[7]), (amt > 4) and (amt - ach) or amt}
+						else
+							printe("! workshop_craft_ui:LoadRecipes() | componenet section [%s] not found for [%s] recipe!", tostring(t[7]), id)
+						end
+					end
+					if t[9] and t[10] then -- support item 4
+						if ini_sys:section_exist(tostring(t[9])) then
+							local amt = tonumber(t[10])
+							self.recipes[x][4] = {tostring(t[9]), (amt > 4) and (amt - ach) or amt}
+						else
+							printe("! workshop_craft_ui:LoadRecipes() | componenet section [%s] not found for [%s] recipe!", tostring(t[9]), id)
+						end
+					end
+				end
+			elseif (id ~= "tle") then
+				printe("! workshop_craft_ui:LoadRecipes() | section [%s] not found!",id)
+			end
+		end
+		
+		ind = ind + 1
+	end
+	
+	--utils_data.print_table(self.recipes)
+end
+
+function UIRecipe:Update()
+	CUIScriptWnd.Update(self)
+	
+	if self.cells_tool and self.cells_tool:IsShown() and self.cells_tool:IsCursorOverWindow() then
+		self.item_info:Update(nil, self.toolkit)
+		return
+		
+	elseif self.cells then
+		for i=1,#self.cells do 
+			for j=1,#self.cells[i] do
+				if (self.cells[i][j] and self.cells[i][j]:IsCursorOverWindow()) then
+					self.item_info:Update(nil, self.cells[i][j].section)
+					return
+				end
+			end
+		end
+	end
+	
+	self.item_info:Update()
+end
+
+
+function UIRecipe:Close()
+	self:HideDialog()
+	
+	Unregister_UI("UIRecipe")
+end
+
+function UIRecipe:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (res == false) then
+		local bind = dik_to_bind(dik)
+		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+			--if dik == DIK_keys.DIK_ESCAPE then
+				self:Close()
+			--end
+		end
+	end
+	return res
+end
