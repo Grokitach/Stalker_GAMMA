@@ -1,0 +1,209 @@
+-- On weapon shot, plays a delayed sound of cartridge falling on the ground with different sounds for different ground types.
+-- Based on Haruka Exo jump sound player code.
+-- Grok 17/04/2023
+
+local dte = demonized_time_events
+
+mat_to_sound = {
+["wood"] = "wood", 
+["earth"] = "dirt", 
+["bush"] = "grass",
+["dirt"] = "dirt",
+["metal"] = "metal", 
+["water"] = "water", 
+["tin"] = "metal", 
+["grass"] = "grass",
+["gravel"] = "concrete", 
+["asphalt"] = "concrete", 
+["tile"] = "concrete", 
+["concrete"] = "concrete", 
+["shifer"] = "concrete",
+["default"] = "dirt",
+}
+
+cal_to_sound = {
+   ["ammo_23x75_shrapnel"] = "shotgun",
+   ["ammo_23x75_barrikada"] = "shotgun",
+   ["ammo_20x70_buck"] = "shotgun",
+   ["ammo_23_eco"] = "shotgun",
+   ["ammo_9x21_sp10"] = "9mm",
+   ["ammo_9x18_fmj"] = "9mm",
+   ["ammo_9x18_pmm"] = "9mm",
+   ["ammo_9x18_ap"] = "9mm",
+   ["ammo_9x19_fmj"] = "9mm",
+   ["ammo_9x19_pbp"] = "9mm",
+   ["ammo_9x19_ap"] = "9mm",
+   ["ammo_7.62x25_p"] = "9mm",
+   ["ammo_7.62x25_ps"] = "9mm",
+   ["ammo_11.43x23_fmj"] = "9mm",
+   ["ammo_11.43x23_hydro"] = "9mm",
+   ["ammo_5.7x28_ss190"] = "556mm",
+   ["ammo_5.7x28_ss195"] = "556mm",
+   ["ammo_5.45x39_fmj"] = "556mm",
+   ["ammo_5.45x39_ep"] = "556mm",
+   ["ammo_5.45x39_ap"] = "556mm",
+   ["ammo_5.56x45_fmj"] = "556mm",
+   ["ammo_5.56x45_ss190"] = "556mm",
+   ["ammo_5.56x45_ap"] = "556mm",
+   ["ammo_9x39_pab9"] = "762mm",
+   ["ammo_9x39_ap"] = "762mm",
+   ["ammo_12x70_buck"] = "shotgun",
+   ["ammo_12x76_zhekan"] = "shotgun",
+   ["ammo_12x70_buck_self"] = "shotgun",
+   ["ammo_12x76_bull"] = "shotgun",
+   ["ammo_12x76_dart"] = "shotgun",
+   ["ammo_12x76_zhekan_heli"] = "shotgun",
+   ["ammo_7.62x39_fmj"] = "762mm",
+   ["ammo_7.62x39_ap"] = "762mm",
+   ["ammo_7.92x33_fmj"] = "338",
+   ["ammo_7.92x33_ap"] = "338",
+   ["ammo_7.62x51_fmj"] = "338",
+   ["ammo_7.62x51_ap"] = "338",
+   ["ammo_pkm_100"] = "762mm",
+   ["ammo_7.62x54_7h1"] = "338",
+   ["ammo_7.62x54_ap"] = "338",
+   ["ammo_7.62x54_7h14"] = "338",
+   ["ammo_12.7x55_fmj"] = "127mm",
+   ["ammo_12.7x55_ap"] = "127mm",
+   ["ammo_magnum_300"] = "127mm",
+   ["ammo_357_hp_mag"] = "762mm",
+   ["ammo_50_bmg"] = "127mm",
+   ["ammo_338_federal"] = "127mm",
+   ["default"] = "556mm"
+}
+
+time_table = {
+   ["wpn_mp133"] = 0.80,
+   ["wpn_ks23"] = 0.80,
+   ["wpn_ks23_kaban"] = 0.80,
+   ["wpn_ks23_kaban_kab_up"] = 0.80,
+   ["wpn_ks23_23_up"] = 0.80,
+   ["wpn_ithacam37"] = 0.80,
+   ["wpn_ithacam37_trench"] = 0.80,
+   ["wpn_ithacam37_mag"] = 0.80,
+   ["wpn_ithacam37_sawnoff"] = 0.80,
+   ["wpn_ithacam37_stakeout"] = 0.80,
+   ["wpn_wincheaster1300"] = 0.80,
+   ["wpn_toz106"] = 1.50,
+   ["wpn_toz106_m1"] = 1.50,
+   ["wpn_mossberg590"] = 0.80,
+   ["wpn_remington870"] = 0.80,
+   ["wpn_dvl10"] = 1.50,
+   ["wpn_dvl10_m1"] = 1.50,
+   ["wpn_k98"] = 1.50,
+   ["wpn_k98_mod"] = 1.50,
+   ["wpn_k98_mod_silen98"] = 1.50,
+   ["wpn_l96a1"] = 1.50,
+   ["wpn_l96a1m"] = 1.50,
+   ["wpn_remington700"] = 1.50,
+   ["wpn_remington700_archangel"] = 1.50,
+   ["wpn_remington700_lapua700"] = 1.50,
+   ["wpn_remington700_magpul_pro"] = 1.50,
+   ["wpn_remington700_mod_x_gen3"] = 1.50,
+   ["wpn_sv98"] = 1.50,
+   ["wpn_sv98_custom"] = 1.50,
+   ["wpn_vssk"] = 1.50,
+   ["wpn_mosin"] = 1.50,
+   ["default"] = 0.54,
+}
+
+no_casing_drop = {
+   ["wpn_mp412"] = 1,
+   ["wpn_toz34"] = 1,
+   ["wpn_toz34_decor"] = 1,
+   ["wpn_toz34_bull"] = 1,
+   ["wpn_toz34_mark4_23"] = 1,   
+   ["wpn_toz34_obrez"] = 1,  
+   ["wpn_toz34_obrez_custom"] = 1,  
+   ["wpn_toz34_obrez_decor"] = 1,  
+   ["wpn_toz34_custom"] = 1, 
+   ["wpn_bm16"] = 1, 
+   ["wpn_bm16_full"] = 1,
+   ["wpn_bm16_full_alt"] = 1, 	
+   ["wpn_bm16_full_alt_23"] = 1, 	
+}
+
+mat = "default"
+
+function actor_on_footstep(material, power, hud_view, flags)
+    local sf = string.find
+    local current_material = tostring(material)
+	
+	for k,v in pairs(mat_to_sound) do
+		found_mat = sf(current_material, k)
+		if found_mat then
+			current_material = k
+			break
+		end
+	end
+
+	material_sound = mat_to_sound[current_material]
+	if not material_sound then
+		material_sound = mat_to_sound["default"]
+	end
+	
+	printf(material_sound)
+end
+
+local sound_to_play
+
+function actor_on_weapon_fired()
+	printf("checking case sound") 
+    local wpn = db.actor:active_item()
+	if wpn and IsWeapon(wpn) and (not IsMelee(wpn)) then
+		if wpn:get_ammo_in_magazine() == 0 then return end
+		
+	    local wpn_id = wpn:id()
+		local wpn_sec = wpn:section()
+	    local ammo_type_number = wpn:get_ammo_type()
+	    local ammo_list = utils_item.get_ammo(wpn_sec, wpn_id)
+	    local ammo_section = ammo_list[ammo_type_number+1]
+        local caliber = ammo_section:gsub("_verybad", "")
+        local caliber = caliber:gsub("_bad", "")
+		local caliber = cal_to_sound[caliber]
+		local time = time_table[wpn_sec]
+		
+		if no_casing_drop[wpn_sec] == 1 then return end
+		
+		if not time then
+			time = time_table["default"]
+		end
+		
+		if not material_sound then
+			material_sound = mat_to_sound["default"]
+		end
+		
+		if material_sound == "dirt" or material_sound == "mud" or material_sound == "grass" then
+			rand = math.random(1,100)
+			if rand >= 80 then
+				material_sound = "grass"
+			elseif rand >= 45 then
+				material_sound = "grass"
+			else
+				material_sound = "dirt"
+			end
+		end
+		
+		if caliber then
+			CreateTimeEvent("grok_casings", "grok_casings_sound", time, function()
+				printf("casings\\" .. caliber .. "_casing_" .. material_sound .. "-0"  .. math.random(1,4))
+				sound_to_play = sound_object("casings\\" .. caliber .. "_casing_" .. material_sound .. "-0"  .. math.random(1,4))
+				sound_to_play:play(db.actor, 0, sound_object.s2d)
+				sound_to_play.volume = 1.2
+				return true
+			end)
+		else
+			CreateTimeEvent("grok_casings", "grok_casings_sound", time, function()
+				sound_to_play = sound_object("casings\\9mm_casing_" .. material_sound .. "-0"  .. math.random(1,4))
+				sound_to_play:play(db.actor, 0, sound_object.s2d)
+				sound_to_play.volume = 1.2
+				return true
+			end)
+		end
+	end
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_footstep", actor_on_footstep)
+    RegisterScriptCallback("actor_on_weapon_fired", actor_on_weapon_fired)
+end
