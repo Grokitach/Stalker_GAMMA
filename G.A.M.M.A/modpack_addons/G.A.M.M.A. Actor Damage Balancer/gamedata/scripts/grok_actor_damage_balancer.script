@@ -301,16 +301,16 @@ function get_protection(shit,bone_id,k_ap)
 --		limiter = 1.00
 --	end
 
---	if shit.type == hit.telepatic then
---		hit_type = HitTypeID["Telepatic"]
---		immunity = "telepatic_immunity"
---		protection = "telepatic"
---		booster_type_def = 6
---		adjuster = 1.00
---		arti_adjuster = adjuster
---		limiter = 0.90
---		psy = 1
---	end
+	if shit.type == hit.telepatic then
+		hit_type = HitTypeID["Telepatic"]
+		immunity = "telepatic_immunity"
+		protection = "telepatic"
+		booster_type_def = 6
+		adjuster = 1.00
+		arti_adjuster = adjuster
+		limiter = 0.90
+		psy = 1
+	end
 
 	-- Special case for Headshot
 
@@ -450,6 +450,14 @@ function shit_booster(shit, bone_id, k_ap)
 	printf("/// Actor got hit - Grok damage balancer")
 	get_protection(shit,bone_id,k_ap)
 
+	if shit.type == hit.telepatic then
+		damage = shit.power * ( 1 - total_prot )
+		local m_data = alife_storage_manager.get_state() 
+		arszi_psy.save_state(m_data)
+		local psy_table = m_data.psy_table
+		psy_table.actor_psy_health = psy_table.actor_psy_health - damage
+		return
+	end
 
 	-- Strike damage boost because they are very weak compared to other damage sources
 	if shit.type == hit.strike then
@@ -480,11 +488,6 @@ function shit_booster(shit, bone_id, k_ap)
 	printf('part hit = %s', hitboxes[bone_id])
 	printf('total protection = %s', total_prot)
 	printf('damage to actor = %s', damage)
-
-	if psy == 1 then
-		printf('Psy damages, handeld by engine')
-		return
-	end
 
 	shit.power = 0
 	db.actor:set_health_ex(db.actor.health - damage)
@@ -560,6 +563,11 @@ function elemental_damage(draftman_sec, shit, bone_id, flags)
 	flags.ret_value = false
 end
 
+function psi_damage(draftman_sec, shit, bone_id, flags)
+	shit_booster(shit,bone_id)
+	flags.ret_value = false
+end
+
 local trigger2 = 0
 local delay2 = 33
 local rad_grace = 1000
@@ -621,7 +629,7 @@ function actor_on_before_hit(shit,bone_id, flags)
 		end
 	end
 	
-	if shit.type == hit.chemical_burn or shit.type == hit.shock or shit.type == hit.burn or shit.type == hit.light_burn then
+	if shit.type == hit.chemical_burn or shit.type == hit.shock or shit.type == hit.burn or shit.type == hit.light_burn or shit.type == hit.telepatic then
 		damage = 1
 	end
 
@@ -718,6 +726,10 @@ function actor_on_before_hit(shit,bone_id, flags)
 
 		if shit.type == hit.chemical_burn then
 			elemental_damage(shit.draftsman:id(), shit, bone_id, flags)
+		end
+		
+		if shit.type == hit.telepatic then
+			 psi_damage(shit.draftsman:id(), shit, bone_id, flags)
 		end
 	end
 end
