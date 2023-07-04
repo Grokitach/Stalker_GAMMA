@@ -2,7 +2,7 @@
 -- created by wepl
 -- contact (discord): wepl#1549
 
-local cam_power = 0.5
+local cam_power = 0.35
 local ltxOutfits = ini_file( "plugins\\wepl_hit_effect_outfits.ltx" )
 local ltxVisuals = ini_file( "plugins\\wepl_hit_effect_visuals.ltx" )
 
@@ -19,7 +19,7 @@ local headBones = {
 
 function on_game_start()
 	RegisterScriptCallback( "actor_on_before_hit", actor_on_before_hit )
-	RegisterScriptCallback( "npc_on_hit_callback", npc_on_hit_callback )
+	RegisterScriptCallback( "npc_on_before_hit", npc_on_hit_callback )
 end
 
 
@@ -75,9 +75,10 @@ function actor_on_before_hit( hit, boneId, flags )
 	local hitType = headBones[boneId] and "head" or "body"
 	local hitEffect = hitType == "head" and helmetType or armorType
 	
-	local hitSound = xr_sound.get_safe_sound_object( "wepl\\hit_effect\\" .. hitType .. "\\hit_" .. hitEffect .. "_" .. math.random(20) )
-	if hitSound then
-		hitSound:play_no_feedback( ply, sound_object.s2d, 0, VEC_ZERO, 1 )
+	local ActorhitSound = sound_object("wepl\\hit_effect\\" .. hitType .. "\\hit_" .. hitEffect .. "_" .. math.random(20) )
+	if ActorhitSound then
+        ActorhitSound:play(db.actor, 0, sound_object.s2d) 
+        ActorhitSound.volume = 0.9
 	end
 	
 	level.add_cam_effector( "camera_effects\\wepl\\hit_effect\\" .. hitType .. "\\hit_" .. hitEffect .. "_" .. math.random(5) .. ".anm", math.random(444555, 444999), false, "", 0, true, cam_power )
@@ -118,9 +119,11 @@ function npc_on_hit_callback( npc, damage, dir, attacker, boneId )
 	local hitType = headBones[boneId] and "head" or "body"
 	local hitEffect = hitType == "head" and helmetType or armorType
 	
-	local hitSound = xr_sound.get_safe_sound_object( "wepl\\hit_effect\\" .. hitType .. "\\hit_" .. hitEffect .. "_" .. math.random(20) )
-	if hitSound then
-		hitSound:play_at_pos( ply, npc:position() )
+	local NPChitSound = xr_sound.get_safe_sound_object( "wepl\\hit_effect\\" .. hitType .. "\\hit_" .. hitEffect .. "_" .. math.random(20) )
+	if NPChitSound then
+		NPChitSound:play_at_pos( ply, npc:position() )
+		NPChitSound.volume = 0.9
+		NPChitSound.frequency = random_float(0.95, 1.05)
 	end
 end
 
