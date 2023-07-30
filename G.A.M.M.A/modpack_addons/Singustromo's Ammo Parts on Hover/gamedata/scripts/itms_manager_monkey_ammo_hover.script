@@ -1,0 +1,52 @@
+local ini_parts = itms_manager.ini_parts
+local ini_ammo = ini_file("items\\ammo\\importer.ltx")
+
+local focus_last_sec
+local focus_tbl = {}
+local focus_upgr = {}
+
+local FocusReceive = itms_manager.ActorMenu_on_item_focus_receive
+function itms_manager.ActorMenu_on_item_focus_receive(obj) -- highlight compatible items
+    if not IsAmmo(obj) then
+        empty_table(focus_tbl)
+     	FocusReceive(obj)
+        return
+    end
+
+    local sec_focus = obj:section()
+    if (focus_last_sec ~= sec_focus) then
+        local id = obj:id()
+        focus_last_sec = sec_focus
+        empty_table(focus_tbl)
+
+        local parent_sec = ini_sys:r_string_ex(sec_focus,"parent_section") or sec_focus
+
+        if IsItem("ammo", parent_sec) then
+            local ammo_parts_str = ini_ammo:r_string_ex("ammo_vanilla", parent_sec)
+                or ini_ammo:r_string_ex("ammo_bas", parent_sec)
+            if ammo_parts_str and ammo_parts_str ~= "" then
+                parts = str_explode(ammo_parts_str,",")
+            end
+        
+        end
+
+        if parts then
+            for i=3,#parts do
+                focus_tbl[#focus_tbl + 1] = parts[i]
+            end
+        end
+    end
+
+    local inventory = GetActorMenu()
+    if not ((#focus_tbl > 0) or (inventory and inventory:IsShown())) then
+        return
+    end
+
+    for i=1,#focus_tbl do
+        inventory:highlight_section_in_slot(focus_tbl[i],EDDListType.iActorBag)
+        inventory:highlight_section_in_slot(focus_tbl[i],EDDListType.iPartnerTradeBag)
+        inventory:highlight_section_in_slot(focus_tbl[i],EDDListType.iDeadBodyBag)
+        inventory:highlight_section_in_slot(focus_tbl[i],EDDListType.iActorTrade)
+        inventory:highlight_section_in_slot(focus_tbl[i],EDDListType.iPartnerTrade)
+    end
+end
