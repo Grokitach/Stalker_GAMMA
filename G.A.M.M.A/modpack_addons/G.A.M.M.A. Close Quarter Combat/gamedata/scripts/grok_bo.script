@@ -44,15 +44,6 @@ Bone_IDs = {
 [36] =	"bip01_r_forearm",
 }
 
-local head_bones = {
-    [14] =	"bip01_neck", 
-    [15] =	"bip01_head",
-    [16] =	"eye_left",
-    [17] =	"eye_right",
-    [18] =	"eyelid_1",
-    [19] =	"jaw_1",
-}
-
 local headBones = {
 	[14] = true,
 	[15] = true,
@@ -62,20 +53,53 @@ local headBones = {
 	[19] = true
 }
 
+local head_bones = {
+    [14] =	"bip01_neck", 
+    [15] =	"bip01_head",
+    [16] =	"eye_left",
+    [17] =	"eye_right",
+    [18] =	"eyelid_1",
+    [19] =	"jaw_1",
+}
+
+local upper_body_group = {
+	[11] =	"bip01_spine",
+	[12] =	"bip01_spine1",
+	[13] =	"bip01_spine2",
+	[20] =	"bip01_l_clavicle",
+	[21] =	"bip01_l_upperarm",
+	[22] =	"bip01_l_forearm",
+	[23] =	"bip01_l_forearm",
+	[33] =	"bip01_r_clavicle",
+	[34] =	"bip01_r_upperarm",
+	[35] =	"bip01_r_forearm",
+	[36] =	"bip01_r_forearm",
+}
+
+local lower_body_group = {
+	[2]  =	"bip01_pelvis",
+	[3]  =	"bip01_l_thigh",
+	[4]  =	"bip01_l_calf",
+	[5]  =	"bip01_l_foot",
+	[7]  =	"bip01_r_thigh",
+	[8]  =	"bip01_r_calf",
+	[9]  =	"bip01_r_foot",
+}
+
 
 stalker_damage = {
 default						= 0.75,
 
 bip01_pelvis 				= 0.9,
-bip01_spine 		 		= 1,
-bip01_spine1 		 		= 1,
-bip01_spine2 		 		= 1,
+bip01_spine 		 		= 0.9,
+bip01_spine1 		 		= 0.9,
+bip01_spine2 		 		= 0.9,
 bip01_neck 			 		= 2.5,
-bip01_head 			 		= 4, 
-eyelid_1 			 		= 4, 
-eye_left 			 		= 4, 
-eye_right 			 		= 4, 
-jaw_1 		 		 		= 4,
+bip01_head 			 		= 3.25, 
+eyelid_1 			 		= 3.25, 
+eye_left 			 		= 3.25, 
+eye_right 			 		= 3.25, 
+jaw_1 		 		 		= 3.25,
 
 bip01_l_clavicle	 		= 0.85,
 bip01_l_upperarm	 		= 0.8, 
@@ -504,7 +528,6 @@ function npc_on_before_hit(npc,shit,bone_id)
 		bone_id = 12
 		printf("Knife hit, redirecting to torso")
 	end
-	
 
 --	/////// BONES DEFINITION //////
 
@@ -528,7 +551,26 @@ function npc_on_before_hit(npc,shit,bone_id)
 		end
 	end
 	
--- Ammo redirection if toes or fingers are hit (hands hits are already redirected to forearms).
+--	/////// BONES GROUPING //////
+
+	-- We keep actually hit bone damage multiplier
+	
+	local bone_damage_multiplier = stalker_damage[custom_bone_name]
+	custom_bone_dmg[custom_bone_id] = tonumber(bone_damage_multiplier) 
+
+	-- We regroup bones armor in group-wise armor (one armor value for multiple bones)
+
+	if upper_body_group[bone_id] then
+		bone_id = 11
+	end
+	
+	if lower_body_group[bone_id] then
+		bone_id = 2
+	end
+	
+	if head_bones[bone_id] then
+		bone_id = 15
+	end
 	
 	local custom_bone_id = (npc_id.."_"..bone_id)
 
@@ -540,10 +582,7 @@ function npc_on_before_hit(npc,shit,bone_id)
 		printf("Custom bone found. Loading custom_bone values")
 	else
 
---		 /////// save bone damage multiplier ///////
 
-		local bone_damage_multiplier = stalker_damage[custom_bone_name]
-		custom_bone_dmg[custom_bone_id] = tonumber(bone_damage_multiplier)
 
 -- get bone profile
 
@@ -682,16 +721,18 @@ function npc_on_before_hit(npc,shit,bone_id)
 		end
 	end
 
-	if tonumber(bone_id) >= 16 and tonumber(bone_id) <= 18 then -- headshot bonus on unprotected parts
+	if tonumber(bone_id) >= 16 and tonumber(bone_id) <= 19 or tonumber(bone_id) == 14 then -- headshot bonus on unprotected parts
 		if ammo_section == "ammo_12x70_buck" or ammo_section == "ammo_12x70_buck_bad" or
 		   ammo_section == "ammo_20x70_buck" or ammo_section == "ammo_23x75_shrapnel" then
 			k_ap = ( k_ap + 0.017 )
+		else
+			k_ap = ( k_ap + 0.040 )
 		end
 	end
 
 	local k_ap = k_ap * custom_bone_ap_scale * barrel_condition_corrected -- reduce bullet ap following npc ap scale and barrel condition
 
-	k_ap = k_ap / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * isg_res * difficulty_multiplier[game_num]
+	k_ap = k_ap / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * isg_res * difficulty_multiplier[game_num] * 0.70 -- last multiplier is a new adjustment after the bone grouping update
 
 	shit.power = wpn_hit_power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * k_hit * custom_bone_dmg_mult * custom_bone_ap_scale * 1.1 * sniper_bad_bone_shit_reduce * barrel_condition_corrected * sin_res * difficulty_multiplier[game_num] * ammo_mult
 
