@@ -137,6 +137,42 @@ bip01_r_foot	 	 		= 0.3,
 bip01_r_toe0	 	 		= 0.3,
 }
 
+hp_rounds = {
+	ammo_357_hp_mag = 2,
+	ammo_357_hp_mag_bad = 2,
+	ammo_357_hp_mag_verybad = 2,
+	ammo_9x18_pmm = 2,
+	ammo_9x18_pmm_bad = 2,
+	ammo_9x18_pmm_verybad = 2,
+	ammo_9x19_pbp = 2,
+	ammo_9x19_pbp_bad = 2,
+	ammo_9x19_pbp_verybad = 2,
+	ammo_7.62x25_p = 1.75,
+	ammo_7.62x25_p_bad = 1.75,
+	ammo_7.62x25_p_verybad = 1.75,
+	ammo_11.43x23_hydro = 2.7,
+	ammo_11.43x23_hydro_bad = 2.7,
+	ammo_11.43x23_hydro_verybad = 2.7,
+	ammo_5.45x39_ep = 1.45,
+	ammo_5.45x39_ep_bad = 1.45,
+	ammo_5.45x39_ep_verybad = 1.45,
+	ammo_5.56x45_ss190 = 1.33,
+	ammo_5.56x45_ss190_bad = 1.33,
+	ammo_5.56x45_ss190_verybad = 1.33,
+	ammo_12x76_zhekan = 5,
+	ammo_12x76_zhekan_bad = 5,
+	ammo_12x76_zhekan_verybad = 5,
+	ammo_12x76_dart = 2,
+	ammo_12x76_dart_bad = 2,
+	ammo_12x76_dart_verybad = 2,
+	ammo_12x70_buck = 2,
+	ammo_12x70_buck_bad = 2,
+	ammo_12x70_buck_verybad = 2,
+	ammo_23x75_shrapnel = 2,
+	ammo_23x75_barrikada = 5,
+	ammo_20x70_buck = 2,
+}
+
 function monster_on_before_hit(monster,shit,bone_id)
 
 	if shit.draftsman:id() ~= db.actor:id() then
@@ -520,6 +556,12 @@ function npc_on_before_hit(npc,shit,bone_id)
 		leg_meta_sniper_null = 0
 	end
 	
+-- HP rounds damage reduction if ammo doesn't penetrate
+
+	if hp_rounds[ammo_section] and hp_rounds[ammo_section] > 0 then
+		hp_no_penetration_penalty = hp_rounds[ammo_section]
+	end
+	
 -- Knife and axes specific stuff
 
 --	if (ammo_section == "ammo_knife" or   
@@ -747,8 +789,8 @@ function npc_on_before_hit(npc,shit,bone_id)
 		if k_ap > new_bone_armor then -- if bullet damaged armor enough and pen with reduced power
 			shit.power = shit.power * custom_bone_hitfraction
 		else
-			shit.power = 0.025 * shit.power * custom_bone_hitfraction * wm_size * 45 -- residual concussion damage if bullet didn't damage armor enough, the bigger the ammo the bigger the residual damages
-                        pos = npc:bone_position(custom_bone_name)
+			shit.power = 0.025 * shit.power * custom_bone_hitfraction * wm_size * 45 * hp_no_penetration_penalty -- residual concussion damage if bullet didn't damage armor enough, the bigger the ammo the bigger the residual damages
+			pos = npc:bone_position(custom_bone_name)
 			fx = particles_object("hit_fx\\hit_metal_0" .. math.random(0,3))
 			fxdir = shit.direction
 			fxdir.x = (fxdir.x * -1.0) + math.random(-0.009, 0.009)
