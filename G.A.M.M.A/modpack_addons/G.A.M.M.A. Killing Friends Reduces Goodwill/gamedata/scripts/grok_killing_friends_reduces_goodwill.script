@@ -1,0 +1,27 @@
+function relation_kill_check(victim, killer)
+    if not IsStalker(victim) then
+		return
+	end
+	
+	if killer:id() == db.actor:id() or killer:has_info("npcx_is_companion") then
+		local v_id = victim and victim:id()
+		local k_id = killer and killer:id()
+		local v_faction = victim and character_community(victim)
+		local k_faction = db.actor and character_community(db.actor)
+		
+	--    if victim:relation(killer) > game_object.enemy then
+
+		if (xr_conditions.is_factions_friends(nil, nil, { k_faction, v_faction })) or (xr_conditions.is_factions_neutrals(nil, nil, { k_faction, v_faction })) then
+			local delta		= 200
+			if delta and v_faction then
+				game_relations.change_factions_community_num(v_faction,db.actor:id(), -tonumber(delta))
+				game_statistics.increment_reputation(-tonumber(delta))
+				news_manager.send_tip(db.actor, game.translate_string("st_grok_goodwill_loss"), 0, nil, 2000)
+			end
+		end
+	end
+end
+
+function on_game_start()
+    RegisterScriptCallback("npc_on_death_callback", relation_kill_check)
+end
