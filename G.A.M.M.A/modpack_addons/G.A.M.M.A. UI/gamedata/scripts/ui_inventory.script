@@ -1545,10 +1545,12 @@ function UIInventory:UpdateWeight()
 	max_weight = max_weight + (backpack and backpack:get_additional_max_weight() or 0)
 	
 	-- Additional weight - Artefacts
-	actor:iterate_belt( function(owner, obj)
-		local c_arty = obj:cast_Artefact()
-		max_weight = max_weight + (c_arty and c_arty:AdditionalInventoryWeight() or 0)
-	end)
+    local function itr(npc,itm)
+        if (npc:is_on_belt(itm)) then
+            max_weight = max_weight + (itm and ((ini_sys:r_float_ex(itm:section(),"additional_inventory_weight") or 0) * itm:condition()) or 0)
+        end
+    end
+    db.actor:iterate_inventory(itr,db.actor)
 	
 	-- Additional weight - Booster
 	actor:cast_Actor():conditions():BoosterForEach( function(booster_type, booster_time, booster_value)
