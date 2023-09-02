@@ -1,0 +1,165 @@
+-- Indirect Parts Favoriter, written by G_FLAT
+-- Adds a right click menu on weapons and armor for favoriting/unfavoriting their parts without having direct access to them.
+-- bless demonized and the ground he threads for making custom_functor_autoinject.script with instructions for my dumb ass to follow
+
+local weapon_part_condition_threshold = 60
+local outfit_part_condition_threshold = 50
+local explicitly_missing = true
+local all_lower_case = true
+local add_an_empty_line = true
+
+function check_has_parts(obj, bag, mode)
+	if IsWeapon(obj) or IsOutfit(obj) or IsHeadgear(obj) then
+		local parts = itms_manager.ini_parts:r_string_ex("con_parts_list", obj:section())
+		return parts ~= nil
+	end
+end
+
+function name_favorite_parts(obj, bag, mode)
+	return "favorite parts"
+end
+
+function name_and_cond(sec, con, threshold, mode)
+	local line
+	
+	if mode == 1 then
+		local part_name = ui_item.get_sec_name(sec)
+		if con == -1 and explicitly_missing then
+			con = "Missing"
+		else
+			con = con .. "%"
+		end
+		if is_favorite(sec) then
+			line = "unfavorite " .. part_name .. " (" .. con .. ")"
+		else
+			line = "favorite " .. part_name .. " (" .. con .. ")"
+		end
+	elseif mode == 2 then
+		line = "unfavorite all parts with at least " .. threshold .. "% condition"
+	elseif mode == 3 then
+		line = "favorite all parts that are missing or below " .. threshold .. "% condition"
+	end
+
+	if all_lower_case then
+		line = string.lower(line)
+	end
+
+	return line
+end
+
+local fs_gui
+function init_favorite_parts_menu(obj, bag, mode)
+	local mode = {
+		["inventory"] = true,
+		["loot"] = true,
+	}
+	local bag = {
+		["actor_equ"] = true,
+		["actor_belt"] = true,
+		["actor_bag"] = true,
+		["npc_bag"] = true,
+	}
+
+	local context_str = {}
+	local context_action = {}
+	local context_params = {}
+
+	local parts = item_parts.get_parts_con(obj)
+	local t = threshold_by_type(obj)
+	local below_threshold_unfavorited = false
+	local above_threshold_favorited = false
+
+	-- favorite/unfavorite a part
+	for k,v in pairs(parts) do
+		if IsItem("part", k) then
+			table.insert(context_str, name_and_cond(k, v, t, 1))
+			table.insert(context_action,  "favorite_part")
+			table.insert(context_params, {obj:id(), k, 1})
+
+			above_threshold_favorited = (is_favorite(k) and v >= t) or above_threshold_favorited
+			below_threshold_unfavorited = (not is_favorite(k) and v < t) or below_threshold_unfavorited
+		end
+	end
+
+	-- empty line
+	if add_an_empty_line and (above_threshold_favorited or below_threshold_unfavorited) then
+		table.insert(context_str, "")
+		table.insert(context_action,  "favorite_part")
+		table.insert(context_params, {obj:id(), nil, 0})
+	end
+
+	-- unfavorite all okay parts
+	if above_threshold_favorited then
+		table.insert(context_str, name_and_cond(nil, nil, t, 2))
+		table.insert(context_action,  "favorite_part")
+		table.insert(context_params, {obj:id(), nil, 2})
+	end
+
+	-- favorite all damaged parts
+	if below_threshold_unfavorited then
+		table.insert(context_str, name_and_cond(nil, nil, t, 3))
+		table.insert(context_action,  "favorite_part")
+		table.insert(context_params, {obj:id(), nil, 3})
+	end
+
+	if not fs_gui then fs_gui = utils_ui_custom.UICellPropertiesCustom(act_favorite_part) end
+	fs_gui:Reset(GetCursorPosition(), context_action, context_str, context_params)
+	ui_inventory.GUI:PlaySND(sound_object([[interface\inv_properties_2]]))
+end
+
+function is_favorite(sec)
+	return zzz_rax_sortingplus_mcm.is_favorite(sec)
+end
+
+function toggle_favorite(sec)
+	zzz_rax_sortingplus_mcm.set_favorite(sec, not is_favorite(sec))
+end
+
+function set_favorite(sec)
+	if not is_favorite(sec) then
+		toggle_favorite(sec)
+	end
+end
+
+function set_not_favorite(sec)
+	if is_favorite(sec) then
+		toggle_favorite(sec)
+	end
+end
+
+function threshold_by_type(obj)
+	if IsWeapon(obj) then
+		return weapon_part_condition_threshold
+	else
+		return outfit_part_condition_threshold
+	end
+end
+
+function act_favorite_part(id, sec, mode)
+	if mode == 1 then
+		toggle_favorite(sec)
+	else
+		local obj = level.object_by_id(id)
+		local parts = item_parts.get_parts_con(obj)
+		local condition_threshold = threshold_by_type(obj)
+
+		if mode == 2 then
+			for k,v in pairs(parts) do
+				if IsItem("part", k) and v >= condition_threshold then
+					set_not_favorite(k)
+				end
+			end
+		elseif mode == 3 then
+			for k,v in pairs(parts) do
+				if IsItem("part", k) and v < condition_threshold then
+					set_favorite(k)
+				end
+			end
+		end
+	end
+	rax_icon_layers.refresh(RESORT and 1)
+end
+
+function on_game_start()
+	custom_functor_autoinject.add_functor("parts_favoriter", check_has_parts, name_favorite_parts, nil, init_favorite_parts_menu, true)
+end
