@@ -250,13 +250,22 @@ function actor_on_first_update()
 end
 
 function npc_on_before_hit(npc,shit,bone_id,flags)
-	if shit.draftsman:id() == db.actor:id() then
-		if npc:see(db.actor) then 
-			return
-		else
-			marked[npc:id()] = true
-		end
-	end
+    if shit.draftsman:id() == db.actor:id() then
+        if npc:see(db.actor) then 
+            return
+        else
+            marked[npc:id()] = marked[npc:id()] or true
+            local squad = get_object_squad(npc)
+            if squad and squad.commander_id then
+                for m in squad:squad_members() do
+                    local member = level.object_by_id(m.id)
+                    if member and member.alive and member:alive() then
+                        marked[member:id()] = marked[member:id()] or true
+                    end
+                end
+            end
+        end
+    end
 end
 
 --===================================
