@@ -1,4 +1,5 @@
 -- DXML Core script
+_G.MODDED_EXES_VERSION = 20230902
 
 -- IMPORTS
 local string_find 	= string.find
@@ -17,29 +18,6 @@ local table_sort 	= table.sort
 local math_huge		= math.huge
 
 -- UTILS
-_G.spairs = function(t, order)
-    -- collect the keys
-    local keys = {}
-    for k in pairs(t) do keys[#keys+1] = k end
-
-    -- if order function given, sort by it by passing the table and keys a, b,
-    -- otherwise just sort the keys
-    if order and type(order) == "function" then
-        table_sort(keys, function(a,b) return order(t, a, b) end)
-    else
-        table_sort(keys)
-    end
-
-    -- return the iterator function
-    local i = 0
-    return function()
-        i = i + 1
-        if keys[i] then
-            return keys[i], t[keys[i]]
-        end
-    end
-end
-
 -- str_explode with limit on items to split
 -- n is the amount of times to split
 -- str_explode("1,2,3,4", ",", 1) = {"1", "2,3,4"}
@@ -222,26 +200,10 @@ function xmlDispatch(xml_file_name, xml_obj)
 end
 
 -- DXML MAIN
-if AddScriptCallback then
-	AddScriptCallback("on_loading_screen_key_prompt")
-	AddScriptCallback("on_loading_screen_dismissed")
-	AddScriptCallback("on_specific_character_dialog_list")
-	AddScriptCallback("on_specific_character_init")
-	AddScriptCallback("on_xml_read")
-else
-	printf("! AddScriptCallback function not found, DXML is unavailable")
-end
-
--- Called from GamePersistent.cpp
--- Callback for when loading screen happens and "Press Any Key to Continue" prompt appears
-_G.OnLoadingScreenKeyPrompt = function()
-	SendScriptCallback("on_loading_screen_key_prompt")
-end
-
--- Callback for when player dismisses loading screen after "Press Any Key to Continue" pressed
-_G.OnLoadingScreenDismissed = function()
-	SendScriptCallback("on_loading_screen_dismissed")
-end
+assert(AddScriptCallback, "Cannot add callbacks to the game, reinstall Anomaly 1.5.2 and Modded Exes")
+AddScriptCallback("on_specific_character_dialog_list")
+AddScriptCallback("on_specific_character_init")
+AddScriptCallback("on_xml_read")
 
 local function dialogs_obj(dialog_list)
 	local d = dialog_list
@@ -574,7 +536,11 @@ function xml_object(xml_file_name, xml_string, xml_table)
 	-- Otherwise the root will be !doc node
 	t.getRoot = function(self)
 		local root_pos = 1
-		if not self.xml_table.kids[root_pos] then
+		if is_empty(self.xml_table.kids) then
+			return self.xml_table
+		end
+
+		if is_empty(self.xml_table.kids[root_pos]) then
 			return self.xml_table
 		end
 
@@ -1266,4 +1232,42 @@ _G.COnXmlRead = function(xml_file_name, xml_string)
 		xml_string_cache[xml_file_name] = xml_string
 	end
 	return xml_string
+end
+
+-- UTILS
+-- Open file, apply dxml edits and return the xml_obj for custom work with files outside of callback
+function openXMLFile(xml_file_name)
+	local function loadFile(path)
+		local file_reader = getFS():r_open('$game_config$', path)
+		if file_reader then
+			local lua_s = ""
+			while not s:r_eof() do
+				lua_s = lua_s .. string.char(s:r_u8())
+			end
+			return lua_s
+		end
+	end
+
+	local xml_string = loadFile(xml_file_name)
+	if not xml_string then
+		printf("error opening file %s", xml_file_name)
+		return 
+	end
+
+	local parser = slaxml.SLAXML()
+	local parser_options = {stripWhitespace = true}
+
+	local xml_table = try(parser.simple_dom, parser, xml_string, parser_options)
+	if not xml_table then
+		printf("error parsing file %s", xml_file_name)
+		return
+	end
+
+	local xml_obj = try(xml_object, xml_file_name, xml_string, xml_table)
+	if not xml_obj then
+		printf("error creating xml_obj for file %s", xml_file_name)
+		return
+	end
+	xmlDispatch(xml_file_name, xml_obj)
+	return xml_obj
 end
