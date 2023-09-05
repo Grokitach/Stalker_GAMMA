@@ -22,21 +22,23 @@ local is_r1 = (renderer == dxeight)
 local pewpewmult = 0
 local get_camo_k = 0
 local vision_memory = {}
+local marked = {}
+local actor_marked = 0
 
 function get_visible_value(npc,who,time_delta,time_quant,luminocity,velocity_factor,velocity,distance,object_distance,always_visible_distance)
 	distance = distance <= 0 and 0.00001 or distance
 
 --============= luminosity =============
-	local npcxnpc_flash = true	-- Boosts NPC's vision when they see other NPC with active flashlight from afar, change to 'false' if you feel like it tanks your FPS too hard and let me know please
+	local npcxnpc_flash = false	-- Boosts NPC's vision when they see other NPC with active flashlight from afar, change to 'false' if you feel like it tanks your FPS too hard and let me know please
 
 	-- main
 	local michiko_patch = stealth_mcm.get_config("michiko_patch")
 	local hrs = level.get_time_hours() + level.get_time_minutes() / 60
 	local who_lum = who:get_luminocity()
 	local lumin_r1 = luminocity <= 0 and 0.0001 or luminocity
-	local lumin_r2 = (who_lum + who_lum^0.5 + lights_lum()) / 2.35
+	local lumin_r2 = (who_lum + who_lum^0.5 + lights_lum()) / 3.02
 
-	local lumin_r2_night = clamp((lumin_r2 * 4)^1.6, 0.01, 0.99)
+	local lumin_r2_night = clamp((lumin_r2 * 2)^1.6, 0.01, 0.99)
 	local lumin_r2_night_michiko = clamp(((lumin_r2 * 7)^3), 0.01, 0.99)
 	lumin_r2_night = michiko_patch and lumin_r2_night_michiko or lumin_r2_night
 
@@ -124,10 +126,18 @@ function get_visible_value(npc,who,time_delta,time_quant,luminocity,velocity_fac
 			local vis_threshold = npc:visibility_threshold()
 			memory_factor = mcm_memory * mem_time_factor * vis_threshold			-- 35 threshold:  100 sec = 0.025 ; 80 sec = 0.04 ; 60 sec = 0.08 ; 40 sec = 0.17 ; 20 sec = 0.66 ; 10 sec = 2.6
 		end
+		
+		if marked[npc:id()] then
+			actor_marked = 50000
+		else
+			actor_marked = 0
+		end
 	end
 
 	memory_factor = (memory_factor > 0.01) and memory_factor or 0
+	
 
+	
 --============== total =============================
 	local shot_mult = pewpewmult
 	local eq_dist = ((distance - object_distance / 1.15) / distance) * stealth_mcm.get_config("distance")
@@ -136,7 +146,7 @@ function get_visible_value(npc,who,time_delta,time_quant,luminocity,velocity_fac
 	local wnj = wei * jacketmult * obj_dist_w * stealth_mcm.get_config("weight")
 	local weight = wnj > 1 and wnj or 1
 	local Luminocity = (33 * luminocity * lum_dist + shot_mult) * stealth_mcm.get_config("luminocity")
-	local step_incr = Luminocity * Velocity * eq_dist * weight * crouch * danger_mult * camo_x * scheme_mult + memory_factor
+	local step_incr = Luminocity * Velocity * eq_dist * weight * crouch * danger_mult * camo_x * scheme_mult + memory_factor + actor_marked
 --===============================================
 
 
@@ -242,6 +252,21 @@ function actor_on_first_update()
 
 end
 
+function npc_on_before_hit(npc,shit,bone_id,flags)
+    if shit.draftsman:id() == db.actor:id() then
+        marked[npc:id()] = marked[npc:id()] or true
+        local squad = get_object_squad(npc)
+        if squad and squad.commander_id then
+            for m in squad:squad_members() do
+				local member = level.object_by_id(m.id)
+				if member and member.alive and member:alive() then
+					marked[member:id()] = marked[member:id()] or true
+				end
+			end
+        end
+    end
+end
+
 --===================================
 function on_game_start()
 	RegisterScriptCallback("actor_on_weapon_fired", actor_on_weapon_fired)
@@ -249,4 +274,5 @@ function on_game_start()
 	RegisterScriptCallback("actor_item_to_ruck", slot_in_out)
 	RegisterScriptCallback("actor_on_item_drop", slot_in_out)
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("npc_on_before_hit", npc_on_before_hit)
 end
