@@ -1,4 +1,5 @@
-local row_limit = 15
+local xml = CScriptXmlInit()
+xml:ParseFile("pda_taskboard.xml")
 
 local SINGLETON = nil
 function get_ui()
@@ -8,12 +9,7 @@ end
 -- Constructor.
 class "pda_taskboard_tab" (CUIScriptWnd)
 function pda_taskboard_tab:__init() super()
-	self.taskboard_info = {}
-	
-	self.clr_red 	= utils_xml.get_color("red",true) -- GetARGB(255, 255, 1, 1)
-	self.clr_green 	= utils_xml.get_color("green",true) -- GetARGB(255, 1, 255, 1)
-	self.clr_yellow = utils_xml.get_color("yellow",true) -- GetARGB(255, 255, 255, 1)
-
+	self.rows = {}
 	self:InitControls()
 end
 
@@ -22,7 +18,6 @@ function pda_taskboard_tab:InitControls()
 	self:SetWndRect(Frect():set(0, 0, 1024, 768))
 	
 	-- Main frame.
-	local xml = CScriptXmlInit()
 	xml:ParseFile("pda_taskboard.xml")
 	xml:InitFrame("frame1", self)
 	xml:InitFrame("frame2", self)
@@ -33,93 +28,38 @@ function pda_taskboard_tab:InitControls()
 	self:AddCallback("refresh_tasks_btn", ui_events.BUTTON_CLICKED, refresh_tasks_factory(self), self)
 
 	-- Taskboard
-	self.taskboard_listbox = xml:InitListBox("taskboard_listbox", self)
-	self.taskboard_listbox:SetItemHeight(config.list_row_height)
-	self:Register(self.taskboard_listbox, "taskboard_listbox")
-	for i = 1, row_limit do
-		self.taskboard_listbox:AddExistingItem(ui_taskboard_row(self, i, xml))
-	end
+	self.list = xml:InitScrollView("list", self)
+	self:Register(self.list, "list")
 end
 
 
 ------------------- TASKBOARD
-class "ui_taskboard_row" (CUIListBoxItem)
-function ui_taskboard_row:__init(parent, row, xml) super(parent, row, xml)
-	local is_widescreen = true --utils_xml.is_widescreen()
-	local offset_comm = is_widescreen and 36 or 49
-	local offset_rank = is_widescreen and 25 or 34
-	local offset_rept = is_widescreen and 51 or 68
-	-- Offset of stalker's portrait and captions
-	local x = is_widescreen and 40 or 55
+class "ui_taskboard_row" (CUIWindow)
+function ui_taskboard_row:__init(parent, row) super(parent, row)
+	self.frame = xml:InitFrame("frame2", self)
 
-	-- Create the components for each entry.
-	parent.taskboard_info[row] = {
-		["comm_field"] = self:AddTextField("", 1), 
-		["comm_label"] = self:AddTextField("", 1), 
-		["icon_field"] = self:AddIconField(1), 
-		["name_field"] = self:AddTextField("", 1),
-		["task_icon_field"] = self:AddIconField(1),
-		["task_details_field"] = self:AddTextField("", 1),
-		["task_full_description_field"] = self:AddTextField("", 1),
-		["task_accept_btn"] = xml:Init3tButton("btn_accept_task", self),
-		["task_next_btn"] = xml:Init3tButton("btn_next_task", self)
-	}
+	-- Subcomponents
+	self.task_category = xml:InitTextWnd("task_category", self)
+	self.icon_field = xml:InitStatic("icon_field", self)
+	self.stalker_info = xml:InitTextWnd("stalker_info", self)
+	self.task_icon_field = xml:InitStatic("task_icon_field", self)
+	self.task_details_field = xml:InitTextWnd("task_details_field", self)
+	self.task_full_description_field = xml:InitTextWnd("task_full_description_field", self)
+	self.task_accept_btn = xml:Init3tButton("btn_accept_task", self)
+	self.task_next_btn = xml:Init3tButton("btn_next_task", self)
 
+	parent.rows[row] = self
+
+	parent:Register(self.task_accept_btn, "task_accept_btn_" .. row)
+	parent:AddCallback("task_accept_btn_" .. row, ui_events.BUTTON_CLICKED, accept_task_callback_factory(parent, row), self)
 	
-	parent:Register(parent.taskboard_info[row].task_accept_btn, "task_accept_btn_" .. row)
-	parent:AddCallback("task_accept_btn_" .. row, ui_events.BUTTON_CLICKED, accept_task_callback_factory(parent, row), parent)
-
-	parent:Register(parent.taskboard_info[row].task_next_btn, "task_next_btn_" .. row)
-	parent:AddCallback("task_next_btn_" .. row, ui_events.BUTTON_CLICKED, next_task_in_category_callback_factory(parent, row), parent)
-	
-	parent.taskboard_info[row].icon_field:InitTexture("ui\\ui_noise")
-	parent.taskboard_info[row].icon_field:SetStretchTexture(true)
-	parent.taskboard_info[row].icon_field:SetWndSize(vector2():set(64, 64))
-	parent.taskboard_info[row].icon_field:SetWndPos(vector2():set(x, 0))
-	parent.taskboard_info[row].icon_field:Show(false)
-	
-	parent.taskboard_info[row].name_field:SetFont(GetFontLetterica16Russian())
-	parent.taskboard_info[row].name_field:SetWndSize(vector2():set(130, 20))
-	parent.taskboard_info[row].name_field:SetWndPos(vector2():set(x, 65))
-	
-	parent.taskboard_info[row].comm_label:SetFont(GetFontLetterica16Russian())
-	parent.taskboard_info[row].comm_label:SetWndSize(vector2():set(130, 20))
-	parent.taskboard_info[row].comm_label:SetWndPos(vector2():set(x, 80))
-	
-	parent.taskboard_info[row].comm_field:SetFont(GetFontLetterica16Russian())
-	parent.taskboard_info[row].comm_field:SetWndSize(vector2():set(130, 20))
-	parent.taskboard_info[row].comm_field:SetWndPos(vector2():set(x + offset_comm, 80))
-
-	parent.taskboard_info[row].task_icon_field:InitTexture("ui\\ui_noise")
-	parent.taskboard_info[row].task_icon_field:SetStretchTexture(true)
-	parent.taskboard_info[row].task_icon_field:SetWndSize(vector2():set(83, 47))
-	parent.taskboard_info[row].task_icon_field:SetWndPos(vector2():set(140, 0))
-	parent.taskboard_info[row].task_icon_field:Show(false)
-
-	parent.taskboard_info[row].task_details_field:SetFont(GetFontLetterica16Russian())
-	parent.taskboard_info[row].task_details_field:SetWndSize(vector2():set(103, 20))
-	parent.taskboard_info[row].task_details_field:SetWndPos(vector2():set(140, 60))
-	parent.taskboard_info[row].task_details_field:SetTextComplexMode(true)
-	parent.taskboard_info[row].task_details_field:SetVTextAlignment(0)
-
-	parent.taskboard_info[row].task_full_description_field:SetFont(GetFontLetterica16Russian())
-	parent.taskboard_info[row].task_full_description_field:SetWndSize(vector2():set(360, 180))
-	parent.taskboard_info[row].task_full_description_field:SetWndPos(vector2():set(250, 0))
-	parent.taskboard_info[row].task_full_description_field:SetTextComplexMode(true)
-	parent.taskboard_info[row].task_full_description_field:SetVTextAlignment(0)
-
-	parent.taskboard_info[row].task_accept_btn:SetWndSize(vector2():set(60, 40))
-	parent.taskboard_info[row].task_accept_btn:SetWndPos(vector2():set(630, 0))
-	parent.taskboard_info[row].task_accept_btn:Show(false)
-
-	parent.taskboard_info[row].task_next_btn:SetWndSize(vector2():set(60, 40))
-	parent.taskboard_info[row].task_next_btn:SetWndPos(vector2():set(630, 40))
-	parent.taskboard_info[row].task_next_btn:Show(false)
+	parent:Register(self.task_next_btn, "task_next_btn_" .. row)
+	parent:AddCallback("task_next_btn_" .. row, ui_events.BUTTON_CLICKED, next_task_in_category_callback_factory(parent, row), self)
 end
 
 local prepared_tasks_data = {}
 local current_board_state = {}
-function reset_taskboard(pda_tab) 
+function reset_taskboard(pda_tab)
 	clear_taskboard_ui(pda_tab)
 	local npc_list = get_nearby_npcs()
 	trigger_generate_available_tasks(npc_list)
@@ -131,37 +71,36 @@ function reset_taskboard(pda_tab)
 		local task_data = prepared_tasks_data[task_effect][1]
 		prepare_task( task_data )
 	end
-	
+
 	-- Delay required for task details from actor message to be properly collected
 	CreateTimeEvent("taskboard_delay_render", "taskboard_delay_render", 0.05, function ()
 		-- Generate taskboard entries
 		local i = 1
 		for _, task_effect in ipairs(sorted_keys) do
-			if i <= row_limit then
-				-- Save the order of the rows and currently viewed item from the category to be able to update a single row later
-				current_board_state[i] = {
-					task_effect = task_effect,
-					current_index = 1
-				}
-				update_task_entry(pda_tab, i, prepared_tasks_data[task_effect][1])
-				i = i + 1
-			end
+			-- Save the order of the rows and currently viewed item from the category to be able to update a single row later
+			current_board_state[i] = {
+				task_effect = task_effect,
+				current_index = 1
+			}
+			update_task_entry(pda_tab, i, prepared_tasks_data[task_effect][1])
+			i = i + 1
 		end
+		a_taskboard_utils.adjust_rows(pda_tab)
 		return true
 	end)
 end
 
 currently_processed_npc_id = nil -- required for fetch quest override
-function prepare_task(task_data) 
+function prepare_task(task_data)
 	currently_processed_npc_id = task_data.npc_id
 	local on_job_descr = task_data.task_id and task_manager.task_ini:r_string_ex(task_data.task_id,"on_job_descr")
-	if (on_job_descr) then 
+	if (on_job_descr) then
 		local cond = xr_logic.parse_condlist(db.actor,"task_manager","condlist",on_job_descr)
-		if (cond) then 
+		if (cond) then
 			xr_logic.pick_section_from_condlist(db.actor,db.actor,cond)
 		end
 	end
-	
+
 	local fetch = task_data.task_id and task_manager.task_ini:r_string_ex(task_data.task_id,"fetch_descr")
 	if (fetch) then
 		axr_task_manager.trigger_fetch_func(task_data.task_id)
@@ -207,7 +146,7 @@ end
 function next_task_in_category(pda_tab, row_index)
 	local entry_info = current_board_state[row_index]
 	local next_task = prepared_tasks_data[entry_info.task_effect][entry_info.current_index + 1]
-	
+
 	if next_task then
 		local stalker = level.object_by_id(next_task.npc_id)
 		if stalker then
@@ -216,6 +155,7 @@ function next_task_in_category(pda_tab, row_index)
 			CreateTimeEvent("next_task_delay", "next_task_delay", 0.05, function () 
 				entry_info.current_index = entry_info.current_index + 1
 				update_task_entry(pda_tab, row_index, next_task)
+				a_taskboard_utils.adjust_rows(pda_tab)
 				return true
 			end)
 		else 
@@ -251,26 +191,14 @@ function clear_cached_data()
 	current_board_state = {}
 end
 
-function clear_taskboard_ui(pda_tab) 
+function clear_taskboard_ui(pda_tab)
 	-- Erase all pre-existing information.
-	for i = 1, row_limit do
-		if (pda_tab.taskboard_info[i]) then
-			pda_tab.taskboard_info[i].comm_field:SetText("")
-			pda_tab.taskboard_info[i].comm_label:SetText("")
-			pda_tab.taskboard_info[i].icon_field:Show(false)
-			pda_tab.taskboard_info[i].name_field:SetText("")
-
-			pda_tab.taskboard_info[i].task_icon_field:Show(false)
-			pda_tab.taskboard_info[i].task_details_field:SetText("")
-			pda_tab.taskboard_info[i].task_accept_btn:Show(false)
-			pda_tab.taskboard_info[i].task_full_description_field:SetText("")
-			pda_tab.taskboard_info[i].task_next_btn:Show(false)
-		end
-	end
+	pda_tab.list:Clear()
+	pda_tab.rows = {}
 end
 
 local excluded_npc_sections = {"bar_duty_security_squad_leader"}
-function get_nearby_npcs() 
+function get_nearby_npcs()
 	local radius = config.scanning_range
 	local npc_list = {}
 	level.iterate_nearest(db.actor:position(), radius, function (obj)
@@ -301,18 +229,18 @@ function trigger_generate_available_tasks(npc_list)
 	for _,npc in pairs(npc_list) do 
 		-- Sim npcs are random roaming stalkers. Non sims are traders, mechanics, etc.
 		local is_sim = string.find(npc:section(), "sim_")
-		if not npc:has_info("npcx_is_companion") then 
-			currently_processed_npc_id = npc:id()
-			axr_task_manager.generate_available_tasks(npc, is_sim)
-			currently_processed_npc_id = nil
-		end
+		currently_processed_npc_id = npc:id()
+		axr_task_manager.generate_available_tasks(npc, is_sim)
+		currently_processed_npc_id = nil
 	end
 end
 
--- These tasks fire additional scripts that break the other script execution - mainly used for testing purposes
-local excluded_effects = {}
 -- Tasks that should not be picked by the taskboard (e. g. ones that are not accessible without it)
-local excluded_tasks = {"jup_b19_freedom_yar_task_1", "merc_pri_a18_mech_mlr_task_1"}
+local excluded_tasks = {
+	"jup_b19_freedom_yar_task_1", -- Yar's CoC task - bugged
+	"merc_pri_a18_mech_mlr_task_1", -- Outskirts merc mechanic task for tools - bugged 
+	"agr_u_bandit_boss_task_1" -- Reefer's task (Agro underground) - it doesn't use the standard setup functions and breaks the board logic
+}
 
 function get_prepared_task_data(npc_list) 
 	-- Split available tasks into categories based on their init effect
@@ -323,7 +251,7 @@ function get_prepared_task_data(npc_list)
 			local raw_task_effect = task_manager.task_ini:r_string_ex(task_id,"on_job_descr") or task_manager.task_ini:r_string_ex(task_id,"fetch_func")
 			local task_effect = string.gmatch(raw_task_effect or "", "=(.*)%(")() or "rest"
 			task_effect = normalize_task_effect(task_effect)
-			if not has_value(excluded_effects, task_effect) and not has_value(excluded_tasks, task_id) then
+			if not has_value(excluded_tasks, task_id) then
 				if not result[task_effect] then
 					result[task_effect] = {}
 				end
@@ -338,6 +266,12 @@ function get_prepared_task_data(npc_list)
 end
 
 function update_task_entry(pda_tab, i, task_details) 
+	if (not pda_tab.rows[i]) then
+		pda_tab.list:AddWindow(ui_taskboard_row(pda_tab, i))
+	end
+
+	pda_tab.rows[i].task_category:SetText(game.translate_string('st_pda_caption_' .. current_board_state[i].task_effect))
+	
 	local stalker = level.object_by_id(task_details.npc_id)
 
 	local stalker_comm = stalker:character_community()
@@ -345,50 +279,23 @@ function update_task_entry(pda_tab, i, task_details)
 	local stalker_name = stalker:character_name()
 	
 	stalker_icon = stalker_icon and stalker_icon ~= "" and stalker_icon or "ui\\ui_noise"
-	pda_tab.taskboard_info[i].icon_field:InitTexture(stalker_icon)
-	pda_tab.taskboard_info[i].icon_field:Show(true)
+	pda_tab.rows[i].icon_field:InitTexture(stalker_icon)
 	
-	local name = string.gsub(stalker_name, "Junior", "Jr.")
-	name = string.gsub(name, "Senior", "Sr.")
-	name = string.gsub(name, "Master ", "M.")
-	name = string.gsub(name, "Private", "Pvt.")
-	name = string.gsub(name, "Sergeant", "Sgt.")
-	name = string.gsub(name, "Lieutenant", "Lt.")
-	name = string.gsub(name, "Captain", "Cpt.")
-	name = string.len(name) <= 22 and name or string.sub(name, 0, 19) .. "..."
-	pda_tab.taskboard_info[i].name_field:SetText(name)
-	
-	pda_tab.taskboard_info[i].comm_label:SetText(game.translate_string("ui_st_community") .. ": ")
-	pda_tab.taskboard_info[i].comm_field:SetText(game.translate_string(stalker_comm))
-	
-	-- Display relation by colouring the stalker's faction name appropriately.
-	if (xr_conditions.is_factions_friends(nil, nil, { stalker_comm, character_community(db.actor) })) then
-		pda_tab.taskboard_info[i].comm_field:SetTextColor(pda_tab.clr_green)
-	elseif (xr_conditions.is_factions_enemies(nil, nil, { stalker_comm, character_community(db.actor) })) then
-		pda_tab.taskboard_info[i].comm_field:SetTextColor(pda_tab.clr_red)
-	else 
-		pda_tab.taskboard_info[i].comm_field:SetTextColor(pda_tab.clr_yellow)
-	end
+	local stalker_info = stalker_name .. "\\n" ..
+	game.translate_string("ui_st_community") .. ": " .. game.translate_string(stalker_comm)
+	pda_tab.rows[i].stalker_info:SetText(stalker_info)
 
 	local more_task_details = get_more_task_details(i) or {}
-	pda_tab.taskboard_info[i].task_icon_field:InitTexture(more_task_details.task_icon or "ui\\ui_noise")
-	pda_tab.taskboard_info[i].task_icon_field:Show(true)
+	pda_tab.rows[i].task_icon_field:InitTexture(more_task_details.task_icon or "ui\\ui_noise")
 
 	local details = (more_task_details.task_title or "") .. 
 	"\\n" .. 
 	(string.gsub(more_task_details.task_details or "", "\\n ", "\\n"))
-	if (config.trim_text) then
-		details = string.len(details) <= 120 and details or string.sub(details, 0, 117) .. "..."
-	end
-	pda_tab.taskboard_info[i].task_details_field:SetText(details)
+	pda_tab.rows[i].task_details_field:SetText(details)
 
 	local full_desc = task_details.task_description or ""
-	if (config.trim_text) then
-		full_desc = string.len(full_desc) <= 640 and full_desc or string.sub(full_desc, 0, 637) .. "..."
-	end
-	pda_tab.taskboard_info[i].task_full_description_field:SetText(full_desc)
-	pda_tab.taskboard_info[i].task_accept_btn:Show(true)
-	pda_tab.taskboard_info[i].task_next_btn:Show(has_more_task_in_category(i))
+	pda_tab.rows[i].task_full_description_field:SetText(full_desc)
+	pda_tab.rows[i].task_next_btn:Show(has_more_task_in_category(i))
 end
 
 function has_more_task_in_category(i) 
@@ -469,7 +376,8 @@ end
 normalizer = {
 	setup_supplies_fetch_task_lostzone_patch = "setup_fetch_task",
 	setup_generic_fetch_task = "setup_fetch_task",
-	drx_sl_create_quest_stash = "setup_fetch_task"
+	drx_sl_create_quest_stash = "setup_bounty_task", -- The actor message in base vanilla files is sent to the wrong queue here
+	multifetch_on_job_descr = "setup_fetch_task" -- Unnecessary thing, but there's only one task in this category
 }
 function normalize_task_effect(task_effect) 
 	return normalizer[task_effect] or task_effect
