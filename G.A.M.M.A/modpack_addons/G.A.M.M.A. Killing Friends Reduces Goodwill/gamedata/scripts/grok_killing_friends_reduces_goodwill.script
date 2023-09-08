@@ -1,5 +1,20 @@
+neutral_npcs = {}
+
+local function npc_on_before_hit(npc,amount,local_direction,who,bone_index)
+	if not IsStalker(npc) then return end
+	
+	if who:id() == db.actor:id() then
+		local npc_faction = npc and character_community(npc)
+		local actor_faction = db.actor and character_community(db.actor)
+		
+		if (xr_conditions.is_factions_friends(nil, nil, { actor_faction, npc_faction })) or (xr_conditions.is_factions_neutrals(nil, nil, { actor_faction, npc_faction })) then
+			neutral_npcs[npc:id()] = true
+		end
+	end
+end
+
 function relation_kill_check(victim, killer)
-    if not IsStalker(victim) then return end
+	if not IsStalker(victim) then return end
 	
 	if victim:has_info("npcx_is_companion") then return end
 	
@@ -21,7 +36,11 @@ function relation_kill_check(victim, killer)
 		end
 		
 		if (xr_conditions.is_factions_enemies(nil, nil, { k_faction, v_faction })) then
-			local delta		= 10
+			if neutral_npcs[victim:id()] then
+				local delta		= 200
+			else
+				local delta		= 10
+			end
 			if delta and v_faction then
 				game_relations.change_factions_community_num(v_faction,db.actor:id(), -tonumber(delta))
 			end
@@ -29,6 +48,29 @@ function relation_kill_check(victim, killer)
 	end
 end
 
+local function save_state(m_data)
+	if neutral_npcs then
+		m_data.neutral_npcs = neutral_npcs
+	end
+end
+
+local function load_state(m_data)
+	neutral_npcs = m_data.neutral_npcs
+	if not neutral_npcs then
+		neutral_npcs = {}
+	end
+	nrows = 0
+	for k,v in pairs(neutral_npcs) do
+		nrows = nrows + 1
+	end
+	if nrows > 60 then
+		neutral_npcs = {}
+	end
+end
+
 function on_game_start()
-    RegisterScriptCallback("npc_on_death_callback", relation_kill_check)
+	RegisterScriptCallback("npc_on_death_callback", relation_kill_check)
+	RegisterScriptCallback("npc_on_before_hit", npc_on_before_hit)
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
 end
