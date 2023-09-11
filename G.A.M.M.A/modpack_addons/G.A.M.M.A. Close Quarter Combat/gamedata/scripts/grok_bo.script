@@ -159,17 +159,17 @@ hp_rounds = {
 	["ammo_5.56x45_ss190"] = 1.33,
 	["ammo_5.56x45_ss190_bad"] = 1.33,
 	["ammo_5.56x45_ss190_verybad"] = 1.33,
-	["ammo_12x76_zhekan"] = 5,
-	["ammo_12x76_zhekan_bad"] = 5,
-	["ammo_12x76_zhekan_verybad"] = 5,
-	["ammo_12x76_dart"] = 2,
-	["ammo_12x76_dart_bad"] = 2,
-	["ammo_12x76_dart_verybad"] = 2,
-	["ammo_12x70_buck"] = 2,
-	["ammo_12x70_buck_bad"] = 2,
-	["ammo_12x70_buck_verybad"] = 2,
+	["ammo_12x76_zhekan"] = 3.5,
+	["ammo_12x76_zhekan_bad"] = 3.5,
+	["ammo_12x76_zhekan_verybad"] = 3.5,
+	["ammo_12x76_dart"] = 1.5,
+	["ammo_12x76_dart_bad"] = 1.5,
+	["ammo_12x76_dart_verybad"] = 1.5,
+	["ammo_12x70_buck"] = 3,
+	["ammo_12x70_buck_bad"] = 3,
+	["ammo_12x70_buck_verybad"] = 3,
 	["ammo_23x75_shrapnel"] = 2,
-	["ammo_23x75_barrikada"] = 5,
+	["ammo_23x75_barrikada"] = 3.5,
 	["ammo_20x70_buck"] = 2,
 }
 
@@ -657,13 +657,17 @@ function npc_on_before_hit(npc,shit,bone_id)
 		if npc:section() == "monolith_eidolon" then
 			custom_bone_value[custom_bone_id] = 4
 			-- Add a gravi shield effect to make Eidolon even more unique
-			fx = particles_object("anomaly2\\gravi_anomaly_shield_00")
 			pos = npc:bone_position(custom_bone_name)
+			fxdir = shit.direction
+			fxdir.x = (fxdir.x * -1.0) + math.random(-0.009, 0.009)
+			fxdir.y = fxdir.y + math.random(-0.0045, 0.0045)
+			fxdir.z = (fxdir.z * -1.0) + math.random(-0.009, 0.009)
 			camdir = device().cam_pos:add(device().cam_dir:mul(dist))
-			pos.x = pos.x + (camdir.x * -0.001)
-			pos.z = pos.z + (camdir.z * -0.001)
-			fx:move_to(pos, camdir)
-			fx:play_at_pos(pos)
+			pos.x = pos.x + (camdir.x * -0.0005)
+			pos.z = pos.z + (camdir.z * -0.0005)
+			fx = particles_object("anomaly2\\gravi_anomaly_shield_00")
+			fx:set_direction(fxdir)
+			fx:play_at_pos(pos)		
 		end
 	
 -- 		/////// save hit_fraction value /////// 
@@ -707,11 +711,9 @@ function npc_on_before_hit(npc,shit,bone_id)
 		
 --	/////// CHECK IF NPC IS FROM THE ISG FACTION TO REDUCE PENETRATION AND DAMAGE //////
 
-		local se_obj = alife_object(npc:id())
-		local faction = se_obj:community()
 		isg_res = 1
 		if faction == "isg" then
-			isg_res = 0.70
+			isg_res = 0.65
 			sin_res = 0.70
 			pos = npc:bone_position(custom_bone_name)
 			fx = particles_object("hit_fx\\hit_metal_0" .. math.random(0,3))
@@ -728,7 +730,7 @@ function npc_on_before_hit(npc,shit,bone_id)
 		
 		if faction == "monolith" then
 			isg_res = 0.90
-			sin_res = 0.90
+			sin_res = 0.80
 		end
 		
 		if faction == "bandit" then
@@ -791,7 +793,7 @@ function npc_on_before_hit(npc,shit,bone_id)
 		if k_ap > new_bone_armor then -- if bullet damaged armor enough and pen with reduced power
 			shit.power = shit.power * custom_bone_hitfraction
 		else
-			shit.power = 0.025 * shit.power * custom_bone_hitfraction * wm_size * 45 / hp_no_penetration_penalty -- residual concussion damage if bullet didn't damage armor enough, the bigger the ammo the bigger the residual damages
+			shit.power = 0.0025 * shit.power * custom_bone_hitfraction * math.random(25,100) / hp_no_penetration_penalty -- residual concussion damage if bullet didn't damage armor enough, the bigger the ammo the bigger the residual damages
 			pos = npc:bone_position(custom_bone_name)
 			fx = particles_object("hit_fx\\hit_metal_0" .. math.random(0,3))
 			fxdir = shit.direction
