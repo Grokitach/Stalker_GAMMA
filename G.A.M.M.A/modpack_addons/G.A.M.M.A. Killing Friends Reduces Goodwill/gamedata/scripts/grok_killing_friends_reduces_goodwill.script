@@ -1,17 +1,14 @@
-neutral_npcs = {}
+aggressive_npcs = {}
 
-local function npc_on_before_hit(npc,amount,local_direction,who,bone_index)
+local function npc_on_before_hit(npc,shit,bone_id, flags)
 	if not IsStalker(npc) then return end
 	
-	if who:id() == db.actor:id() then
-		local npc_faction = npc and character_community(npc)
-		local actor_faction = db.actor and character_community(db.actor)
-		
-		if (xr_conditions.is_factions_friends(nil, nil, { actor_faction, npc_faction })) or (xr_conditions.is_factions_neutrals(nil, nil, { actor_faction, npc_faction })) then
-			neutral_npcs[npc:id()] = true
+	if shit and shit.draftsman and (shit.draftsman:id() == 0 or shit.draftsman:has_info("npcx_is_companion")) then
+		if xr_conditions.is_enemy_fighting_actor(npc,shit.draftsman) then
+			aggressive_npcs[npc:id()] = true
 		end
 	end
-end
+end 
 
 function relation_kill_check(victim, killer)
 	if not IsStalker(victim) then return end
@@ -27,20 +24,21 @@ function relation_kill_check(victim, killer)
 	--    if victim:relation(killer) > game_object.enemy then
 
 		if (xr_conditions.is_factions_friends(nil, nil, { k_faction, v_faction })) or (xr_conditions.is_factions_neutrals(nil, nil, { k_faction, v_faction })) then
-			local delta		= 200
-			if delta and v_faction then
-				game_relations.change_factions_community_num(v_faction,db.actor:id(), -tonumber(delta))
-				game_statistics.increment_reputation(-tonumber(delta))
-				news_manager.send_tip(db.actor, game.translate_string("st_grok_goodwill_loss"), 0, nil, 2000)
+			if v_faction then
+				if aggressive_npcs[victim:id()] then
+					local delta		= 10
+					game_relations.change_factions_community_num(v_faction,db.actor:id(), -tonumber(delta))
+				else
+					local delta		= 140
+					game_relations.change_factions_community_num(v_faction,db.actor:id(), -tonumber(delta))
+					game_statistics.increment_reputation(-tonumber(300))
+					news_manager.send_tip(db.actor, game.translate_string("st_grok_goodwill_loss"), 0, nil, 2000)
+				end
 			end
 		end
 		
 		if (xr_conditions.is_factions_enemies(nil, nil, { k_faction, v_faction })) then
-			if neutral_npcs[victim:id()] then
-				local delta		= 200
-			else
-				local delta		= 10
-			end
+			local delta		= 10
 			if delta and v_faction then
 				game_relations.change_factions_community_num(v_faction,db.actor:id(), -tonumber(delta))
 			end
