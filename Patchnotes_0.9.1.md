@@ -122,7 +122,7 @@
 
 - New Tasks
     - New dynamic task asking for Drug Kit or Ammo Kit for all factions
-    - Replaced Wolf buggy resuce stalker task by a new task asking to clear all the mutants from Cordon.
+    - Replaced Wolf buggy rescue stalker task by a new task asking to clear all the mutants from Cordon.
     - New Sakharov Task: clean mutants in Agroprom Udg.
     - New Sakharov Task: clean mutants in X16 Lab. Ecologists also now have a chance to spawn in x16 after the lab is done to make the map more lively.
     - Replaced Skinflint task for Bear Detectors for a new one asking for gear to infiltrate Duty. This is locked behind 1000 Goodwill with Freedom.
