@@ -127,8 +127,8 @@
     - New Sakharov Task: clean mutants in Agroprom Udg.
     - New Sakharov Task: clean mutants in X16 Lab. Ecologists also now have a chance to spawn in x16 after the lab is done to make the map more lively.
     - Replaced Skinflint task for Bear Detectors for a new one asking for gear to infiltrate Duty. This is locked behind 1000 Goodwill with Freedom.
-    - New dynamic task available for all Freedom to bring some drugs
-    - New Fanatic Task to clear mutant nest in Meadow
+    - New dynamic task available for all Freedom to bring some drugs.
+    - New Fanatic Task to clear mutant nest in Meadow.
 
 - More dynamic faction relation to reduce the hobo murder player behavior (think before shooting):
     - Killing allies reduces reputation by 300 and the goodwill with the neutral victim faction by 140.
@@ -146,7 +146,7 @@
 
 - Once a body is looted by an NPC, it stays looted independently of the NPCs fate. 
 
-- Wepl hit effects fixes and reduced aim punch
+- Wepl hit effects fixes and reduced aim punch.
 
 
 **Gunplay**
@@ -172,49 +172,50 @@
     - Concussion damages (when ammo didn't penetrate the armor) have been slightly increased and made a bit more random.
     - Concussion damages for HP rounds have been reduced to match their FMJ counter part.
     - Concussion damages of Slugs and Buckshots have been reduced. Slugs still stagger in the head, thus making headshot spam still easy.
-    - Slightly reduced damages to NPCs extremities
+    - Slightly reduced damages to NPCs extremities.
     - Removed the melee hit redirection to torso: aim for the head! Axes dunk is thus much more powerful.
 
 - Guns balance:
-    - Saigas mag size increase
-    - Reduced endgame 5.45 guns recoil
-    - Reduced AKM Alfa recoil significantly
-    - Reduced AKM ISG recoil a little bit
-    - Reduced AK104 Alfa recoil a little bit
+    - Saigas mag size increase.
+    - Reduced endgame 5.45 guns recoil.
+    - Reduced AKM Alfa recoil significantly.
+    - Reduced AKM ISG recoil a little bit.
+    - Reduced AK104 Alfa recoil a little bit.
     - Replaced AK104 by AK103 (grenade launcher compatible).
-    - Firebreath Spas12 Salvo suppressor instead of NATO
-    - PP2000 - mags have 45 rounds
-    - PP2000 - 600rpm as IRL
-    - PP2000 - now has high accuracy
+    - Firebreath Spas12 Salvo suppressor instead of NATO.
+    - PP2000 - mags have 45 rounds.
+    - PP2000 - 600rpm as IRL.
+    - PP2000 - now has high accuracy.
     - Vihr reduced recoil, it's now a very strong 9x39 gun.
-    - HOWA20 and RU556 normal 5.56 damages
+    - HOWA20 and RU556 normal 5.56 damages.
+    - Coonan increased recoil and added a silencer model.
 
 
 **Balance**
-- Easier bandits, tankier Sin, ISG and Monolith
-- Slightly increased end game NPCs head armor to actor levels
+- Easier bandits, tankier Sin, ISG and Monolith.
+- Slightly increased end game NPCs head armor to actor levels.
 - ISG teleporting should now avoid the bullet (bullet dodge system).
 - Reduced exo outfit and exo helmet drop chance to match new north population.
-- Some Scopes were moved at higher Trader Supply Level
-- Removed SVT from stashes
-- Removed SVT from NPCs loadouts
-- Reduced Bullet res cap, increased strike res cap
-- Reduced exo armors AP res
-- Bit more common saiga isg , bit more rare raptr
-- More rare Desert Eagle
-- Increased toz 106 20ga conversion price
-- Reduced dynamic fields artefacts spawn
-- Reduced chance of dynamic artefacts spawn
-- Slightly Increased ammo parts salvaging coefficient (80% to 90%)
-- Phantom Star duration divided by 4
-- Vihr and SVU increased spawn chance on NPCs
-- SVU repair type to advanced
-- bit rarer SVD
-- More common basic P90
-- Bit more rare RPK16
-- More rare Nosorog and Spartan Helm armor spawn chance
+- Some Scopes were moved at higher Trader Supply Level.
+- Removed SVT from stashes.
+- Removed SVT from NPCs loadouts.
+- Reduced Bullet res cap, increased strike res cap.
+- Reduced exo armors AP res.
+- Bit more common saiga isg , bit more rare raptr.
+- More rare Desert Eagle.
+- Increased toz 106 20ga conversion price.
+- Reduced dynamic fields artefacts spawn.
+- Reduced chance of dynamic artefacts spawn.
+- Slightly Increased ammo parts salvaging coefficient (80% to 90%).
+- Phantom Star duration divided by 4.
+- Vihr and SVU increased spawn chance on NPCs.
+- SVU repair type to advanced.
+- bit rarer SVD.
+- More common basic P90.
+- Bit more rare RPK16.
+- More rare Nosorog and Spartan Helm armor spawn chance.
 - Rebalanced Exo PSUs: No regen, but lower consumptions and higher storage capacities.
-- Multiplied artefacts explosition resistance by 1.5 
+- Multiplied artefacts explosition resistance by 1.5.
 - Heavy armors artefacts slots increased (Skat9, Exosuits) to make them more interesting to use.
 - Reduced Drug kit and ammo kit prices.
 
@@ -222,8 +223,8 @@
 **Visuals**
 - Updated Reshade to 5.9.2 with addon support: Reshade effects don't mess with the UI anymore thanks to Demonized EXE.
 - Sun quality to medium and shadows scanlines fixes: no more parallel evenly spaced bugged shadow lines on surfaces.
-- New SSS and atmospherics versions
-- Actor shadow on by default
+- New SSS and atmospherics versions.
+- Actor shadow on by default.
 
 
 **Audio**
@@ -236,9 +237,9 @@
 - Free Zoom properly resets when dying.
 - Sound volume proper reset after dying with volume effects down (hopefully).
 - All Vices are now free by default and use the tools given to the associated mechanic.
-- Removal of Vice dialog since they are now free
+- Removal of Vice dialog since they are now free.
 - Hideout Furniture 2.2.1 thanks to Veerserif and Hatexsi and Aoldri.
-- Improved placeable campfires: Fixed placeable firecamps not staying lit upon reloading a save. Also the fire start animation is much better. Campfires don't enflame the actor anymore. Campfire placeable are cheaper and lighter
+- Improved placeable campfires: Fixed placeable firecamps not staying lit upon reloading a save. Also the fire start animation is much better. Campfires don't enflame the actor anymore. Campfire placeable are cheaper and lighter.
 - Minimap showed by default.
 - Cr3pis fixes to icons and textures.
 - Removed useless ammo parts from various sources.
@@ -255,34 +256,34 @@
 - Spreaded timed scripts execution over time to avoid stutters.
 - BHS limbs damages aren't random anymore.
 - BHS health gating: you can't be one shotted because your head or torso went from 11 to 0 in one shot.
-- Parts fix for P90 GS
-- Full Empty charges Melter properly
-- Fixed K98 condition decrease that was too high
-- Zombies don't claim loot
-- Fixed blood sucker food rad res typo
-- MP5SD Acog potential fix
-- Sell items to dead traders bug abuse fix
-- Fixed artefacts random double spawns
-- Fixed double toolkits spawn in green stashes
-- Fixed R thigh L thigh damage multiplier to NPCs
-- Fix treasure manager crash fix
-- 7.62x25 p rounds damage boost fix to mutants
-- potential bug fix for sim_board.script:140 crash
-- tan5050 fix for displayed max carry weight with artefacts
-- Inventory slow scroll fix after alt tabbing (hopefully)
-- Fair Fast Travel compatibility fix
-- Starter loadouts special ammo fix by MotaRin
-- Removed Knife fixed FOV
-- Fixed mags HUD position
-- Added an edge case to avoid CSky exos being deleted in the south (the… 
-- Fixed helmet armor for stalker_soldier_hired_lc_17 and 20
-- PP2000 hud fov fix and specter dynamic zoom fix
-- Chimera hunter sight position fix on icon
-- M4s inspect animations camera fixes
-- Saiga 12s idle camera anim bugfix for area transitions
-- SVU sound fix for NPC shooting
-- removed Tomahawk from shops
-- NïS fix for workshop UI
-- Fixed Eidolon particles display
-- Fixed SVU "infinite reload" when mashing R key
-- Removed the Melter Details option to avoid the crash
+- Parts fix for P90 GS.
+- Full Empty charges Melter properly.
+- Fixed K98 condition decrease that was too high.
+- Zombies don't claim loot.
+- Fixed blood sucker food rad res typo.
+- MP5SD Acog potential fix.
+- Sell items to dead traders bug abuse fix.
+- Fixed artefacts random double spawns.
+- Fixed double toolkits spawn in green stashes.
+- Fixed R thigh L thigh damage multiplier to NPCs.
+- Fix treasure manager crash fix.
+- 7.62x25 p rounds damage boost fix to mutants.
+- potential bug fix for sim_board.script:140 crash.
+- tan5050 fix for displayed max carry weight with artefacts.
+- Inventory slow scroll fix after alt tabbing (hopefully).
+- Fair Fast Travel compatibility fix.
+- Starter loadouts special ammo fix by MotaRin.
+- Removed Knife fixed FOV.
+- Fixed mags HUD position.
+- Added an edge case to avoid CSky exos being deleted in the south, which could affect the Clear the Pump Station Task.
+- Fixed helmet armor for stalker_soldier_hired_lc_17 and 20.
+- PP2000 hud fov fix and specter dynamic zoom fix.
+- Chimera hunter sight position fix on icon.
+- M4s inspect animations camera fixes.
+- Saiga 12s idle camera anim bugfix for area transitions.
+- SVU sound fix for NPC shooting.
+- removed Tomahawk from shops.
+- NïS fix for workshop UI.
+- Fixed Eidolon particles display.
+- Fixed SVU "infinite reload" when mashing R key.
+- Removed the Melter Details option to avoid the crash.
