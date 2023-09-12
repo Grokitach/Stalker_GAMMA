@@ -34,6 +34,7 @@
 - Bert's Vector Reanimation to GAMMA Large Files: <https://discord.com/channels/912320241713958912/1122219515728625686/1122219515728625686>
 - Slugler's No Old Ammo in the Ammo Wheel: <https://discord.com/channels/912320241713958912/1035947361920364624/1035947361920364624>
 - Andtheherois's Ammo Wheel Retexture: <https://discord.com/channels/912320241713958912/1036082642644369438/1036082642644369438>
+- SixSloth's & Veerserif's Hideout Furnitures 2.2.1 GAMMA patch: <https://discord.com/channels/912320241713958912/1142851348187066418/1142851348187066418>
 - Cr3pis textures and icons fixes to GAMMA Large Files
 
 - New set of MCM values for the newly added addons.
