@@ -173,6 +173,26 @@ hp_rounds = {
 	["ammo_20x70_buck"] = 2,
 }
 
+function perk_based_artefacts.npc_on_before_hit(npc, shit, bone_id, flags) end
+function perk_based_artefacts.npc_on_hit_callback(npc, amount, local_direction, who, bone_index) end
+function perk_based_artefacts.npc_on_death_callback(npc, who) end
+
+local pba = perk_based_artefacts
+
+function PBA_obh(npc, shit, bone_id, flags)
+	pba.last_npc_hit = hit(shit)
+	pba.last_npc_hit_bone_index = bone_id
+	perk_based_artefacts.process_artefacts(perk_based_artefacts.artefact_on_npc_before_hit_functions, npc, shit, bone_id, flags)
+end
+
+function PBA_ohc(npc, amount, local_direction, who, bone_index)
+	perk_based_artefacts.process_artefacts(perk_based_artefacts.artefact_on_npc_hit_functions, npc, amount, local_direction, who, bone_index, pba.last_npc_hit)
+end
+
+function PBA_odc(npc, who)
+	perk_based_artefacts.process_artefacts(perk_based_artefacts.artefact_on_npc_death_functions, npc, who, pba.last_npc_hit, pba.last_npc_hit_bone_index)
+end
+
 function monster_on_before_hit(monster,shit,bone_id)
 
 	if shit.draftsman:id() ~= db.actor:id() then
@@ -782,6 +802,11 @@ function npc_on_before_hit(npc,shit,bone_id)
 
 	shit.power = wpn_hit_power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * k_hit * custom_bone_dmg_mult * custom_bone_ap_scale * 1.1 * sniper_bad_bone_shit_reduce * barrel_condition_corrected * sin_res * difficulty_multiplier[game_num] * ammo_mult
 
+	-- etapomom: run pba before armor so that they actually feel like they're doing something.
+	pbadamage = hit(shit)
+	PBA_obh(npc, pbadamage, bone_id, flags)
+	shit.power = pbadamage.power
+	
 	local armor_loss_increment = tonumber(k_ap * 0.60) -- reduce bone armor depending on k_ap
 	
 	local new_bone_armor = tonumber( tonumber(custom_bone_armor) - tonumber(armor_loss_increment) )-- armor reduce
@@ -823,24 +848,22 @@ function npc_on_before_hit(npc,shit,bone_id)
 		shit.power = shit.power * 2
 	end
 	
-	if perk_based_artefacts then
-		perk_based_artefacts.last_npc_hit = hit(shit)
-		perk_based_artefacts.last_npc_hit_bone_index = bone_id    
+	life_remove = shit.power 
 	
-		local pbadamage = hit(shit)
-		perk_based_artefacts.process_artefacts(perk_based_artefacts.artefact_on_npc_before_hit_functions, npc, pbadamage, bone_id)
-	
-		shit.power = pbadamage.power
-	end
-	
-	life_remove = npc.health - shit.power 
-
-	printf("Real AP power= %s, Bone armor after hit= %s, Damages inflicted= %s, Remaining health= %s", k_ap, custom_bone_value[custom_bone_id], shit.power, life_remove)
 	if surrender_bonus == 1 then
 		npc:set_health_ex(0.0)
 	else
-		npc:set_health_ex(life_remove)
+		npc:set_health_ex(npc.health - life_remove)
 	end
+	
+	-- etapomom: fire on_death_callback and or on_hit_callback from pba
+	if npc.health <= 0 then
+		PBA_odc(npc, shit.draftsman)
+	end
+	
+	PBA_ohc(npc, shit.power, shit.direction, shit.draftsman, bone_id)
+
+	printf("Real AP power= %s, Bone armor after hit= %s, Damages inflicted= %s, Remaining health= %s", k_ap, custom_bone_value[custom_bone_id], life_remove, npc.health)
 	
 --	if life_remove < -1 then
 --		if head_bones[bone_id] then
