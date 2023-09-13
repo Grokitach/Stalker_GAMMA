@@ -1,0 +1,630 @@
+local CreateTimeEvent = demonized_time_events.CreateTimeEvent
+local RemoveTimeEvent = demonized_time_events.RemoveTimeEvent
+
+s_event = perk_based_artefacts.add_simple_timed_effect
+n_event = perk_based_artefacts.add_timed_effect
+
+local random = math.random
+local get_safe_sound_object = xr_sound.get_safe_sound_object
+
+-- LIFTED
+local function get_random_array_element(t)
+	return t[random(#t)]
+end
+
+local function play_sound_on_actor(snd, volume, frequency)
+	if not snd then
+		--trace("snd is nil")
+		return
+	end
+	local actor = db.actor
+	local snd = get_safe_sound_object(snd)
+	if snd then
+		snd:play(actor, 0, sound_object.s2d)
+		snd.volume = volume or 1
+		snd.frequency = frequency or 1
+		return snd
+	end
+end
+--
+
+perk_based_artefacts.artefact_on_before_hit_functions.af_lucifer =
+	function(actor, artefact_count, artefact_ids, artefact_names, s_hit, bone_id, flags)
+		local af_lucifer = perk_based_artefacts.artefact_props.af_lucifer
+		local overcharge = af_lucifer:get_overcharge()
+		s_hit.power = s_hit.power * (1 - normalize(af_lucifer.condition, 0.5, 1.5) - overcharge * 0.1) * 0.25 -- 12.5% reduction at 100% condition
+	end
+
+perk_based_artefacts.artefact_on_before_hit_functions.af_black_angel =
+	function(actor, artefact_count, artefact_ids, artefact_names, shit, bone_id, flags)
+		local af_black_angel = perk_based_artefacts.artefact_props.af_black_angel
+		if not af_black_angel.valid_hits[shit.type] then
+			--trace("Black Angel, not a valid hit type %s", shit.type)
+			return
+		end
+
+		af_black_angel.dice_roll = random(100)
+		if af_black_angel.dice_roll <= af_black_angel.reflect_chance[artefact_count] then
+			local snd = get_safe_sound_object("perk_based_artefacts\\NLRICO" .. random(1, 4))
+			snd:play_at_pos(db.actor, db.actor:position(), 0, sound_object.s3d)
+			snd.frequency = random_float(0.85, 1.15)
+			snd.volume = 1.0
+			--trace("Black Angel, successfully blocked %s damage!", shit.power)
+			shit.power = 0.001
+			
+			local gibs = particles_object("anomaly2\\effects\\emi_entrance_big_02")
+			local hitpos = actor:bone_position(bone_id)
+			hitpos.x = hitpos.x + random(-0.05, 0.05)
+			hitpos.y = hitpos.y + random(-0.05, 0.05)
+			hitpos.z = hitpos.z + random(-0.05, 0.05)
+			if gibs then
+				gibs:play_at_pos(hitpos)
+			end
+			gibs = particles_object("anomaly2\\effects\\electra_entrance_big")
+			if gibs then
+				gibs:play_at_pos(hitpos)
+			end
+		end
+	end
+
+perk_based_artefacts.artefact_on_hit_functions.af_black_angel =
+	function(actor, artefact_count, artefact_ids, artefact_names, obj, amount, who, last_hit)
+		local af_black_angel = perk_based_artefacts.artefact_props.af_black_angel
+		if af_black_angel.dice_roll > af_black_angel.reflect_chance[artefact_count] then
+			--trace("Black Angel not triggered, dice roll %s, chance %s", af_black_angel.dice_roll, af_black_angel.reflect_chance[artefact_count])
+			return
+		end
+		if not (
+			last_hit and
+			af_black_angel.valid_hits[last_hit.type] and
+			who and
+			obj
+		) then
+			--trace("Black Angel not triggered, not valid hit")
+			return
+		end
+
+		local af_lucifer = perk_based_artefacts.artefact_props.af_lucifer
+
+		local s_hit = hit(last_hit)
+		local hit_koeff = af_lucifer:check_lucifer() and 0.5 or 0.35
+		s_hit.power = s_hit.power * hit_koeff
+		s_hit.draftsman = actor
+
+		who:hit(s_hit)
+		
+		local gibs = particles_object("anomaly2\\effects\\emi_entrance_big_02")
+		local hitpos = who:bone_position(who:bone_name(bone_id))
+		hitpos.x = hitpos.x + random(-0.05, 0.05)
+		hitpos.y = hitpos.y + random(-0.05, 0.05)
+		hitpos.z = hitpos.z + random(-0.05, 0.05)
+		if gibs then
+			gibs:play_at_pos(hitpos)
+		end
+
+		gibs = particles_object("anomaly2\\effects\\electra_entrance_big")
+		if gibs then
+			gibs:play_at_pos(hitpos)
+		end
+
+		--trace("hit %s, last_hit %s", s_hit.power, last_hit.power)
+	end
+
+perk_based_artefacts.artefact_props.af_lighthouse.on_death =
+	function(self, actor, artefact_count, artefact_ids, artefact_names, npc, who, last_npc_hit, last_npc_hit_bone_index)
+		--trace("Teleporting actor")
+		local gibs = particles_object("anomaly2\\effects\\teleport_spark_out_monolit")
+		if gibs and not gibs:playing() then
+			gibs:play_at_pos(actor:position())
+		end
+		actor:set_actor_position(npc:position())
+		if gibs and not gibs:playing() then
+			gibs:play_at_pos(npc:position())
+		end
+		play_sound_on_actor(get_random_array_element(self.sounds), 0.7, random_float(0.95, 1.05))
+	end
+
+perk_based_artefacts.artefact_props.af_sandstone =
+{
+	buff_timer = 5,
+	vulnerable = 1.25,
+	p_h_chance = 50,
+	f_a_chance = 25,
+	
+	g_regen = (function()
+		local t = {}
+		for artefact_count = 1, 5 do
+			-- -1.8% (0%) // 1% // 3% // 4.2% // 4.6%
+			artefact_count = artefact_count
+			t[artefact_count] = (0.04 - 0.004 * artefact_count) * artefact_count - 0.054
+		end
+		return t
+	end)(),
+	
+	g_speed = (function()
+		local t = {}
+		for artefact_count = 1, 5 do
+			-- 4% // 14.5% // 22% // 26.5% // 28%
+			t[artefact_count] = (0.15 - 0.015 * artefact_count) * artefact_count - 0.095
+		end
+		return t
+	end)(),
+	
+	on_before_hit = function(self, actor, artefact_count, artefact_ids, artefact_names, npc, s_hit, bone_id, flags)
+		return
+	end,
+	
+	on_death = function(self, actor, artefact_count, artefact_ids, artefact_names, npc, who, last_npc_hit, last_npc_hit_bone_index)
+		
+		play_sound_on_actor("perk_based_artefacts\\BLUDFUEL", 0.1, 1.0)
+
+		local gibs = particles_object("_samples_particles_\\explode_radial_distort")
+		if gibs then
+			gibs:play_at_pos(actor:bone_position("bip01_spine"))
+		end
+		
+		speed.remove_speed("af_sandstone_speed_w")
+		speed.remove_speed("af_sandstone_speed_s")
+		
+		RemoveTimeEvent("af_sandstone_speed", "af_sandstone_speed")
+		
+		speed.add_speed("af_sandstone_speed_w", 1 + self.g_speed[artefact_count], false, false)
+		speed.add_speed("af_sandstone_speed_s", 1 + self.g_speed[artefact_count], true, false)
+		
+		local health_boost = self.g_regen[artefact_count]
+		
+		if health_boost <= 0 then
+			health_boost = 0
+		end
+		
+		if artefact_count >= 2 then
+			n_event(self.buff_timer, function()
+				actor:change_health(health_boost * 0.02)
+			end)
+		end
+		
+		if artefact_count >= 3 then
+			if zzz_player_injuries and zzz_player_injuries.health then
+				if (random(1, 100)) <= self.p_h_chance then
+					local part_pick = random(1, 6)
+					
+					local health
+					if part_pick == 1 then
+						health = utils_obj.load_var(actor, "health.head", zzz_player_injuries.health.head)
+						zzz_player_injuries.health.head = health + 1
+						utils_obj.save_var(actor, "health.head", zzz_player_injuries.health.head)
+					end
+					if part_pick == 2 then
+						health = utils_obj.load_var(actor, "health.torso", zzz_player_injuries.health.torso)
+						zzz_player_injuries.health.torso = health + 1
+						utils_obj.save_var(actor, "health.torso", zzz_player_injuries.health.torso)
+					end
+					if part_pick == 3 then
+						health = utils_obj.load_var(actor, "health.leftarm", zzz_player_injuries.health.leftarm)
+						zzz_player_injuries.health.leftarm = health + 1
+						utils_obj.save_var(actor, "health.leftarm", zzz_player_injuries.health.leftarm)
+					end
+					if part_pick == 4 then
+						health = utils_obj.load_var(actor, "health.rightarm", zzz_player_injuries.health.rightarm)
+						zzz_player_injuries.health.rightarm = health + 1
+						utils_obj.save_var(actor, "health.rightarm", zzz_player_injuries.health.rightarm)
+					end
+					if part_pick == 5 then
+						health = utils_obj.load_var(actor, "health.leftleg", zzz_player_injuries.health.leftleg)
+						zzz_player_injuries.health.leftleg = health + 1
+						utils_obj.save_var(actor, "health.leftleg", zzz_player_injuries.health.leftleg)
+					end
+					if part_pick == 6 then
+						health = utils_obj.load_var(actor, "health.rightleg", zzz_player_injuries.health.rightleg)
+						zzz_player_injuries.health.rightleg = health + 1
+						utils_obj.save_var(actor, "health.rightleg", zzz_player_injuries.health.rightleg)
+					end
+				end
+			else
+				n_event(self.buff_timer, function()
+					actor:change_health(health_boost * 0.01)
+				end)
+			end
+		end
+		
+		-- couldn't get this to work
+		-- for some reason, it always damages limbs???
+		
+		--[[
+		if artefact_count >= 4 then
+			if zzz_player_injuries and zzz_player_injuries.health then
+				if (random(1, 100)) <= self.f_a_chance then
+					zzz_player_injuries.medkits.timedhealth = self.buff_timer
+					zzz_player_injuries.medkits.lastregen = time_global()
+					
+					--local timed_health = utils_obj.load_var(actor, "medkits.timedhealth", zzz_player_injuries.medkits.timedhealth)
+					--timed_health = self.buff_timer
+					
+					local health_head = utils_obj.load_var(actor, "timedhp.head", zzz_player_injuries.timedhp.head)
+					local health_torso = utils_obj.load_var(actor, "timedhp.torso", zzz_player_injuries.timedhp.torso)
+					local health_leftarm = utils_obj.load_var(actor, "timedhp.leftarm", zzz_player_injuries.timedhp.leftarm)
+					local health_rightarm = utils_obj.load_var(actor, "timedhp.rightarm", zzz_player_injuries.timedhp.rightarm)
+					local health_leftleg = utils_obj.load_var(actor, "timedhp.leftleg", zzz_player_injuries.timedhp.leftleg)
+					local health_rightleg = utils_obj.load_var(actor, "timedhp.rightleg", zzz_player_injuries.timedhp.rightleg)
+					
+					zzz_player_injuries.timedhp.head = health_head + 1
+					zzz_player_injuries.timedhp.torso = health_torso + 1
+					zzz_player_injuries.timedhp.leftarm = health_leftarm + 1
+					zzz_player_injuries.timedhp.rightarm = health_rightarm + 1
+					zzz_player_injuries.timedhp.leftleg = health_leftleg + 1
+					zzz_player_injuries.timedhp.rightleg = health_rightleg + 1
+					
+					utils_obj.save_var(actor, "timedhp.head", zzz_player_injuries.timedhp.head)
+					utils_obj.save_var(actor, "timedhp.torso", zzz_player_injuries.timedhp.torso)
+					utils_obj.save_var(actor, "timedhp.leftarm", zzz_player_injuries.timedhp.leftarm)
+					utils_obj.save_var(actor, "timedhp.rightarm", zzz_player_injuries.timedhp.rightleg)
+					utils_obj.save_var(actor, "timedhp.leftleg", zzz_player_injuries.timedhp.leftleg)
+					utils_obj.save_var(actor, "timedhp.rightleg", zzz_player_injuries.timedhp.rightleg)
+					
+					--utils_obj.save_var(actor, "medkits.timedhealth", zzz_player_injuries.medkits.timedhealth)
+				end
+			else
+				s_event(self.buff_timer, function()
+					actor:change_health(health_boost * 0.01)
+				end, nil, "af_sandstone_heal_3")
+			end
+		end
+		--]]
+		
+		if artefact_count >= 4 then
+			if zzz_player_injuries and zzz_player_injuries.health then
+				if (random(1, 100)) <= self.f_a_chance then
+					local part_pick = random(1, 6)
+					
+					local health
+					if part_pick == 1 then
+						health = utils_obj.load_var(actor, "health.head", zzz_player_injuries.health.head)
+						zzz_player_injuries.health.head = health + 1
+						utils_obj.save_var(actor, "health.head", zzz_player_injuries.health.head)
+					end
+					if part_pick == 2 then
+						health = utils_obj.load_var(actor, "health.torso", zzz_player_injuries.health.torso)
+						zzz_player_injuries.health.torso = health + 1
+						utils_obj.save_var(actor, "health.torso", zzz_player_injuries.health.torso)
+					end
+					if part_pick == 3 then
+						health = utils_obj.load_var(actor, "health.leftarm", zzz_player_injuries.health.leftarm)
+						zzz_player_injuries.health.leftarm = health + 1
+						utils_obj.save_var(actor, "health.leftarm", zzz_player_injuries.health.leftarm)
+					end
+					if part_pick == 4 then
+						health = utils_obj.load_var(actor, "health.rightarm", zzz_player_injuries.health.rightarm)
+						zzz_player_injuries.health.rightarm = health + 1
+						utils_obj.save_var(actor, "health.rightarm", zzz_player_injuries.health.rightarm)
+					end
+					if part_pick == 5 then
+						health = utils_obj.load_var(actor, "health.leftleg", zzz_player_injuries.health.leftleg)
+						zzz_player_injuries.health.leftleg = health + 1
+						utils_obj.save_var(actor, "health.leftleg", zzz_player_injuries.health.leftleg)
+					end
+					if part_pick == 6 then
+						health = utils_obj.load_var(actor, "health.rightleg", zzz_player_injuries.health.rightleg)
+						zzz_player_injuries.health.rightleg = health + 1
+						utils_obj.save_var(actor, "health.rightleg", zzz_player_injuries.health.rightleg)
+					end
+				end
+			else
+				n_event(self.buff_timer, function()
+					actor:change_health(health_boost * 0.01)
+				end)
+			end
+		end
+			
+		CreateTimeEvent("af_sandstone_speed", "af_sandstone_speed", self.buff_timer, function()
+			speed.remove_speed("af_sandstone_speed_w")
+			speed.remove_speed("af_sandstone_speed_s")
+		end)
+	end
+}
+
+perk_based_artefacts.artefact_on_before_hit_functions.af_sandstone =
+	function(actor, artefact_count, artefact_ids, artefact_names, s_hit, bone_id, flags)
+		local af_sandstone = perk_based_artefacts.artefact_props.af_sandstone
+		
+		if artefact_count < 5 then
+			if s_hit.type ~= hit.radiation and s_hit.type ~= hit.telepatic then
+				s_hit.power = s_hit.power * af_sandstone.vulnerable
+			end
+		end
+	end
+
+perk_based_artefacts.artefact_on_weapon_fired_functions.af_sandstone =
+	function(actor, artefact_count, artefact_ids, artefact_names, obj, wpn, ammo_elapsed, grenade_elapsed, ammo_type, grenade_type)
+		return
+	end
+
+perk_based_artefacts.artefact_on_hit_functions.af_sandstone =
+	function(actor, artefact_count, artefact_ids, artefact_names, obj, amount, who, last_hit)
+		return
+	end
+
+perk_based_artefacts.artefact_on_item_drag_dropped_functions.af_sandstone =
+	function(actor, obj_1, obj_2, slot_from, slot_to)
+		return
+	end
+
+perk_based_artefacts.artefact_on_npc_death_functions.af_sandstone =
+	function(actor, artefact_count, artefact_ids, artefact_names, npc, who, last_npc_hit, last_npc_hit_bone_index)
+		perk_based_artefacts.artefact_props.af_sandstone:on_death(actor, artefact_count, artefact_ids, artefact_names, npc, who, last_npc_hit, last_npc_hit_bone_index)
+	end
+
+perk_based_artefacts.artefact_on_monster_death_functions.af_sandstone =
+	function(actor, artefact_count, artefact_ids, artefact_names, monster, who, last_npc_hit, last_npc_hit_bone_index)
+		perk_based_artefacts.artefact_props.af_sandstone:on_death(actor, artefact_count, artefact_ids, artefact_names, monster, who, last_npc_hit, last_npc_hit_bone_index)
+	end
+
+perk_based_artefacts.artefact_on_before_hit_functions.af_elektron =
+	function(actor, artefact_count, artefact_ids, artefact_names, s_hit, bone_id, flags)
+		local af_elektron = perk_based_artefacts.artefact_props.af_elektron
+		if s_hit.draftsman:id() == AC_ID then
+			--trace("Electron, hit draftsman is actor")
+			return
+		end
+
+		if not af_elektron.valid_hits[s_hit.type] then
+			--trace("Electron, not a valid hit type %s", s_hit.type)
+			return
+		end
+
+		for i = 8, 10 do
+			local item = actor:item_in_slot(i)
+			if item then
+				item:set_condition(1)
+			end
+		end
+		actor:iterate_inventory(function(npc, item)
+			local sec = item:section()
+			if (IsItem("device", sec) or sec == "batteries_dead") and random(100) < 40 then
+				if sec ~= "batteries_exo" then
+					item:set_condition(1)
+				end
+				if sec == "batteries_exo" and artefact_count >= 5 then
+					item:set_condition(1)
+				end
+			end
+		end, actor)
+
+		local function infinite_sprint()
+			db.actor:change_power(1)
+		end
+		
+		play_sound_on_actor("perk_based_artefacts\\rnd_scr3", 1)
+		n_event(25, infinite_sprint)
+
+		local gibs = particles_object("_samples_particles_\\explode_radial_electra")
+		if gibs then
+			gibs:play_at_pos(actor:bone_position("bip01_spine"))
+		end
+
+	end
+
+perk_based_artefacts.artefact_props.af_repei =
+{
+	effect_time = 3.5,
+	--bleed_coeff = 0.00075, -- Bigger number => bigger bleeding damage
+	hit_coeff = 0.5,
+	--proc_chance = 25,
+
+	g_bleed = (function()
+		local t = {}
+		for artefact_count = 1, 5 do
+			-- 0.05% // 0.08% // 0.11% // 0.12% // 0.13%
+			artefact_count = artefact_count
+			t[artefact_count] = (0.005 - 0.0005 * artefact_count) * artefact_count
+		end
+		return t
+	end)(),
+
+	g_proc = (function()
+		local t = {}
+		for artefact_count = 1, 5 do
+			-- 5% // 22.5% // 35% // 42.5% // 45%
+			artefact_count = artefact_count
+			t[artefact_count] = (25 - 2.5 * artefact_count) * artefact_count - 17.5
+		end
+		return t
+	end)(),
+
+	on_before_hit = function(self, actor, artefact_count, artefact_ids, artefact_names, npc, s_hit, bone_id, flags)
+		wpn = level.object_by_id(s_hit.weapon_id)
+		sec = wpn:section()
+		
+		local wpn_id = wpn:id()
+		local ammo_type_number = wpn:get_ammo_type()
+		local ammo_list = utils_item.get_ammo(sec, wpn_id)
+		local ammo_section = ammo_list[ammo_type_number+1]
+		
+		local pellet_count = ini_sys:r_float_ex(ammo_section, "buck_shot") and ini_sys:r_float_ex(ammo_section, "buck_shot") or 1
+
+		local hit_k = self.hit_coeff
+
+		local chance = self.g_proc[artefact_count]
+		local bleed = self.g_bleed[artefact_count]
+
+		s_hit.power = s_hit.power * hit_k
+
+		if random(100) <= chance then
+			local snd = get_safe_sound_object("perk_based_artefacts\\GIBLET0" .. random(1, 7))
+			snd:play_at_pos(npc, npc:position(), 0, sound_object.s3d)
+			snd.frequency = random_float(0.85, 1.15)
+			snd.volume = 2.5
+
+			local gibs = particles_object("anomaly2\\effects\\body_tear_blood_01")
+			local hitpos = npc:bone_position("bip01_spine")
+			if gibs then
+				gibs:play_at_pos(hitpos)
+			end
+
+			local bleeding_hit = s_hit.power * (-bleed * 0.75)
+
+			s_event(self.effect_time, function()
+				if not npc:alive() then return end
+				npc:change_health(bleeding_hit)
+				
+				--[[
+				gibs = particles_object("anomaly2\\effects\\body_tear_blood_04")
+				hitpos = npc:bone_position("bip01_spine")
+				if gibs and not gibs:playing() then
+					gibs:play_at_pos(hitpos)
+				end
+				--]]
+
+			end)
+		end
+	end,
+	on_hit = function(self, actor, artefact_count, artefact_ids, artefact_names, npc, amount, local_direction, who, bone_index, last_npc_hit)
+		s_event(self.effect_time, function()
+			if not npc:alive() then return end
+			if npc.health > 0 then
+				CreateTimeEvent("af_thistle_hud", "af_thistle_hud", 0, function()
+					ui_enemy_health.on_hit(npc, nil, local_direction, who, bone_index)
+					return true
+				end)
+			end
+		end, nil, "af_thistle_hud")
+	end
+}
+
+-- Add feedback to the CLAW
+perk_based_artefacts.artefact_props.af_kogot.on_before_hit = 
+	function(self, actor, artefact_count, artefact_ids, artefact_names, npc, s_hit, bone_id, flags)
+		if not self.valid_hits[s_hit.type] then
+			--trace("Claw, not a valid hit type %s", s_hit.type)
+			return
+		end
+
+		local af_lucifer = perk_based_artefacts.artefact_props.af_lucifer
+		local lucifer_bonus = math.max(1 - normalize(af_lucifer.condition, 0, 0.5), 0)
+
+		s_hit.power = s_hit.power * (1 + artefact_count * 0.1) * (1 + lucifer_bonus)
+		local health_boost = s_hit.power * self.health_boost_coeff * artefact_count
+
+		play_sound_on_actor("perk_based_artefacts\\GKPUNCH" .. random(8), 0.5, random_float(0.85, 1.15))
+
+		s_event(1, function()
+			actor:change_health(health_boost)
+		end)
+
+		local gibs = particles_object("amik\\explosion\\data\\expl_10")
+		local hitpos = npc:bone_position(npc:bone_name(bone_id))
+
+		if gibs then
+			gibs:play_at_pos(hitpos)
+		end
+
+		self.dice_roll = random()
+		if af_lucifer:check_lucifer() and self.dice_roll < (lucifer_bonus * lucifer_bonus) then -- Squared chance to have less proc on better condition
+			s_hit.power = 10000
+
+			play_sound_on_actor("perk_based_artefacts\\GNTEAR0" .. random(2), 0.75, random_float(0.9, 1.0))
+			
+			gibs = particles_object("_samples_particles_\\parent_motion_03")
+			if gibs then
+				gibs:play_at_pos(npc:bone_position("bip01_spine"))
+			end
+		end
+	end
+
+local function get_monster_clsid_and_kind(obj)
+	return obj:clsid(), SYS_GetParam(0, obj:section(), "kind", 0)
+end
+
+perk_based_artefacts.artefact_props.af_kogot.on_death =
+	function(self, actor, artefact_count, artefact_ids, artefact_names, monster, who, last_monster_hit, last_monster_hit_bone_index)
+		local monster_id = monster:id()
+		local monster_position = monster:position()
+		local monster_direction = monster:direction()
+		local monster_level_vertex_id = monster:level_vertex_id()
+		local monster_game_vertex_id = monster:game_vertex_id()
+
+		local af_lucifer = perk_based_artefacts.artefact_props.af_lucifer
+		local lucifer_bonus = math.max(1 - normalize(af_lucifer.condition, 0, 0.5), 0)
+		lucifer_bonus = lucifer_bonus * lucifer_bonus -- Squared chance to have less proc on better condition
+
+		local gibs
+
+		if af_lucifer:check_lucifer() and self.dice_roll < lucifer_bonus then
+			--trace("Overpowered Claw, dice_roll %s, chance %s", self.dice_roll, lucifer_bonus)
+			local sim = alife()
+			sim:release(sim:object(monster_id))
+
+			local snd = get_safe_sound_object("perk_based_artefacts\\BARADD" .. random(3, 5))
+			snd:play_at_pos(monster, monster_position, 0, sound_object.s3d)
+			snd.volume = 0.5
+			snd.frequency = random_float(0.95, 1.05)
+
+			snd = get_safe_sound_object("perk_based_artefacts\\DSTELEPT")
+			snd:play_at_pos(monster, monster_position, 0, sound_object.s3d)
+			snd.volume = 0.25
+			snd.frequency = random_float(0.95, 1.05)
+
+			gibs = particles_object("_samples_particles_\\pux_vivert")
+			if gibs then
+				gibs:play_at_pos(monster_position)
+			end
+
+			gibs = particles_object("static\\zharka_static")
+			if gibs then
+				gibs:play_at_pos(monster_position)
+			end
+
+			af_lucifer:change_condition(0.01)
+		end
+
+		local monster_cls, monster_kind = get_monster_clsid_and_kind(monster)
+		local monster_meat = self.monster_to_meat[monster_kind] or self.monster_to_meat[monster_cls]
+		if not (last_monster_hit and self.valid_hits[last_monster_hit.type] and monster_meat) then
+			--trace("Claw not triggered")
+			return
+		end
+
+		local function spawn_meat()
+			local meat_position = monster:position()
+			local meat_direction = monster:direction()
+			meat_direction = vector_rotate_y(meat_direction, random(-180, 180))
+			meat_position.x = meat_position.x + meat_direction.x * random_float(0.5, 0.7)
+			meat_position.y = meat_position.y + meat_direction.y + 1
+			meat_position.z = meat_position.z + meat_direction.z * random_float(0.5, 0.7)
+			local meat_item = alife_create_item(monster_meat, {meat_position, monster_level_vertex_id, monster_game_vertex_id, nil})
+		end
+
+		for i = 1, artefact_count do
+			spawn_meat()
+		end
+
+		if af_lucifer:check_lucifer() and self.dice_roll < lucifer_bonus then
+			for i = 1, 5 do
+				spawn_meat()
+			end
+		end
+	end
+
+-- "_samples_particles_\\parent_motion_03" 					<-- ludicrous gibs
+-- "_samples_particles_\\explode_radial_distort" 			<-- buff?
+-- "_samples_particles_\\effects\\smoke_death" 				<-- hit spark?
+-- "amik\\explosion\\data\\expl_10"							<-- hit spark? LOOKS LIKE A MINI EXPLOSION
+-- "amik\\hit_fx\\metal\\hit_sparks_01"						<-- literal sparks, small
+-- "amik\\hit_fx\\metal\\hit_sparks_02"						<-- literal sparks, large
+-- "amik\\hit_fx\\metal\\hit_sparks_inside"					<-- literal sparks, TINY
+-- "amik\\weapons\\data\\smoke_particles\\smokeshoot_1"		<-- smoke puff
+-- "amik\\weapons\\smoke_particles\\smoke_particles_pump_00"<-- smoke puff + hit sparks
+-- "amik\\weapons\\smoke_particles\\smoke_particles_pump_01"
+-- "anomaly2\\effects\\gravity_dust_00"						<-- hit sparks, large
+-- 
+
+-- COCOON
+-- "explosions\\effects\\expl_10_smoke00_07"
+-- "explosions\\effects\\expl_wall_bricks_01"
+
+-- CLAW
+-- "_samples_particles_\\effects\\body_tear_blood"			<-- ON KILL
+-- "_samples_particles_\\pux_vivert"
+-- "static\\zharka_static"									<-- let play for 1.5 secs via timed event
+
+-- ELECTRON
+-- "_samples_particles_\\explode_radial_electra"
