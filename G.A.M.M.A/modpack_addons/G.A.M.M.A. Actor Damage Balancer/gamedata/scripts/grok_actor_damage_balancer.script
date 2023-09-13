@@ -452,6 +452,31 @@ function get_protection(shit,bone_id,k_ap)
 	end
 end
 
+local pba = perk_based_artefacts
+function perk_based_artefacts.actor_on_before_hit(s_hit, bone_id, flags) end
+function perk_based_artefacts.actor_on_hit_callback(obj, amount, local_direction, who, bone_index) end
+function perk_based_artefacts.actor_on_before_death(whoID, flags) end
+
+function PBA_a_obh(shit, bone_id, flags)
+	--trace('Firing PBA >> actor_on_before_hit')
+	pba.last_hit = hit(shit)
+	perk_based_artefacts.process_artefacts(perk_based_artefacts.artefact_on_before_hit_functions, shit, bone_id, flags)
+end
+
+function PBA_a_ohc(obj, amount, local_direction, who, bone_index)
+	--trace('Firing PBA >> actor_on_hit_callback')
+	perk_based_artefacts.process_artefacts(perk_based_artefacts.artefact_on_hit_functions, obj, amount, who, pba.last_hit)
+end
+
+-- etapomom: weird ass hack
+local flags = { ret_value = true }
+
+function PBA_a_obd(whoID, flags)
+	--trace('Firing PBA >> actor_on_before_death')	
+	flags.ret_value = false
+	perk_based_artefacts.process_artefacts(perk_based_artefacts.artefact_on_before_death_functions, whoID, flags)
+end
+
 function shit_booster(shit, bone_id, k_ap)
 	printf("/// Actor got hit - Grok damage balancer")
 	get_protection(shit,bone_id,k_ap)
@@ -478,6 +503,11 @@ function shit_booster(shit, bone_id, k_ap)
 	if shit.type == hit.wound then
 		shit.power = shit.power * 0.65 -- Now that there's no immunity, damages need to be scaled down. Chimeras do 1.54 damage and boars do 0.90 !
 	end
+	
+	-- etapomom: run on_before_hit before doing armor math
+	local pbadamage = hit(shit)
+	PBA_a_obh(pbadamage, bone_id, flags)
+	damage = pbadamage.power
 
 	damage = shit.power * ( 1 - total_prot )
 
@@ -501,12 +531,20 @@ function shit_booster(shit, bone_id, k_ap)
 	end
 
 	shit.power = 0
+	
+	-- etapomom: run on_before_death, make the seraphim work with ironman. maybe the only cool thing about making damage this inflexible
+	if (db.actor.health - damage) <= 0 then
+		PBA_a_obd(db.actor, flags)
+	end
+	
 	db.actor:set_health_ex(db.actor.health - damage)
 	if no_pen == 0 then
 		if shit.type == hit.fire_wound or shit.type == hit.wound then
 			db.actor:cast_Actor():conditions():AddWound(damage, hit_type, bone_id)
 		end
 	end
+	
+	PBA_a_ohc(db.actor, damage, shit.direction, shit.draftsman, bone_id)
 
 	if elemental == 1 then
 		helmet = db.actor:item_in_slot(12)
