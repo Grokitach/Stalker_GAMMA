@@ -64,6 +64,9 @@
 - Starting Loadouts changes:
     - Rebalanced available Pistols, with NATO factions having the best available pistols.
     - Made PP2000 available to Duty and Monolith as a starting SMG.
+    - Made the sawn off shotguns available only in Tourist and Scavenger difficulty.
+    - Increased TOZ106 cost.
+    - Reduced APS and PM costs.
 
 
 **Gameplay**
@@ -188,7 +191,7 @@
     - PP2000 - now has high accuracy.
     - Vihr reduced recoil, it's now a very strong 9x39 gun.
     - HOWA20 and RU556 normal 5.56 damages.
-    - Coonan increased recoil and added a silencer model.
+    - Coonan increased recoil and added a silencer model. Coonan also uses .357 caliber barrel part.
 
 
 **Balance**
@@ -225,6 +228,7 @@
 - Sun quality to medium and shadows scanlines fixes: no more parallel evenly spaced bugged shadow lines on surfaces.
 - New SSS and atmospherics versions.
 - Actor shadow on by default.
+- Beef NVGs MCM values have been tweaked to allow the NVGs various levels of illumination to be more useful (no need to use NVG + Flashlight anymore). This also makes the red dots, collimators and tritium sights useable with ease while using NVGs. 
 
 
 **Audio**
