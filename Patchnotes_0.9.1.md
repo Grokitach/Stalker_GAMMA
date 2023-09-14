@@ -145,6 +145,10 @@
     - Monolith should see the actor from even farther away compared to other NPCs.
     - Once a NPC got it by a bullet shot from the actor, the whole squad associated to the victim should be alerted and try to seek the actor.
 
+- Complete support of Perk Based Artefacts with the GAMMA damage systems thanks to etapomom / momopate!
+    - Redesign and rebalance of some perk artefacts.
+    - Artefacts description should actually match the math running behind.
+
 - Teivaz's Exo Item Use Animations ported to Anomaly for medkits, injectors, defense boosters and glucose shots. This essentially makes exos able to use important healing items much faster.
 
 - Once a body is looted by an NPC, it stays looted independently of the NPCs fate. 
@@ -167,6 +171,7 @@
     - 12ga buck and slugs are a bit more expensive.
     - 12ga buckshot is a bit harder to craft (everyone was buying them anyways).
     - 5.7 SS195 rounds AP increased to 22.
+    - Increased .338 Lapua damages.
 
 - New NPCs Armor System:
     - NPCs armor is now defined according to 3 body parts / groups of limns: head armor (head and neck), upper armor (body and arms) and lower armor (legs).
