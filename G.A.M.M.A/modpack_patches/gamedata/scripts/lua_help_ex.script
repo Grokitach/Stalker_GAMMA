@@ -25,21 +25,163 @@
         first_person_death_position_offset // FPD Camera Position Offset (x, y, z)
         first_person_death_position_smoothing // FPD Camera Position Change Smoothing
         first_person_death_direction_smoothing // FPD Camera Direction Change Smoothing
+
+        use_english_text_for_missing_translations // Enables using english text if translation is missing
     }
+
+    globals {
+        int get_modded_exes_version() // Returns modded exes version in integer format
+    }
+
+    namespace alife() {
+        void iterate_objects(function(se_obj))
+    }
+
+    namespace game {
+        Fvector2 world2ui(Fvector pos, bool hud = false, bool allow_offscreen = false)
+        function ui2world(Fvector2 pos) -> Fvector result, u16 object_id
+    }
+
+    // Debug shapes
+    enum DebugRenderType {
+        line,
+        sphere,
+        box,
+    }
+    namespace debug_render {
+        DBG_ScriptObject* add_object(u16 id, DebugRenderType type)
+        void remove_object(u16 id)
+        DBG_ScriptObject* get_object(u16 id)
+        u32 get_flags()
+        void set_flags(u32 flags)
+        DBG_ScriptSphere* cast_dbg_sphere()
+        DBG_ScriptBox* cast_dbg_box()
+        DBG_ScriptLine* cast_dbg_line()
+
+        // Common properties
+        fcolor color
+        bool hud
+        bool visible
+    }
+    class DBG_ScriptSphere {
+        Fmatrix matrix
+    }
+    class DBG_ScriptBox {
+        Fmatrix matrix
+        Fvector size
+    }
+    class DBG_ScriptLine {
+        Fvector point_a
+        Fvector point_b
+    }
+    // examples
+        local sphere = debug_render.add_object(1337, DBG_ScriptObject.sphere):cast_dbg_sphere()
+        sphere.visible = true
+        sphere.color = fcolor():set(1,0,0,1)
+        local scale_mat = matrix():identity():scale(0.1,0.1,0.1)
+        local pos_mat = matrix():translate(db.actor:position())
+        local mat = matrix():mul(pos_mat, scale_mat)
+        sphere.matrix = mat
+
+        local line = debug_render.add_object(9, DBG_ScriptObject.line):cast_dbg_line()
+        line.point_a = db.actor:position()
+        line.point_b = vector():set(0, 0, 0)
+        
+        local box = debug_render.add_object(12, DBG_ScriptObject.box):cast_dbg_box()
+        box.size = vector():set(0.5,1,0.5)
 
     namespace level {
         float get_music_volume()
         void set_music_volume(float)
+
+        // Camera, position is x,y,z vector, direction is head,pitch,roll vector in RADIANS
+        void set_cam_custom_position_direction(Fvector position, Fvector direction, int smoothing, bool hudDraw, bool hudAffect)
+        void set_cam_custom_position_direction(Fvector position, Fvector direction, int smoothing, bool hudDraw)
+        void set_cam_custom_position_direction(Fvector position, Fvector direction, int smoothing)
+        void set_cam_custom_position_direction(Fvector position, Fvector direction)
+        void remove_cam_custom_position_direction()
+
+        // Get target position and result of crosshair ray_query
+        Fvector get_target_pos()
+        script_rq_result get_target_result()
+
+        void map_remove_all_object_spots(id)
+    }
+
+    // obj:get_physics_shell()
+    class PHShell {
+        void apply_torque(float roll, float yaw, float pitch)
     }
 
     class Fvector {
+        function add(float x, float y, float z)
+        function sub(float x, float y, float z)
+        function mul(float x, float y, float z)
+        function div(float x, float y, float z)
         function distance_to_xz_sqr(Fvector)
+    }
+
+    class Fmatrix {
+        property i
+        property _14_
+        property j
+        property _24_
+        property k
+        property _34_
+        property c
+        property _44_
+
+        matrix()
+
+        function set(Fmatrix)
+        function set(Fvector, Fvector, Fvector, Fvector) 
+        function identity()
+        function mk_xform(quaternion, Fvector)
+        function build_camera_dir(Fvector vFrom, Fvector vView, Fvector vWorldUp)
+        function build_projection(float fov, float aspect, float nearPlane, float farPlane)
+        function mulA_43(Fmatrix A)
+        function mulA_44(Fmatrix A)
+        function mulB_43(Fmatrix B)
+        function mulB_44(Fmatrix B)
+        function mul_43(Fmatrix A, Fmatrix B)
+        function translate(float x, float y, float z)
+        function translate(Fvector)
+        function translate_add(float x, float y, float z)
+        function translate_add(Fvector)
+        function translate_over(float x, float y, float z)
+        function translate_over(Fvector)
+        function mul(Fmatrix, Fmatrix)
+        function mul(Fmatrix, float)
+        function mul(float)
+        function invert()
+        function invert(Fmatrix)
+        function invert_b(Fmatrix)
+        function div(Fmatrix, float)
+        function div(float)
+        function scale(float x, float y, float z)
+        function scale(Fvector)
+        function setHPB(float x, float y, float z)
+        function setHPB(Fvector)
+        function setXYZ(float x, float y, float z)
+        function setXYZ(Fvector)
+        function setXYZi(float x, float y, float z)
+        function setXYZi(Fvector)
+        Fvector getHPB()
+    }
+
+    class particle_object {
+        function play(bool bHudMode = false)
+        function play_at_pos(Fvector pos, bool bHudMode = false)
     }
 
     class wallmarks_manager {
         wallmarks_manager()
         function place (Fvector dir, Fvector start_pos, float trace_dist, float wallmark_size, string section, game_object ignore_obj, float ttl)
         function place (Fvector dir, Fvector start_pos, float trace_dist, float wallmark_size, string section, game_object ignore_obj, float ttl, bool random_rotation)
+
+        // User defined rotation in DEGREES
+        function place (Fvector dir, Fvector start_pos, float trace_dist, float wallmark_size, string section, game_object ignore_obj, float ttl, float rotation)
+
         function place_skeleton (game_object obj, string section, Fvector start, Fvector dir, float size, float ttl)
     }
 
@@ -52,6 +194,59 @@
         function set_actor_walk_accel(float)
         function get_actor_walk_back_coef()
         function set_actor_walk_back_coef(float)
+        function get_actor_lookout_coef()
+        function set_actor_lookout_coef(float)
+
+        // Stalker NPCs
+        function get_enable_anomalies_pathfinding()
+        function set_enable_anomalies_pathfinding(bool)
+        function get_enable_anomalies_damage()
+        function set_enable_anomalies_damage(bool)
+        function angle()
+        function force_set_angle(Fvector angle, bool bActivate)
+
+        // Artefact
+        function get_artefact_additional_inventory_weight()
+        function set_artefact_additional_inventory_weight(float)
+
+        // Bones
+        u16 get_bone_id(string)
+        u16 get_bone_id(string, bool bHud)
+
+        u16 bone_id(string) // Same as get_bone_id
+        u16 bone_id(string, bool bHud)
+
+        string bone_name(u16 id)
+        string bone_name(u16 id, bool bHud)
+
+        Fvector bone_position(u16 id)
+        Fvector bone_position(u16 id, bool bHud)
+        Fvector bone_position(string)
+        Fvector bone_position(string, bool bHud)
+
+        Fvector bone_direction(u16 id)
+        Fvector bone_direction(u16 id, bool bHud)
+        Fvector bone_direction(string)
+        Fvector bone_direction(string, bool bHud)
+
+        u16 bone_parent(u16 id)
+        u16 bone_parent(u16 id, bool bHud)
+        u16 bone_parent(string)
+        u16 bone_parent(string, bool bHud)
+
+        bool bone_visible(u16 id)
+        bool bone_visible(u16 id, bool bHud)
+        bool bone_visible(string)
+        bool bone_visible(string, bool bHud)
+
+        function set_bone_visible(u16 id)
+        function set_bone_visible(u16 id, bool bHud)
+        function set_bone_visible(string)
+        function set_bone_visible(string, bool bHud)
+    }
+
+    class CArtefact : CGameObject {
+        property m_additional_weight
     }
 
     class CWeapon : CGameObject {
@@ -91,6 +286,13 @@
         function SetHitPowerCritical(float)
         function SetHitImpulse(float)
         function SetFireDistance(float)
+
+        // World model on stalkers adjustments
+        function Set_mOffset(Fvector position, Fvector orientation)
+        function Set_mStrapOffset(Fvector position, Fvector orientation)
+        function Set_mFirePoint(Fvector position)
+        function Set_mFirePoint2(Fvector position)
+        function Set_mShellPoint(Fvector position)        
 
         // Cam Recoil
         // Getters
@@ -153,7 +355,7 @@
         function get_element() : int (number of triangle)
     }
 
-    class rq_result {
+    class script_rq_result {
         const object
         const range
         const element

@@ -1,0 +1,43 @@
+-- gavrilenko tasks fix 
+-- script written by G_FLAT
+-- I stole all the task stage processing thing from the autocomplete task mod
+-- what this mod does: completes tasks that are pointing to gavrilenko when you talk to him
+
+function GUI_on_show(gui_name)
+	-- check if I'm in rostok
+	if level.name() == "l05_bar" then
+		if gui_name == "Dialog" then
+			-- find gavrilenko as object
+			local id = story_objects.object_id_by_story_id["bar_duty_security_squad_leader"]
+			if (id) then gavi = db.storage[id] and db.storage[id].object end
+			-- check if I'm talking with gavi
+			if gavi:is_talking() then
+				-- search for the tasks that point to gavi for completion
+				local tm = task_manager.get_task_manager()
+				for tid, tsk in pairs(tm.task_info) do
+					if (tsk.task_giver_id and tsk.task_giver_id == gavi:id()) then
+						-- filter out finished tasks
+						if tsk.stage ~= 255 then
+							-- check if tasks are in last stage
+							local parsed_data = utils_data.parse_ini_section_to_array(task_manager.task_ini, tid)
+							if tonumber(parsed_data.stage_complete) ~= tonumber(tsk.stage) then 
+								-- news_manager.send_tip(db.actor, "stages are different (" .. tsk.stage .. "/" .. parsed_data.stage_complete .. ")")
+							else
+								-- complete those tasks
+								-- news_manager.send_tip(db.actor, "completing task")
+								CreateTimeEvent("gimme_a_sec", "gimme_a_sec", 1, function ()
+									tm:set_task_completed(tid)
+									return true
+								end)
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("GUI_on_show", GUI_on_show)
+end
