@@ -112,8 +112,8 @@ uniform float SSR_RELIEF_SCALE <
 #define RESHADE_QUINT_EFFECT_DEPTH_REQUIRE      //effect requires depth access
 #include "qUINT_common.fxh"
 
-texture2D SSR_ColorTex 	{ Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA8; AddressU = MIRROR;};
-sampler2D sSSR_ColorTex	{ Texture = SSR_ColorTex;	};
+texture2D SSR_ColorTex 	{ Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA8; };
+sampler2D sSSR_ColorTex	{ Texture = SSR_ColorTex;	AddressU = MIRROR;};
 
 texture2D CommonTex0 	{ Width = BUFFER_WIDTH;   Height = BUFFER_HEIGHT;   Format = RGBA8; };
 sampler2D sCommonTex0	{ Texture = CommonTex0;	};
