@@ -61,7 +61,7 @@ float3 pack_hdr(float3 color)
     color  = saturate(color);    
     if(RT_USE_SRGB) color = sqrt(color);   
     return color;     
-}
+}  
 
 float4 atrous(in VSOUT i, in sampler gi, int iteration, int mode)
 {
@@ -75,8 +75,8 @@ float4 atrous(in VSOUT i, in sampler gi, int iteration, int mode)
     float4 sigma_n = 5;
     float4 sigma_v = exp2(iteration * 1.5 * 0.5);
 
-    float4 value_sum = center.val * 0.000001; 
-    float4 weight_sum = 0.00001;
+    float4 weight_sum = 0.01;
+    float4 value_sum = center.val * weight_sum;     
 
     float3 center_pos = Projection::uv_to_proj(i.uv, center.gbuffer.w);
     float3 eyevec = normalize(center_pos);
@@ -100,10 +100,12 @@ float4 atrous(in VSOUT i, in sampler gi, int iteration, int mode)
         mip = 0;
     }
 
+    //float2 randjitter = frac(tex2Dfetch(sJitterTex, i.vpos.xy % 32).xy + iteration * 0.618)*2-1;
+
     for(float x = -1; x <= 1; x++)
     for(float y = -1; y <= 1; y++)
     {
-        float2 uv = i.uv + float2(x, y) * kernel[iteration] * BUFFER_PIXEL_SIZE;
+        float2 uv = i.uv + (float2(x, y)) * kernel[iteration] * BUFFER_PIXEL_SIZE;
         FilterSample tap = fetch_sample(uv, gi);
 
         float sz = sigma_z[iteration];
