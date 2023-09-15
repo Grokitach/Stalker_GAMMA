@@ -2,6 +2,7 @@
 - New Exe v2023.9.6
 
 **New Addons**
+- G.A.M.M.A. Traduccion Espanola - vdltman: https://www.moddb.com/mods/stalker-anomaly/addons/gamma-spanish-translation
 - Extra Level Transitions Rostok Garbage Yantar Facing Fix - Qball: <https://www.moddb.com/mods/stalker-anomaly/addons/extra-level-transitions-rostok-to-garbage-and-yantar-facing-fix>
 - Black Market (Buyable Gear) - SalamanderAnder & nox: <https://github.com/iam-n0x/Black_Market/archive/refs/heads/main.zip>
 - XM4 Rifle - KeatonB_08: <https://www.moddb.com/mods/stalker-anomaly/addons/xm4-black-ops-cold-war>
@@ -76,7 +77,6 @@
     - North areas should be much less empty as respawn timers has been reduced.
     - North areas are *much more* dangerous than before. Be aware that Sin and ISG are now common enemies in the North. The mutants are also much stronger. Expect potential packs of controllers.
     - North bases should be much more busy with more tasks to do.
-    - Jumper Giants are enabled should thus spawn north.
     - Very rarely, Sin has Rocket Launcher
 
 - Radar and Brain Scorcher rework:
@@ -104,7 +104,11 @@
     - Faster phantoms.
     - Psi damages don't affect limb health.
 
-- Meat mutants rebalance:
+- Mutants rebalance:
+    - Some mutants can spawn in packs: chimera, bloodsucker, giants, fractures...
+    - Karlik will always spawn in packs.
+    - Jumper Giants are enabled should thus spawn north.
+    - Removed the Big Bloodsuckers (with red spikes) because of the terrible model.
     - A bit less meat spawns on mutants.
     - More toxic uncooked and low tier cooked meats. This should promote the cooking of higher tier mutant meats.
 
@@ -182,6 +186,12 @@
     - Concussion damages of Slugs and Buckshots have been reduced. Slugs still stagger in the head, thus making headshot spam still easy.
     - Slightly reduced damages to NPCs extremities.
     - Removed the melee hit redirection to torso: aim for the head! Axes dunk is thus much more powerful.
+    - The head AP boost system is still in: hitting the eyes, the neck or the jaw boosts the ammo Penetration by +3.5 (flat, 21 AP becomes 24.5).
+    - Reduced the Head and Eyes headshot bonus from 4 to 3.65
+    - Reduced the Jaw damage bonus from 4 to 3.00
+    - Reduced the Neck damage bonus from 4 to 2.70
+    - The new headshot values ensure that certain calibers don't always one shot headshot at long ranges bu do at close ranges (9x18 vs .45 vs 9x19).
+    - A dilemma is set between aiming for the neck to guarantee the AP boost at the cost of damage, or aim for the head and have both the AP boost and Damage or just the Damage boost if the top, back or lateral parts of the head are hit (where the helmet protection works).
 
 - Guns balance:
     - Saigas mag size increase.
@@ -233,7 +243,8 @@
 - Sun quality to medium and shadows scanlines fixes: no more parallel evenly spaced bugged shadow lines on surfaces.
 - New SSS and atmospherics versions.
 - Actor shadow on by default.
-- Beef NVGs MCM values have been tweaked to allow the NVGs various levels of illumination to be more useful (no need to use NVG + Flashlight anymore). This also makes the red dots, collimators and tritium sights useable with ease while using NVGs. 
+- Beef NVGs MCM values have been tweaked to allow the NVGs various levels of illumination to be more useful (no need to use NVG + Flashlight anymore). This also makes the red dots, collimators and tritium sights useable with ease while using NVGs.
+- Default Aydin's Flora set to Autumn.
 
 
 **Audio**
@@ -259,6 +270,11 @@
 - Halved length of Headshot Post Process Effect.
 - Item Animations Enabling button unbound by default.
 - Proper flashlight light position by hibaruza DLTXed: no more "illuminated hand".
+- Fixed the font colors errors for the Spanish translation so disabling Tactical Fonts is not needed anymore.
+- WPO "bad guns parts" will always be bad, and not 59% anymore.
+- Restored proper armor exchange dialogue in English.
+- Small compatibility fix for people disabling BHS so the game doesn't crash when being shot at.
+
 
 
 **Bugfixes**
@@ -296,3 +312,4 @@
 - Fixed Eidolon particles display.
 - Fixed SVU "infinite reload" when mashing R key.
 - Removed the Melter Details option to avoid the crash.
+- Doom Gun Inspection sound fix and busy hands chance reduced.
