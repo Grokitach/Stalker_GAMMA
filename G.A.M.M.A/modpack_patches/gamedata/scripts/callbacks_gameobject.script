@@ -1,3 +1,19 @@
+-- Loading screen callbacks
+AddScriptCallback("on_loading_screen_key_prompt")
+AddScriptCallback("on_loading_screen_dismissed")
+
+-- Called from GamePersistent.cpp
+-- Callback for when loading screen happens and "Press Any Key to Continue" prompt appears
+_G.OnLoadingScreenKeyPrompt = function()
+	SendScriptCallback("on_loading_screen_key_prompt")
+end
+
+-- Callback for when player dismisses loading screen after "Press Any Key to Continue" pressed
+_G.OnLoadingScreenDismissed = function()
+	SendScriptCallback("on_loading_screen_dismissed")
+end
+
+-- Generic net spawn/net destroy callbacks
 AddScriptCallback("game_object_on_net_spawn")
 AddScriptCallback("game_object_on_net_destroy")
 _G.CGameObject_NetSpawn = function(obj)
@@ -15,10 +31,6 @@ function game_object_on_net_spawn(obj)
 end
 function game_object_on_net_destroy(obj)
 	gameobjects_registry[obj:id()] = nil
-end
-function on_game_start()
-	RegisterScriptCallback("game_object_on_net_spawn", game_object_on_net_spawn)
-	RegisterScriptCallback("game_object_on_net_destroy", game_object_on_net_destroy)
 end
 
 -- Game objects iterator
@@ -54,21 +66,8 @@ _G.CPseudoGigant__HitCallback = function(victim, who, shit, boneId)
 end
 
 -- Bullet callbacks
-local function BulletTable(position, dir, speed, fly_dist, catridgeSection, bullet_id, weapon_id, parent_id, targetID, materialName)
-	return {
-		position = position,
-		direction = dir,
-		speed = speed, -- Speed will be 0 in bullet_on_remove callback if the bullet hitted the target and stayed inside of it
-		distance = fly_dist,
-		section = catridgeSection,
-		bullet_id = bullet_id,
-		weapon_id = weapon_id,
-		parent_id = parent_id,
-		target_id = targetID,
-		material = materialName
-	}
-end
-
+AddScriptCallback("bullet_on_init")
+AddScriptCallback("bullet_on_update")
 AddScriptCallback("bullet_on_impact")
 AddScriptCallback("bullet_on_remove")
 
@@ -83,26 +82,29 @@ AddScriptCallback("bullet_on_remove")
 -- parent_id = game object id of actor that has a weapon that shot bullet
 -- target_id = game object id of entity the bullet hit (it will be 65535 if bullet hit the terrain or vanished)
 -- material = name of material that bullet hit
+-- life_time = time of bullet fly
+
+-- Called when bullet is shot from the weapon
+_G.CBulletOnInit = function(bullet)
+	SendScriptCallback("bullet_on_init", bullet)
+end
+
+-- Called when bullet is flying
+_G.CBulletOnUpdate = function(bullet)
+	SendScriptCallback("bullet_on_update", bullet)
+end
 
 -- Called when bullet hits something (terrain, object, npcs)
-_G.CBulletOnImpact = function(...)
-	local bullet = BulletTable(...)
+_G.CBulletOnImpact = function(bullet)
 	SendScriptCallback("bullet_on_impact", bullet)
 end
 
--- Called when bullet is destroyed
-_G.CBulletOnRemove = function(...)
-	local bullet = BulletTable(...)
+-- Called when bullet is destroyed and removed from the world
+_G.CBulletOnRemove = function(bullet)
 	SendScriptCallback("bullet_on_remove", bullet)
 end
 
--- AddScriptCallback("bullet_on_update")
--- Called when bullet is flying
--- _G.CBulletOnUpdate = function(bullet)
--- 	SendScriptCallback("bullet_on_update", bullet)
--- 	return bullet
--- end
-
+-- WIP DONT TOUCH
 -- AddScriptCallback("rocket_on_update")
 -- Called when rocket is flying
 -- _G.CRocketOnUpdate = function(rocket)
@@ -128,3 +130,74 @@ end
 -- 		print_r(rocket)
 -- 	end)
 -- end
+
+-- Mouse callbacks
+-- Scroll wheel callback, sends mouse wheel direction as a number
+-- 1 is up, 0 is down
+-- set flags.ret_value = false to consume the input and prevent actor wheel binds (zoom, switch weapons, etc)
+-- Example:
+--[[
+	RegisterScriptCallback("on_mouse_wheel", function(dir, flags)
+		printf("mousewheel %s", dir == 1 and "up" or "down")
+	end)
+]] 
+AddScriptCallback("on_mouse_wheel")
+_G.COnMouseWheel = function(dir)
+	local d = dir > 0 and 1 or 0
+	local flags = { ret_value = true }
+	SendScriptCallback("on_mouse_wheel", d, flags)
+	return flags.ret_value
+end
+
+-- Slot change callback
+-- new_obj and prev_obj can be nil
+AddScriptCallback("actor_on_changed_slot")
+_G.CActor_OnChangedSlot = function(new_slot, new_obj, prev_slot, prev_obj)
+	SendScriptCallback("actor_on_changed_slot", new_slot, new_obj, prev_slot, prev_obj)
+end
+
+-- On before hit after calculations callback
+-- The hit object contains final values before applying
+AddScriptCallback("on_before_hit_after_calcs")
+_G.CBeforeHitAfterCalcs = function(shit, target, boneId)
+	SendScriptCallback("on_before_hit_after_calcs", shit, target, boneId)
+end
+
+-- Improve NPCs pathfinding by reducing actual anomaly damage radius
+-- Works only when npc:get_enable_anomalies_pathfinding() == true or ai_die_in_anomalies cvar is 1
+function is_outside_damage_radius(zone, obj)
+	local se_zone = alife_object(zone:id())
+	if not se_zone then
+		return false
+	end
+
+	local data = utils_stpk.get_anom_zone_data(se_zone)
+	if not (data and data.shapes[1] and data.shapes[1].radius) then
+		return false
+	end
+
+	local radius = data.shapes[1].radius
+	local damage_radius = math.max(radius - 1.1, 1)
+	local damage_radius_sqr = damage_radius * damage_radius
+	local dist_sqr = zone:position():distance_to_sqr(obj:position())
+	local res = dist_sqr > damage_radius_sqr
+	-- printf("obj %s anomaly %s, dist_sqr %s, damage_radius_sqr %s, damaging %s", obj:name(), zone:name(), dist_sqr, damage_radius_sqr, res)
+	return res
+end
+
+function anomaly_on_before_activate(zone, obj, flags)
+	if obj:id() ~= AC_ID 
+	and (IsStalker(obj) or IsMonster(obj))
+	and obj:alive()
+	and is_outside_damage_radius(zone, obj)
+	then
+		-- printf("obj %s in anomaly %s and is_outside_damage_radius", obj:name(), zone:name())
+		flags.ret_value = false
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("anomaly_on_before_activate", anomaly_on_before_activate)
+	RegisterScriptCallback("game_object_on_net_spawn", game_object_on_net_spawn)
+	RegisterScriptCallback("game_object_on_net_destroy", game_object_on_net_destroy)
+end

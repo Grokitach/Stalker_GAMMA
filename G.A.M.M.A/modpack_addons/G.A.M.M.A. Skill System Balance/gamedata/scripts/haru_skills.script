@@ -191,6 +191,14 @@ local important_npcs = Set {
 }
 
 
+rare_armors = {
+	["army_nosorog_outfit"] = true,	       
+	["freedom_nosorog_outfit"] = true,	       
+	["isg_nosorog_outfit"] = true,	  
+	["merc_nosorog_outfit"] = true,	     
+	["monolith_nosorog_outfit"] = true,	 
+	["dolg_nosorog_outfit"] = true,		
+}
 
 local function print_dbg(msg, ...)
     if options["debug"] then
@@ -346,15 +354,29 @@ function scavanger_effect(npc)
     or function(npc, item)
         local sec = item and item:section() or false
         if not sec then return end
-        if -scavenging_skill > math_random(100) and not always_keep_item[sec] then
-            print_dbg("Releasing [%s]", item:section())
-            --alife_release(item)
-        end
+			if -scavenging_skill > math_random(100) and not always_keep_item[sec] then
+				print_dbg("Releasing [%s]", item:section())
+				--alife_release(item)
+			end
 
-	if item:section() == "grenade_f1" or item:section() == "detector_elite" or item:section() == "detector_scientific" then
-		alife_release(item)
-	end
-    end 
+		if item:section() == "grenade_f1" or item:section() == "detector_elite" or item:section() == "detector_scientific" then
+			alife_release(item)
+		end
+		
+		if rare_armors[item:section()] then
+			armor_spawn_chance = math.random(1,100)
+			if armor_spawn_chance > 15 then
+				alife_release(item)
+			end
+		end
+		
+		if item:section() == "helm_spartan" then
+			helm_spawn_chance = math.random(1,100)
+			if helm_spawn_chance > 50 then
+				alife_release(item)
+			end
+		end
+    end
     npc:iterate_inventory(itr, npc)
 end
 
@@ -398,7 +420,7 @@ function level_up_skill(name)
 end
 
 local updated = 0
-local interval = 1000
+local interval = 1182
 
 function update_stats()
     if time_global() < updated then return end
