@@ -23,6 +23,7 @@ local pewpewmult = 0
 local get_camo_k = 0
 local vision_memory = {}
 local marked = {}
+local actor_marked = 0
 
 function get_visible_value(npc,who,time_delta,time_quant,luminocity,velocity_factor,velocity,distance,object_distance,always_visible_distance)
 	distance = distance <= 0 and 0.00001 or distance
@@ -125,15 +126,17 @@ function get_visible_value(npc,who,time_delta,time_quant,luminocity,velocity_fac
 			local vis_threshold = npc:visibility_threshold()
 			memory_factor = mcm_memory * mem_time_factor * vis_threshold			-- 35 threshold:  100 sec = 0.025 ; 80 sec = 0.04 ; 60 sec = 0.08 ; 40 sec = 0.17 ; 20 sec = 0.66 ; 10 sec = 2.6
 		end
+		
+		if marked[npc:id()] then
+			actor_marked = 50000
+		else
+			actor_marked = 0
+		end
 	end
 
 	memory_factor = (memory_factor > 0.01) and memory_factor or 0
 	
-	if marked[npc:id()] then
-		actor_marked = 50000
-	else
-		actor_marked = 0
-	end
+
 	
 --============== total =============================
 	local shot_mult = pewpewmult
@@ -251,19 +254,15 @@ end
 
 function npc_on_before_hit(npc,shit,bone_id,flags)
     if shit.draftsman:id() == db.actor:id() then
-        if npc:see(db.actor) then 
-            return
-        else
-            marked[npc:id()] = marked[npc:id()] or true
-            local squad = get_object_squad(npc)
-            if squad and squad.commander_id then
-                for m in squad:squad_members() do
-                    local member = level.object_by_id(m.id)
-                    if member and member.alive and member:alive() then
-                        marked[member:id()] = marked[member:id()] or true
-                    end
-                end
-            end
+        marked[npc:id()] = marked[npc:id()] or true
+        local squad = get_object_squad(npc)
+        if squad and squad.commander_id then
+            for m in squad:squad_members() do
+				local member = level.object_by_id(m.id)
+				if member and member.alive and member:alive() then
+					marked[member:id()] = marked[member:id()] or true
+				end
+			end
         end
     end
 end
