@@ -137,32 +137,34 @@ function simulation_board:create_squad(spawn_smart, sq_id)
 	-- end
 
 	local squad = alife_create(squad_id,spawn_smart.position,	spawn_smart.m_level_vertex_id,spawn_smart.m_game_vertex_id)
-	squad:create_npc(spawn_smart)
-	-- SMR
-	smr_debug.get_log().info("simboard", "removing disabled mutants from squad %s (smart: %s)", squad:section_name(), spawn_smart:name())
-	smr_pop.remove_disabled_mutants_from_squad(squad, spawn_smart)
-	smr_debug.get_log().info("simboard", "adjusting squad size for squad %s (smart: %s)", squad:section_name(), spawn_smart:name())
-	smr_pop.adjust_squad_size(squad, spawn_smart)
-	smr_debug.get_log().info("simboard", "replacing mutant variants for squad %s (smart: %s)", squad:section_name(), spawn_smart:name())
-	smr_pop.replace_mutant_variants_in_squad(squad, spawn_smart)
-	-- SMR END
-	self:assign_squad_to_smart(squad, spawn_smart.id)
+	if squad then
+		squad:create_npc(spawn_smart)
+		-- SMR
+		smr_debug.get_log().info("simboard", "removing disabled mutants from squad %s (smart: %s)", squad:section_name(), spawn_smart:name())
+		smr_pop.remove_disabled_mutants_from_squad(squad, spawn_smart)
+		smr_debug.get_log().info("simboard", "adjusting squad size for squad %s (smart: %s)", squad:section_name(), spawn_smart:name())
+		smr_pop.adjust_squad_size(squad, spawn_smart)
+		smr_debug.get_log().info("simboard", "replacing mutant variants for squad %s (smart: %s)", squad:section_name(), spawn_smart:name())
+		smr_pop.replace_mutant_variants_in_squad(squad, spawn_smart)
+		-- SMR END
+		self:assign_squad_to_smart(squad, spawn_smart.id)
 
-	local sim = alife()
-	for k in squad:squad_members() do
-		local se_obj = k.object or k.id and sim:object(k.id)
-		if (se_obj) then
-			SIMBOARD:setup_squad_and_group(se_obj)
-			-- Alundaio
-			SendScriptCallback("squad_on_npc_creation",squad,se_obj,spawn_smart)
-			-- Alundaio
+		local sim = alife()
+		for k in squad:squad_members() do
+			local se_obj = k.object or k.id and sim:object(k.id)
+			if (se_obj) then
+				SIMBOARD:setup_squad_and_group(se_obj)
+				-- Alundaio
+				SendScriptCallback("squad_on_npc_creation",squad,se_obj,spawn_smart)
+				-- Alundaio
+			end
 		end
-    end
-	-- SMR
-	smr_debug.get_log().info("simboard", "setting up civil war relations for squad %s (smart: %s)", squad:section_name(), spawn_smart:name())
-	smr_civil_war.setup_civil_war_squad(squad, spawn_smart:name())
-	-- SMR END
-	return squad
+		-- SMR
+		smr_debug.get_log().info("simboard", "setting up civil war relations for squad %s (smart: %s)", squad:section_name(), spawn_smart:name())
+		smr_civil_war.setup_civil_war_squad(squad, spawn_smart:name())
+		-- SMR END
+		return squad
+	end
 end
 
 function simulation_board:create_squad_at_named_location(loc_name, squad_id) -- tdef

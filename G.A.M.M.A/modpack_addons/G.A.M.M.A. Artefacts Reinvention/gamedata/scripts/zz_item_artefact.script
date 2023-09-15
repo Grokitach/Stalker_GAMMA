@@ -15,8 +15,6 @@ local function load_defaults()
 	return t
 end
 local settings = load_defaults()
-settings.enable_condition_bar = true
-settings.enable_degraded_drops = true
 
 -- Artefact condition enable
 item_artefact.artefact_binder.net_spawn = function(self, se_abstract)
@@ -141,6 +139,7 @@ se_artefact.se_artefact.on_register = function(self)
     story_objects.check_spawn_ini_for_story_id(self)
     
     -- persistent storage
+    printf("adding %s, %s to se_obj state", self.id, self:name())
     alife_storage_manager.get_se_obj_state(self,true)
 
     SendScriptCallback("server_entity_on_register",self,"se_artefact")
@@ -148,7 +147,8 @@ end
 
 se_artefact.se_artefact.on_unregister = function(self)
     local m_data = alife_storage_manager.get_state()
-    if (m_data.se_object) then
+    if (m_data.se_object and m_data.se_object[self.id]) then
+    	printf("clearing object %s, %s from m_data", self.id, self:name())
         m_data.se_object[self.id] = nil
     end
     unregister_story_object_by_id(self.id)
@@ -235,11 +235,7 @@ local function on_option_change()
 		for k, v in pairs(settings) do
 			settings[k] = ui_mcm.get("item_artefact/" .. k)
 		end
-		
-		settings.enable_condition_bar = true
-		settings.enable_degraded_drops = true
 	end
-	
 end
 
 function on_game_start()

@@ -1,0 +1,278 @@
+-- Visual Memory Manager exports
+-- by Alundaio
+
+-- called from engine
+-- This occurs during the visible check. If value >= visiblity_threshold then object is considered visible
+-- warning npc and who can be nil sometimes
+
+-- luminocity rewritten from scratch by Andruxa
+
+local jacket_t = {
+	["o_medium"] = 2,
+	["o_sci"] = 2,
+	["o_light"] = 1.35,
+	["o_heavy"] = 4.5,
+}
+
+local jacketmult = 1
+local summ = 0
+local renderer = get_console_cmd(0,"renderer")
+local dxeight = 'renderer_r1'
+local is_r1 = (renderer == dxeight)
+local pewpewmult = 0
+local get_camo_k = 0
+local vision_memory = {}
+local marked = {}
+local actor_marked = 0
+
+function get_visible_value(npc,who,time_delta,time_quant,luminocity,velocity_factor,velocity,distance,object_distance,always_visible_distance)
+	distance = distance <= 0 and 0.00001 or distance
+
+--============= luminosity =============
+	local npcxnpc_flash = false	-- Boosts NPC's vision when they see other NPC with active flashlight from afar, change to 'false' if you feel like it tanks your FPS too hard and let me know please
+
+	-- main
+	local michiko_patch = stealth_mcm.get_config("michiko_patch")
+	local hrs = level.get_time_hours() + level.get_time_minutes() / 60
+	local who_lum = who:get_luminocity()
+	local lumin_r1 = luminocity <= 0 and 0.0001 or luminocity
+	local lumin_r2 = (who_lum + who_lum^0.5 + lights_lum()) / 3.02
+
+	local lumin_r2_night = clamp((lumin_r2 * 2)^1.6, 0.01, 0.99)
+	local lumin_r2_night_michiko = clamp(((lumin_r2 * 7)^3), 0.01, 0.99)
+	lumin_r2_night = michiko_patch and lumin_r2_night_michiko or lumin_r2_night
+
+	local is_night = (hrs > 21 or hrs < 4)
+	local is_night_michiko = (hrs > 21 or hrs < 5)
+	is_night = michiko_patch and is_night_michiko or is_night
+
+	lumin_r2 = is_night and lumin_r2_night or lumin_r2
+
+	luminocity = is_r1 and lumin_r1 or lumin_r2
+
+	-- campfire/underground
+	luminocity = luminocity + camp_lum.luminocity_inc
+
+	if level_weathers.bLevelUnderground then
+		luminocity = luminocity + 0.35
+	end
+
+	-- flashlights
+	local torch = db.actor:item_in_slot(10)
+	local flash = db.actor:item_in_slot(9)
+	local npc_torch = (npc and IsStalker(npc) and npc:object("device_torch"))
+	local who_torch = (who and IsStalker(who) and who:object("device_torch"))
+	local who_dist = 20 / object_distance
+	local npc_dist = 10 / object_distance
+
+	local luminocity_flash_r2 = luminocity
+	local actor_torch_active = (who and (who:id() == db.actor:id()) and ( (torch and torch:torch_enabled()) or (flash and (flash:section() == "device_flashlight") and db.actor:active_detector()) ))
+	local luminocity_flash_actor_r2 = luminocity_flash_r2 + who_dist
+	local npc_torch_active = (npc_torch and npc_torch:attachable_item_enabled() and (object_distance <= 25 and distance > 90))
+	local luminocity_flash_npc_r2 = luminocity_flash_r2 + npc_dist
+	local npc_to_npc_torch_active = npcxnpc_flash and who_torch and who_torch:attachable_item_enabled()
+
+	luminocity_flash_r2 = (actor_torch_active or npc_to_npc_torch_active) and luminocity_flash_actor_r2 or luminocity_flash_r2
+	luminocity_flash_r2 = npc_torch_active and luminocity_flash_npc_r2 or luminocity_flash_r2
+
+	luminocity = is_r1 and luminocity or luminocity_flash_r2
+
+--======== camo/weight ====================
+	local camo_checks = get_camo_k > 0 and velocity == 0 and object_distance >= 30
+	local camo_dist = 1 - object_distance * 0.01
+	local camo_tot = get_camo_k / 20 * camo_dist
+	camo_tot = clamp(camo_tot, 0.02, 1.0)
+	local camo_x = camo_checks and camo_tot or 1
+
+	local w = db.actor:get_total_weight()
+	local wei = math.exp(w/100)
+	local odw = 1.1 - 0.02 * object_distance
+	local obj_dist_w = odw > 0.01 and odw or 0.01
+
+--====== crouch/danger_mult/scheme_mult ===========
+	local cr = IsMoveState('mcCrouch')
+	local acc = IsMoveState('mcAccel')
+	local crouch = (cr and (not acc)) and (stealth_mcm.get_config("crouch")) or 1
+	crouch = (cr and acc) and (stealth_mcm.get_config("low_crouch")) or crouch
+
+	local npc_alive = npc and npc:alive()
+	local is_mutant = npc_alive and IsMonster(npc)
+	local is_stalker = npc_alive and IsStalker(npc)
+	local danger_mult = is_mutant and (0.003 / time_quant) or 1
+	danger_mult = is_stalker and (time_quant * 2) or danger_mult
+
+	local scheme_mult = 1
+	if npc_alive then
+		local st = db.storage[npc:id()]
+                if st then
+		    scheme_mult = (st and (st.active_scheme == "guard" or st.active_scheme == "sniper")) and 0.5 or 1
+	        end
+        end
+	
+--============ memory ====================
+	local tg = time_global()
+	local memory_factor = 0
+	local mcm_memory = stealth_mcm.get_config("memory")
+
+	if npc and npc:alive() and who and (IsStalker(who) or IsMonster(who)) and who:alive() then
+		local see = npc:see(who)
+		local vis_memory_t = vision_memory[npc:id()] and vision_memory[npc:id()][who:id()] or nil
+		if (see) and (not (vis_memory_t)) then
+			vision_memory[npc:id()] = {}
+			vision_memory[npc:id()][who:id()] = true
+		elseif (not (see)) and (vis_memory_t) then
+			local mem_time = (tg - npc:memory_time(who)) * 0.001
+			local mem_time_factor =  7.5 * (1 / mem_time)^2
+			local vis_threshold = npc:visibility_threshold()
+			memory_factor = mcm_memory * mem_time_factor * vis_threshold			-- 35 threshold:  100 sec = 0.025 ; 80 sec = 0.04 ; 60 sec = 0.08 ; 40 sec = 0.17 ; 20 sec = 0.66 ; 10 sec = 2.6
+		end
+		
+		if marked[npc:id()] then
+			actor_marked = 50000
+		else
+			actor_marked = 0
+		end
+	end
+
+	memory_factor = (memory_factor > 0.01) and memory_factor or 0
+	
+
+	
+--============== total =============================
+	local shot_mult = pewpewmult
+	local eq_dist = ((distance - object_distance / 1.15) / distance) * stealth_mcm.get_config("distance")
+	local lum_dist = (distance - object_distance / 1.35) / distance
+	local Velocity = (1 + velocity_factor * velocity) * stealth_mcm.get_config("velocity")
+	local wnj = wei * jacketmult * obj_dist_w * stealth_mcm.get_config("weight")
+	local weight = wnj > 1 and wnj or 1
+	local Luminocity = (33 * luminocity * lum_dist + shot_mult) * stealth_mcm.get_config("luminocity")
+	local step_incr = Luminocity * Velocity * eq_dist * weight * crouch * danger_mult * camo_x * scheme_mult + memory_factor + actor_marked
+--===============================================
+
+
+-- ==== dbg ==========
+	if (stealth_mcm.get_config("debugx")) then
+		local wthrs = level_weathers.get_weather_manager():get_curr_weather_preset()
+		local obj = level.get_target_obj()
+		local r = round_idp
+
+		if (obj and (obj:alive()) and (who and (who:id() == db.actor:id() or who:id() == obj:id() ) and npc and (npc:id() == db.actor:id() or npc:id() == obj:id() ))) and (not obj:see(db.actor)) then
+			summ = summ + step_incr
+		elseif obj and obj:see(db.actor) then
+			summ = 0
+			news_manager.send_tip(db.actor, "Spotted", 0, nil, 1500)
+		end
+
+		if obj and (obj:alive()) and (who and (who:id() == db.actor:id() or who:id() == obj:id() ) and npc and (npc:id() == db.actor:id() or npc:id() == obj:id() )) then
+			printf('---------------------------------------------------------------')
+			printf("Weather is: " .. (wthrs))
+			printf("1. Luminocity  ---------- %s", Luminocity)
+			printf("1.a) luminocity --------- %s", luminocity)
+			printf("1.b) lights_lum() ------- %s", lights_lum())
+			printf("1.c) who:get_lum() ---- %s", who:get_luminocity())
+			printf("2. Velocity ------------- %s", Velocity)
+			printf("3. dist_original --------- %s", distance)
+			printf("4. weight&outfit ------- %s", weight)
+			printf("5. crouch ------------- %s", crouch)
+			printf("6.a) shot_mult --------- %s", shot_mult)
+			printf("6.b) danger ------------ %s", danger_mult)
+			printf("6.c) camo ------------- %s", camo_x)
+			printf("6.d) ai scheme --------- %s", scheme_mult)
+			printf("6.e) get_camo_k ------ %s", get_camo_k)
+			printf("6.f) jacketmult --------- %s", jacketmult)
+			printf("7. memory ------------- %s", memory_factor)
+			printf("8. Step incr --- %s", step_incr)
+			actor_menu.set_msg(1, strformat("Threshold: %s/%s || (Lumin: %s | Veloc: %s | Dist: %s | Weight: %s | Memory: %s || Total per update: %s)", r(summ,2), obj:visibility_threshold(), r(Luminocity,2), r(Velocity,2), r(eq_dist,2), r(weight,2), r(memory_factor,2), r(step_incr,2) ))
+		end
+
+		if obj == nil then
+			summ = 0
+		end
+
+	end
+--===============================================
+
+
+	return step_incr
+end
+
+--======== luminosity extra ====================
+function andruxa(animegif)
+	return 0.21 * animegif.x + 0.72 * animegif.y + 0.07 * animegif.z
+end
+
+function lights_lum(andre)
+	local andlum = andre
+	local andsun =  andruxa(weather.get_value_vector("sun_color"))
+	local andhem = andruxa(weather.get_value_vector("hemisphere_color"))
+	andlum = (math.max(andhem, andsun))
+
+	return andlum
+end
+
+function actor_on_weapon_fired()
+	local wpn = db.actor:active_item()
+	if not (wpn) then return end
+	if not (IsWeapon(wpn)) or IsMelee(wpn) or wpn:weapon_is_silencer() then return end
+
+	pewpewmult = 7
+	CreateTimeEvent("xcvb", "wpn_fired_stop", 0.16, wpn_fired_stop)
+
+end
+
+function wpn_fired_stop()
+		pewpewmult = 0
+    return true
+end
+
+function icon_lum()
+	local act_lum = db.actor:get_luminocity()
+	local dblum = (act_lum + act_lum^0.5 + lights_lum()) / 3 + camp_lum.luminocity_inc
+	local luminocity_icon = is_r1 and (act_lum)^0.7 or dblum
+
+	return luminocity_icon
+end
+
+--========== outfit/camo =================
+function slot_in_out(obj)
+	if not IsOutfit(obj) then return end
+	local outfit = db.actor:item_in_slot(7)
+	local kind = outfit and ini_sys:r_string_ex(outfit:section(),"kind")
+	local get_camo_get_line = outfit and ini_sys:line_exist(outfit:section(), "npc_blindness_koeff")
+	get_camo_k = get_camo_get_line and ini_sys:r_float(outfit:section(), "npc_blindness_koeff") or 0
+	jacketmult = kind and jacket_t[kind] or 1
+
+end
+
+function actor_on_first_update()
+	for i=1,13 do
+		local obj = db.actor:item_in_slot(i)
+		slot_in_out(obj)
+	end
+
+end
+
+function npc_on_before_hit(npc,shit,bone_id,flags)
+    if shit.draftsman:id() == db.actor:id() then
+        marked[npc:id()] = marked[npc:id()] or true
+        local squad = get_object_squad(npc)
+        if squad and squad.commander_id then
+            for m in squad:squad_members() do
+				local member = level.object_by_id(m.id)
+				if member and member.alive and member:alive() then
+					marked[member:id()] = marked[member:id()] or true
+				end
+			end
+        end
+    end
+end
+
+--===================================
+function on_game_start()
+	RegisterScriptCallback("actor_on_weapon_fired", actor_on_weapon_fired)
+	RegisterScriptCallback("actor_item_to_slot", slot_in_out)
+	RegisterScriptCallback("actor_item_to_ruck", slot_in_out)
+	RegisterScriptCallback("actor_on_item_drop", slot_in_out)
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("npc_on_before_hit", npc_on_before_hit)
+end

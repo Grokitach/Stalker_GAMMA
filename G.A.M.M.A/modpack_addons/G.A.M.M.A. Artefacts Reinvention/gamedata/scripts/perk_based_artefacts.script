@@ -12,9 +12,6 @@ local has_alife_info = has_alife_info
 local ipairs = ipairs
 local is_empty = is_empty
 local is_not_empty = is_not_empty
-local IsAnomaly = IsAnomaly
-local IsArtefact = IsArtefact
-local IsMoveState = IsMoveState
 local normalize = normalize
 local pairs = pairs
 local particles_object = particles_object
@@ -23,12 +20,10 @@ local random_float = random_float
 
 local round_100 = round_100
 local script_light = script_light
-local SYS_GetParam = SYS_GetParam
 local time_global = time_global
 local vector_rotate_y = vector_rotate_y
 
 local manage_psy_health = arszi_psy.manage_psy_health
-local get_psy_health = arszi_psy.get_psy_health
 
 -- Get psy table to manipulate psy health values
 local actor_psy_table = {}
@@ -38,6 +33,12 @@ function get_actor_psy_table()
 	local m_data = alife_storage_manager.get_state()
 	arszi_psy.save_state(m_data) 
 	actor_psy_table = m_data.psy_table
+end
+
+function get_psy_health()
+	if actor_psy_table.actor_psy_health then
+		return actor_psy_table.actor_psy_health
+	end
 end
 
 function set_psy_health(amount)
@@ -69,6 +70,7 @@ local get_start_time = level.get_start_time
 local get_time_factor = level.get_time_factor
 local get_time_hours = level.get_time_hours
 local get_time_minutes = level.get_time_minutes
+local iterate_nearest = level.iterate_nearest
 local level_name = level.name
 local level_object_by_id = level.object_by_id
 local press_action = level.press_action
@@ -302,6 +304,11 @@ local function get_monster_clsid_and_kind(obj)
 	return obj:clsid(), SYS_GetParam(0, obj:section(), "kind", 0)
 end
 
+local function IsBinoc(sec)
+	return 	SYS_GetParam(0, sec, "ammo_class", "") == "ammo_binoc"
+	or 		SYS_GetParam(0, sec, "class", "") == "WP_BINOC"
+end
+
 local function get_current_weather()
 	return get_weather_manager():get_curr_weather()
 end
@@ -370,6 +377,20 @@ local force_refresh_state
 local artefacts = {}
 local belt = {}
 
+-- Temporal virtual artefacts to add
+-- Only adds if no artefacts of that type is on belt
+virtual_artefacts = {}
+
+function add_virtual_artefact(sec)
+	virtual_artefacts[sec] = true
+	refresh_artefacts(true)
+end
+
+function remove_virtual_artefact(sec)
+	virtual_artefacts[sec] = nil
+	refresh_artefacts(true)
+end
+
 -- Find artefact in a container
 function get_artefact_from_container(sec)
     local sec = sec
@@ -437,8 +458,19 @@ iterate_belt = function(actor)
 	local function iterate_belt_f(owner, artefact)
 		iterate_belt_function(owner, artefact, artefacts, belt)
 	end
-
 	actor:iterate_belt(iterate_belt_f)
+
+	for k, v in pairs(virtual_artefacts) do
+		if not artefacts[k] then
+			artefacts[k] = {
+				count = 1,
+				ids = { },
+				names = { }
+			}
+			table_insert(belt, k)
+		end
+	end
+
 	table_sort(belt)
 	return artefacts, belt
 end
@@ -536,7 +568,29 @@ function remove_cooldown(name)
 end
 
 status_effects = {} -- Table of status effects of artefacts (["artefact"] = time_elapsed + cooldown)
-function add_status_effect(timer, effect, key)
+function add_status_effect(timer, effect, key, check_timer)
+	if check_timer then
+		if type(check_timer) == "number" then
+			check_timer = clamp(check_timer, 0, 2)
+			if check_timer == 0 then
+				check_timer = false
+			end
+		end
+	end
+
+	if check_timer and status_effects[key] then
+		local remaining_time = status_effects[key].timer - time_elapsed
+		if check_timer == 2 then
+			trace("can't add effect, already existing with timer")
+			trace("effect %s, timer %s, remaining_time %s, new timer %s", key, status_effects[key].timer, remaining_time, timer)
+			return
+		elseif remaining_time > timer then
+			trace("can't add effect, already existing with bigger timer")
+			trace("effect %s, timer %s, remaining_time %s, new timer %s", key, status_effects[key].timer, remaining_time, timer)
+			return
+		end
+	end
+
 	local t = {
 		timer = time_elapsed + (timer or 0),
 		time_applied = time_elapsed,
@@ -682,7 +736,7 @@ speed_boosts = { -- Table of speed boosts for different artefacts
 	},
 	af_lucifer = {
 		name = "af_lucifer_boost",
-		boost = 0.175
+		boost = 0.160
 	}
 }
 
@@ -772,12 +826,12 @@ artefact_props = { -- Special props of artefacts that are used in processing
 		end
 	},
 	af_cell = {
-		reduction_coeff = (function() -- LUT with chances to trigger by artefact count
+		reduction_coeff = (function() -- LUT with reduction coeffs by artefact count
 			local t = {}
 			for artefact_count = 1, 5 do
 				-- Parabolic curve
-				-- Progression is 20 -> 35 -> 48 -> 60 -> 70
-				t[artefact_count] = round((17.5 - 0.8333333 * artefact_count) * artefact_count + 3.3333333) * 0.01
+				-- Progression is 15 -> 29 -> 42 -> 54 -> 65
+				t[artefact_count] = round(-0.5 * artefact_count ^ 2 + 15.5 * artefact_count) * 0.01
 			end
 			return t
 		end)(),
@@ -851,7 +905,103 @@ artefact_props = { -- Special props of artefacts that are used in processing
 			-- 	"SM_VENDIGO",
 			-- 	131, -- Bibliotekar
 			-- }
-		}
+		},
+		iterate_func_radius = 2,
+		iterate_func = function(self, actor, artefact_count, artefact_ids, artefact_names, obj) -- Function to find nearest monster to trigger
+			if IsMonster(obj) and obj.alive and obj:alive() and obj:position():distance_to_sqr(actor:position()) <= self.iterate_func_radius * self.iterate_func_radius then
+				trace("Monster %s near Tapeworm, stun", obj:name())
+				self:stun_func(actor, artefact_count, artefact_ids, artefact_names, obj, nil, obj)
+				return true
+			end
+		end,
+		stun_func = function(self, actor, artefact_count, artefact_ids, artefact_names, obj, amount, who, last_hit)
+			local who_id = who:id()
+			local who_position = who:position()
+
+			local s_hit = hit()
+			s_hit.bone = "bip01_spine"
+			s_hit.power = 0.05 * artefact_count
+			s_hit.draftsman = who
+			s_hit.type = hit.strike
+			s_hit.direction = VEC_Z
+
+			local effect_time = 1 + 2 * artefact_count
+
+			local monster_anims = self.monster_animations
+			local monster_cls, monster_kind = get_monster_clsid_and_kind(who)
+
+			local anims = IsStalker(who) and monster_anims.stalker or monster_anims[monster_kind] or monster_anims[monster_cls]
+
+			local function ignore_enemy_function(obj, enemy, flags) -- Remove evaluation
+				if obj:id() == who_id then
+					flags.override = true
+					flags.result = false
+					return
+				end
+			end
+
+			RegisterScriptCallback("on_enemy_eval", ignore_enemy_function)
+
+			if IsStalker(who) then
+				s_hit.power = s_hit.power * 0.1
+
+				if who:id() == AC_ID then
+					s_hit.draftsman = get_object_by_id(artefact_ids[1])
+				end
+
+				local function hit_enemy(time)
+					who_position = who:position()
+
+					local snd = get_safe_sound_object("anomaly\\electra_hit" .. get_random_array_element({"", "1"}))
+					snd:play_at_pos(who, who_position, 0, sound_object.s3d)
+					snd.frequency = random_float(0.95, 1.05)
+
+					if who:alive() then
+						who:set_movement_type(move.stand)
+						who:set_body_state(move.standing)
+						who:set_mental_state(anim.panic)
+						who:hit(s_hit)
+
+						if anims then
+				        	who:play_cycle(get_random_array_element(anims), true)
+				        end
+
+						trace("time %s, hit %s, last_hit %s", time, s_hit.power, last_hit.power)
+					else
+						if who:get_physics_shell() then
+							who:get_physics_shell():apply_force(random(1000, 2000), random(2000, 4000), random(1000, 2000))
+						end
+					end
+					return true
+				end
+
+				for i = 0, effect_time, 0.05 do
+					CreateTimeEvent("af_tapeworm" .. who_id, "af_tapeworm" .. who_id .. i, i, hit_enemy, i)
+				end
+			else
+				local snd = get_safe_sound_object("anomaly\\electra_blast")
+				snd:play_at_pos(who, who_position, 0, sound_object.s3d)
+				snd.volume = 0.7
+				snd.frequency = random_float(1.1, 1.2)
+
+				local function hit_enemy(time)
+					who_position = who:position()
+					who:hit(s_hit)
+
+					trace("time %s, hit %s", time, s_hit.power)
+					return true
+				end
+
+				hit_enemy(0)
+			end
+
+			CreateTimeEvent("af_tapeworm" .. who_id, "af_tapeworm" .. who_id .. "eval", effect_time + 0.1, function()
+				UnregisterScriptCallback("on_enemy_eval", ignore_enemy_function)
+				return true
+			end)
+
+			add_cooldown(6, "af_tapeworm")
+		end,
 	},
 	af_sun = {
 		valid_hits = { -- Valid hit types to trigger
@@ -1105,7 +1255,7 @@ artefact_props = { -- Special props of artefacts that are used in processing
 	af_skull_miser = {
 		money_items = (function() -- Money items to choose and spawn
 			local t = {}
-			insert_n_times(t, "roubles", 192)
+			insert_n_times(t, "roubles", 100)
 			insert_n_times(t, "money_10_50", 12)
 			insert_n_times(t, "money_50_100", 8)
 			insert_n_times(t, "money_100_200", 6)
@@ -1316,9 +1466,9 @@ artefact_props = { -- Special props of artefacts that are used in processing
 		end,
 		psy_health_penalty_coeff = 0.35,
 		psy_health_restore_coeff = 0.05,
-		hit_buff_coeff = 0.01,
-		critical_hit_buff_coeff = 0.04,
-		artefact_count_coeff = 0.02,
+		hit_buff_coeff = 0.025,
+		critical_hit_buff_coeff = 0.075,
+		artefact_count_coeff = 0.025,
 		effect_reset = function(self)
 			if self.damage_multiplier > 1 then
 				local s_hit = hit()
@@ -1350,6 +1500,29 @@ artefact_props = { -- Special props of artefacts that are used in processing
 			[hit.shock] = true,
 			[hit.chemical_burn] = true
 		},
+		valid_hits_table = {}, -- Table of valid hits to choose from, updates each hour
+		valid_hits_table_pointer = 1, -- Current valid hit
+		valid_hits_table_update_time = 0, -- Update time of valid_hits_table
+		update_valid_hits_table = function(self)
+			-- Set randomseed to current game hour and reset back later
+			local seed = ceil(time_elapsed * time_factor / 60 / 60)
+			if seed ~= self.valid_hits_table_update_time or is_empty(self.valid_hits_table) then
+				empty_table(self.valid_hits_table)
+				math.randomseed(seed)
+				for i = 1, 100 do
+					self.valid_hits_table[i] = get_random_key(self.valid_hits)
+				end
+				self.valid_hits_table_pointer = 1
+				self.valid_hits_table_update_time = seed
+				math.randomseed(os.time())
+			end
+		end,
+		get_valid_hit_type = function(self)
+			self:update_valid_hits_table()
+			local res = self.valid_hits_table[self.valid_hits_table_pointer]
+			self.valid_hits_table_pointer = (self.valid_hits_table_pointer % #self.valid_hits_table) + 1
+			return res
+		end,
 		hit_types_sounds = { -- Hit type to sounds associations
 			[hit.light_burn] = {
 				"perk_based_artefacts\\flamer2",
@@ -1415,33 +1588,9 @@ artefact_props = { -- Special props of artefacts that are used in processing
 		effect_time = 7,
 		bleed_coeff = 0.0014, -- Bigger number => bigger bleeding damage
 		hit_coeff = 0.5,
-		pellet_count = 1,
 		on_before_hit = function(self, actor, artefact_count, artefact_ids, artefact_names, npc, s_hit, bone_id, flags)
 			local hit_k = self.hit_coeff
-						
-			-- Stolen from GBOOBS. Shame me.
-			-- Suppossed some nice and wellspoken individuals would want shotguns to be fucking useless again.
-			-- So I did this patch:
-			
-			local shooter = s_hit.draftsman
-			wpn = level.object_by_id(s_hit.weapon_id)
-			sec = wpn:section()
-			
-			local wpn_id = wpn:id()
-			local ammo_type_number = wpn:get_ammo_type()
-			local ammo_list = utils_item.get_ammo(sec, wpn_id)
-			local ammo_section = ammo_list[ammo_type_number+1]
-			
-			self.pellet_count = 1
-			
-			if ammo_section == "ammo_12x70_buck" or ammo_section == "ammo_12x70_buck_bad" or ammo_section == "ammo_20x70_buck" then
-						self.pellet_count = 9
-						end
-			if ammo_section == "ammo_23x75_shrapnel" then	
-						self.pellet_count = 6
-					end
-			
-			local bleeding_hit = (s_hit.power / self.pellet_count) * -self.bleed_coeff * artefact_count
+			local bleeding_hit = s_hit.power * -self.bleed_coeff * artefact_count
 			s_hit.power = s_hit.power * hit_k
 			
 			add_simple_timed_effect(self.effect_time, function()
@@ -1471,7 +1620,7 @@ artefact_props = { -- Special props of artefacts that are used in processing
 		protection_bonus = (function()
 			local t = {}
 			for stacks = 0, 10 do
-				t[stacks] = 1 - round(0.1875 * stacks * stacks + 4.625 * stacks + 10) * 0.01 -- 10 -> 75% parabolic curve
+				t[stacks] = 1 - round(-0.6 * stacks ^ 2 + 12 * stacks + 15) * 0.01 -- 15 -> 75% parabolic curve
 			end
 			return t
 		end)(),
@@ -1970,6 +2119,9 @@ artefact_props = { -- Special props of artefacts that are used in processing
 				self:hurt_psy(actor, 0.3, nil, nil, 5, 0.006)
 			end,
 			function(self, actor)
+				self:hurt_psy(actor, 0.3, nil, nil, 5, 0.006)
+			end,
+			function(self, actor)
 				self:hurt_psy(actor, 0.5, {1, 2, 3, 4, 5}, 2, 10, 0.0075)
 			end,
 			function(self, actor)
@@ -2039,21 +2191,55 @@ artefact_props = { -- Special props of artefacts that are used in processing
 			t["af_lucifer"] = true -- Can't mutate Lucifer
 
 			-- Can't mutate unique artefacts
+			t["af_ameba_mica"] = true
+			t["af_ameba_slime"] = true
+			t["af_ameba_slug"] = true
 			t["af_base_mlr"] = true
 			t["af_black"] = true
 			t["af_compass"] = true
 			t["af_control"] = true
 			t["af_death_lamp"] = true
+			t["af_dummy_pellicle"] = true
+			t["af_dummy_spring"] = true
 			t["af_geliy"] = true
 			t["af_gimlet"] = true
 			t["af_misery_bread"] = true
 			t["af_monolith"] = true
 			t["af_oasis_heart"] = true
 			t["af_quest_b14_twisted"] = true
+			t["af_rusty_kristall"] = true
+			t["af_rusty_sea"] = true
+			t["af_rusty_thorn"] = true
 			t["af_vaselisk"] = true
 			t["monolith_shard"] = true
 			t["jup_b1_half_artifact"] = true
 			t["marker"] = true
+
+			-- Multiplayer items
+			t["mp_af_electra_flash"] = true
+			t["mp_zone_witches_galantine"] = true
+			t["mp_af_cta_green"] = true
+			t["mp_af_cta_blue"] = true
+			t["mp_medkit"] = true
+			t["mp_medkit_scientic"] = true
+			t["mp_medkit_army"] = true
+			t["mp_energy_drink"] = true
+			t["mp_bandage"] = true
+			t["mp_antirad"] = true
+			t["mp_drug_coagulant"] = true
+			t["mp_drug_radioprotector"] = true
+			t["mp_medkit_old"] = true
+			t["mp_antirad_old"] = true
+			t["mp_detector_advanced"] = true
+			t["mp_device_torch"] = true
+			t["mp_players_rukzak"] = true
+			t["mp_wood_stolb_fixed"] = true
+			t["mp_wood_stolb_fixed_immunities"] = true
+			t["mp_explosive_fuelcan"] = true
+			t["mp_explosive_tank"] = true
+			t["mp_explosive_barrel"] = true
+
+
 			ini_sys:section_for_each(function(sec)
 				if SYS_GetParam(0, sec, "kind", "") == "i_arty_cont" then -- Exclude artefacts in containers
 					t[sec] = true
@@ -2212,7 +2398,19 @@ artefact_props = { -- Special props of artefacts that are used in processing
 			alife_create_item(new_artefact, actor)
 			CreateTimeEvent("refresh_artefacts", "refresh_artefacts", 0.15, refresh_artefacts_time_event_func, true)
 		end,
+		randomseed = 0,
+		randomseed_update_time = 0,
 		transmutate_artefact = function(self, obj)
+			-- Set randomseed to current game hour and reset back
+			local seed = ceil(time_elapsed * time_factor / 60 / 60)
+			if self.randomseed_update_time ~= seed then
+				self.randomseed = seed
+				self.randomseed_update_time = seed
+			else
+				math.randomseed(self.randomseed)
+				self.randomseed = self.randomseed + math.random(100, 200)
+			end
+			math.randomseed(self.randomseed)
 			local sec = obj:section()
 			local new_sec
 			if self.perk_artefacts[sec] then
@@ -2230,6 +2428,7 @@ artefact_props = { -- Special props of artefacts that are used in processing
 			end
 			trace("Bat, resulting artefact %s", new_sec)
 			self:transmutate(obj, new_sec)
+			math.randomseed(os.time())
 		end
 	},
 	af_lucifer = {
@@ -2463,6 +2662,20 @@ artefact_on_update_functions = {
 		end
 	end,
 
+	-- Tapeworm, Perk: Stunner
+	af_tapeworm = function(actor, artefact_count, artefact_ids, artefact_names)
+		local af_tapeworm = artefact_props.af_tapeworm
+		if not check_cooldown("af_tapeworm") then
+			trace("Tapeworm not triggered, cooldown active")
+			return
+		end
+
+		iterate_nearest(actor:position(), af_tapeworm.iterate_func_radius, function(obj)
+			return af_tapeworm:iterate_func(actor, artefact_count, artefact_ids, artefact_names, obj)
+		end)
+
+	end,
+
 	-- Heart, Perk: Will to Live
 	af_ear = function(actor, artefact_count, artefact_ids, artefact_names)
 		local health_threshold = 0.22 + 0.03 * artefact_count
@@ -2498,12 +2711,13 @@ artefact_on_update_functions = {
 
 	-- Signet, Perk: Light of Tranquility
 	af_signet = function(actor, artefact_count, artefact_ids, artefact_names)
-		local health_boost = 0.0005
+		local health_boost = 0.0007
 
 		local nearby_camp = get_nearby_campfire(5, true)
 		if nearby_camp and nearby_camp:is_on() then
 			for i = 1, artefact_count do
 				actor:change_health(health_boost)
+				manage_psy_health()
 				manage_psy_health()
 				manage_psy_health()
 			end
@@ -2514,7 +2728,7 @@ artefact_on_update_functions = {
 	-- Atom, Perk: Arszi's Blessing
 	af_atom = function(actor, artefact_count, artefact_ids, artefact_names)
 		local power_boost = 0.02
-		local radiation_cure = -0.00006
+		local radiation_cure = -0.00005
 
 		local radiation = actor.radiation
 		actor:change_power(radiation * power_boost * artefact_count)
@@ -2560,7 +2774,7 @@ artefact_on_update_functions = {
 		local af_chelust = artefact_props.af_chelust
 
 		if af_chelust.valid_communities[actor_community] then
-			local health_boost = 0.0006
+			local health_boost = 0.0004
 			local power_boost = 0.006
 			actor:change_health(health_boost)
 			actor:change_power(power_boost)
@@ -2594,8 +2808,8 @@ artefact_on_update_functions = {
 			trace("Chain, healing companion %s", heal_companion:id())
 			heal_companion:change_health(0.0015)
 		else
-			local health_boost = 0.00015
-			local power_boost = 0.0018
+			local health_boost = 0.000075
+			local power_boost = 0.0011
 
 			actor:change_health(health_boost)
 			actor:change_power(power_boost)
@@ -2606,10 +2820,10 @@ artefact_on_update_functions = {
 	af_zhelch = function(actor, artefact_count, artefact_ids, artefact_names)
 		local af_lucifer = artefact_props.af_lucifer
 		local health_boost = 0.003
-		local psy_drain = -0.0025 * (2 - af_lucifer.condition)
+		local psy_drain = -0.00125 * (2 - af_lucifer.condition)
 		local psy_boost = 0.0035 * af_lucifer.condition
 
-		if actor.health < (advanced_stamina_system_ass and advanced_stamina_system_ass.blood_loss_limit - 0.01 or 0.99) then -- ASS compatibility
+		if actor.health < (advanced_stamina_system_ass and advanced_stamina_system_ass.blood_loss_limit - 0.03 or 0.97) then -- ASS compatibility
 			actor:change_health(health_boost)
 			change_psy_health(psy_drain)
 		else
@@ -2622,7 +2836,7 @@ artefact_on_update_functions = {
 		end
 
 		local dice_roll = random() * 100
-		local chance = 0.5 + 5 * (1 - get_psy_health())
+		local chance = 0.25 + 2.5 * (1 - get_psy_health())
 		if dice_roll > chance then
 			trace("Scar, action not triggered, dice roll %s, chance %s", dice_roll, chance)
 			return
@@ -2639,7 +2853,7 @@ artefact_on_update_functions = {
 		for k, v in pairs(artefact_ids) do
 			local obj = get_object_by_id(v)
 			if obj then
-				obj:set_condition(obj:condition() - 0.00027 / artefact_count)
+				obj:set_condition(obj:condition() - 0.00108 / artefact_count)
 				if obj:condition() < 0.01 then
 					alife_release(obj)
 					CreateTimeEvent("refresh_artefacts", "refresh_artefacts", 0.15, refresh_artefacts_time_event_func, true)
@@ -2900,7 +3114,7 @@ artefact_on_weapon_fired_functions = {
 
 		local hit_type = status_effects["af_sandstone" .. actor_weapon].effect.hit_type
 		local af_sandstone = artefact_props.af_sandstone
-		play_sound_on_actor(get_random_array_element(af_sandstone.hit_types_sounds[hit_type]), 0.35, random_float(0.95, 1.05))
+		play_sound_on_actor(get_random_array_element(af_sandstone.hit_types_sounds[hit_type]), 0.5, random_float(0.95, 1.05))
 	end
 }
 
@@ -3207,7 +3421,7 @@ artefact_on_before_hit_functions = {
 		local rad_amount = power * 0.1
 		trace("Cell: resulted radiation %s", rad_amount)
 		actor:change_radiation(rad_amount)
-		play_sound_on_actor("anomaly\\electra_hit" .. get_random_array_element({"", "1"}), 1, 1 - (artefact_count - 1) * 0.1)
+		play_sound_on_actor("anomaly\\electra_hit" .. get_random_array_element({"", "1"}), 1, 1 - artefact_count * 0.1)
 
 		local function rad_sound()
 			play_sound_on_actor("detectors\\geiger_" .. random(8), 1)
@@ -3321,92 +3535,7 @@ artefact_on_hit_functions = {
 			return
 		end
 
-		local who_id = who:id()
-		local who_position = who:position()
-
-		local s_hit = hit(last_hit)
-		s_hit.bone = "bip01_spine"
-		s_hit.power = 0.01 * artefact_count
-		s_hit.draftsman = who
-
-		local effect_time = 1 + 2 * artefact_count
-
-		local monster_anims = af_tapeworm.monster_animations
-		local monster_cls, monster_kind = get_monster_clsid_and_kind(who)
-
-		local anims = IsStalker(who) and monster_anims.stalker or monster_anims[monster_kind] or monster_anims[monster_cls]
-
-		local function ignore_enemy_function(obj, enemy, flags) -- Remove evaluation
-			if obj:id() == who_id then
-				flags.override = true
-				flags.result = false
-				return
-			end
-		end
-
-		RegisterScriptCallback("on_enemy_eval", ignore_enemy_function)
-
-		if IsStalker(who) then
-			s_hit.power = s_hit.power * 0.5
-
-			if who:id() == AC_ID then
-				s_hit.draftsman = get_object_by_id(artefact_ids[1])
-			end
-
-			local function hit_enemy(time)
-				who_position = who:position()
-
-				local snd = get_safe_sound_object("anomaly\\electra_hit" .. get_random_array_element({"", "1"}))
-				snd:play_at_pos(who, who_position, 0, sound_object.s3d)
-				snd.frequency = random_float(0.95, 1.05)
-
-				if who:alive() then
-					who:set_movement_type(move.stand)
-					who:set_body_state(move.standing)
-					who:set_mental_state(anim.panic)
-					who:hit(s_hit)
-
-					if anims then
-			        	who:play_cycle(get_random_array_element(anims), true)
-			        end
-
-					trace("time %s, hit %s, last_hit %s", time, s_hit.power, last_hit.power)
-				else
-					if who:get_physics_shell() then
-						who:get_physics_shell():apply_force(random(1000, 2000), random(2000, 4000), random(1000, 2000))
-					end
-				end
-				return true
-			end
-
-			for i = 0, effect_time, 0.05 do
-				CreateTimeEvent("af_tapeworm" .. who_id, "af_tapeworm" .. who_id .. i, i, hit_enemy, i)
-			end
-		else
-			local snd = get_safe_sound_object("anomaly\\electra_blast")
-			snd:play_at_pos(who, who_position, 0, sound_object.s3d)
-			snd.volume = 0.7
-			snd.frequency = random_float(1.1, 1.2)
-
-			local function hit_enemy(time)
-				who_position = who:position()
-				who:hit(s_hit)
-
-				trace("time %s, hit %s, last_hit %s", time, s_hit.power, last_hit.power)
-				return true
-			end
-
-			hit_enemy(0)
-		end
-
-		CreateTimeEvent("af_tapeworm" .. who_id, "af_tapeworm" .. who_id .. "eval", effect_time + 0.1, function()
-			-- Possible unstuck Fix
-			-- TeleportObject(who:id(), who:position(), who:level_vertex_id(), who:game_vertex_id())
-			UnregisterScriptCallback("on_enemy_eval", ignore_enemy_function)
-			return true
-		end)
-
-		add_cooldown(2, "af_tapeworm")
+		af_tapeworm:stun_func(actor, artefact_count, artefact_ids, artefact_names, obj, amount, who, last_hit)
 	end,
 
 	-- Sandstone, perk: Zone Infusion
@@ -3431,7 +3560,7 @@ artefact_on_hit_functions = {
 		add_status_effect(180, {
 			weapon_name = actor_weapon:name(),
 			hit_type = last_hit.type
-		}, "af_sandstone" .. actor_weapon:name())
+		}, "af_sandstone" .. actor_weapon:name(), true)
 	end,
 
 }
@@ -3621,7 +3750,7 @@ artefact_on_trade_functions = {
 			local function cashback()
 				local money = actor:money()
 				trace("Actor last money %s, actor current money %s", actor_last_money, money)
-				local cashback = round((actor_last_money - money) * 0.02 * artefact_count)
+				local cashback = round((actor_last_money - money) * 0.04 * artefact_count)
 				if cashback < 1 then
 					trace("Fountain not fired, not enough money")
 					actor_last_money = money
@@ -3649,6 +3778,51 @@ artefact_on_trade_functions = {
 		end
 	end
 
+}
+
+-- Functions for artefacts which provide perk on drag drop
+artefact_on_item_drag_dropped_functions = {
+	-- Sandstone, perk: Zone Infusion
+	af_sandstone = function(actor, obj_1, obj_2, slot_from, slot_to)
+		if not IsWeapon(obj_2) then 
+			trace("Sandstone, target is not weapon, %s", obj_2:section())
+			return
+		end
+
+		-- Reset if melee weapon or binocs
+		if IsMelee(obj_2) or IsItem("fake_ammo_wpn", obj_2:section()) or IsBinoc(obj_2:section()) then
+			trace("Sandstone, target is knife or binocs, %s", obj_2:section())
+			return
+		end
+
+		-- Reset if throwable weapon (grenade, bolt)
+		if IsBolt(obj_2) or IsGrenade(obj_2) then
+			trace("Sandstone, target is throwable, %s", obj_2:section())
+			return
+		end
+
+		local af_sandstone = artefact_props.af_sandstone
+		local hit_type = af_sandstone:get_valid_hit_type()
+
+		add_status_effect(600, {
+			weapon_name = obj_2:name(),
+			hit_type = hit_type
+		}, "af_sandstone" .. obj_2:name())
+		
+		add_virtual_artefact("af_sandstone")
+		add_timed_effect(600, nil, nil, function()
+			perk_based_artefacts.remove_virtual_artefact("af_sandstone")
+		end, nil, "af_sandstone_remove_virtual_artefact")
+		play_sound_on_actor(get_random_array_element(af_sandstone.hit_types_sounds[hit_type]), 0.7, random_float(0.95, 1.05))
+		alife_release(obj_1)
+	end,
+
+	--Bat, Perk: Zone Alchemy
+	af_bat = function(actor, obj_1, obj_2, slot_from, slot_to)
+		if bat_transmutate_func.check_transmutate(obj_2, nil, "inventory") then
+			bat_transmutate_func.transmutate_func(obj_2, nil, "inventory")
+		end
+	end,
 }
 
 -- Functions for artefacts which provide perk bonuses on equip
@@ -3954,6 +4128,59 @@ bind_crow.crow_binder.death_callback = function(self, victim, who)
 	crow_death(self, victim, who)
 end
 
+-- Patch to not trigger lighthouse for emission crow kills
+function make_dead_crow(id,powr)
+	local crow = id and level.object_by_id(id)
+	if(crow and crow.alive and crow:alive() and powr) then
+		powr.draftsman = crow
+		crow:hit(powr)
+	end
+	return true
+end
+
+function surge_manager.CSurgeManager:kill_crows_at_pos(pos,delay) -- hit all crows if their pos is bigger than "pos"
+	local h = hit()
+	h.type = hit.fire_wound
+	h.power = 0.9
+	h.impulse = 0.0
+	h.direction = VEC_Z
+--	h.draftsman = db.actor
+	for k,id in pairs(bind_crow.crow_storage) do
+		if delay then
+			CreateTimeEvent("delay_kill_crow", id, random(3), make_dead_crow, id, h)
+		else
+			local crow = level.object_by_id(id)
+			if (crow and crow.alive and crow:alive() and pos < crow:position().z) then
+				h.draftsman = crow
+				crow:hit(h)
+			end
+		end
+	end
+end
+
+function psi_storm_manager.CPsiStormManager:kill_crows_at_pos(pos)
+	--self.crowParticles={}
+	local h = hit()
+	h.type = hit.fire_wound
+	h.power = 1.0
+	h.impulse = 0
+	h.direction = VEC_Z
+--	h.draftsman = db.actor
+	for k,v in pairs(bind_crow.crow_storage) do
+		local obj = alife_object(v)
+		if obj then
+			local crow = level.object_by_id(obj.id)
+			if(crow and crow.alive and crow:alive() and distance_2d(pos, crow:position())<25) then
+				--crow:start_particles("crommcruac\\electrocute_crow","bip01_pelvis")
+				--self.crowParticles[k]=particles_object("crommcruac\\electrocute_crow")
+				--self.crowParticles[k]:play_at_pos(crow:position())
+				h.draftsman = crow
+				crow:hit(h)
+			end
+		end
+	end
+end
+
 -- Disable talk possibility for Phantom Pacifist
 local process_npc_usability = xr_meet.process_npc_usability
 xr_meet.process_npc_usability = function(npc)
@@ -4101,8 +4328,6 @@ function actor_on_weapon_fired(obj, wpn, ammo_elapsed, grenade_elapsed, ammo_typ
 end
 
 function actor_on_before_hit(s_hit, bone_id, flags)
-	
-
 	if not (s_hit.draftsman and s_hit.draftsman.id) then
 		trace("actor_on_before hit, draftsman not defined")
 		return
@@ -4112,8 +4337,6 @@ function actor_on_before_hit(s_hit, bone_id, flags)
 	last_hit = hit(s_hit)
 
 	process_artefacts(artefact_on_before_hit_functions, s_hit, bone_id, flags)
-
-	
 end
 
 function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
@@ -4146,8 +4369,6 @@ function actor_on_item_sell(item)
 end
 
 function npc_on_before_hit(npc, s_hit, bone_id, flags)
-
-	--[[
 	if not (s_hit.draftsman and s_hit.draftsman.id) then
 		trace("npc_on_before hit, draftsman not defined")
 		return
@@ -4161,8 +4382,6 @@ function npc_on_before_hit(npc, s_hit, bone_id, flags)
 	last_npc_hit_bone_index = bone_id
 
 	process_artefacts(artefact_on_npc_before_hit_functions, npc, s_hit, bone_id, flags)
-	--]]
-
 end
 
 function npc_on_hit_callback(npc, amount, local_direction, who, bone_index)
@@ -4194,8 +4413,6 @@ function npc_on_death_callback(npc, who)
 end
 
 function monster_on_before_hit(monster, s_hit, bone_id, flags)
-	
-
 	if not (s_hit.draftsman and s_hit.draftsman.id) then
 		trace("monster_on_before hit, draftsman not defined")
 		return
@@ -4215,8 +4432,6 @@ function monster_on_before_hit(monster, s_hit, bone_id, flags)
 	last_monster_hit_bone_index = bone_id
 
 	process_artefacts(artefact_on_monster_before_hit_functions, monster, s_hit, bone_id, flags)
-
-	
 end
 
 function monster_on_hit_callback(monster, amount, local_direction, who, bone_index)
@@ -4252,6 +4467,19 @@ function monster_on_death_callback(monster, who)
 	process_artefacts(artefact_on_monster_death_functions, monster, who, last_monster_hit, last_monster_hit_bone_index)
 end
 
+function on_item_drag_dropped(obj_1, obj_2, slot_from, slot_to)
+	if not (obj_1 and obj_2) then 
+		trace("No obj_1 or obj_2 found, o1 %s, o2 %s", obj_1 and obj_1:section(), obj_2 and obj_2:section())
+		return
+	end
+
+	if artefact_on_item_drag_dropped_functions[obj_1:section()] then
+		artefact_on_item_drag_dropped_functions[obj_1:section()](db.actor, obj_1, obj_2, slot_from, slot_to)
+	elseif artefact_on_item_drag_dropped_functions[obj_2:section()] then
+		artefact_on_item_drag_dropped_functions[obj_2:section()](db.actor, obj_2, obj_1, slot_to, slot_from)
+	end
+end
+
 function actor_on_first_update()
 	get_actor_psy_table()
 
@@ -4285,12 +4513,14 @@ function actor_on_first_update()
 	RegisterScriptCallback("actor_on_hit_callback", actor_on_hit_callback)
 	RegisterScriptCallback("actor_on_before_death", actor_on_before_death)
 	RegisterScriptCallback("actor_on_item_use", actor_on_item_use)
+	RegisterScriptCallback("ActorMenu_on_item_drag_drop", on_item_drag_dropped)
 	RegisterScriptCallback("npc_on_before_hit", npc_on_before_hit)
 	RegisterScriptCallback("npc_on_hit_callback", npc_on_hit_callback)
 	RegisterScriptCallback("npc_on_death_callback", npc_on_death_callback)
 	RegisterScriptCallback("monster_on_before_hit", monster_on_before_hit)
 	RegisterScriptCallback("monster_on_hit_callback", monster_on_hit_callback)
 	RegisterScriptCallback("monster_on_death_callback", monster_on_death_callback)
+	RegisterScriptCallback("on_before_level_changing", on_before_level_changing)
 end
 
 function on_trade_started_set_values()
@@ -4314,6 +4544,12 @@ function ActorMenu_on_trade_closed()
 	UnregisterScriptCallback("actor_on_item_drop", actor_on_item_sell)
 end
 
+function on_before_level_changing()
+	if check_lucifer() then
+		artefact_props.af_lucifer:change_condition(random_float(-0.02, -0.025))
+	end
+end
+
 function save_state(m_data)
 	local t = {}
 	for key, effect in pairs(timed_effects) do
@@ -4328,6 +4564,7 @@ function save_state(m_data)
 	m_data.perk_based_artefacts_cooldowns = cooldowns
 	m_data.perk_based_artefacts_status_effects = status_effects
 	m_data.perk_based_artefacts_lucifer_condition = artefact_props.af_lucifer.condition
+	m_data.perk_based_artefacts_virtual_artefacts = virtual_artefacts
 	-- m_data.perk_based_artefacts_last_time = time_elapsed
 end
 
@@ -4351,6 +4588,7 @@ function load_state(m_data)
 	cooldowns = m_data.perk_based_artefacts_cooldowns or {}
 	status_effects = m_data.perk_based_artefacts_status_effects or {}
 	artefact_props.af_lucifer.condition = m_data.perk_based_artefacts_lucifer_condition or 1
+	virtual_artefacts = m_data.perk_based_artefacts_virtual_artefacts or {}
 	-- saved_time_elapsed = m_data.perk_based_artefacts_last_time or 0
 end
 

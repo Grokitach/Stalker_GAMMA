@@ -22,12 +22,13 @@ local is_r1 = (renderer == dxeight)
 local pewpewmult = 0
 local get_camo_k = 0
 local vision_memory = {}
+local marked = {}
 
 function get_visible_value(npc,who,time_delta,time_quant,luminocity,velocity_factor,velocity,distance,object_distance,always_visible_distance)
 	distance = distance <= 0 and 0.00001 or distance
 
 --============= luminosity =============
-	local npcxnpc_flash = true	-- Boosts NPC's vision when they see other NPC with active flashlight from afar, change to 'false' if you feel like it tanks your FPS too hard and let me know please
+	local npcxnpc_flash = false	-- Boosts NPC's vision when they see other NPC with active flashlight from afar, change to 'false' if you feel like it tanks your FPS too hard and let me know please
 
 	-- main
 	local michiko_patch = stealth_mcm.get_config("michiko_patch")
@@ -102,10 +103,10 @@ function get_visible_value(npc,who,time_delta,time_quant,luminocity,velocity_fac
 	local scheme_mult = 1
 	if npc_alive then
 		local st = db.storage[npc:id()]
-		if st then
-			scheme_mult = (st and (st.active_scheme == "guard" or st.active_scheme == "sniper")) and 0.5 or 1
-		end
-	end
+                if st then
+		    scheme_mult = (st and (st.active_scheme == "guard" or st.active_scheme == "sniper")) and 0.5 or 1
+	        end
+        end
 	
 --============ memory ====================
 	local tg = time_global()
@@ -127,7 +128,13 @@ function get_visible_value(npc,who,time_delta,time_quant,luminocity,velocity_fac
 	end
 
 	memory_factor = (memory_factor > 0.01) and memory_factor or 0
-
+	
+	if marked[npc:id()] then
+		actor_marked = 50000
+	else
+		actor_marked = 0
+	end
+	
 --============== total =============================
 	local shot_mult = pewpewmult
 	local eq_dist = ((distance - object_distance / 1.15) / distance) * stealth_mcm.get_config("distance")
@@ -136,7 +143,7 @@ function get_visible_value(npc,who,time_delta,time_quant,luminocity,velocity_fac
 	local wnj = wei * jacketmult * obj_dist_w * stealth_mcm.get_config("weight")
 	local weight = wnj > 1 and wnj or 1
 	local Luminocity = (33 * luminocity * lum_dist + shot_mult) * stealth_mcm.get_config("luminocity")
-	local step_incr = Luminocity * Velocity * eq_dist * weight * crouch * danger_mult * camo_x * scheme_mult + memory_factor
+	local step_incr = Luminocity * Velocity * eq_dist * weight * crouch * danger_mult * camo_x * scheme_mult + memory_factor + actor_marked
 --===============================================
 
 
@@ -242,6 +249,25 @@ function actor_on_first_update()
 
 end
 
+function npc_on_before_hit(npc,shit,bone_id,flags)
+    if shit.draftsman:id() == db.actor:id() then
+        if npc:see(db.actor) then 
+            return
+        else
+            marked[npc:id()] = marked[npc:id()] or true
+            local squad = get_object_squad(npc)
+            if squad and squad.commander_id then
+                for m in squad:squad_members() do
+                    local member = level.object_by_id(m.id)
+                    if member and member.alive and member:alive() then
+                        marked[member:id()] = marked[member:id()] or true
+                    end
+                end
+            end
+        end
+    end
+end
+
 --===================================
 function on_game_start()
 	RegisterScriptCallback("actor_on_weapon_fired", actor_on_weapon_fired)
@@ -249,4 +275,5 @@ function on_game_start()
 	RegisterScriptCallback("actor_item_to_ruck", slot_in_out)
 	RegisterScriptCallback("actor_on_item_drop", slot_in_out)
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("npc_on_before_hit", npc_on_before_hit)
 end

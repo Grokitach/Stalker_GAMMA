@@ -1,4 +1,4 @@
---Tweaki_Breeki's
+--CookBook's QoL adjustment of Tweaki_Breeki's
 ----_____--______---_____---------------_------------------_----_-_-----_-----_---------------
 ---|--__-\|--____|-|--__-\-------------(_)----------------|-|--|-(_)---|-|---|-|--------------
 ---|-|__)-|-|__----|-|__)-|___--___-___-___---_____-_-__--|-|__|-|_--__|-|-__|-|-___-_-__-----
@@ -22,6 +22,20 @@
 --Also to Real_leaper, Dominus_Imperatoriis, Green_Ghost and Aorushome for bug reports!
 --Further thanks to ptolthegoodguy for helping me test why 1.7 was crashing!
 
+--Cookbook QoL adjustment version 1.4
+--1.0
+--Made hidden loot give arti's simple streamlined upgrades instead of vanilla upgrade items.
+--Adjusted reminder function on initial load to have a failsafe to prevent a missing package crash.
+--Thanks to FuckinSki for the translation of the line used for the failsafe.
+--1.1
+--restructured failsafe code cos i'm dumb and moved the looping relationship check code start behind an if statement.
+--1.2
+--added MCM reminder and upgrade item options.
+--1.3
+--added MCM auto or manual unpacking options as well as a "cancel package" pda right click function
+--1.4
+--added PDA note entry functionality
+
 --[TB] VARIABLES NEEDED TO STORE INFORMATION FOR SAVING AND LOADING
 tb_target_item = 0
 tb_sufficient_passed = false
@@ -44,6 +58,82 @@ tb_tg_badguys = 0
 tb_previous_level = "empty"
 --[TB] ADDED IN V1.7
 tb_making_package = false
+--[CB] ADDED IN QOL ADJUSTMENT 1.4
+cb_note_given =  false
+
+--[CB] MCM MENU FUNCTIONALITY
+
+----------------------------------------------------------------------------------------------------------------------------------------------
+--defaults for if you don't have MCM
+----------------------------------------------------------------------------------------------------------------------------------------------
+
+cb_reminders = "transitions"
+-- "transitions" gives a reminder whenever you load into an outdoor area with an active package | "transitions" присылает напоминание при переходе на наземную локацию
+-- "local" only gives a reminder when you load into the area the package is in | "local" присылает напоминание только при переходе на локацию с посылкой
+-- "never" stops all reminders except for when the package first spawns | "never" сообщение присылается 1 раз при появлении посылки
+
+cb_upgrades = "vanilla"
+-- "vanilla" gives the default S.T.A.L.K.E.R. anomaly upgrade items | "vanilla" в посылках будут наборы улучшений из Anomaly
+-- "streamlined" gives the upgrade items from Arti's streamlined upgrades mod. don't select this if you don't have that mod installed
+-- "streamlined" в посылках будут наборы улучшений из мода "Упрощенные улучшения Arti" (Arti's streamlined upgrades mod). Не выбирайте эту опцию, если мод не установлен
+cb_unpack = "manual"
+-- "manual" requires you to use the right click menu option to unpack the package | "manual" распкаовка посылки происходит вручную через контекстное меню пда
+-- "automatic" will automatically unpack the package on pickup, useful for not having to figure out which one it is in your inventory.
+-- "automatic" посылки будут автоматически распаковываться при подборе, удобно, чтобы случайно не открыть чужую посылку в инвентаре
+
+----------------------------------------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------------------------
+
+function on_option_change()
+	if ui_mcm then
+		cb_reminders = ui_mcm.get("RF_package_patch/reminders")
+		cb_upgrades = ui_mcm.get("RF_package_patch/upgrades")
+	end
+end
+
+--[CB] PDA right click functor for canceling packages, uses some code originally from xcvb's interactive pda mod, modified for demonized dynamic functors format
+
+local function is_pda_and_charged(obj, actor_equ, inventory)
+	local dev_is_pda = string.find(obj:section(), "device_pda_")
+	if dev_is_pda and obj:condition() and obj:condition() > 0.01 then
+		return true
+	end
+end
+
+local function pda_ui_option(obj, actor_equ, inventory)
+	return game.translate_string("cb_pda_cancel")
+end
+
+local function pda_cancellable_package(obj, actor_equ, inventory)
+	if tb_package_active == false then
+		actor_menu.set_item_news("success", "detail", game.translate_string("cb_cancel_package_inactive"))
+		utils_obj.play_sound("device\\pda\\pda_guide_2")
+		return false
+	end 
+	if  GetEvent("underground") then
+		actor_menu.set_item_news("success", "detail", game.translate_string("cb_cancel_package_underground"))
+		utils_obj.play_sound("device\\pda\\pda_guide_2")
+		return false
+	end
+	return true
+end
+
+local function package_cancel(obj, actor_equ, inventory)
+	item_radio.clear_target(tb_target_item)
+	RemoveTimeEvent(tb_target_item,"remind_about_radio_package")
+	tb_package_active = false
+	tb_badguy_spawned = false
+	tb_target_item = 0
+	tb_target_item = 0
+	tb_reminder = "empty"
+	tb_package_in_level = "empty"
+	tb_scan_time = 4000		
+	item_radio.tb_in_range = false
+	item_radio.tb_sound_object = false
+	item_radio.tb_flash_time = 0
+	db.actor:give_game_news(game.translate_string("tb_anon_sender"), game.translate_string("cb_cancel_package_success"), tb_sender_icon, 0, 20000, 0)
+	utils_obj.play_sound("device\\pda\\pda_sos")
+end
 
 --[TB] ARRAY TO STORE CURRENT GOODWILL POINTS AND FACTION IMAGE FOR MESSAGES
 tb_relations = {
@@ -721,9 +811,31 @@ tb_extraupgrades = {
 	{"upgr_w_3_weight","st_upgr_w_weight"},
 }
 
+CB_streamlined_extraupgrades = {
+	{"upgr_o_1_physical", "st_upgr_o_physical"},
+	{"upgr_o_1_magical", "st_upgr_o_magical"},
+	{"upgr_o_1_utility", "st_upgr_o_utility"},
+	{"upgr_o_2_physical", "st_upgr_o_physical"},
+	{"upgr_o_2_magical", "st_upgr_o_magical"},
+	{"upgr_o_2_utility", "st_upgr_o_utility"},
+	{"upgr_o_3_physical", "st_upgr_o_physical"},
+	{"upgr_o_3_magical", "st_upgr_o_magical"},
+	{"upgr_o_3_utility", "st_upgr_o_utility"},
+	{"upgr_w_1_internal", "st_upgr_w_internal"},
+	{"upgr_w_1_external", "st_upgr_w_external"},
+	{"upgr_w_1_optical", "st_upgr_w_optical"},
+	{"upgr_w_2_internal", "st_upgr_w_internal"},
+	{"upgr_w_2_external", "st_upgr_w_external"},
+	{"upgr_w_2_optical", "st_upgr_w_optical"},
+	{"upgr_w_3_internal", "st_upgr_w_internal"},
+	{"upgr_w_3_external", "st_upgr_w_external"},
+	{"upgr_w_3_optical", "st_upgr_w_optical"},
+}
+
 tb_junks = {
 	{"af_atom","st_af_atom_name"},
 	{"af_ball","st_af_ball_name"},
+	{"af_bat","st_af_bat_name"},
 	{"af_black_angel","st_af_black_angel_name"},
 	{"af_cell","st_af_cell_name"},
 	{"af_chelust","st_af_chelust_name"},
@@ -731,6 +843,7 @@ tb_junks = {
 	{"af_dragon_eye","st_af_dragon_eye_name"},
 	{"af_ear","st_af_ear_name"},
 	{"af_elektron","st_af_elektron_name"},
+	{"af_fire_loop","st_af_fire_loop_name"},
 	{"af_fonar","st_af_fonar_name"},
 	{"af_fountain","st_af_fountain_name"},
 	{"af_generator","st_af_generator_name"},
@@ -776,6 +889,19 @@ function give_bonus_items()
 	local rand_extraloot,rand_extraupgrades,rand_junks,rand_lootname,rand_upgradename,rand_junkname
 	local bonusmessage = game.translate_string("st_msg_stash_title_1_5")
 	local extrabonus = false
+	
+	
+	--[CB] additions for mod upgrade item support
+	if ui_mcm then
+		cb_upgrades = ui_mcm.get("RF_package_patch/upgrades")
+	end
+	
+	local upgradepool = tb_extraupgrades
+	
+	if (cb_upgrades == "streamlined") then
+		upgradepool = CB_streamlined_extraupgrades
+	end
+	
 	if (math.random() > 0.5) then
 		local lootpick = math.random(#tb_extraloot)
 		rand_extraloot = tostring(tb_extraloot[lootpick][1])
@@ -785,9 +911,9 @@ function give_bonus_items()
 		extrabonus = true
 	end
 	if (math.random() > 0.5) then
-		local lootpick = math.random(#tb_extraupgrades)
-		rand_extraupgrades = tostring(tb_extraupgrades[lootpick][1])
-		rand_upgradename = game.translate_string(tb_extraupgrades[lootpick][2])
+		local lootpick = math.random(#upgradepool)
+		rand_extraupgrades = tostring(upgradepool[lootpick][1])
+		rand_upgradename = game.translate_string(upgradepool[lootpick][2])
 		alife_create_item(rand_extraupgrades, db.actor)
 		bonusmessage = bonusmessage .. "\\n- " .. tostring(rand_upgradename)
 		extrabonus = true
@@ -812,6 +938,7 @@ end
 --[TB] SET tb_radio_has_run_once FLAG WHEN ADDING ADDON MID-GAME
 --[TB] ADDED tb_radio_1_3_has_run_once FLAG for v1.3
 --[TB] ADDED tb_radio_1_6_has_run_once FLAG for v1.6
+--[CB] ADDED cb_1_4_has_run_once for QOL adjustment v1.4
 function on_game_load()
 	printf("--- Loading TBs_RF_Receiver_Hidden_Package_Sidequests_v1.8 ---")
 	local m_data = alife_storage_manager.get_state()
@@ -826,6 +953,9 @@ function on_game_load()
 		--(which should never have happened anyway)
 		fix_queue_from_1_5_to_1_6()
 		m_data.tb_radio_1_6_has_run_once = true
+	end
+	if not m_data.cb_1_4_has_run_once then
+		m_data.cb_1_4_has_run_once = true
 	end
 end
 
@@ -845,62 +975,117 @@ function fix_queue_from_1_5_to_1_6()
 end
 
 --[TB] THIS RUNS FIRST TO REMIND PLAYER PACKAGE EXISTS IF ALREADY SPAWNED, ALSO SET GOODWILL POINTS CHECKER TIMER 30 SECONDS
+--[CB] ADDED FAILSAFE THAT SPAWNS NEW PACKAGE SOMEWHERE ELSE IN THE LEVEL IF THE PACKAGE IS DELETED SOMEHOW AND RESTRUCTURED CHECK FOR 1.0F
 function actor_on_first_update()
-	if tb_package_active == true then
-		CreateTimeEvent(tb_target_item, "remind_about_radio_package", math.random(900,1800), remindaboutpackage)
+	if not note_given and tb_sufficient_passed then
+		give_note()
 	end
 	CreateTimeEvent(0, "check_relation_change", 30, checkrelationchange)
-	remindaboutpackage()
 	if (tb_package_active == true) and tb_target_item ~= 0 then
 		local checkobj = alife_object(tb_target_item)
-		if not (checkobj) then
-			db.actor:give_game_news("ERROR!", "SOMETHING HAS REMOVED THE PACKAGE FROM THE GAME! PLEASE LOOK AT THIS ERROR IN THE CONSOLE!", "ui_inGame2_no_data", 0, 60000, 0)
-			utils_obj.play_sound("device\\pda\\pda_sos")
-			printf("! --------------------------------------------------\n! ERROR!\n! SOMETHING HAS REMOVED THE PACKAGE FROM THE GAME!\n! Please post the following information to tweaki_breeki on moddb!\n! tb_target_item is %s\n! tb_package_active is %s\n! tb_package_in_level is %s\n! #tb_package_queue is %s\n! tb_target_lvid is %s\n! tb_target_gvid is %s\n! --------------------------------------------------",tb_target_item,tb_package_active,tb_package_in_level,#tb_package_queue,tb_target_lvid,tb_target_gvid)
+		if (checkobj) then
+			CreateTimeEvent(0, "check_relation_change", 30, checkrelationchange)
+			CreateTimeEvent(tb_target_item, "remind_about_radio_package", math.random(900,1800), remindaboutpackage)
+			remindaboutpackage()
+		else
+			failsafepackagespawn()
 		end
 	end
 end
 
+--[CB]FAILSAFE FUNCTION TO SPAWN NEW PACKAGE IF PACKAGE IS DELETED SOMETIMES 1.1F
+function failsafepackagespawn()
+	tb_making_package = true
+	local surge_state = GetEvent("surge", "state")
+	local psi_storm_state = GetEvent("psi_storm", "state")
+	if (surge_state) or (psi_storm_state) then
+		tb_making_package = false
+		return false
+	end
+	if GetEvent("underground") then
+		tb_making_package = false
+		return false	
+	end
+	if tb_making_package == true then
+		item_radio.clear_target(tb_target_item)
+		RemoveTimeEvent(tb_target_item,"remind_about_radio_package")
+		tb_package_active = false
+		tb_badguy_spawned = false
+		tb_target_item = 0
+		tb_target_item = 0
+		tb_reminder = "empty"
+		tb_package_in_level = "empty"
+		tb_scan_time = 4000
+		local actor_level, chosenmap, randspot, packagespot
+		chosenmap = tb_previous_level
+		tb_package_in_level = chosenmap
+		randspot = math.random(1,#tb_package_coords[chosenmap])
+		packagespot = tb_package_coords[chosenmap][randspot]
+		local rpos = vector():set(packagespot[1],packagespot[2],packagespot[3])
+		local rlvid = packagespot[4]
+		local rgvid = packagespot[5]
+		local availpacks = {"quest_tb_package_1","quest_tb_package_2","quest_tb_package_3","quest_tb_package_4","quest_tb_package_6"}
+		local rfreq = math.random(30,300)
+		tb_freq = rfreq
+		local rlocat = packagespot[6]
+		local rplace = packagespot[7]
+		local se_obj
+		se_obj = alife_create(tostring(availpacks[math.random(#availpacks)]),rpos,rlvid,rgvid)
+		if se_obj then
+			tb_target_item = se_obj.id
+			tb_target_lvid = rlvid
+			tb_target_gvid = rgvid
+		end
+		item_radio.add_target(se_obj.id, rfreq, 150)
+		tb_package_active = true
+		local anonpdamessage = game.translate_string("cb_package_lost") .. " " .. game.translate_string(rlocat) .. " " .. game.translate_string(rplace) .. game.translate_string("tb_use_rf_on_freq") .. " " .. tostring(rfreq) .. game.translate_string("tb_mhz_to_search")
+		tb_reminder = game.translate_string("tb_dont_forget") .. " " .. game.translate_string(rlocat) .. " " .. game.translate_string(rplace) .. game.translate_string("tb_freq_was_on") .. " " .. tostring(rfreq) .. game.translate_string("tb_the_mhz")
+		db.actor:give_game_news(game.translate_string("tb_anon_sender"), anonpdamessage, tb_sender_icon, 0, 20000, 0)
+		utils_obj.play_sound("device\\pda\\pda_sos")
+		CreateTimeEvent(tb_target_item, "remind_about_radio_package", math.random(900,1800), remindaboutpackage)
+		tb_making_package = false
+		CreateTimeEvent(0, "check_relation_change", 30, checkrelationchange)
+		return true
+	end
+	tb_making_package = false
+end
+
 --[TB] CONSTANTLY RUNS TO CHECK IF PLAYER HOLDING RF RECEIVER AND CALL EXTRA BEEPS FUNCTION (IF PACKAGE EXISTS IN SAME LEVEL)
 --[TB] ALSO CHECKS PLAYER DISTANCE FROM PACKAGE FOR CHANCE SPAWNING ENEMY NPCS
-
-trigger = 0
-delay = 2000
-
 function actor_on_update()
-	tg = time_global()
-	
-	if trigger == 0 then
-       		grok_delay = tg + delay
-		trigger = 1
-	end
-	
-	if (trigger == 1 and tg > grok_delay) then
-		trigger = 0
-		if (tb_package_active == true) and tb_package_in_level == level.name() and  tb_target_item ~= 0 then
-			local tg = time_global()
-			if tb_package_in_level ~= "l05_bar" then
-				if (tg > tb_tg_badguys) then
-					tb_tg_badguys = tg + 2000
-					if tb_badguy_spawned == false then
-						if tb_target_item then
-							local dist_to_package = db.actor:position():distance_to(alife():object(tb_target_item).position)
-							if (dist_to_package < 100) then
-								spawn_some_badguys()
-								tb_badguy_spawned = true
-							end
-						end
+	if (tb_package_active == true) and tb_package_in_level == level.name() then
+		local tg = time_global()
+		if tb_package_in_level ~= "l05_bar" then
+			if (tg > tb_tg_badguys) then
+				tb_tg_badguys = tg + 2000
+				if tb_badguy_spawned == false then
+					local dist_to_package = db.actor:position():distance_to(alife():object(tb_target_item).position)
+					if (dist_to_package < 100) then
+						spawn_some_badguys()
+						tb_badguy_spawned = true
 					end
 				end
 			end
-			local obj_det = db.actor:active_detector()
-			if not (obj_det and obj_det:section() == tb_device and obj_det:condition() >= obj_det:power_critical()) then
-				return
+		end
+		
+		local obj_det
+		if reworked_rf_receiver_mcm then
+			if reworked_rf_receiver_mcm.get_config("only_equip_rf") then
+				obj_det = db.actor:item_in_slot(9)
+			else
+				obj_det = db.actor:active_detector()
 			end
-			if (tg > tb_tg_scan) then
-				tb_tg_scan = tg + tb_scan_time
-				boop_if_nearby()
-			end
+		else
+			obj_det = db.actor:active_detector()
+		end
+
+		
+		if not (obj_det and obj_det:section() == tb_device and obj_det:condition() >= obj_det:power_critical()) then
+			return
+		end
+		if (tg > tb_tg_scan) then
+			tb_tg_scan = tg + tb_scan_time
+			boop_if_nearby()
 		end
 	end
 end
@@ -944,6 +1129,7 @@ function checkrelationchange()
 					db.actor:give_game_news(game.translate_string("tb_anon_sender"), tb_reminder, tb_sender_icon, 0, 20000, 0)
 					utils_obj.play_sound("device\\pda\\pda_sos")
 					tb_sufficient_passed = true
+					give_note()
 				end
 			end
 		end
@@ -953,9 +1139,21 @@ function checkrelationchange()
 end
 
 --[TB] REMINDS PLAYER ABOUT PACKAGE IF EXISTS
+--[CB] ADDED CHECKS FOR MCM OPTION FUNCTIONALITY
 function remindaboutpackage()
+	if ui_mcm then
+		cb_reminders = ui_mcm.get("RF_package_patch/reminders")
+	end
+	
+	local cb_see_reminder = true
+	if ((cb_reminders == "local" and tb_package_in_level ~= level.name()) or (cb_reminders == "never")) then
+		cb_see_reminder = false
+	end	
+
 	if tb_package_active == true then
-		db.actor:give_game_news(game.translate_string("tb_anon_sender"), tb_reminder, tb_sender_icon, 0, 10000, 0)
+		if (cb_see_reminder == true) and GetEvent("underground") == false then
+			db.actor:give_game_news(game.translate_string("tb_anon_sender"), tb_reminder, tb_sender_icon, 0, 10000, 0)
+		end
 		utils_obj.play_sound("device\\pda\\pda_alarm")
 	end
 	ResetTimeEvent(tb_target_item,"remind_about_radio_package",math.random(900,1800))
@@ -1065,6 +1263,14 @@ function spawn_some_badguys()
 	end
 end
 
+local lowbeep = sound_object("detectors\\tb_lowbeep")
+local midbeep = sound_object("detectors\\tb_midbeep")
+local highbeep = sound_object("detectors\\tb_highbeep")
+
+local tb_lowbeep_flash_time = 200
+local tb_midbeep_flash_time = 400
+local tb_highbeep_flash_time = 600
+
 --[TB] THIS PLAYS ADDITIONAL BEEPS, INCREASES THE SPEED OF BEEPS THE CLOSER THE PLAYER TO THE PACKAGE
 function boop_if_nearby()
 	if tb_package_active == true then
@@ -1076,28 +1282,46 @@ function boop_if_nearby()
 					if se_obj then
 						local objpos = se_obj.position
 						local dist_pos = db.actor:position():distance_to(objpos)
-						local lowbeep = ("detectors\\tb_lowbeep")
-						local midbeep = ("detectors\\tb_midbeep")
-						local highbeep = ("detectors\\tb_highbeep")
+						-- local lowbeep = ("detectors\\tb_lowbeep")
+						-- local midbeep = ("detectors\\tb_midbeep")
+						-- local highbeep = ("detectors\\tb_highbeep")
 						if dist_pos < 10 then
+							item_radio.tb_sound_object = highbeep
+							item_radio.tb_flash_time = tb_lowbeep_flash_time
+							item_radio.tb_in_range = true
+							
 							tb_scan_time = 1000
-							xr_effects.play_snd(actor, nil, {
-							[1] = highbeep
-							})
+							highbeep:play(db.actor, 0, sound_object.s2d)
+							-- xr_effects.play_snd(actor, nil, {
+							-- [1] = highbeep
+							-- })
 						end
 						if (dist_pos >= 10) and (dist_pos < 50) then
+							item_radio.tb_sound_object = midbeep
+							item_radio.tb_flash_time = tb_midbeep_flash_time
+							item_radio.tb_in_range = true
+							
 							tb_scan_time = 2000
-							xr_effects.play_snd(actor, nil, {
-							[1] = midbeep
-							})
+							midbeep:play(db.actor, 0, sound_object.s2d)
+							-- xr_effects.play_snd(actor, nil, {
+							-- [1] = midbeep
+							-- })
 						end
 						if (dist_pos >= 50) and (dist_pos < 75) then
+							item_radio.tb_sound_object = lowbeep
+							item_radio.tb_flash_time = tb_lowbeep_flash_time
+							item_radio.tb_in_range = true
+							
 							tb_scan_time = 3000
-							xr_effects.play_snd(actor, nil, {
-							[1] = lowbeep
-							})
+							lowbeep:play(db.actor, 0, sound_object.s2d)
+							-- xr_effects.play_snd(actor, nil, {
+							-- [1] = lowbeep
+							-- })
 						end
 						if (dist_pos >= 75) and (dist_pos < 150) then
+							item_radio.tb_in_range = false
+							item_radio.tb_sound_object = false
+							
 							tb_scan_time = 4000
 						end
 					end
@@ -1108,9 +1332,14 @@ function boop_if_nearby()
 end
 
 --[TB] WATCHES ITEM PICKUPS, CHECKS IF ITEM IS A tb_package, REMOVES THE tb_package, CREATES REAL PACKAGE IN INVENTORY
+--[CB] ADDED MCM FUNCTIONALITY TO ALLOW CHOICE BETWEEN AUTOMATIC OR MANUAL UNPACKING 
 function actor_on_item_take(item)
 	local itemid = item:id()
 	local itemname = item:section()
+	local invobj = 0
+	if ui_mcm then
+		cb_unpack = ui_mcm.get ("RF_package_patch/unpacking")
+	end	
 	if (itemid == tb_target_item) and tb_package_active == true then
 		item_radio.clear_target(tb_target_item)
 		RemoveTimeEvent(tb_target_item,"remind_about_radio_package")
@@ -1121,20 +1350,38 @@ function actor_on_item_take(item)
 		tb_reminder = "empty"
 		tb_package_in_level = "empty"
 		tb_scan_time = 4000
+		
+		item_radio.tb_in_range = false
+		item_radio.tb_sound_object = false
+		item_radio.tb_flash_time = 0
 	end
-	if string.find(itemname,"quest_tb_package_") then
+	if string.find(itemname,"quest_tb_package_") then		
 		for i=1, 8 do
 			local checkname = "quest_tb_package_" .. tostring(i)
 			local givename = "quest_package_" .. tostring(i)
 			if itemname == checkname then
-				alife_create_item(givename, db.actor)
-				alife_release(item)
 				if tb_bonus_items == nil then
 					tb_bonus_items = 0
 				end
 				tb_bonus_items = tb_bonus_items + 1
+				invobj = alife_create_item(givename, db.actor)
+				if cb_unpack == "automatic" then
+					CreateTimeEvent(0,".5_second_delay",0.5,function()
+						itms_manager.use_package_random(get_object_by_id(invobj.id))
+						return true
+					end)
+				end
+				alife_release(item)
 			end
 		end
+	end
+end
+
+--[CB] NOTE-GIVING FUNCTION FOR PDA ENTRY
+function give_note()
+	if not note_given then
+		ui_pda_encyclopedia_tab.unlock_note("encyclopedia__notes_rfpackages")
+		note_given = true
 	end
 end
 
@@ -1154,6 +1401,7 @@ function save_state(m_data)
 	m_data.tb_bonus_items = tb_bonus_items
 	m_data.tb_badguy_spawned = tb_badguy_spawned
 	m_data.tb_previous_level = tb_previous_level
+	m_data.cb_note_given = cb_note_given
 end
 
 --[TB] TO LOAD VARIABLE DATA
@@ -1181,9 +1429,13 @@ function load_state(m_data)
 	if m_data.tb_radio_1_6_has_run_once then
 		tb_previous_level = m_data.tb_previous_level
 	end
+	if m_data.cb_radio_1_4_has_run_once then
+		cb_note_given = m_data.cb_note_given
+	end
 end
 
 --[TB] REQUIRED FUNCTION TO REGISTER CALLBACKS
+--[CB] ADDED FUNCTOR AUTOINJECTOR FOR PDA RIGHT CLICK OPTION
 function on_game_start()
 	RegisterScriptCallback("on_game_load",on_game_load)
 	RegisterScriptCallback("actor_on_update",actor_on_update)
@@ -1191,4 +1443,5 @@ function on_game_start()
 	RegisterScriptCallback("actor_on_item_take",actor_on_item_take)
 	RegisterScriptCallback("save_state",save_state)
 	RegisterScriptCallback("load_state",load_state)
+	custom_functor_autoinject.add_functor("pda_package_cancel", is_pda_and_charged, pda_ui_option, pda_cancellable_package, package_cancel, true)
 end

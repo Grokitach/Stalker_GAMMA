@@ -1,0 +1,78 @@
+/*
+	Original author: CrookR (https://www.moddb.com/members/crookr)
+	DX9 port: LVutner
+*/
+
+#include "common.h"
+
+uniform sampler2D s_scope;
+uniform float4 m_hud_params; // zoom_rotate_factor, secondVP_zoom_factor, hud_fov, NULL
+uniform float4 eye_direction_lerp;
+uniform float4 eye_position_lerp;
+uniform float4 fakescope_params1; // power, inner blur, outer blur, brightness
+uniform float4 fakescope_params2; // chroma abber, fog attack(aim), fog attack(move), fog max travel
+uniform float4 fakescope_params3; // radius, relative fog radius, fog sharpness, scope sway amount
+
+float getparallax(float d)
+{
+	return clamp(1.0 - pow(1.0 / fakescope_params3.x * fakescope_params3.y * d, fakescope_params3.z), 0.0, 1.0);
+}
+
+float2 clampMagnitude(float2 v, float l)
+{
+	return normalize(v) * min(length(v), l);
+}
+
+float4 main(p_screen I) : COLOR0
+{
+	if(m_hud_params.x > 0.0 && fakescope_params3.x > 0.0)
+	{
+		float3 image;
+		float2 corrected_texturecoords = I.tc0;
+		corrected_texturecoords.x -= 0.5;
+		corrected_texturecoords.x *= screen_res.x * screen_res.w;
+		corrected_texturecoords.x += 0.5;
+
+		// get velocity
+		float2 eye_velocity = clampMagnitude((mul(m_VP, eye_direction_lerp) * fakescope_params2.y) + (mul(m_VP, eye_position_lerp) * fakescope_params2.z), fakescope_params2.w);
+		
+		// parallax
+		float2 parallax_offset = float2(0.5 + eye_velocity.x, 0.5 - eye_velocity.y);
+		float distToParallax = distance(corrected_texturecoords, parallax_offset);
+		
+		// scope offset
+		float2 scope_center = float2(0.5f, 0.5f);
+		float distToCenter = distance(corrected_texturecoords, scope_center);
+		float4 scope = tex2D(s_scope, I.tc0 * float2(1.0, 0.5625));
+
+		float3 half_res_blur = tex2D(s_blur_2, I.tc0).rgb;
+		
+		if(step(distToCenter, fakescope_params3.x) == 1.0 && m_hud_params.x >= 1.0)
+		{
+			float2 scaled_tc = fakescope_params1.x * (I.tc0.xy - 0.5) + 0.5;
+			image.r = tex2D(s_image, scaled_tc + (float2(-fakescope_params2.x, 0) * distToCenter)).r;
+			image.b = tex2D(s_image, scaled_tc + (float2( fakescope_params2.x, 0) * distToCenter)).b;
+			image.g = tex2D(s_image, scaled_tc).g;
+
+			image = lerp(image, half_res_blur, fakescope_params1.y);
+			
+			image.rgb *= getparallax(distToParallax);
+		}
+		else
+		{	
+			image = tex2D(s_image, I.tc0).xyz;
+			image = lerp(image, half_res_blur, m_hud_params.x * fakescope_params1.z) * (1.0 - (m_hud_params.x * (1.0 - fakescope_params1.w)));
+		}
+		
+		if(m_hud_params.x >= 1.0)
+		{
+			image = lerp(image, scope, scope.a);
+		}
+		
+		return float4(image, 1.0);
+	}
+	else
+	{
+		return float4(tex2D(s_image, I.tc0).xyz, 1.0);
+	}
+} 

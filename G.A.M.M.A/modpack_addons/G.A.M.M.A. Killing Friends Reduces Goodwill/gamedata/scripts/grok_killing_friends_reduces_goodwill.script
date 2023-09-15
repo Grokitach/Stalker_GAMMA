@@ -1,0 +1,74 @@
+aggressive_npcs = {}
+
+local function npc_on_before_hit(npc,shit,bone_id, flags)
+	if not IsStalker(npc) then return end
+	
+	if shit and shit.draftsman and (shit.draftsman:id() == 0 or shit.draftsman:has_info("npcx_is_companion")) then
+		if xr_conditions.is_enemy_fighting_actor(npc,shit.draftsman) then
+			aggressive_npcs[npc:id()] = true
+		end
+	end
+end 
+
+function relation_kill_check(victim, killer)
+	if not IsStalker(victim) then return end
+	
+	if victim:has_info("npcx_is_companion") then return end
+	
+	if killer:id() == db.actor:id() or killer:has_info("npcx_is_companion") then
+		local v_id = victim and victim:id()
+		local k_id = killer and killer:id()
+		local v_faction = victim and character_community(victim)
+		local k_faction = db.actor and character_community(db.actor)
+		
+	--    if victim:relation(killer) > game_object.enemy then
+
+		if (xr_conditions.is_factions_friends(nil, nil, { k_faction, v_faction })) or (xr_conditions.is_factions_neutrals(nil, nil, { k_faction, v_faction })) then
+			if v_faction then
+				if aggressive_npcs[victim:id()] then
+					local delta		= 10
+					game_relations.change_factions_community_num(v_faction,db.actor:id(), -tonumber(delta))
+				else
+					local delta		= 140
+					game_relations.change_factions_community_num(v_faction,db.actor:id(), -tonumber(delta))
+					game_statistics.increment_reputation(-tonumber(300))
+					news_manager.send_tip(db.actor, game.translate_string("st_grok_goodwill_loss"), 0, nil, 2000)
+				end
+			end
+		end
+		
+		if (xr_conditions.is_factions_enemies(nil, nil, { k_faction, v_faction })) then
+			local delta		= 10
+			if delta and v_faction then
+				game_relations.change_factions_community_num(v_faction,db.actor:id(), -tonumber(delta))
+			end
+		end
+	end
+end
+
+local function save_state(m_data)
+	if neutral_npcs then
+		m_data.neutral_npcs = neutral_npcs
+	end
+end
+
+local function load_state(m_data)
+	neutral_npcs = m_data.neutral_npcs
+	if not neutral_npcs then
+		neutral_npcs = {}
+	end
+	nrows = 0
+	for k,v in pairs(neutral_npcs) do
+		nrows = nrows + 1
+	end
+	if nrows > 60 then
+		neutral_npcs = {}
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("npc_on_death_callback", relation_kill_check)
+	RegisterScriptCallback("npc_on_before_hit", npc_on_before_hit)
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+end

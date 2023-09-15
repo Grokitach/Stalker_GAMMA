@@ -203,7 +203,7 @@ function get_protection(shit,bone_id,k_ap)
 		booster_type_def = 15
 		adjuster = 0.80
 		arti_adjuster = adjuster
-		limiter = 0.90
+		limiter = 0.85
 	end
 
 	if shit.type == hit.wound then
@@ -233,7 +233,7 @@ function get_protection(shit,bone_id,k_ap)
 		booster_type_def = 14
 		adjuster = 0.55
 		arti_adjuster = adjuster * 1.3
-		limiter = 0.70
+		limiter = 0.80
 		elemental = 1
 	end
 
@@ -243,8 +243,8 @@ function get_protection(shit,bone_id,k_ap)
 		protection = "Explosion"
 		booster_type_def = 13
 		adjuster = 0.45
-		arti_adjuster = adjuster
-		limiter = 0.75
+		arti_adjuster = 0.675
+		limiter = 0.90
 		elemental = 1
 	end
 
@@ -301,16 +301,17 @@ function get_protection(shit,bone_id,k_ap)
 --		limiter = 1.00
 --	end
 
---	if shit.type == hit.telepatic then
---		hit_type = HitTypeID["Telepatic"]
---		immunity = "telepatic_immunity"
---		protection = "telepatic"
---		booster_type_def = 6
---		adjuster = 1.00
---		arti_adjuster = adjuster
---		limiter = 0.90
---		psy = 1
---	end
+	if shit.type == hit.telepatic then
+		hit_type = HitTypeID["Telepatic"]
+		immunity = "telepatic_immunity"
+		protection = "telepatic"
+		booster_type_def = 6
+		adjuster = 1.70
+		arti_adjuster = 1.50
+		limiter = 0.99
+		elemental = 1
+		psy = 1
+	end
 
 	-- Special case for Headshot
 
@@ -397,6 +398,11 @@ function get_protection(shit,bone_id,k_ap)
 	db.actor:cast_Actor():conditions():BoosterForEach( function(booster_type, booster_time, booster_value)
 		if booster_type == booster_type_def then
 			booster_protection = booster_value
+			if booster_type_def == 6 then
+				booster_protection  = booster_value * arti_adjuster * adjuster
+			end
+			
+			
 		end
 	end)
 
@@ -446,10 +452,44 @@ function get_protection(shit,bone_id,k_ap)
 	end
 end
 
+local pba = perk_based_artefacts
+function perk_based_artefacts.actor_on_before_hit(s_hit, bone_id, flags) end
+function perk_based_artefacts.actor_on_hit_callback(obj, amount, local_direction, who, bone_index) end
+function perk_based_artefacts.actor_on_before_death(whoID, flags) end
+
+function PBA_a_obh(shit, bone_id, flags)
+	--trace('Firing PBA >> actor_on_before_hit')
+	pba.last_hit = hit(shit)
+	perk_based_artefacts.process_artefacts(perk_based_artefacts.artefact_on_before_hit_functions, shit, bone_id, flags)
+end
+
+function PBA_a_ohc(obj, amount, local_direction, who, bone_index)
+	--trace('Firing PBA >> actor_on_hit_callback')
+	perk_based_artefacts.process_artefacts(perk_based_artefacts.artefact_on_hit_functions, obj, amount, who, pba.last_hit)
+end
+
+-- etapomom: weird ass hack
+local flags = { ret_value = true }
+
+function PBA_a_obd(whoID, flags)
+	--trace('Firing PBA >> actor_on_before_death')	
+	flags.ret_value = false
+	perk_based_artefacts.process_artefacts(perk_based_artefacts.artefact_on_before_death_functions, whoID, flags)
+end
+
 function shit_booster(shit, bone_id, k_ap)
 	printf("/// Actor got hit - Grok damage balancer")
 	get_protection(shit,bone_id,k_ap)
 
+	if shit.type == hit.telepatic then
+		game_num = gameplay["type"] or game_num
+		damage = shit.power * ( 1 - total_prot ) * difficulty_multiplier[game_num] * 0.90
+		local m_data = alife_storage_manager.get_state() 
+		arszi_psy.save_state(m_data)
+		local psy_table = m_data.psy_table
+		psy_table.actor_psy_health = psy_table.actor_psy_health - damage
+		return
+	end
 
 	-- Strike damage boost because they are very weak compared to other damage sources
 	if shit.type == hit.strike then
@@ -463,6 +503,11 @@ function shit_booster(shit, bone_id, k_ap)
 	if shit.type == hit.wound then
 		shit.power = shit.power * 0.65 -- Now that there's no immunity, damages need to be scaled down. Chimeras do 1.54 damage and boars do 0.90 !
 	end
+	
+	-- etapomom: run on_before_hit before doing armor math
+	local pbadamage = hit(shit)
+	PBA_a_obh(pbadamage, bone_id, flags)
+	damage = pbadamage.power
 
 	damage = shit.power * ( 1 - total_prot )
 
@@ -480,19 +525,26 @@ function shit_booster(shit, bone_id, k_ap)
 	printf('part hit = %s', hitboxes[bone_id])
 	printf('total protection = %s', total_prot)
 	printf('damage to actor = %s', damage)
-
-	if psy == 1 then
-		printf('Psy damages, handeld by engine')
-		return
+	
+	if zzz_player_injuries and zzz_player_injuries_mcm then
+		zzz_player_injuries.limb_hit(bone_id)
 	end
 
 	shit.power = 0
+	
+	-- etapomom: run on_before_death, make the seraphim work with ironman. maybe the only cool thing about making damage this inflexible
+	if (db.actor.health - damage) <= 0 then
+		PBA_a_obd(db.actor, flags)
+	end
+	
 	db.actor:set_health_ex(db.actor.health - damage)
 	if no_pen == 0 then
 		if shit.type == hit.fire_wound or shit.type == hit.wound then
 			db.actor:cast_Actor():conditions():AddWound(damage, hit_type, bone_id)
 		end
 	end
+	
+	PBA_a_ohc(db.actor, damage, shit.direction, shit.draftsman, bone_id)
 
 	if elemental == 1 then
 		helmet = db.actor:item_in_slot(12)
@@ -560,6 +612,15 @@ function elemental_damage(draftman_sec, shit, bone_id, flags)
 	flags.ret_value = false
 end
 
+function psi_damage(draftman_sec, shit, bone_id, flags)
+	level.add_pp_effector("adb_psy_feedback.ppe", 88432, false)
+	local snd = sound_object("grok_adb\\heartbeat")
+	snd:play_no_feedback(db.actor, sound_object.s2d, 0, VEC_ZERO, 1.0, 1.0)
+	snd.volume = math.random(40,65)/100
+	shit_booster(shit,bone_id)
+	flags.ret_value = false
+end
+
 local trigger2 = 0
 local delay2 = 33
 local rad_grace = 1000
@@ -567,6 +628,7 @@ local rad_damage = 10000
 local rad_trigger = 0
 
 function actor_on_before_hit(shit,bone_id, flags)
+
 	local damage = 0
 	tg = time_global()
 
@@ -589,6 +651,7 @@ function actor_on_before_hit(shit,bone_id, flags)
 		end
 
 		if (rad_trigger == 1 and tg > rad_grace_delay and tg < rad_grace_cancel) then
+			game_num = gameplay["type"] or game_num
 			shit.power = shit.power * difficulty_multiplier[game_num]
 			return
 		else
@@ -621,7 +684,7 @@ function actor_on_before_hit(shit,bone_id, flags)
 		end
 	end
 	
-	if shit.type == hit.chemical_burn or shit.type == hit.shock or shit.type == hit.burn or shit.type == hit.light_burn then
+	if shit.type == hit.chemical_burn or shit.type == hit.shock or shit.type == hit.burn or shit.type == hit.light_burn or shit.type == hit.telepatic then
 		damage = 1
 	end
 
@@ -698,26 +761,37 @@ function actor_on_before_hit(shit,bone_id, flags)
 
 		if (shit.type == hit.strike) then
 			shit_booster(shit,bone_id)
+			flags.ret_value = false
 		end
 
 		if (shit.type == hit.explosion) then
 			shit_booster(shit,bone_id)
+			flags.ret_value = false
 		end
 
 		if shit.type == hit.light_burn then
 			elemental_damage(shit.draftsman:id(), shit, bone_id, flags)
+			flags.ret_value = false
 		end
 
 		if shit.type == hit.burn then
 			elemental_damage(shit.draftsman:id(), shit, bone_id, flags)
+			flags.ret_value = false
 		end
 
 		if shit.type == hit.shock then
 			elemental_damage(shit.draftsman:id(), shit, bone_id, flags)
+			flags.ret_value = false
 		end
 
 		if shit.type == hit.chemical_burn then
 			elemental_damage(shit.draftsman:id(), shit, bone_id, flags)
+			flags.ret_value = false
+		end
+		
+		if shit.type == hit.telepatic then
+			 psi_damage(shit.draftsman:id(), shit, bone_id, flags)
+			 flags.ret_value = false
 		end
 	end
 end
