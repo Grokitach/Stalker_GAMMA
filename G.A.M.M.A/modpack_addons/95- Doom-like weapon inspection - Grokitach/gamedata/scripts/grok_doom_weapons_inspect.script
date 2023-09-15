@@ -40,11 +40,9 @@ function check_anim()
 			    local hud = ini_sys:r_string_ex(current_wpn_sec, "hud")
 	            local bored_anim = hud and ini_sys:r_string_ex(hud,idle_section)
                 if bored_anim then
-                    music:play_no_feedback(db.actor, sound_object.s2d, 0, VEC_ZERO, 1.0, 1.0)
+					music:play_no_feedback(db.actor, sound_object.s2d, 0, vector(), 1.0, 1.0)
 				    local sound = ini_sys:r_string_ex(current_wpn_sec, "snd_bore") or "$no_sound"
 				    play_anim(current_wpn, idle_section, sound)
-                    voice = sound_object("grok\\actor_" .. math.random(1,11) .. "" .. lang)
-                    voice:play_no_feedback(db.actor, sound_object.s2d, 0, VEC_ZERO, 1.0, 1.0)
                 else
 					block_repeat = false
 				end
@@ -55,16 +53,27 @@ function check_anim()
 end
 
 local function save_state(m_data)
-	m_data.inspected_weapons = inspected_weapons
+	if inspected_weapons then
+		m_data.inspected_weapons = inspected_weapons
+	end
 end
 
 local function load_state(m_data)
-	if (m_data.inspected_weapons) then
-		for k,v in pairs(m_data.inspected_weapons) do 
-			inspected_weapons[k] = v
-		end
+	inspected_weapons = m_data.inspected_weapons
+	
+	if not inspected_weapons then
+		inspected_weapons = {}
+	end
+	
+	nrows = 0
+	for k,v in pairs(inspected_weapons) do
+		nrows = nrows + 1
+	end
+	if nrows > 60 then
+		inspected_weapons = {}
 	end
 end
+
 
 function play_anim(weapon, anim, sound)
 	if not block_repeat then
@@ -72,7 +81,9 @@ function play_anim(weapon, anim, sound)
 		local length = weapon:play_hud_motion(anim, true, 0, 1, 0)
 		if sound then
 			snd = sound_object(sound)
-			snd:play_no_feedback(db.actor, sound_object.s2d, 0, VEC_ZERO, 1.0, 1.0)
+			snd:play_no_feedback(db.actor, sound_object.s2d, 0, vector(), 1.0, 1.0)
+			voice = sound_object("grok\\actor_" .. math.random(1,11) .. "" .. lang)
+			voice:play_no_feedback(db.actor, sound_object.s2d, 0, vector(), 1.0, 1.0)
 		end				
 		CreateTimeEvent("grok_inspect", "restore", length/1000, unset)
 	end
