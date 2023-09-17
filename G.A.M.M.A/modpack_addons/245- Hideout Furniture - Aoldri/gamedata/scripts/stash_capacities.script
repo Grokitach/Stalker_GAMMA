@@ -37,7 +37,7 @@ function ui_inventory.UIInventory:UpdateWeight()
     local section = stash:section()
     pr("STASH SECTION: " .. section)
 	if not stash_sections[section] then return end
-	local capacity = ini_sys:r_float_ex(section,"capacity") or 80
+	local capacity = ini_sys:r_float_ex(section,"capacity") or 60
     pr("CAPACITY: " .. capacity)
 	self.npc_weight_max:SetText( strformat("(max %s %s)", capacity, game.translate_string("st_kg")) )
 end
@@ -61,11 +61,15 @@ function ui_inventory.UIInventory:Action_Move_All(obj, bag)
         if self:Cond_Move(id, bag) then
             pr("UNO")
 			if id and bag then
-		    self:Action_Move(id, bag)
-				if self:CheckItem(id):weight() then
-                    weight_add = weight_add + self:CheckItem(id):weight()
-				else
-					weight_add = weight_add
+				self:Action_Move(id, bag)
+				item = self:CheckItem(id)
+				if item then
+					item_weight = item:weight()
+					if item_weight then
+						weight_add = weight_add + item_weight
+					else
+						weight_add = weight_add
+					end
 				end
 			end
         else
@@ -98,7 +102,7 @@ local function actor_on_item_before_move(flags, npc_id, obj, mode, bag_from)
 
     if not stash_sections[section] then return end
 
-	local capacity = ini_sys:r_float_ex(section,"capacity") or 80
+	local capacity = ini_sys:r_float_ex(section,"capacity") or 60
     local weight = getInvWeight(npc_id) + weight_add
     pr("Weight: " .. weight)
 	if weight + obj:weight() > capacity then
