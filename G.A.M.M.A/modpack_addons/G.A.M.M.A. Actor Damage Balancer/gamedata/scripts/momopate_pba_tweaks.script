@@ -35,6 +35,8 @@ perk_based_artefacts.artefact_on_before_hit_functions.af_lucifer =
 		s_hit.power = s_hit.power * (1 - normalize(af_lucifer.condition, 0.5, 1.5) - overcharge * 0.1) * 0.25 -- 12.5% reduction at 100% condition
 	end
 
+local last_hit_index = nil
+
 perk_based_artefacts.artefact_on_before_hit_functions.af_black_angel =
 	function(actor, artefact_count, artefact_ids, artefact_names, shit, bone_id, flags)
 		local af_black_angel = perk_based_artefacts.artefact_props.af_black_angel
@@ -45,6 +47,7 @@ perk_based_artefacts.artefact_on_before_hit_functions.af_black_angel =
 
 		af_black_angel.dice_roll = random(100)
 		if af_black_angel.dice_roll <= af_black_angel.reflect_chance[artefact_count] then
+			
 			local snd = get_safe_sound_object("perk_based_artefacts\\NLRICO" .. random(1, 4))
 			snd:play_at_pos(db.actor, db.actor:position(), 0, sound_object.s3d)
 			snd.frequency = random_float(0.85, 1.15)
@@ -53,7 +56,7 @@ perk_based_artefacts.artefact_on_before_hit_functions.af_black_angel =
 			shit.power = 0.001
 			
 			local gibs = particles_object("anomaly2\\effects\\emi_entrance_big_02")
-			local hitpos = actor:bone_position(bone_id)
+			local hitpos = actor:bone_position(actor:bone_name(bone_id))
 			hitpos.x = hitpos.x + random(-0.05, 0.05)
 			hitpos.y = hitpos.y + random(-0.05, 0.05)
 			hitpos.z = hitpos.z + random(-0.05, 0.05)
@@ -64,6 +67,8 @@ perk_based_artefacts.artefact_on_before_hit_functions.af_black_angel =
 			if gibs then
 				gibs:play_at_pos(hitpos)
 			end
+			
+			last_hit_index = bone_id
 		end
 	end
 
@@ -83,17 +88,19 @@ perk_based_artefacts.artefact_on_hit_functions.af_black_angel =
 			--trace("Black Angel not triggered, not valid hit")
 			return
 		end
-
+		
 		local af_lucifer = perk_based_artefacts.artefact_props.af_lucifer
-
+		
 		local s_hit = hit(last_hit)
 		local hit_koeff = af_lucifer:check_lucifer() and 0.5 or 0.35
 		s_hit.power = s_hit.power * hit_koeff
 		s_hit.draftsman = actor
-
+		
 		who:hit(s_hit)
 		
-		local gibs = particles_object("anomaly2\\effects\\emi_entrance_big_02")
+		local bone_id = last_hit_index
+		
+		local gibs = particles_object("anomaly2\\effects\\emi_entrance_big_02")	
 		local hitpos = who:bone_position(who:bone_name(bone_id))
 		hitpos.x = hitpos.x + random(-0.05, 0.05)
 		hitpos.y = hitpos.y + random(-0.05, 0.05)
@@ -101,12 +108,10 @@ perk_based_artefacts.artefact_on_hit_functions.af_black_angel =
 		if gibs then
 			gibs:play_at_pos(hitpos)
 		end
-
 		gibs = particles_object("anomaly2\\effects\\electra_entrance_big")
 		if gibs then
 			gibs:play_at_pos(hitpos)
 		end
-
 		--trace("hit %s, last_hit %s", s_hit.power, last_hit.power)
 	end
 
