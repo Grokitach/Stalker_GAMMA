@@ -1,0 +1,271 @@
+weapon_displays = {}
+weapon_display_slots = {}
+
+function on_game_start()
+    RegisterScriptCallback("ActorMenu_on_item_after_move", ActorMenu_on_item_after_move)
+    RegisterScriptCallback("ActorMenu_on_item_before_move", ActorMenu_on_item_before_move)
+    RegisterScriptCallback("actor_on_item_before_pickup", actor_on_item_before_pickup)
+    RegisterScriptCallback("game_object_on_net_spawn", game_object_on_net_spawn)
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
+
+    -- Patch the displayed items into world items, so that npc's don't pick them up
+    local base_is_world_item = game_setup.is_world_item
+    function game_setup.is_world_item(id)
+        for case_id, case_guns in pairs(weapon_displays) do
+            for item_id, world_id in pairs(case_guns) do
+                if id == world_id then
+                    return true
+                end
+            end
+        end
+        return base_is_world_item(id)
+    end
+end
+
+
+valid_actor_bags = {
+    [EDDListType.iActorBag] = true,
+    [EDDListType.iActorSlot] = true
+}
+
+valid_stash = {}
+
+valid_display_kind = {}
+
+-- probably a bad idea to mix display metadata with pos/rot offsets in seperate sections, but in the same LTX
+local ini_displays = ini_file("items\\settings\\hideout_furniture\\displays\\displays.ltx")
+ini_displays:section_for_each(function(section)
+    local slots = ini_displays:r_float_ex(section, "slots")
+    if not slots then return end -- exit early if there is no number of slots
+    valid_stash[section] = slots
+
+    local valid_classes = ini_displays:r_list(section, "valid_classes")
+    valid_display_kind[section] = {}
+    for i, class in pairs(valid_classes) do
+        valid_display_kind[section][class] = true
+    end
+end)
+
+---@param se_obj game_object
+function game_object_on_net_spawn(se_obj)
+    for case_id, case_guns in pairs(weapon_displays) do
+        for item_id, world_id in pairs(case_guns) do
+            if se_obj:id() == world_id then
+                CreateTimeEvent("collector","freeze_" .. se_obj:id(), 0, freeze_item, se_obj:id(), item_id)
+                return
+            end
+        end
+    end
+end
+
+function ActorMenu_on_item_before_move(flags, case_id, item, mode, bag_from)
+    if not (case_id and item and mode == "loot") then return end
+    local case_obj = get_object_by_id(case_id)
+    local case_sec = case_obj:section()
+    if case_obj and case_sec and valid_stash[case_sec] and valid_actor_bags[bag_from] then
+        local sec = item:section()
+        local kind = SYS_GetParam(0, sec, "kind")
+        local case_slot_count = valid_stash[case_sec]
+        if weapon_displays[case_id] and size_table(weapon_displays[case_id]) >= case_slot_count or not(kind and valid_display_kind[case_sec][kind]) then
+            flags.ret_value = false
+        end
+    end
+end
+
+function ActorMenu_on_item_after_move(case_id, item, mode, bag_from)
+    if not (case_id and item and mode == "loot") then return end
+    local case_obj = get_object_by_id(case_id)
+    local case_sec = case_obj:section()
+    if case_obj and case_sec and valid_stash[case_sec] then
+        local sec = item:section()
+        local kind = SYS_GetParam(0, sec, "kind")
+        local item_id = item:id()
+        if valid_actor_bags[bag_from] and kind and valid_display_kind[case_sec][kind] then
+
+            if weapon_displays[case_id] and weapon_displays[case_id][item_id] then
+                RemoveTimeEvent("collector","remove_" .. weapon_displays[case_id][item_id])
+            else
+                if not weapon_displays[case_id] then
+                    weapon_displays[case_id] = {}
+                    weapon_display_slots[case_id] = {}
+                end
+
+                local ini_wd = ini_file("items\\settings\\hideout_furniture\\displays\\displays.ltx")
+
+                local se_case = alife_object(case_id)
+                local pos = vector():set(case_obj:position())
+                local case_slot_count = valid_stash[case_sec]
+                local gun_number = get_first_open_slot(weapon_display_slots[case_id], case_slot_count)
+                local gun_section = ini_sys:r_string_ex(sec,"parent_section") or sec
+
+                -- Rotation --
+                -- Pull slot angle for stash
+                local angle = vector():set(se_case.angle)
+                local angle_q = aol_rotation.Quaternion(angle)
+                local angle_str = ini_wd:r_string_ex(case_sec .. "_angles",gun_number)
+                
+                -- Pull angle for gun slot
+                local case_slot_angle = vector():set(string_to_vector(angle_str)) -- get specific angle for gun slot
+                case_slot_angle = case_slot_angle:mul(0.017453292519943295769236907684886) -- convert to radian
+                
+                -- Pull angle for gun
+                local gun_adjust_str = ini_wd:r_string_ex("gun_angle_offsets",gun_section) or "0,0,0"
+                local gun_adjust_angle = string_to_vector(gun_adjust_str)
+                gun_adjust_angle = gun_adjust_angle:mul(0.017453292519943295769236907684886)
+
+                local angle_offset = case_slot_angle:add(gun_adjust_angle)
+                local angle_offset_q = aol_rotation.Quaternion(angle_offset)
+            
+                local q_rotation = angle_offset_q:multiply(angle_q)
+
+                -- Location --
+                local pos_offset = vector():set(0,0,0)
+
+                -- Add position offset (weapon-specific, in vanilla)
+                local position_offset_str = ini_sys:r_string_ex(sec, "position")
+                if position_offset_str then
+                    local vec = string_to_vector(position_offset_str)
+                    vec.x = 0 -- ignore x axis offset
+                    pos_offset:add(vec)
+                end
+                
+                -- Pull position adjustment for gun (weapon-display-specific)
+                local ini_gun_offsets = ini_file("items\\settings\\hideout_furniture\\item_offsets\\items.ltx")
+                local pos_gun_adjust = ini_gun_offsets:r_string_ex("gun_position_offsets",gun_section)
+                if pos_gun_adjust then
+                    -- Rotate offset to align with orientation of stash
+                    pos_offset:add(string_to_vector(pos_gun_adjust))
+                end
+                
+                -- Rotate position offset by unique gun rotation offset
+                pos_offset = angle_offset_q:rotate_vector(pos_offset)
+                
+                -- Pull slot positions for stash
+                local slot_pos_str = ini_wd:r_string_ex(case_sec .. "_positions",gun_number)
+                local slot_pos = vector():set(string_to_vector(slot_pos_str))
+
+                -- pos_offset = aol_rotation.rotate_vector_by_euler(pos_offset, se_case.angle)
+                pos_offset:add(slot_pos)
+                pos_offset = angle_q:rotate_vector(pos_offset)
+                
+                pos = pos:add(pos_offset)
+                
+                -- Create object at pos
+                local world_se_obj = alife_create_item(sec, { pos, db.actor:level_vertex_id(), db.actor:game_vertex_id() })
+                
+                -- Rotate object
+                world_se_obj.angle = q_rotation:to_euler_angles()
+                -- world_se_obj.angle = angle
+                
+                -- Set invisible to AI (prevent pickup)
+                local data = utils_stpk.get_weapon_data(world_se_obj)
+                local remove_flags = 16 + 128
+                local flag_mask = bit_not(remove_flags)
+                data.object_flags = bit_and(data.object_flags, flag_mask)
+
+                utils_stpk.set_weapon_data(data, world_se_obj)
+                release_item_manager.unmark_item(world_se_obj.id)
+
+                weapon_displays[case_id][item_id] = world_se_obj.id
+                weapon_display_slots[case_id][gun_number] = world_se_obj.id
+            end
+        elseif weapon_displays[case_id] and weapon_displays[case_id][item_id] then
+            CreateTimeEvent("collector","remove_" .. weapon_displays[case_id][item_id], 0, remove_displayed_item, item_id, weapon_displays[case_id][item_id], case_id)
+        end
+    end
+end
+
+function string_to_vector(string)
+    local t = str_explode(string,",")
+    for k, str in pairs(t) do
+        t[k] = string.gsub(str, "%s+", "") -- remove whitespaces
+        t[k] = tonumber(t[k])
+        --printf(str)
+    end
+    return vector():set(t[1], t[2], t[3])
+end
+
+function get_first_open_slot(t, max_slots)
+    for i=1, max_slots do
+        if not t[i] then
+            return i
+        end
+    end
+end
+
+function actor_on_item_before_pickup(obj, flags)
+    for case_id, case_guns in pairs(weapon_displays) do
+        for item_id, world_id in pairs(case_guns) do
+            if obj:id() == world_id then
+                --printf("NO PICKUP")
+                flags.ret_value = false
+            end
+        end
+    end
+end
+
+function freeze_item(id, item_id)
+    local obj = level.object_by_id(id)
+    local phys = obj and obj:get_physics_shell()
+    if phys then
+        -- Show silencer/launcher if stashed item has the attachment
+        if utils_item.has_attached_silencer(get_object_by_id(item_id)) then
+            obj:set_bone_visible("wpn_silencer", true, true)
+        end
+        if utils_item.has_attached_gl(get_object_by_id(item_id)) then
+            obj:set_bone_visible("wpn_launcher", true, true)
+        end
+
+        phys:freeze()
+        return true
+    end
+    return false
+end
+
+function remove_displayed_item(item_id, world_item_id, case_id)
+    local obj = alife_object(world_item_id)
+    if obj then
+        alife_release(obj) -- USE safe_release_manager.release(se_obj) ??????
+        weapon_displays[case_id][item_id] = nil
+        
+        for slot, id in pairs(weapon_display_slots[case_id]) do
+            if id == world_item_id then
+                weapon_display_slots[case_id][slot] = nil
+                break
+            end
+        end
+        
+        if size_table(weapon_displays[case_id]) == 0 then
+            weapon_displays[case_id] = nil
+            weapon_display_slots[case_id] = nil
+        end
+
+        RemoveTimeEvent("collector","freeze_" .. world_item_id)
+        --printf("DISPLAYED ITEM REMOVED")
+        return true
+    end
+    --printf("TRYING TO REMOVE")
+    return false
+end
+
+function vector_rotate_y_radian(v, angle)
+	--angle = angle * 0.017453292519943295769236907684886
+	local c = math.cos (angle)
+	local s = math.sin (angle)
+	return vector():set(v.x * c - v.z * s, v.y, v.x * s + v.z * c)
+end
+
+function angle_to_radian(angle)
+    return angle * 0.017453292519943295769236907684886
+end
+
+function save_state(m_data)
+    m_data.weapon_displays = weapon_displays
+    m_data.weapon_display_slots = weapon_display_slots
+end
+
+function load_state(m_data)
+    weapon_displays = m_data.weapon_displays or {}
+    weapon_display_slots = m_data.weapon_display_slots or {}
+end
