@@ -1,152 +1,205 @@
 //=================================================================================================
 //Pseudo PBR shading for STALKER Anomaly 
 //Roughness is controlled with r2_gloss_min
-//GGX unfucked by LVutner
 //=================================================================================================
 #include "pbr_settings.h" //load settings files
-#define CUBE_MIPS 5 //mipmaps for ambient shading and specular
-static const float Pi = 3.14159265359;
-
-float3 calc_albedo(float3 diffuse, float material_ID)
+#define PI 3.14159265359
+//=================================================================================================
+//Metalness
+//
+float calc_metalness(float4 alb_gloss, float material_ID)
 {
-#ifdef USE_PBR
-	float3 albedo = SRGBToLinear(diffuse) * ALBEDO_AMOUNT;
+	//material ID experiment
+	float metallerp = max(0.0, (material_ID*4)-0.5)/4; //approx material + weight? //nowhere near
+ 	//metallerp = saturate((metallerp - 0.5) * 2); //metal threshold
+	//metallerp = saturate(((metallerp * 4) - 2) * 0.5); //metal threshold
+	
+	//binary metalness
+	float metalness = saturate(material_ID - 0.75 - 0.001) > 0 ? 1 : 0;
+	
+	//float metal_thres = METALNESS_THRESHOLD;
+	//float metal_soft = METALNESS_SOFTNESS;
+	
+	//float metal_thres = METALNESS_THRESHOLD * (1 - metallerp) * 2;
+	float metal_thres = pow(METALNESS_THRESHOLD, exp2(metallerp));
+	float metal_soft = metal_thres * 0.9;
+	
+	//lerp on gloss
+	//metalness *= saturate(smoothstep(METALNESS_THRESHOLD-METALNESS_SOFTNESS, METALNESS_THRESHOLD+METALNESS_SOFTNESS, alb_gloss.a)); 
+	metalness *= saturate((alb_gloss.a - (metal_thres-metal_soft)) / ((metal_thres+metal_soft) - (metal_thres-metal_soft)));
+	return metalness;
+}
+
+float3 Soft_Light (float3 base, float3 blend)
+{
+	return (blend <= 0.5) ? base - (1-2*blend)*base*(1-base) : base + (2*blend-1)*(sqrt(base)-base);
+}
+//=================================================================================================
+//Material
+//
+float3 calc_albedo_boost(float3 albedo)
+{
+	float3 blend = lerp(0.5, 1-dot(albedo, LUMINANCE_VECTOR), ALBEDO_BOOST); //boost albedo by inv
+	return Soft_Light(albedo, blend);
+}
+
+float3 calc_albedo(float4 alb_gloss, float material_ID)
+{
+
+	float metalness = calc_metalness(alb_gloss, material_ID);
+	
+	float3 albedo = alb_gloss.rgb;
+	//albedo = SRGBToLinear(albedo);
+	
+	albedo = calc_albedo_boost(albedo);
+	//albedo = SRGBToLinear(albedo);
+
+	float3 screen_contrib = albedo;
+	screen_contrib = (1-(1-screen_contrib)*(1-screen_contrib))-lerp(dot(screen_contrib, LUMINANCE_VECTOR), screen_contrib, 0.5);
+
+	albedo = SRGBToLinear(albedo);
+	screen_contrib = SRGBToLinear(screen_contrib);
+
+	float3 albedo_metal = screen_contrib; //metal albedo is screen blend contrib, it gets rid of all highlights.
+
+	return saturate(lerp(albedo, albedo_metal, metalness)*ALBEDO_AMOUNT);
+}
+
+float3 calc_specular(float4 alb_gloss, float material_ID)
+{
+	float metalness = calc_metalness(alb_gloss, material_ID);
+
+	float3 specular = float3(SPECULAR_BASE, SPECULAR_BASE, SPECULAR_BASE); //base fresnel to tweak
+	
+	float3 specular_metal = alb_gloss.rgb; //metal uses diffuse for specular
+	specular_metal = calc_albedo_boost(specular_metal); //boost albedo
+	specular_metal = SRGBToLinear(specular_metal);
+
+	//tweaks for specular boost 
+	//material_ID = sqrt(material_ID/0.75);
+	material_ID = saturate(material_ID * 1.425);
+	alb_gloss.a = sqrt(alb_gloss.a);
+	
+	/*
+	//old spec boost
+	float specular_boost = ((0.5+material_ID) * (0.5+alb_gloss.a))-0.25; //0.0 - 2.0 range
+	specular_boost = specular_boost - 1; //scale in -1 to +1 range
+	specular_boost = SPECULAR_RANGE * specular_boost;
+	specular_boost = max(0, specular_boost + 1); //0 - 2
+	*/
+	
+	float specular_boost = (material_ID*2-1) + (alb_gloss.a*2-1); //-2.0 - +2.0 range
+	specular_boost = exp2(SPECULAR_RANGE * specular_boost);
+	specular_boost = pow(specular_boost, SPECULAR_POW);
+
+	specular *= specular_boost;
+
+	return saturate(lerp(specular, specular_metal, metalness));
+}
+
+float calc_rough(float4 alb_gloss, float material_ID)
+{
+	float metalness = calc_metalness(alb_gloss, material_ID);
+	
+	alb_gloss.a = pow(alb_gloss.a, ROUGHNESS_POW - (metalness * METAL_BOOST)); //metal boost
+	
+	float roughpow = 0.5 / max(0.001, 1 - Ldynamic_color.w);
+	float rough = pow(lerp(ROUGHNESS_HIGH, ROUGHNESS_LOW, alb_gloss.a), roughpow);
+
+	//rough = pow(rough, 1 + (metalness * METAL_BOOST)); //metal boost
+	
+	return saturate(rough*rough);
+}
+
+//=================================================================================================
+//Rain and Foliage
+//
+void calc_rain(inout float3 albedo, inout float3 specular, inout float rough, in float4 alb_gloss, in float material_ID, in float rainmask)
+{
+	//rain based on Remember Me's implementation
+	//float wetness = saturate(rain_params.x*rainmask);
+	float wetness = saturate(smoothstep(0.1,0.9,rain_params.x*rainmask));
+
+	float porosity = 1-saturate(material_ID*1.425); //metal material at 0, concrete at 1
+	//porosity = saturate((porosity-0.5)/0.4); //Remember Me rain porosity
+
+	float factor = lerp(1,0.2, porosity); //albedo darkening factor
+	
+	albedo *= lerp(1, factor, wetness); 
+	rough = lerp(0.001, rough, lerp(1, factor, wetness)); 
+	specular = lerp(specular, 0.02, wetness);
+}
+
+void calc_foliage(inout float3 albedo, inout float3 specular, inout float rough, in float4 alb_gloss, in float mat_id)
+{
+	//specular = (abs(mat_id-MAT_FLORA) <= MAT_FLORA_ELIPSON) ? calc_specular(alb_gloss, 0.0) : specular;
+	specular = (abs(mat_id-MAT_FLORA) <= MAT_FLORA_ELIPSON) ? alb_gloss.g * 0.02 : specular;
+	//specular = (abs(mat_id-MAT_FLORA) <= MAT_FLORA_ELIPSON) ? pow(alb_gloss.g * 0.1414, 2) : specular;
+}
+
+//=================================================================================================
+//Functions
+//
+
+float F_Shlick(float f0, float f90, float vDotH)
+{
+	return lerp(f0, f90, pow(1-vDotH, 5));
+}
+
+float3 F_Shlick(float3 f0, float3 f90, float vDotH)
+{
+	return lerp(f0, f90, pow(1-vDotH, 5));
+}
+// We have a better approximation of the off specular peak
+// but due to the other approximations we found this one performs better .
+// N is the normal direction
+// R is the mirror vector
+// This approximation works fine for G smith correlated and uncorrelated
+float3 getSpecularDominantDir(float3 N, float3 R, float roughness)
+{
+	float smoothness = saturate(1 - roughness);
+	float lerpFactor = smoothness * (sqrt(smoothness) + roughness);
+	// The result is not normalized as we fetch in a cubemap
+	return lerp(N, R, lerpFactor);
+}
+
+//=================================================================================================
+//Shading
+//
+
+//include BRDFs
+#include "pbr_brdf_blinn.h" //brdf
+#include "pbr_brdf_ggx.h" //brdf
+
+float Lit_Burley(float nDotL, float nDotV, float vDotH, float rough)
+{
+	float fd90 = 0.5 + 2 * vDotH * vDotH * rough;
+	float lightScatter = F_Shlick(1, fd90, nDotL);
+	float viewScatter = F_Shlick(1, fd90, nDotV);
+ 	return (lightScatter * viewScatter) / PI;
+}
+
+float Lambert_Source(float nDotL,float rough)
+{
+	float exponent = lerp(1.4, 0.6, rough);
+	return (pow(nDotL, exponent) * ((exponent + 1.0) * 0.5)) / max(1e-5, PI * nDotL);
+}
+
+float Lit_Diffuse(float nDotL, float nDotV, float vDotH, float rough)
+{
+#ifdef USE_BURLEY_DIFFUSE
+	return Lit_Burley(nDotL, nDotV, vDotH, rough);
 #else
-	float3 albedo = SRGBToLinear(diffuse);
+	return Lambert_Source(nDotL, rough);
 #endif
-	return saturate(albedo);
 }
 
-float calc_rough(float gloss, float material_ID)
-{
-	
-#ifdef USE_PBR
-	float rough = lerp(ROUGHNESS_HIGH, ROUGHNESS_LOW, pow(gloss, ROUGHNESS_POW)); //gloss to roughness
-	rough = pow(rough, 1/(1.01-Ldynamic_color.w)); //gloss factor
-#else
-	float rough = lerp(0.5, .25, material_ID);
-	rough *= rough;
-#endif
-	
-	return saturate(rough);
-}
-
-float3 calc_f0(float gloss, float material_ID)
-{
-
-	float foliage = saturate(20*(abs(material_ID-0.47)-0.05)); //foliage
-	//gloss *= foliage;
-	material_ID *= foliage;
-
-#ifdef USE_PBR
-	float3 specular = SPECULAR_BASE; //base fresnel to tweak
-	specular *= SPECULAR_RANGE * max(0,((0.5+material_ID) * (0.5+gloss)) - 0.25); //0.0 - 2.0 fresnel multiplier
-	specular = pow(specular, SPECULAR_POW);
-#else
-	float3 specular = SPECULAR_BASE;
-#endif
-
-	return saturate(specular);
-}
-
-float3 F_Shlick(float3 f0, float3 f90, float lDotH)
-{
-	return lerp(f0, f90, pow(1-lDotH, 5));
-}
-
-float G_GGX(float m2, float nDotX)
-{
-	return 1.0 / (nDotX + sqrt(m2 + (1 - m2) * nDotX * nDotX));
-}
-
-//Normal distribution function for GGX
-float NDF_GGX(float NdotH, float alpha)
-{
-    alpha *= alpha;
-    float denominator = (NdotH * alpha - NdotH) * NdotH + 1.0;
-    return alpha / (3.14 * denominator * denominator);
-}
-
-//Lambda used in G2-G1 functions
-float Lambda_Smith(float NdotX, float alpha)
-{    
-    float alpha_sqr = alpha * alpha;
-    float NdotX_sqr = NdotX * NdotX;
-    return (-1.0 + sqrt(alpha_sqr * (1.0 - NdotX_sqr) / NdotX_sqr + 1.0)) * 0.5;
-}
-
-//Height Correlated Masking-shadowing function
-float G2_Smith(float NdotL, float NdotV, float alpha)
-{
-	float lambdaV = Lambda_Smith(NdotV, alpha);
-	float lambdaL = Lambda_Smith(NdotL, alpha);
-
-	return 1.0 / (1.0 + lambdaV + lambdaL);
-}
-
-float3 GGX(float NdotL, float NdotH, float NdotV, float VdotH, float3 F0, float roughness)
-{
-	//Alpha
-	float alpha = clamp(roughness * roughness, 1.0/255.0, 1.0);
-
-    //Normal distribution function
-    float NDF = NDF_GGX(NdotH, alpha);
-    
-    //Masking-shadowing
-    float G2 = G2_Smith(NdotL, NdotV, alpha);
-    
-    //Fresnel
-    float3 F = F_Shlick(F0, 1.0, VdotH);
-    
-    //Numerator
-    float3 numerator = NDF * G2 * F;
-    
-    //Denominator
-    float denominator = max(4.0 * NdotV, 1e-8);
-    
-    //Output
-    return numerator / denominator;
-}
-
-float G_Smith(float m2, float nDotX)
-{
-	//m2 = m2*0.5; //remapping for GGX
-	m2 = m2 * 0.797884560802865; //remapping for beckmann/blinn (sqrt(2/pi))
-	return nDotX / (nDotX * (1 - m2) + m2);
-}
-
-float3 Blinn(float nDotL, float nDotH, float nDotV, float lDotH, float3 f0, float rough)
-{
-	float gloss = 1-rough;
-	gloss = gloss*gloss;
-	gloss = exp2(gloss*10);
-	
-	float d = pow(nDotH, gloss);
-	d *= (gloss+8)/(8); //blinn normalized without pi, (n+6)/8 might be better?
-	
-	float m2 = rough * rough;
-	float v1i = G_Smith(m2, nDotL);
-	float v1o = G_Smith(m2, nDotV);
-	float vis = v1i * v1o;
-	
-	//float vis = ceil(nDotL); //don't bother with vis
-	
-	float3 f = F_Shlick(f0, 1, lDotH);
-
-	return d * f * vis;
-}
-
-float3 Lit_Diffuse(float nDotL, float nDotH, float nDotV, float lDotH, float3 f0, float rough)
-{
-	return pow(nDotL, lerp(1.125, 0.75, rough)*1.5); // aesthetic tweak to roughness
-}
-
-float3 Lit_Specular(float nDotL, float nDotH, float nDotV, float lDotH, float3 f0, float rough)
+float3 Lit_Specular(float nDotL, float nDotH, float nDotV, float vDotH, float3 f0, float rough)
 {
 #ifdef USE_GGX_SPECULAR
-	return GGX(nDotL, nDotH, nDotV, lDotH, f0, rough); //GGX is much more expensive but looks nicer
+	return Lit_GGX(nDotL, nDotH, nDotV, vDotH, f0, rough); //GGX is much more expensive but looks nicer
 #else
-	return Blinn(nDotL, nDotH, nDotV, lDotH, f0, rough); //much cheaper pbr blinn 
+	return Lit_Blinn(nDotL, nDotH, nDotV, vDotH, f0, rough); //much cheaper pbr blinn 
 #endif
 }
 
@@ -154,71 +207,79 @@ float3 Lit_BRDF(float rough, float3 albedo, float3 f0, float3 V, float3 N, float
 {
 	float3 H = normalize(V + L );
 	
-	float nDotL = max(0, dot(N, L));
-	float nDotH = max(0, dot(N, H));
-	float nDotV = max(0, dot(N, V));
-	float lDotH = max(0, dot(L, H));
+	float nDotL = saturate(dot(N, L));
+	float nDotH = saturate(dot(N, H));
+	//float nDotV = saturate(dot(N, V));
+	//float nDotV = 1e-5 + abs(dot(N, V)); //DICE
+	float nDotV = max(1e-5, dot(N, V));
+	float vDotH = saturate(dot(V, H));
 	
-	float3 diffuse_term = Lit_Diffuse(nDotL, nDotH, nDotV, lDotH, f0, rough);
+	float3 diffuse_term = Lit_Diffuse(nDotL, nDotV, vDotH, rough).rrr;
 	diffuse_term *= albedo;
 	
-	float3 specular_term = Lit_Specular(nDotL, nDotH, nDotV, lDotH, f0, rough);
+	float3 specular_term = Lit_Specular(nDotL, nDotH, nDotV, vDotH, f0, rough);
 	
-	return diffuse_term + specular_term;
+	// horizon occlusion with falloff, should be computed for direct specular too
+	//float R = reflect(V, N);
+	//float R = 2 * dot(N, V) * N - V;
+	//float horizon = saturate(1.0 + dot(R, N)); //needs vertex normals
+	float horizon = saturate(0.95 + dot(N, V));
+	horizon *= horizon;
+
+	specular_term *= horizon; //horizon atten
+	
+	return (diffuse_term + specular_term) *  nDotL * PI;
 }
 
 //=================================================================================================
 //Ambient
 //
 
-float3 CubeDiffuse (float rough, TextureCube cubeMap, float3 nw)
+float EnvBurley(float roughness, float NV)
 {
-	float3 nwRemap = nw;
-	float3 vnormabs    = abs(nwRemap);
-	float  vnormmax    = max(vnormabs.x, max(vnormabs.y, vnormabs.z));
-        nwRemap      /= vnormmax;
-
-        if (nwRemap.y < 0.999)    
-        nwRemap.y= nwRemap.y*2-1;     // fake remapping 
-
-	nwRemap = normalize(nwRemap);
-	
-	float3 nSquared = nw * nw;
-	const float Epsilon = 0.000001;
-	float3 DiffuseColor = 0;
-	DiffuseColor += nSquared.x * cubeMap.SampleLevel(smp_rtlinear, float3(nwRemap.x, Epsilon, Epsilon), CUBE_MIPS);
-	DiffuseColor += nSquared.y * cubeMap.SampleLevel(smp_rtlinear, float3(Epsilon, nwRemap.y, Epsilon), CUBE_MIPS); 
-	DiffuseColor += nSquared.z * cubeMap.SampleLevel(smp_rtlinear, float3(Epsilon, Epsilon, nwRemap.z), CUBE_MIPS);
-	
-	return DiffuseColor;
+    //Burley (Hill's curve)
+    float d0 = 0.97619 - 0.488095 * pow(1.0 - NV, 5.0);
+    float d1 = 1.55754 + (-2.02221 + (2.56283 - 1.06244 * NV) * NV) * NV;
+    return lerp(d0, d1, roughness);
 }
 
-float3 CubeSpecular (float rough, TextureCube cubeMap, float3 vreflect)
+float Amb_Diffuse(float3 f0, float rough, float nDotV)
 {
-	float RoughMip = rough * CUBE_MIPS;
-	float3 SpecularColor = cubeMap.SampleLevel(smp_rtlinear, vreflect, RoughMip); 
-
-	return SpecularColor;
+#ifdef USE_BURLEY_DIFFUSE
+    return EnvBurley(rough, nDotV);
+#else
+	return 1.0; 
+#endif
 }
 
-//UE4 mobile approx
-float3 EnvBRDFApprox(float3 SpecularColor, float Roughness, float NoV )
+float3 Amb_Specular(float3 f0, float rough, float nDotV)
 {
-	const float4 c0 = { -1, -0.0275, -0.572, 0.022 };
-	const float4 c1 = { 1, 0.0425, 1.04, -0.04 };
-	float4 r = Roughness * c0 + c1;
-	float a004 = min(r.x * r.x, exp2(-9.28 * NoV ) ) * r.x + r.y;
-	float2 AB = float2(-1.04, 1.04 ) * a004 + r.zw;
-	return SpecularColor * AB.x + AB.y;
+#ifdef USE_GGX_SPECULAR
+    return EnvGGX(f0, rough, nDotV);
+#else
+    return EnvBlops2(f0, rough, nDotV);
+#endif
 }
 
 float3 Amb_BRDF(float rough, float3 albedo, float3 f0, float3 env_d, float3 env_s, float3 V, float3 N)
 {
-	float nDotV = max(0, dot(N, V));
+	//float nDotV = saturate(dot(N, V));
+	//float nDotV = 1e-5 + abs(dot(N, V)); //DICE
+	float nDotV = max(1e-5, dot(N, V));
+	 
+	float3 diffuse_term = Amb_Diffuse(f0, rough, nDotV);
+	diffuse_term *= env_d * albedo;
 	
-	float3 diffuse_term = env_d * albedo; 
+	float3 specular_term = Amb_Specular(f0, rough, nDotV);
+	specular_term *= env_s;
 	
-	float3 specular_term = env_s * EnvBRDFApprox(f0, rough, nDotV );
+	// horizon occlusion with falloff, should be computed for direct specular too
+	//float R = reflect(V, N);
+	//float horizon = saturate(1.0 + dot(R, N)); //needs vertex normals
+	float horizon = saturate(0.95 + dot(N, V));
+	horizon *= horizon;
+
+	specular_term *= horizon; //horizon atten
 	
 	return diffuse_term + specular_term;
 }
