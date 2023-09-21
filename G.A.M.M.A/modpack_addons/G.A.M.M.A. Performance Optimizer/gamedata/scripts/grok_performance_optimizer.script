@@ -211,24 +211,35 @@ end
 trigger2 = 0
 delay2 = 2560
 local function actor_on_update()
-	nrows = 0
-	for k,v in pairs(online_npcs) do
-		nrows = nrows + 1
+	tg = time_global()
+	
+	if trigger2 == 0 then
+       	grok_delay2 = tg + delay2
+		trigger2 = 1
 	end
-	if nrows > npc_threshold then
-		number_to_remove = nrows - npc_threshold
-		for i=1,number_to_remove do
-			local npc_id_to_remove = online_npcs[math.random(#online_npcs)]
-			local npc = get_object_by_id(npc_id_to_remove)
-			local pos = db.actor:position()
-			if npc:position():distance_to_sqr(pos) >= dist_threshold then
-				se_item = alife_object(npc_id_to_remove)
-				alife_release(se_item)
-			end
+
+	if (trigger2 == 1 and tg > grok_delay2) then
+		trigger2 = 0
+			
+		nrows = 0
+		for k,v in pairs(online_npcs) do
+			nrows = nrows + 1
 		end
-	else
-		online_npcs = {}
-	end
+		if nrows > npc_threshold then
+			number_to_remove = nrows - npc_threshold
+			for i=1,number_to_remove do
+				local npc_id_to_remove = online_npcs[math.random(#online_npcs)]
+				local npc = get_object_by_id(npc_id_to_remove)
+				local pos = db.actor:position()
+				if npc:position():distance_to_sqr(pos) >= dist_threshold then
+					se_item = alife_object(npc_id_to_remove)
+					alife_release(se_item)
+				end
+			end
+		else
+			online_npcs = {}
+		end
+	else return end
 end
 
 function on_game_start()
