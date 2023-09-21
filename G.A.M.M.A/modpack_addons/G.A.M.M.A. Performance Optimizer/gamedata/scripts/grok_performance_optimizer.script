@@ -174,12 +174,13 @@ local important_npcs = Set {
 
 }
 
-npc_threshold = 30
-dist_threshold = 100
+npc_threshold = 35
+dist_threshold = 300000
+check_tasks = false
 online_npcs = {}
-trigger = 0
-delay = 25
 
+trigger = 0
+delay = 30
 local function npc_on_update(npc)
 	tg = time_global()
 	
@@ -192,7 +193,52 @@ local function npc_on_update(npc)
 		trigger = 0
 		
 		if npc then
-			online_npcs[#online_npcs+1] = npc:id()
+			local pos = db.actor:position()
+			if npc:position():distance_to_sqr(pos) <= dist_threshold then
+
+				if important_npcs[npc:section()] then return end
+				if get_object_story_id(npc:id()) then return end
+				if npc:has_info("npcx_is_companion") then return end
+									
+				local squad = get_object_squad(npc)
+				if squad then
+					if (get_object_story_id(squad.id)) then return end
+				end
+
+				online_npcs[npc:id()] = npc:id()
+				nrows = 0
+				for k,v in pairs(online_npcs) do
+					nrows = nrows + 1
+				end
+				-- printf(nrows)
+			end
+		end
+	else return end
+end
+
+trigger3 = 0
+delay3 = 15
+local function monster_on_update(npc)
+	tg = time_global()
+	
+	if trigger3 == 0 then
+       	grok_delay3 = tg + delay3
+		trigger3 = 1
+	end
+
+	if (trigger3 == 1 and tg > grok_delay3) then
+		trigger = 0
+		
+		if npc then
+			local pos = db.actor:position()
+			if npc:position():distance_to_sqr(pos) <= dist_threshold then
+				online_npcs[npc:id()] = npc:id()
+				nrows = 0
+				for k,v in pairs(online_npcs) do
+					nrows = nrows + 1
+				end
+				-- printf(nrows)
+			end
 		end
 	else return end
 end
@@ -210,36 +256,42 @@ local function actor_on_update()
 	if (trigger2 == 1 and tg > grok_delay2) then
 		trigger2 = 0
 			
-		nrows = 0
+--		printf("checking if NPCs need to be deleted")
+		nrows2 = 0
 		for k,v in pairs(online_npcs) do
-			nrows = nrows + 1
+			nrows2 = nrows2 + 1
 		end
-		if nrows > npc_threshold then
-			number_to_remove = nrows - npc_threshold
-			for i=1,number_to_remove do
-				local npc_id_to_remove = online_npcs[math.random(#online_npcs)]
-				local npc = get_object_by_id(npc_id_to_remove)
+		printf(nrows2)
+		if nrows2 > npc_threshold then
+			number_to_remove = nrows2 - npc_threshold
+			counter = 0
+			shuffle_table(online_npcs)
+			for k,v in pairs(online_npcs) do
+				counter = counter + 1
 				
-				if important_npcs[npc:section()] then return end
-				if get_object_story_id(npc:id()) then return end
-				if npc:has_info("npcx_is_companion") then return end
-				
-				local squad = get_object_squad(npc)
-				if squad then
-					if (get_object_story_id(squad.id)) then return end
-				end
-			
-				axr_task_manager.generate_ongoing_tasks(npc,nil)
-				if axr_task_manager.ongoing_tasks and axr_task_manager.ongoing_tasks[npc:id()] then return end
-			
---				if dialogs.drx_sl_dont_has_npc_task(npc, db.actor) then
-					local pos = db.actor:position()
-					if npc:position():distance_to_sqr(pos) >= dist_threshold then
-						se_item = alife_object(npc_id_to_remove)
-						alife_release(se_item)
+				if counter >= number_to_remove then
+					online_npcs = {}
+					return
+				else
+					local npc_id_to_remove = v
+					local npc = get_object_by_id(npc_id_to_remove)
+							
+					if npc then
+					
+						local cls = npc:clsid()
+						axr_task_manager.generate_ongoing_tasks(npc,nil)
+						if check_tasks and axr_task_manager.ongoing_tasks and axr_task_manager.ongoing_tasks[npc:id()] then
+							online_npcs[k] = nil
+						else
+							se_item = alife_object(npc_id_to_remove)
+							alife_release(se_item)
+							online_npcs[k] = nil
+							printf("Release of %s", npc_id_to_remove)
+						end
 					end
---				end
+				end
 			end
+			online_npcs = {}
 		else
 			online_npcs = {}
 		end
@@ -248,5 +300,6 @@ end
 
 function on_game_start()
 	RegisterScriptCallback("npc_on_update",npc_on_update)
+	RegisterScriptCallback("monster_on_update",monster_on_update)
 	RegisterScriptCallback("actor_on_update",actor_on_update)
 end
