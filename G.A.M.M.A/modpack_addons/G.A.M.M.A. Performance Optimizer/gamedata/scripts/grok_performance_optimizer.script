@@ -192,17 +192,6 @@ local function npc_on_update(npc)
 		trigger = 0
 		
 		if npc then
-			if important_npcs[npc:section()] then return end
-			if get_object_story_id(npc:id()) then return end
-			if npc:has_info("npcx_is_companion") then return end
-				
-			local squad = get_object_squad(npc)
-			if squad then
-				if (get_object_story_id(squad.id)) then return end
-			end
-			
-			if axr_task_manager.ongoing_tasks and axr_task_manager.ongoing_tasks[npc:id()] then return end
-
 			online_npcs[#online_npcs+1] = npc:id()
 		end
 	else return end
@@ -230,11 +219,26 @@ local function actor_on_update()
 			for i=1,number_to_remove do
 				local npc_id_to_remove = online_npcs[math.random(#online_npcs)]
 				local npc = get_object_by_id(npc_id_to_remove)
-				local pos = db.actor:position()
-				if npc:position():distance_to_sqr(pos) >= dist_threshold then
-					se_item = alife_object(npc_id_to_remove)
-					alife_release(se_item)
+				
+				if important_npcs[npc:section()] then return end
+				if get_object_story_id(npc:id()) then return end
+				if npc:has_info("npcx_is_companion") then return end
+				
+				local squad = get_object_squad(npc)
+				if squad then
+					if (get_object_story_id(squad.id)) then return end
 				end
+			
+				axr_task_manager.generate_ongoing_tasks(npc,nil)
+				if axr_task_manager.ongoing_tasks and axr_task_manager.ongoing_tasks[npc:id()] then return end
+			
+--				if dialogs.drx_sl_dont_has_npc_task(npc, db.actor) then
+					local pos = db.actor:position()
+					if npc:position():distance_to_sqr(pos) >= dist_threshold then
+						se_item = alife_object(npc_id_to_remove)
+						alife_release(se_item)
+					end
+--				end
 			end
 		else
 			online_npcs = {}
