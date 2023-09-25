@@ -23,8 +23,48 @@
 
 -----------------------------------------------------------------------
 
-local mrs = math.randomseed
-local dtg = device():time_global()
+--local mrs	= math.randomseed
+--local dtg	= device():time_global()
+
+local ini_seed = ini_file("plugins\\mass_fat_loot.ltx")
+
+local function dtg()
+	return device():time_global()
+end
+
+local function mrs(seed, context)
+	
+	--local check = tonumber(ini_seed:r_string("blacklist", seed) and ini_seed:r_string("blacklist", seed) or 0) or nil
+	local check = ini_seed:line_exist("blacklist", seed) and true or false
+	
+	if (seed == dtg()) then
+		context = nil
+	end
+	
+	if context and (context ~= nil) then
+		printf("~ MASS: Context [%s]", context and context or "Unknown or undefined")
+	end
+	
+	if (seed == AC_ID) and context and (context ~= nil) then
+		printf("~ MASS: Actor ID was used!")
+	end
+	
+	while (check == true) do
+		if context and (context ~= nil) then
+			printf("~ MASS: RNG Seed [%s] is blacklisted!", seed)
+		end
+		
+		seed = seed + 1
+		
+		check = ini_seed:line_exist("blacklist", seed) and true or false
+	end
+	
+	if context and (context ~= nil) then
+		printf("~ MASS: RNG Seed [%s] chosen!", seed)
+	end
+	
+	math.randomseed(seed)
+end
 
 -----------------------------------------------------------------------
 
@@ -45,17 +85,18 @@ local outfitter 		= item_parts.evaluate_parts						-- Outfit parts, maybe
 
 if not haru_skills then													-- Just make sure this runs ONLY if you don't have HarukaSai's skill system
 	function death_manager.create_release_item(npc)
-		mrs(npc:id())
+		mrs(npc:id(), "Core NPC loot generation")
 		make_loot(npc)
-		mrs(dtg)
+		mrs(dtg())
 	end
 end
 
-function death_manager.create_item(npc, section, number, rnd, to_save)
-	mrs(npc:id())
-	create_item(npc, section, number, rnd, to_save)
-	mrs(npc:id())
-end
+-- Grok: Disabled to avoid loot pinatas
+--function death_manager.create_item(npc, section, number, rnd, to_save)
+--	mrs(npc:id())
+--	create_item(npc, section, number, rnd, to_save)
+--	mrs(npc:id())
+--end
 
 function death_manager.try_spawn_ammo(npc)
 	mrs(npc:id())
@@ -72,43 +113,43 @@ end
 function death_manager.set_weapon_drop_condition(npc, itm)
 	mrs(npc:id())
 	greasy_hands(npc, itm)
-	mrs(dtg)
+	mrs(dtg())
 end
 
 function ui_mutant_loot.loot_mutant(section, clsid, loot_table, npc, dont_create, victim)
-	mrs(victim and victim:id() or dtg)
+	mrs(victim and victim:id() or dtg())
 	skin_the_flesh(section, clsid, loot_table, npc, dont_create, victim)
-	mrs(dtg)
+	mrs(dtg())
 end
 
 function ui_mutant_loot.UIMutantLoot:Loot(loot_all)
-	mrs(tonumber(level.object_by_id(self.id)) and tonumber(level.object_by_id(self.id)) or dtg)
+	mrs(tonumber(level.object_by_id(self.id)) and tonumber(level.object_by_id(self.id)) or dtg())
 	taxidermy(self, loot_all)
-	mrs(dtg)
+	mrs(dtg())
 end
 
 function item_money.actor_on_loot_money(corpse)
 	mrs(corpse:id())
 	khajiit_act(corpse)
-	mrs(dtg)
+	mrs(dtg())
 end
 
 function item_money.npc_on_loot_money(npc, corpse)
 	mrs(corpse:id())
 	khajiit_npc(npc, corpse)
-	mrs(dtg)
+	mrs(dtg())
 end
 
 function item_money.actor_on_item_use(obj)
 	mrs(obj:id())
 	khajiit_get(obj)
-	mrs(dtg)
+	mrs(dtg())
 end
 
 function item_parts.disassembly_item(obj, obj_d)
 	mrs(obj:id())
 	vigilant(obj, obj_d)
-	mrs(dtg)
+	mrs(dtg())
 end
 
 function item_parts.evaluate_parts(obj)
@@ -129,8 +170,9 @@ function item_parts.evaluate_parts(obj)
 	end
 	
 	mrs(seed)
+	
 	outfitter(obj)
-	mrs(dtg)
+	mrs(dtg())
 end
 
 -----------------------------------------------------------------------
@@ -182,7 +224,8 @@ if haru_skills then														-- Check if you have HarukaSai's skill system i
 	printf("/// SAVESCUMMER: HarukaSai's skill system is loaded!")
 	
 	function death_manager.create_release_item(npc)
-		mrs(npc:id())
+		mrs(npc:id(), "Core NPC loot generation")
+		
 		make_loot(npc)
 		
 		mrs(npc:id())
@@ -191,7 +234,7 @@ if haru_skills then														-- Check if you have HarukaSai's skill system i
 			return true
 		end)
 		
-		mrs(dtg)
+		mrs(dtg())
 	end
 	
 	function haru_skills.scavanger_effect(npc)
@@ -201,9 +244,9 @@ if haru_skills then														-- Check if you have HarukaSai's skill system i
 	end
 	
 	function haru_skills.monster_on_loot_init(victim, loot_table)
-		mrs(victim and victim:id() or dtg)
+		mrs(victim and victim:id() or dtg(), "Monster loot generation")
 		skin_the_flesh_skilled(victim, loot_table)
-		mrs(dtg)
+		mrs(dtg())
 	end
 	
 end
@@ -216,16 +259,29 @@ if zzzz_arti_jamming_repairs then												-- Check if you have WPO installed,
 	printf("/// SAVESCUMMER: WPO is loaded!")
 	
 	function zzzz_arti_jamming_repairs.weapon_eval_parts(wpn)
-		mrs(wpn:parent() and wpn:parent():id() or wpn:id())
-		printf("%s", wpn:parent():id())
+		local seed = wpn:parent() and wpn:parent():id() or wpn:id()
+		
+		if (seed == AC_ID) then
+			seed = wpn:id()
+		end
+		
+		mrs(seed, "Weapon parts generation")
+		
 		create_parts(wpn)
-		mrs(dtg)
+		mrs(dtg())
 	end
 	
 	function zzzz_arti_jamming_repairs.custom_disassembly_weapon(obj, obj_d)
-		mrs(obj:parent() and obj:parent():id() or obj:id())
+		local seed = obj:parent() and obj:parent():id() or obj:id()
+		
+		if (seed == AC_ID) then
+			seed = obj:id()
+		end
+		
+		mrs(seed)
+		
 		disassemble(obj, obj_d)
-		mrs(dtg)
+		mrs(dtg())
 	end
 	
 end
@@ -247,13 +303,13 @@ if smr_loot and smr_loot_mcm then 										-- Check if you have ZCP installed, 
 	function smr_loot.npc_on_death_callback(obj, who)
 		mrs(obj:id())
 		zcp_npc_odc(obj, who)
-		mrs(dtg)
+		mrs(dtg())
 	end
 
 	function smr_loot.try_spawn(box)
 		mrs(box:id())
 		zcp_create_loot(box)
-		mrs(dtg)
+		mrs(dtg())
 	end
 
 	function smr_loot.try_spawn_mag(box)
