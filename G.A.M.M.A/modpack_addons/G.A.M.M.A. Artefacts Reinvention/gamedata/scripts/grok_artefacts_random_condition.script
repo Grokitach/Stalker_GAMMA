@@ -1,3 +1,5 @@
+local cond_t = {}
+
 if drx_da_main then
 	arti_min_eff = 20
 	arti_max_eff = 30
@@ -18,7 +20,108 @@ function grok_arti_random_efficiency(obj)
 
 end
 
+-- containers
+-- to
+function itms_manager.dropdrop_ArtyContainer(obj_1, obj_2, sec_1, sec_2)
+	local cont = sec_2
+	local arty = sec_1
+
+	if ini_sys:section_exist(arty .. "_" .. cont) then
+		local cond = obj_1 and obj_1:condition()
+
+		actor_effects.play_item_fx("container_tool_" .. cont .. "_dummy")
+
+		local se_new_cont = alife_create_item(arty .. "_" .. cont, db.actor, { cond = cond } )
+
+		if cond_t[obj_1:id()] then		-- artefact id
+			CreateTimeEvent("save_cond_box_e", "save_cond_box_a", 0.5, function(art_id, new_cond, art_sec)
+				-- add container to the table
+				cond_t[se_new_cont.id] = new_cond
+				-- and remove artefact from it
+				cond_t[art_id] = nil
+				return true
+			end, obj_1:id(), cond_t[obj_1:id()], obj_1:section())
+		end
+
+		alife_release(obj_1)
+		alife_release(obj_2)
+
+	end
+
+end
+
+-- from
+function itms_manager.use_arty_container(obj)
+	local break_con
+	local break_arty
+	local sec = obj:section()
+
+	if (string.find(sec, "(lead.-_box)",3)) then
+		break_con = "lead_box"
+		break_arty = sec:gsub("_lead_box", "")		
+	elseif (string.find(sec, "(af.-_iam)",3)) then
+		break_con = "af_iam"
+		break_arty = sec:gsub("_af_iam", "")
+	elseif (string.find(sec, "(af.-_aac)",3)) then
+		break_con = "af_aac"
+		break_arty = sec:gsub("_af_aac", "")
+	elseif (string.find(sec, "(af.-_aam)",3)) then
+		break_con = "af_aam"
+		break_arty = sec:gsub("_af_aam", "")
+	end
+
+	if break_con and break_arty and ini_sys:section_exist(break_con) and ini_sys:section_exist(break_arty) then
+		local cond = obj:condition()
+
+		_G.ARTY_FROM_CONT = true -- Hack to prevent player from exploting Artefacts Containers (gaining rank points by receiving artefacts)
+		actor_effects.play_item_fx(break_con .. "_dummy")
+		alife_create_item(break_con, db.actor)
+		local se_new_art = alife_create_item(break_arty, db.actor, { cond = cond } )
+
+		if cond_t[obj:id()] then		-- container id
+			CreateTimeEvent("save_cond_art_e", "save_cond_art_a", 0.5, function(cont_id, new_cond, cont_sec)
+				-- add artefact to it and set its condition
+				cond_t[se_new_art.id] = new_cond
+				-- and remove container from it
+				cond_t[cont_id] = nil
+				return true
+			end, obj:id(), cond_t[obj:id()], obj:section())
+		end
+
+		alife_release(obj)
+	end
+end
+----------------
+
+local base_binder_update = item_artefact.artefact_binder.update
+function item_artefact.artefact_binder:update(delta)
+
+	-- if condition of stored artefact was changed by online transition / loading
+	if cond_t[self.object:id()] and self.object:condition() >= 1 then
+		-- set stored condition back
+		self.object:set_condition(cond_t[self.object:id()])
+	end
+
+	-- if condition of artefact was changed by other addons or containers
+	if (not cond_t[self.object:id()] and self.object:condition() < 1) or (cond_t[self.object:id()] and self.object:condition() ~= cond_t[self.object:id()]) then
+		-- store/update this condition
+		cond_t[self.object:id()] = self.object:condition()
+	end
+
+	base_binder_update(self, delta)
+end
+
+function save_state(m_data)
+	m_data.cond_t = cond_t
+end
+
+function load_state(m_data)
+	cond_t = m_data.cond_t or {}
+end
+
 function on_game_start()
 	RegisterScriptCallback("actor_item_to_ruck", grok_arti_random_efficiency)
 	RegisterScriptCallback("actor_on_item_take", grok_arti_random_efficiency)
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
 end
