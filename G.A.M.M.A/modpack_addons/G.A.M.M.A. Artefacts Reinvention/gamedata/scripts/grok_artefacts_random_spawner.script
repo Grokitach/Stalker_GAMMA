@@ -1,5 +1,7 @@
 spawned = 0
-delay = 40210
+counter = 0
+limit = 11
+delay = 65210
 regular_fields_chance = 7
 dynamic_fields_chance = 2
 
@@ -30,8 +32,12 @@ function grok_artefact_spawner()
     tg = time_global()
 
     if spawned == 0 then
+		if delayed_lvl and delayed_lvl ~= level.name() then
+			delay = 65210
+		end
         grok_delay = tg + delay
         spawned = 1
+		counter = counter + 1
     end
     
     if (spawned == 1 and tg > grok_delay) then
@@ -42,18 +48,23 @@ function grok_artefact_spawner()
             return
         end
 
-			  if drx_da_main then
-				    if math.random(1,100) <= dynamic_fields_chance then
-					      drx_da_main.spawn_artefacts_on_level()
-					      spawned = 0
-				    end
+		if drx_da_main then
+			if math.random(1,100) <= dynamic_fields_chance then
+				drx_da_main.spawn_artefacts_on_level()
+				spawned = 0
+			end
         end
 
-			  if math.random(1,100) <= regular_fields_chance then
-				    bind_anomaly_zone.force_spawn_artefacts()
-				    spawned = 0
-			  end
+		if math.random(1,100) <= regular_fields_chance then
+			bind_anomaly_zone.force_spawn_artefacts()
+			spawned = 0
 		end
+		
+		if spawned == 0 and counter >= limit then
+			delay = 1250000
+			delayed_lvl = level.name()
+		end
+	end
 end
 
 function on_game_start()
