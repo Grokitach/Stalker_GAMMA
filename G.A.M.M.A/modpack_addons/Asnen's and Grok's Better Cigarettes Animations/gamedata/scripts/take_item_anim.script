@@ -3,7 +3,6 @@ item pickup animation script
 Author: Feel_Fried
 --]]
 local skin_anim, harv_usage_snd,enable_take
-local bool_to_number={ [true]=1, [false]=0 }
 local ltx = ini_file("items\\items\\anims_loot_list.ltx")
 
 function on_game_start()
@@ -13,37 +12,68 @@ end
 
 function actor_on_first_update()
 	RegisterScriptCallback("actor_on_item_take",actor_on_item_take)
+	RegisterScriptCallback("actor_on_item_before_pickup",actor_on_item_before_pickup)
 	loadsettings()
 end
 
 function loadsettings()
 	if ui_mcm then
 		enable_animations = ui_mcm.get("EA_settings/enable_animations")
-		default_dist = ui_mcm.get("EA_settings/take_dist")
 		enable_take = ui_mcm.get("EA_settings/take_item_anim")
 	else
 		enable_animations = ui_options.get("video/player/animations")
-		default_dist = 0.12
-		enable_take = false
+		enable_take = true
+	end
+	enable_multipickup = ui_options.get("control/general/pickup_mode")
+end
+
+
+local anim_plays = nil
+local anm_name = "camera_effects\\weapon\\two_handed_weapon_effect.anm"
+function actor_on_item_before_pickup(item,flags)
+	if (not enable_take) or (not enable_animations) then return end --1 - 10 single press, 50+ - long press
+	flags.ret_value = false
+	if not anim_plays and not enhanced_animations.used_item then
+		game.play_hud_motion(db.actor:active_slot()==0 and 2 or 1, "item_ea_take_hud", "anm_ea_take", true, 1.4)
+		game.play_hud_anm(anm_name, 0, 1.4, 1, false)
+		CreateTimeEvent("ea_item_take","take_delay",0.65,take_delay,item)
+		CreateTimeEvent("ea_item_take","anim_delay",1.33,anim_delay)
+		anim_plays = true
 	end
 end
 
-function actor_on_item_take(item)
-	active_slot = db.actor:active_slot()
-	local itemv = item:position()
-	local actorv = db.actor:position()
-	local dist = actorv:distance_to(itemv)
-	--item pickup animation
-	local checkrun = level.actor_moving_state()
-	local check = bool_to_number[not enhanced_animations.used_item] + bool_to_number[not anim_used] + bool_to_number[not enhanced_animations.fake_monster] + bool_to_number[enable_animations] + ((string.sub(item:section(),1,4) == 'anim') and 0 or 1) + ((checkrun >= 2000) and 0 or 1)
-	if enable_take then
-		if ( dist > default_dist ) and (check == 6) and enable_take then
-			game.play_hud_motion(db.actor:active_slot()==0 and 2 or 1, "item_ea_take_hud", "anm_ea_take", true, 1.4)
-			anim_used = true
-			CreateTimeEvent("anim_delay", "anim_delay", 0.5, anim_delay)
-		end
+function anim_delay()
+	anim_plays = nil
+	return true
+end
+
+function take_delay(obj_o)
+	local actor = db.actor
+	actor:take_item(obj_o)
+	if enable_multipickup then
+		multipickup(1.5,0.75,actor)
+		multipickup(1,0.5,actor)
+		multipickup(0.5,0.25,actor)
 	end
-	checkrun ,check ,itemv ,actorv ,dist = nil
+	printf(obj_o:section() .. " taken with id " .. obj_o:id())
+	actor = nil
+	return true
+end
+
+function multipickup(dist,radius,actor)
+	local pos = device().cam_pos
+	local dir = device().cam_dir
+	pos = pos:add(dir:mul(dist))
+	level.iterate_nearest(pos,dist,function(obj)
+		if obj:cast_InventoryItem() and (pos:distance_to(obj:position()) <= radius) then
+			actor:take_item(obj)
+			printf(obj:section() .. " taken with id " .. obj:id())
+		end
+	end)
+	pos,dir = nil
+end
+
+function actor_on_item_take(item)
 	--mutant loot bag animation
 	if enhanced_animations.fake_monster then
 		fov_anim_manager.change_fov(0.45)
@@ -62,10 +92,7 @@ function actor_on_item_take(item)
 	end
 end
 
-function anim_delay()
-	anim_used = false
-	return true
-end
+
 
 --patching mutant loot dialog close call
 function ui_mutant_loot.UIMutantLoot:Close()
@@ -94,12 +121,10 @@ end
 
 function return_slots()
 	fov_anim_manager.restore_fov()
-	if (not enhanced_animations.mutant_loot_mod) or (not enhanced_animations.enable_animations) then
-		db.actor:activate_slot(active_slot)
-		return
-	end
+	local slot = enhanced_animations.active_slot
+	db.actor:activate_slot(slot or 1)
 	local device = enhanced_animations.det_active
 	if device then device:switch_state(1) end
-	device = nil	
+	device = nil
+	slot = nil
 end
-
