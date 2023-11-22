@@ -1,6 +1,7 @@
 **New Engine version thanks to Mr.Demonized and team**
 - Engine exe v2023.11.15
 
+
 **New Addons**
 - M249 Reanimation	by NickolasNikova	https://www.moddb.com/mods/stalker-anomaly/addons/m249-reanimation
 - SV98 Reanimation	by NickolasNikova	https://www.moddb.com/mods/stalker-anomaly/addons/sv98-trg42-reanimation
@@ -18,6 +19,7 @@
 - Fixed BAS AK74 thumb by LilJma    https://www.moddb.com/addons/bas-aks-animation-tweak
 - AlphaLion's Reworked Stash Quest and Map Markers
 - Improved Quick Melee by Daimenex
+
 
 **Progression**
 - Self Made Upgrades do not require tools nor toolkits anymore. The crafting of upgrade kits is still locked behind toolkits however.
@@ -39,6 +41,7 @@
 - Artefacts now spawn with a random delay to be less predictable and avoid potential back to back spawning (can still happen very rarely)
 - Reduced amount of guards
 - Zombies now have proper guns loadouts
+- Jupiter Underground is now properly blacklisted so that it doesn't spawn that many artefacts while visiting the level (artefacts will still respawn after emissions and psy storms, just like regular labs)
 
 
 **Gunplay**
