@@ -144,3 +144,4 @@
 - Fixed weapon parts dots colors indicators by properly setting the new Utjan's Item UI improvements MCM values.
 - Free Zoom ADS fixes
 - Gavrilenko crash fix by Oleh and veerserif
+- ISG Mechanic inventory now properly scales depending on the quest thanks to gbrlallison.
