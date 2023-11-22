@@ -1,0 +1,535 @@
+-- Auto Looter
+-- Author: iTheon
+-- License: MIT
+local disassemble_ammo_options = auto_looter_mcm.disassemble_ammo_options
+local disassemble_armor_options = auto_looter_mcm.disassemble_armor_options
+local disassemble_weapon_options = auto_looter_mcm.disassemble_weapon_options
+local strip_weapon_options = auto_looter_mcm.strip_weapon_options
+local loot_part_options = auto_looter_mcm.loot_part_options
+
+local function load_defaults()
+	local t = {}
+	local op = auto_looter_mcm.op
+	for i, v in ipairs(op.gr) do
+		if v.def ~= nil then
+			t[v.id] = v.def
+		end
+	end
+	return t
+end
+-- Default config
+config = load_defaults()
+
+local function load_settings()
+	config = load_defaults()
+	if ui_mcm then
+		for k, v in pairs(config) do
+			config[k] = ui_mcm.get("auto_looter/" .. k)
+		end
+	end
+end
+
+local valid_modes = {
+	[4] = true
+}
+
+local ammo_parts_sections = {
+	"powder_1",
+	"powder_2",
+	"powder_3",
+
+	"bullet_pistol",
+	"bullet_pistol_ap",
+	"bullet_shotgun",
+	"bullet_shotgun_ap",
+	"bullet_r5",
+	"bullet_r5_ap",
+	"bullet_r7",
+	"bullet_r7_ap",
+
+	"casing_r5",
+	"casing_r7",
+	"casing_s",
+	"casing_p"
+}
+
+local favorite_itms = {}
+local actors_being_processed = {}
+
+function is_right_key(key)
+	return key == config.looter_key
+end
+
+function is_placable_stash(actor) 
+	local placeable_type = ini_sys:r_string_ex(actor:section(), "placeable_type")
+	return placeable_type == "stash"
+end
+
+function get_actor()
+	-- To do: refactor if any more changes will be required - actor retrieval is ugly
+	-- Standard looting
+	local last_mode = actor_menu.get_last_mode()
+	local object_being_looted = level.object_by_id(ui_inventory.GUI.npc_id)
+	if object_being_looted and (not object_being_looted:alive()) and valid_modes[last_mode] then
+		return object_being_looted
+	end
+
+	-- Remote looting
+	local target = level.get_target_obj()
+	if target and (IsStalker(target) and not target:alive() or IsInvbox(target)) then
+		if config.remote_looting_distance == 0 then
+			news_manager.send_tip(db.actor, game.translate_string("st_auto_looter_remote_looting_disabled"))
+		elseif target:position():distance_to(db.actor:position()) > config.remote_looting_distance then
+			news_manager.send_tip(db.actor, game.translate_string("st_auto_looter_remote_looting_too_far"))
+		else
+			return target
+		end
+	end
+end
+
+-- Second param is used for proximity looting processing - EXPERIMENTAL FEATURE
+function auto_looter(key, experimental_actor)
+	local actor = experimental_actor
+	if not experimental_actor then
+		if not is_right_key(key) then return end
+		actor = get_actor()
+		if not actor or is_placable_stash(actor) then return end
+	end
+
+	-- Prevent execution if looter is already running for a given actor
+	if actors_being_processed[actor:id()] then 
+		news_manager.send_tip(db.actor, game.translate_string("st_auto_looter_still_running"))
+		return 
+	end
+	actors_being_processed[actor:id()] = true
+
+	-- Unload weapons before disassembling, so disassembling actions can also be performed on the unloaded ammo
+	handle_unload(actor)
+	
+	-- Delays required for new state to be processed correctly by the engine
+	CreateTimeEvent("auto_looter_delayed_disassembling", "auto_looter_delayed_disassembling_" .. actor:id(), 0.01, function ()
+		handle_disassemble(actor)
+		CreateTimeEvent("auto_looter_delayed_stripping", "auto_looter_delayed_stripping_" .. actor:id(), 0.01, function ()
+			handle_strip(actor)
+			return true
+		end)
+		return true
+	end)
+end
+
+-- The function below is detached from the rest as it needs to wait for execution in case there's
+-- a queue running for the scope detaching function. Also waits for the inventory to refresh properly after detaching the
+-- last scope
+function continue_looter(actor)
+	CreateTimeEvent("auto_looter_continue", "auto_looter_continue_" .. actor:id(), 0.040, function ()
+		handle_loot(actor)
+		CreateTimeEvent("auto_looter_delay_deleting", "auto_looter_delay_deleting_" .. actor:id(), 0.05, function ()
+			handle_delete(actor)
+			-- Clear looting status for actor - can't use remove function here due to resulting index squashing
+			-- Actor might have been released through deletion
+			if actor then
+				actors_being_processed[actor:id()] = false
+			end
+			return true
+		end)
+		return true
+	end)
+end
+
+function collect_items(actor)
+	local item_table = {}
+	local function iterate(npc, item)
+		local id = item:id()
+		item_table[id] = item
+	end
+
+	if IsStalker(actor) then
+		actor:iterate_inventory(iterate, actor)
+	elseif IsInvbox(actor) then
+		actor:iterate_inventory_box(iterate, actor)
+	end
+	return item_table
+end
+
+function handle_unload(actor) 
+	local collected_items = collect_items(actor)
+	for k, v in pairs(collected_items) do
+		if IsWeapon(v) then
+			if mag_support and mag_support.using_mags and mag_support.using_mags() and mag_support.is_mag_loaded(v) then 
+				mag_support.eject_mag(v)
+			else
+				v:force_unload_magazine(true)
+			end
+		end
+	end
+end
+
+function handle_disassemble(actor)
+	local collected_items = collect_items(actor)
+	for k, v in pairs(collected_items) do
+		local should_disassemble = false
+		if IsAmmo(v) then
+			should_disassemble = cond_ammo_disassemble(v)
+		elseif IsOutfit(v) or IsHeadgear(v) then
+			should_disassemble = cond_armor_disassemble(v)
+		elseif IsWeapon(v) then
+			should_disassemble = cond_weapon_disassemble(v)
+		else
+			should_disassemble = cond_misc_disassemble(v)
+		end
+
+		if should_disassemble then
+			local obj_d = get_disassembly_tool(v)
+			if not obj_d then 
+				if config.no_valid_tool_messaging then
+					-- Delay required for the message to appear after the actual disassembling of other stuff and not before
+					CreateTimeEvent("auto_looter_no_suitable_tool", "auto_looter_no_suitable_tool_" .. v:id(), 0, function () 
+						news_manager.send_tip(db.actor, game.translate_string("st_auto_looter_no_valid_tool"), nil, "swiss_knife", 6000)
+						return true
+					end)
+				end
+			else
+				item_parts.func_disassembly(v, obj_d)
+			end
+		end
+	end
+end
+
+function get_disassembly_tool(obj)
+	-- Get the suitable disassembling tool for the operation and check whether using it again would cause it to disappear
+	-- Disassembling must be prevented at this point, as it will save you from the random CTDs (the next iteration for disassembling another item
+	-- might pick the tool that is about to get released by the system and introducing more queues/timed events here would be a nightmare)
+	-- Demonized ensures in his script that you're always using the tool with best condition, so you should be able to auto-disassemble as long as
+	-- you have good tools in your inventory
+	-- pcall does not help, as XRay is crashing :)
+	local obj_d = item_parts.get_suitable_dtool(obj)
+	if not obj_d then
+		return
+	end
+	local diss_tools = GetItemList("disassemble")
+	local degr_val = diss_tools[obj_d:section()]
+	if obj_d:condition() < degr_val then
+		return
+	else return obj_d end
+end
+
+function cond_ammo_disassemble(obj)
+	if config.disassemble_ammo == disassemble_ammo_options.all then
+		return true
+	end
+	if config.disassemble_ammo == disassemble_ammo_options.non_favourite then
+		if not favorite_itms[obj:section()] then
+			return true
+		end
+	end
+	return false
+end
+
+function cond_armor_disassemble(obj)
+	if config.disassemble_armor == disassemble_armor_options.all then
+		return true
+	end
+	if config.disassemble_armor == disassemble_armor_options.with_usable_parts then
+		local parts = item_parts.get_parts_con(obj, nil, true)
+		for k, v in pairs(parts) do
+			local is_recipe_material = zzz_craft_use_in_tooltip_mcm and is_not_empty(zzz_craft_use_in_tooltip_mcm.getCraftableItems(k))
+			if (config.always_treat_recipe_part_as_usable and is_recipe_material) 
+			or (v >= config.usable_armor_part_condition_treshold and IsItem("part", k)) then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+function cond_weapon_disassemble(obj)
+	-- Gauss CTD fix
+	if not has_parts(obj) then return false end
+
+	if config.disassemble_weapon == disassemble_weapon_options.all then
+		return true
+	elseif config.disassemble_weapon == disassemble_weapon_options.with_usable_barrel then
+		local parts = item_parts.get_parts_con(obj, nil, true)
+		for k, v in pairs(parts) do
+			if string.find(k, "barrel") and v >= config.usable_weapon_part_condition_treshold then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+function cond_misc_disassemble(obj)
+	return config["disassemble_misc_" .. obj:section()]	
+end
+
+local queued_weapons = {}
+function handle_strip(actor)
+	local collected_items = collect_items(actor)
+	for idx, wpn in pairs(collected_items) do
+		if IsWeapon(wpn) then
+			if zzzz_arti_jamming_repairs then
+				-- Gauss CTD fix
+				local parts_not_stripped = false
+				if not has_parts(wpn) then
+
+				else 
+					local parts = item_parts.get_parts_con(wpn, nil, true)
+					if parts then
+						if config.strip_weapon == strip_weapon_options.all then
+							zzzz_arti_jamming_repairs.act_fieldstrip(wpn:id())
+						elseif config.strip_weapon == strip_weapon_options.usable_parts then
+							for part_section, part_con in pairs(parts) do
+								if not string.find(part_section, "barrel") 
+								and part_con >= config.usable_weapon_part_condition_treshold 
+								and zzzz_arti_jamming_repairs.is_part(part_section) then
+									zzzz_arti_jamming_repairs.act_fieldstrip(wpn:id(), part_section)
+								end
+							end
+						end
+					else
+						news_manager.send_tip(db.actor, game.translate_string("st_auto_looter_parts_not_stripped"), nil, "swiss_knife", 6000)
+					end
+				end
+			end
+			
+			if config.strip_attachments then
+				local gui = ui_inventory.GUI
+				if gui:Cond_Detach_GL(wpn) then gui:Action_Detach_GL(wpn) end
+				if gui:Cond_Detach_Silencer(wpn) then gui:Action_Detach_Silencer(wpn) end
+				-- Detaching scope generates a completely new object. To avoid bugs, detaching it has to be performed
+				-- asynchronously. Otherwise you'd receive scope alongside other available weapon attachments and a newly
+				-- generated weapon that still has other attachments attached to it. It takes exactly 30ms for the ui to fire refresh event. 
+				-- After stripping each scope, there needs to be at least 40ms delay for the ui to update before stripping the next 
+				-- one - otherwise XRay crashes in some cpp file.
+				local has_detachable_scope = gui:Cond_Detach_Scope(wpn)
+				if has_detachable_scope then
+					-- Queue weapons
+					table.insert(queued_weapons, wpn:id())
+				end
+			end
+		end
+	end
+	if is_not_empty(queued_weapons) then
+		handle_queue(actor)
+	else
+		continue_looter(actor)
+	end
+end
+
+local queue_running = false
+function handle_queue(actor)
+	if not queue_running then
+		queue_running = true
+		recursive_time_event(actor)
+	end
+end
+
+function recursive_time_event(actor)
+	local id = table.remove(queued_weapons)			
+	CreateTimeEvent("detach_scope_auto_looter", "detach_scope_auto_looter_" .. id, 0.040, function () 
+		local obj = level.object_by_id(id)
+		-- We claim that weapon has scope here, as it was checked before adding to the queue
+		ui_inventory.GUI:Action_Detach_Scope(obj)	
+		if #queued_weapons == 0 then
+			queue_running = false
+			continue_looter(actor)
+		else
+			recursive_time_event(actor)
+		end
+		return true
+	end)
+end
+
+function handle_loot(actor)
+	local collected_items = collect_items(actor)
+	local should_loot = false
+
+	for k, v in pairs(collected_items) do
+		local should_loot = false
+		if IsAmmo(v) then
+			should_loot = config.loot_ammo
+		elseif has_value(ammo_parts_sections, v:section()) then
+			should_loot = config.loot_ammo_parts
+		elseif IsOutfit(v) or IsHeadgear(v) or IsWeapon(v) then
+			-- Not looting these
+			should_loot = false
+		elseif magazine_binder and magazine_binder.is_magazine(v) then
+			should_loot = config.loot_magazines
+		else
+			local sec = v:section()
+			if string.find(sec, "prt_o_") then
+				should_loot = cond_loot_armor_part(v)
+			elseif string.find(sec, "prt_w_") then
+				should_loot = cond_loot_weapon_part(v)
+			elseif is_misc_item_defined_in_loot_config(v) then
+				should_loot = cond_misc_loot(v)
+			else
+				should_loot = true
+			end
+		end
+
+		if should_loot then
+			actor:transfer_item(v, db.actor)
+		end
+	end
+end
+
+function cond_loot_armor_part(obj)
+	local con = obj:condition()
+	local is_recipe_material = zzz_craft_use_in_tooltip_mcm and is_not_empty(zzz_craft_use_in_tooltip_mcm.getCraftableItems(obj:section()))
+	if config.loot_armor_parts == loot_part_options.all then
+		return true
+	elseif config.loot_armor_parts == loot_part_options.usable then
+		return con >= (config.usable_armor_part_condition_treshold / 100) 
+		or (config.always_treat_recipe_part_as_usable and is_recipe_material)
+	end
+	return false
+end
+
+function cond_loot_weapon_part(obj)
+	local con = obj:condition()
+	if config.loot_weapon_parts == loot_part_options.all then
+		return true
+	elseif config.loot_weapon_parts == loot_part_options.usable then
+		return con >= (config.usable_weapon_part_condition_treshold / 100)
+	end
+	return false
+end
+
+function cond_misc_loot(obj)
+	return config["loot_misc_" .. obj:section()]	
+end
+
+function handle_delete(actor)
+	if config.delete_body and IsStalker(actor) and not actor:alive() then
+		actors_being_processed[actor:id()] = false
+		if ui_inventory.GUI:IsShown() then
+			ui_inventory.GUI:Close()
+		end
+		-- The other function works only on objects and living stalkers
+		local sim = alife()
+		sim:release(sim:object(actor:id()))
+		return
+	end
+
+	local collected_items = collect_items(actor)
+	for k, v in pairs(collected_items) do 
+		if IsWeapon(v) then
+			if config.delete_weapon then
+				alife_release(v)
+			end
+		elseif IsOutfit(v) or IsHeadgear(v) then
+			if config.delete_armor then
+				alife_release(v)
+			end
+		elseif config.delete_misc then
+			alife_release(v)
+		end
+	end
+end
+
+local function load_state(mdata)
+    favorite_itms = mdata.rax_favorite_itms or favorite_itms
+end
+
+function is_misc_item_defined_in_disassemble_config(obj)
+	for k, _ in pairs(config) do
+		if k == "disassemble_misc_" .. obj:section() then
+			return true
+		end
+	end
+	return false
+end
+
+function context_menu_disassemble_string(obj) 
+	if config["disassemble_misc_" .. obj:section()] then
+		return game.translate_string("st_auto_looter_disable_auto_disassemble")
+	else
+		return game.translate_string("st_auto_looter_enable_auto_disassemble")
+	end
+end
+
+function change_disassemble_config(obj)
+	local config_key = "disassemble_misc_" .. obj:section()
+	local new_value = not config[config_key]
+	ui_mcm.set("auto_looter/" .. config_key, new_value)
+	config[config_key] = new_value
+end
+
+function is_misc_item_defined_in_loot_config(obj)
+	for k, _ in pairs(config) do
+		if k == "loot_misc_" .. obj:section() then
+			return true
+		end
+	end
+	return false
+end
+
+function context_menu_loot_string(obj) 
+	if config["loot_misc_" .. obj:section()] then
+		return game.translate_string("st_auto_looter_disable_auto_loot")
+	else
+		return game.translate_string("st_auto_looter_enable_auto_loot")
+	end
+end
+
+function change_loot_config(obj)
+	local config_key = "loot_misc_" .. obj:section()
+	local new_value = not config[config_key]
+	ui_mcm.set("auto_looter/" .. config_key, new_value)
+	config[config_key] = new_value
+end
+
+
+function on_game_start()
+	local bag_config = {
+		actor_equ = true,
+		actor_belt = true,
+		actor_bag = true,
+		actor_trade_bag = true,
+		actor_trade = true,
+		npc_bag = true,
+		npc_trade = true,
+		npc_trade_bag = true
+	}
+
+	if custom_functor_autoinject then 
+		custom_functor_autoinject.add_functor("auto_looter_config_disassemble", is_misc_item_defined_in_disassemble_config, context_menu_disassemble_string, nil, change_disassemble_config, bag_config)
+		custom_functor_autoinject.add_functor("auto_looter_config_loot", is_misc_item_defined_in_loot_config, context_menu_loot_string, nil, change_loot_config, bag_config)
+	end
+
+	RegisterScriptCallback("on_key_press", auto_looter)
+	RegisterScriptCallback("load_state", load_state)
+	RegisterScriptCallback("on_game_load", load_settings)
+	RegisterScriptCallback("on_option_change", load_settings)
+end
+
+function has_parts(wpn)
+	if wpn and IsWeapon(wpn) and (not IsMelee(wpn)) then
+		local sec = ini_sys:r_string_ex(wpn:section(),"parent_section") or wpn:section()
+		local parts = itms_manager.ini_parts:r_string_ex("con_parts_list", sec)
+		return parts ~= nil
+	else 
+		return false
+	end
+end
+
+function has_value(tab, val)
+    for index, value in ipairs(tab) do
+        if value == val then
+            return true
+        end
+    end
+
+    return false
+end
+
+function table_length(tab)
+	local count = 0
+    for _ in pairs(tab) do
+        count = count + 1
+    end
+
+    return count
+end
