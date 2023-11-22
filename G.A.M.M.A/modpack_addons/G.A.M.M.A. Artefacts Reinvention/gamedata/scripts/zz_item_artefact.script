@@ -3,6 +3,91 @@ local rad_factor = 0.5 -- multiplier to artefact rad effect in ruck
 local rad_tg_step = 300 --[ms]
 local dgr_tg_step = 2000 --[ms]
 
+cond_t = {}
+
+local art_dbg = false
+
+if drx_da_main then
+	arti_min_eff = 20
+	arti_max_eff = 30
+else
+	arti_min_eff = 20
+	arti_max_eff = 40
+end
+
+-- containers
+-- to
+function itms_manager.dropdrop_ArtyContainer(obj_1, obj_2, sec_1, sec_2)
+	local cont = sec_2
+	local arty = sec_1
+
+	if ini_sys:section_exist(arty .. "_" .. cont) then
+		local cond = obj_1 and obj_1:condition()
+
+		actor_effects.play_item_fx("container_tool_" .. cont .. "_dummy")
+
+		local se_new_cont = alife_create_item(arty .. "_" .. cont, db.actor, { cond = cond } )
+
+		if cond_t[obj_1:id()] then		-- artefact id
+			local data = utils_stpk.get_item_data(se_new_cont)
+			data.condition = cond_t[obj_1:id()]
+			utils_stpk.set_item_data(data, se_new_cont)
+			-- add container to table / remove artefact from table
+			cond_t[se_new_cont.id] = cond_t[obj_1:id()]
+			cond_t[obj_1:id()] = nil
+			pr("to box, cond: %s", r(cond_t[se_new_cont.id]))
+		end
+
+		alife_release(obj_1)
+		alife_release(obj_2)
+
+	end
+
+end
+
+-- from
+function itms_manager.use_arty_container(obj)
+	local break_con
+	local break_arty
+	local sec = obj:section()
+
+	if (string.find(sec, "(lead.-_box)",3)) then
+		break_con = "lead_box"
+		break_arty = sec:gsub("_lead_box", "")		
+	elseif (string.find(sec, "(af.-_iam)",3)) then
+		break_con = "af_iam"
+		break_arty = sec:gsub("_af_iam", "")
+	elseif (string.find(sec, "(af.-_aac)",3)) then
+		break_con = "af_aac"
+		break_arty = sec:gsub("_af_aac", "")
+	elseif (string.find(sec, "(af.-_aam)",3)) then
+		break_con = "af_aam"
+		break_arty = sec:gsub("_af_aam", "")
+	end
+
+	if break_con and break_arty and ini_sys:section_exist(break_con) and ini_sys:section_exist(break_arty) then
+		local cond = obj:condition()
+
+		_G.ARTY_FROM_CONT = true -- Hack to prevent player from exploting Artefacts Containers (gaining rank points by receiving artefacts)
+		actor_effects.play_item_fx(break_con .. "_dummy")
+		alife_create_item(break_con, db.actor)
+		local se_new_art = alife_create_item(break_arty, db.actor, { cond = cond } )
+
+		if cond_t[obj:id()] then		-- container id
+			local data = utils_stpk.get_item_data(se_new_art)
+			data.condition = cond_t[obj:id()]
+			utils_stpk.set_item_data(data, se_new_art)
+			-- add artefact to table / remove container from table
+			cond_t[se_new_art.id] = cond_t[obj:id()]
+			cond_t[obj:id()] = nil
+			pr("from box, cond: %s", r(cond_t[se_new_art.id]))
+		end
+
+		alife_release(obj)
+	end
+end
+----------------
+
 -- Load the defaults
 local function load_defaults()
 	local t = {}
@@ -43,14 +128,41 @@ end
 item_artefact.artefact_binder.update = function(self, delta)
 	object_binder.update(self, delta)
 --	printf("pl:art [%s] pos %s", self.object:name(), vec_to_str(self.object:position()))
-	
+
+	-- randomizer (first update)
+	local kind = SYS_GetParam(0, self.object:section(), "kind")
+	local kind_fits = kind and (kind == "i_arty" or kind == "i_arty_cont")
+	if (not cond_t[self.object:id()] and self.object:condition() >= 1 and kind_fits) then
+		local cond = (math.random(arti_min_eff, arti_max_eff) / 100)
+		if self.object:section() == "af_ah_f1" then
+			cond = 0.98
+		end
+		self.object:set_condition(cond)
+		cond_t[self.object:id()] = cond
+		pr("~randomizer set cond to: %s", r(cond))
+	end
+
+	-- if condition of stored artefact was changed by online transition / loading
+	if cond_t[self.object:id()] and self.object:condition() >= 1 then
+		-- set stored condition back
+		pr("condition changed from online/loading, prev: %s || curr: %s", r(self.object:condition()), r(cond_t[self.object:id()]))
+		self.object:set_condition(cond_t[self.object:id()])
+	end
+
+	-- if condition was changed by other addons
+	if (cond_t[self.object:id()] and self.object:condition() ~= cond_t[self.object:id()]) or (not cond_t[self.object:id()] and self.object:condition() < 1) then
+		pr("condition changed by other addons, prev: %s || curr: %s", cond_t[self.object:id()] and r(cond_t[self.object:id()]) or "nil", r(self.object:condition()))
+		-- update this condition
+		cond_t[self.object:id()] = self.object:condition()
+	end
+
     if self.first_call == true then
 		local se_obj = alife_object(self.object:id())
 		if (se_obj) then
 			local m_data = alife_storage_manager.get_se_obj_state(se_obj, true)
 			if (m_data and m_data.offline_condition and m_data.name == self.object:name()) then
 				printf("loaded condition for %s "..tonumber(m_data.offline_condition), se_obj:section_name())
-				self.object:set_condition(tonumber(m_data.offline_condition) or 0.9999999)
+			--	self.object:set_condition(tonumber(m_data.offline_condition) or 0.9999999)
 				--m_data.offline_condition = nil
 			end
 		end								  
@@ -238,7 +350,43 @@ local function on_option_change()
 	end
 end
 
+function server_entity_on_unregister(se_item)
+	if cond_t[se_item.id] then
+		cond_t[se_item.id] = nil
+	end
+end
+
+local unreg_tmr = 0
+function entity_unregister_plan_b()		-- for stupid traders that do not fire unregister
+	local tg = time_global()
+	if tg < unreg_tmr then return end
+	unreg_tmr = tg + 10000
+
+	for id, cond in pairs(cond_t) do
+		local se_obj = alife_object(id)
+		if not se_obj then
+			cond_t[id] = nil
+		end
+	end
+
+end
+
+function save_state(m_data)
+	m_data.cond_t = cond_t
+end
+
+function load_state(m_data)
+	cond_t = m_data.cond_t or {}
+end
+
+function pr(...) if art_dbg then printf(...) end end
+function r(v) return round_idp(v, 3) end
+
 function on_game_start()
 	RegisterScriptCallback("actor_on_first_update", on_option_change)
 	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("server_entity_on_unregister", server_entity_on_unregister)
+	RegisterScriptCallback("actor_on_update", entity_unregister_plan_b)
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
 end

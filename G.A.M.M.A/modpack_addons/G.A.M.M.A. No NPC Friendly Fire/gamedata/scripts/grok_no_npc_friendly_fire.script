@@ -1,0 +1,31 @@
+function npc_on_before_hit(npc,shit,bone_id,flags)
+    if shit.draftsman:id() == db.actor:id() then return end
+	
+	if npc then 
+		victim_comm = npc:character_community()
+	end
+
+	if shit.draftsman then
+		shooter_comm = shit.draftsman:character_community()
+	end
+
+	if victim_comm and shooter_comm then
+		if (xr_conditions.is_factions_friends(nil, nil, { shooter_comm, victim_comm })) then
+			shit.power = 0
+			flags.ret_value = false
+			npc:set_relation(game_object.friend,shit.draftsman)
+			shit.draftsman:set_relation(game_object.friend,npc)
+		end
+		
+		if (xr_conditions.is_factions_neutrals(nil, nil, { shooter_comm, victim_comm })) then
+			shit.power = 0
+			flags.ret_value = false
+			npc:set_relation(game_object.neutral,shit.draftsman)
+			shit.draftsman:set_relation(game_object.neutral,npc)
+		end
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("npc_on_before_hit", npc_on_before_hit)
+end
