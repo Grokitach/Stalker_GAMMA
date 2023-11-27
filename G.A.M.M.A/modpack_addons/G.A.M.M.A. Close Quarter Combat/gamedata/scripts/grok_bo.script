@@ -10,6 +10,21 @@ leg_meta_sniper_null = 1
 sniper_bad_bone_shit_reduce = 1
 
 
+integrated_silencer = {
+	["wpn_dvl10_m1"] = true,
+	["wpn_vssk"] = true,
+	["wpn_val_tac"] = true,
+	["wpn_vintorez"] = true,
+	["wpn_val"] = true,
+	["wpn_val_modern"] = true,
+	["wpn_vintorez_m1"] = true,
+	["wpn_vintorez_m2"] = true,
+	["wpn_vintorez_isg"] = true,
+	["wpn_mp5sd"] = true,
+	["wpn_mp5sd_custom"] = true,
+	["wpn_mp5sd_new"] = true,
+}
+
 local difficulty_multiplier = {
 	[1]  = 1.3,
 	[2]  = 1.05,
@@ -507,6 +522,15 @@ function npc_on_before_hit(npc,shit,bone_id)
 	local ammo_list = utils_item.get_ammo(sec, wpn_id)
 	local ammo_section = ammo_list[ammo_type_number+1]
 	local wpn_hit_power = ui_wpn_params.read_float(sec, "", "hit_power")
+	if wpn and wpn:weapon_is_silencer() then
+		silencer_boost = 1.07
+	else
+		silencer_boost = 1
+	end
+	
+	if sec and integrated_silencer[sec] then
+		silencer_boost = 1.07
+	end
 
 	if string.find(sec, "wpn_toz106") then
 		wpn_hit_power = 0.8
@@ -800,9 +824,9 @@ function npc_on_before_hit(npc,shit,bone_id)
 
 	local k_ap = k_ap * custom_bone_ap_scale * barrel_condition_corrected -- reduce bullet ap following npc ap scale and barrel condition
 
-	k_ap = k_ap / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * isg_res * difficulty_multiplier[game_num] * 0.80 -- last multiplier is a new adjustment after the bone grouping update
+	k_ap = k_ap / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * isg_res * silencer_boost * difficulty_multiplier[game_num] * 0.80 -- last multiplier is a new adjustment after the bone grouping update
 
-	shit.power = wpn_hit_power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * k_hit * custom_bone_dmg_mult * custom_bone_ap_scale * 1.1 * sniper_bad_bone_shit_reduce * barrel_condition_corrected * sin_res * difficulty_multiplier[game_num] * ammo_mult
+	shit.power = wpn_hit_power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * k_hit * custom_bone_dmg_mult * custom_bone_ap_scale * 1.1 * sniper_bad_bone_shit_reduce * barrel_condition_corrected * sin_res * difficulty_multiplier[game_num] * ammo_mult * silencer_boost
 
 	-- etapomom: run pba before armor so that they actually feel like they're doing something.
 	pbadamage = hit(shit)

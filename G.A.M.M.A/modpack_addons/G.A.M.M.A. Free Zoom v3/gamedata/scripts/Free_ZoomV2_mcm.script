@@ -1,4 +1,5 @@
 local dte = demonized_time_events
+local saved_custom = {}
 
 -- KEYBINDINGS MANAGEMENT AND MCM --
 
@@ -14,7 +15,10 @@ function on_mcm_load()
 			-- LuaFormatter off
 			{id = "title", type = "slide", link = "ui_options_slider_player", text = "ui_mcm_menu_free_zoom", size = {512, 50}, spacing = 20},
 			{id = "key_bind_toggle", type = "key_bind", val = 2, def = KEY_TOGGLE_ZOOM},
+			{id = "free_zoom_mult", type = "track", val = 2, min=0.5,max=1,step=0.01, def = 0.61},
 			{id = "pistol_mult", type = "track", val = 2, min=1,max=2,step=0.01, def = 1.15},
+			{id = "ads_mult", type = "track", val = 2, min=0.5,max=1,step=0.01, def = 0.85},
+			{id = "free_zoom_mult", type = "track", val = 2, min=0.5,max=1,step=0.01, def = 0.61},
 			-- LuaFormatter on
 		}
 	}
@@ -24,9 +28,16 @@ function on_option_change(mcm)
 	fov_before = get_console_cmd(2, "fov")
 	hud_fov_before = get_console_cmd(2, "hud_fov")
 	mouse_sens_before = get_console_cmd(2, "mouse_sens")
+	if not special_gun then
+		fov_backup = get_console_cmd(2, "fov")
+		hud_fov_backup = get_console_cmd(2, "hud_fov")
+		mouse_sens_backup = get_console_cmd(2, "mouse_sens")
+	end
 	if mcm then
 		KEY_TOGGLE_ZOOM = ui_mcm.get("free_zoom/key_bind_toggle") or KEY_TOGGLE_ZOOM
 		pistol_mult = ui_mcm.get("free_zoom/pistol_mult") or 1.15
+		ads_mult = ui_mcm.get("free_zoom/ads_mult") or 0.8
+		free_zoom_mult = ui_mcm.get("free_zoom/free_zoom_mult") or 0.85
 	end
 end
 
@@ -41,6 +52,8 @@ special_weapons={
 	["wpn_desert_eagle_nimble"] = 0.58,
 	["wpn_ak12_m1"] = 0.78,
 	["wpn_sr25"] = 0.80,
+	["wpn_saiga12s_m1"] = 0.83,
+	["wpn_saiga12s_m2"] = 0.83,
 }
 
 local pressed = 0
@@ -87,7 +100,10 @@ function actor_on_update()
 		end
 		
 		if special_weapons[sec] then
+			special_gun = true
 			hud_fov_before = special_weapons[sec]
+		else
+			special_gun = false
 		end
 		
 		if last_sec and last_sec ~= sec then
@@ -101,25 +117,61 @@ end
 function on_key_press(key)
 	if (key == bind_to_dik(key_bindings.kWPN_ZOOM)) then
 		if pressed and pressed == 0 then
-			dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal", 0.03, reset_fov_to_normal, fov_before)
-			dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal", 0.03, reset_hud_fov_to_normal, hud_fov_before)
-			dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal", 0.03, reset_mouse_sens_to_normal, mouse_sens_before)			
+			ads = true
+			dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal1", 0.035, reset_fov_to_normal, fov_before*ads_mult)
+			dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal1", 0.035, reset_mouse_sens_to_normal, mouse_sens_before*ads_mult)
+			if wpn and saved_custom[wpn:section()] then
+				dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal1", 0.035, reset_hud_fov_to_normal, saved_custom[wpn:section()]*ads_mult)
+			else
+				dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal1", 0.035, reset_hud_fov_to_normal, hud_fov_before*ads_mult)
+			end
+		end
+		if pressed and pressed == 1 then
+			ads = true
+			dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal2", 0.035, reset_fov_to_normal, fov_before * free_zoom_mult * ads_mult)
+			dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal2", 0.035, reset_hud_fov_to_normal, hud_fov_before * free_zoom_mult * ads_mult)
+			dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal2", 0.035, reset_mouse_sens_to_normal, mouse_sens_before * free_zoom_mult * ads_mult)
+			if wpn and saved_custom[wpn:section()] then
+				dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal2", 0.035, reset_hud_fov_to_normal, saved_custom[wpn:section()]* free_zoom_mult * ads_mult)
+			else
+				dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal2", 0.035, reset_hud_fov_to_normal, hud_fov_before* free_zoom_mult * ads_mult)
+			end			
 		end
 	end
-	if not (key == KEY_TOGGLE_ZOOM) then return end
-	pressed = 1
-	released = 0
-	exec_console_cmd("fov " .. fov_before * 0.61)
-	exec_console_cmd("hud_fov " .. hud_fov_before * 0.61)
-	exec_console_cmd("mouse_sens " .. mouse_sens_before * 0.61)
-	custom_zoom = true
-	local run_coef = 0.6
-	local sprint_coef = 0.95
-	speed.add_speed("freezoom_speed_run", run_coef, false, true)
-	speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
+	if (key == KEY_TOGGLE_ZOOM) then
+		pressed = 1
+		released = 0
+		if ads then
+			dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal3", 0.035, reset_fov_to_normal, fov_before * free_zoom_mult * ads_mult)
+			dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal3", 0.035, reset_mouse_sens_to_normal,  mouse_sens_before * free_zoom_mult * ads_mult)
+			if wpn and saved_custom[wpn:section()] then
+				dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal3", 0.035, reset_hud_fov_to_normal, saved_custom[wpn:section()] * free_zoom_mult * ads_mult)
+			else
+				dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal3", 0.035, reset_hud_fov_to_normal, hud_fov_before * free_zoom_mult * ads_mult)
+			end		
+		else
+			dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal4", 0.035, reset_fov_to_normal, fov_before * free_zoom_mult)
+			dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal4", 0.035, reset_mouse_sens_to_normal, mouse_sens_before * free_zoom_mult)
+			dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal4", 0.035, reset_hud_fov_to_normal, hud_fov_before * free_zoom_mult)	
+		end
+		custom_zoom = true
+		local run_coef = 0.6
+		local sprint_coef = 0.95
+		speed.add_speed("freezoom_speed_run", run_coef, false, true)
+		speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
+	end
 end
 
 function on_key_release(key)
+	if (key == bind_to_dik(key_bindings.kWPN_ZOOM)) then
+		ads = false
+		if pressed and pressed == 0 then
+			dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal5", 0.035, reset_fov_to_normal, fov_before)
+			dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal5", 0.035, reset_hud_fov_to_normal, hud_fov_before)
+			dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal5", 0.035, reset_mouse_sens_to_normal, mouse_sens_before)
+		end
+	end
+
 	if (key == KEY_TOGGLE_ZOOM) then
 		if not custom_zoom then return end
 
@@ -131,17 +183,37 @@ function on_key_release(key)
 
 		pressed = 0
 		released = 1
-
-		dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal", 0.085, reset_fov_to_normal, fov_before)
-		dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal", 0.085, reset_hud_fov_to_normal, hud_fov_before)
-		dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal", 0.085, reset_mouse_sens_to_normal, mouse_sens_before)
+		
+		if ads then
+			dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal6", 0.035, reset_fov_to_normal, fov_before*ads_mult)
+			dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal6", 0.035, reset_mouse_sens_to_normal, mouse_sens_before*ads_mult)
+			if wpn and saved_custom[wpn:section()] then
+				dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal6", 0.035, reset_hud_fov_to_normal, saved_custom[wpn:section()] * ads_mult)
+			else
+				dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal6", 0.035, reset_hud_fov_to_normal, hud_fov_before * ads_mult)
+			end		
+		else
+			dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal7", 0.035, reset_fov_to_normal, fov_backup)
+			dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal7", 0.035, reset_hud_fov_to_normal, hud_fov_backup)
+			dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal7", 0.035, reset_mouse_sens_to_normal, mouse_sens_backup)
+		end
 	end
 	
 	if (key == bind_to_dik(key_bindings.kWPN_FIRE)) then
 		if released == 1 then
-			dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal", 0.085, reset_fov_to_normal, fov_before)
-			dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal", 0.085, reset_hud_fov_to_normal, hud_fov_before)
-			dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal", 0.085, reset_mouse_sens_to_normal, mouse_sens_before)
+			if ads then
+				dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal8", 0.035, reset_fov_to_normal, fov_before*ads_mult)
+				dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal8", 0.035, reset_mouse_sens_to_normal, mouse_sens_before*ads_mult)
+				if wpn and saved_custom[wpn:section()] then
+					dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal8", 0.035, reset_hud_fov_to_normal, saved_custom[wpn:section()] * ads_mult)
+				else
+					dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal8", 0.035, reset_hud_fov_to_normal, hud_fov_before * ads_mult)
+				end	
+			else
+				dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal9", 0.035, reset_fov_to_normal, fov_before)
+				dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal9", 0.035, reset_hud_fov_to_normal, hud_fov_before)
+				dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal9", 0.035, reset_mouse_sens_to_normal, mouse_sens_before)
+			end
 			local run_coef = 1
 			local sprint_coef = 1
 			speed.add_speed("freezoom_speed_run", run_coef, false, true)
@@ -166,13 +238,20 @@ function actor_on_weapon_zoom_out()
 		local sprint_coef = 1
 		speed.add_speed("freezoom_speed_run", run_coef, false, true)
 		speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
-		dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal", 0.085, reset_fov_to_normal, fov_before)
-		dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal", 0.085, reset_hud_fov_to_normal, hud_fov_before)
-		dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal", 0.085, reset_mouse_sens_to_normal, mouse_sens_before)
+		dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal10", 0.01, reset_fov_to_normal, fov_backup)
+		dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal10", 0.01, reset_hud_fov_to_normal, hud_fov_backup)
+		dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal10", 0.01, reset_mouse_sens_to_normal, mouse_sens_backup)
 	end
 	
-	dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal", 0.085, reset_hud_fov_to_normal, hud_fov_before)
+	dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal11", 0.085, reset_hud_fov_to_normal, hud_fov_before)
 end
+
+
+local function load_state(mdata)
+	saved_custom = mdata.snk_saved_hud_fov or {}
+	saved_gls = mdata.snk_saved_gl_fov or {}
+end
+
 
 function on_game_start()
 	RegisterScriptCallback("on_option_change",on_option_change)
@@ -182,6 +261,7 @@ function on_game_start()
 	RegisterScriptCallback("actor_on_before_death",actor_on_before_death)
 	RegisterScriptCallback("actor_on_weapon_zoom_out",actor_on_weapon_zoom_out)
 	RegisterScriptCallback("actor_on_update",actor_on_update)
+	RegisterScriptCallback("load_state", load_state)
 	on_option_change(mcm_keybinds)
 	fov_backup = get_console_cmd(2, "fov")
 	hud_fov_backup = get_console_cmd(2, "hud_fov")
