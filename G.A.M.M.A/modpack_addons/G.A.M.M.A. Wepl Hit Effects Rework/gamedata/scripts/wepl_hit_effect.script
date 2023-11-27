@@ -14,17 +14,24 @@ local headBones = {
 	[19] = true
 }
 
+-- mcm configs
+local enable_for_stalkers = wepl_hit_effect_mcm.get_config("enable_stalker")
+local enable_for_npcs = wepl_hit_effect_mcm.get_config("enable_npc")
 
+local volume = wepl_hit_effect_mcm.get_config("volume")
 
 
 function on_game_start()
 	RegisterScriptCallback( "actor_on_before_hit", actor_on_before_hit )
-	RegisterScriptCallback( "npc_on_before_hit", npc_on_hit_callback )
+	RegisterScriptCallback( "npc_on_before_hit", npc_on_before_hit )
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
+	RegisterScriptCallback("on_option_change", on_option_change)
 end
 
 
 function actor_on_before_hit( hit, boneId, flags )
-	if not ( hit and hit.type and hit.power and boneId ) then return end
+	if not ( enable_for_stalkers and hit and hit.type and hit.power and boneId ) then return end
 	
 	if hit.power == 0 then return end
 	if not ( hit.type == 5 or hit.type == 6 or hit.type == 7 or hit.type == 8 ) then return end
@@ -77,16 +84,21 @@ function actor_on_before_hit( hit, boneId, flags )
 	
 	local ActorhitSound = sound_object("wepl\\hit_effect\\" .. hitType .. "\\hit_" .. hitEffect .. "_" .. math.random(20) )
 	if ActorhitSound then
-        ActorhitSound:play(db.actor, 0, sound_object.s2d) 
-        ActorhitSound.volume = 0.9
+		ActorhitSound:play(db.actor, 0, sound_object.s2d) 
+		ActorhitSound.volume = volume
 	end
 	
 	level.add_cam_effector( "camera_effects\\wepl\\hit_effect\\" .. hitType .. "\\hit_" .. hitEffect .. "_" .. math.random(5) .. ".anm", math.random(444555, 444999), false, "", 0, true, cam_power )
 end
 
 
-function npc_on_hit_callback( npc, damage, dir, attacker, boneId )
-	if not ( npc and damage and attacker and boneId ) then return end
+function npc_on_before_hit(npc,shit,bone_id,flags)
+	local npc = npc
+	local damage = shit.power
+	local attacker = shit.draftsman
+	local boneId = bone_id
+
+	if not ( enable_for_npcs and npc and damage and attacker and boneId ) then return end
 	if damage == 0 or damage == 1 then return end
 	
 	local ply = db.actor
@@ -122,12 +134,26 @@ function npc_on_hit_callback( npc, damage, dir, attacker, boneId )
 	local NPChitSound = xr_sound.get_safe_sound_object( "wepl\\hit_effect\\" .. hitType .. "\\hit_" .. hitEffect .. "_" .. math.random(20) )
 	if NPChitSound then
 		NPChitSound:play_at_pos( ply, npc:position() )
-		NPChitSound.volume = 0.9
+		NPChitSound.volume = volume
 		NPChitSound.frequency = random_float(0.95, 1.05)
 	end
 end
 
 
+function save_state(m_data)
+	m_data.obj_t = obj_t
+end
+
+function load_state(m_data)
+	obj_t = m_data.obj_t or {}
+end
+
+function on_option_change()
+	enable_for_stalkers = wepl_hit_effect_mcm.get_config("enable_stalker")
+	enable_for_npcs = wepl_hit_effect_mcm.get_config("enable_npc")
+
+	volume = wepl_hit_effect_mcm.get_config("volume")
+end
 
 
 
