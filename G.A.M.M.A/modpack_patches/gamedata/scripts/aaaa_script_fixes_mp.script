@@ -2,9 +2,44 @@
 
 -- Correct behaviour of actor_on_item_before_pickup callback
 function bind_stalker_ext.actor_on_item_before_pickup(item) -- called from engine!
--- Called when actor is pressing use key to pick up an item
--- return false will prevent actor from pickup the item
+	-- Called when actor is pressing use key to pick up an item
+	-- return false will prevent actor from pickup the item
 	local flags = { ret_value = true }
 	SendScriptCallback("actor_on_item_before_pickup",item,flags)
 	return flags.ret_value
+end
+
+-- Fix to NPC PDA not working with active weapon when using "view" function
+-- Thanks Catspaw for testing
+function ui_pda_npc_tab.use_view(obj)
+	local p = obj:parent()
+	if not (p and p:id() == AC_ID) then
+		return
+	end
+	
+	hide_hud_inventory()
+	
+	if get_console_cmd(1,"g_3d_pda") then
+		db.actor:make_item_active(obj)
+		ActorMenu.get_pda_menu():SetActiveSubdialog("eptNPC")
+	else
+		db.actor:move_to_slot(obj, 14)
+
+		if db.actor:active_slot() ~= 0 then
+			db.actor:activate_slot(0)
+		end
+
+		local tg = time_global()
+		CreateTimeEvent(0, "delay_2d_pda_draw", 0, function()
+			if time_global() - tg > 5000 then
+				-- timeout
+				return true
+			end
+			if not db.actor:active_item() then
+				ActorMenu.get_pda_menu():ShowDialog(true) 
+				ActorMenu.get_pda_menu():SetActiveSubdialog("eptNPC") 
+				return true
+			end
+		end)
+	end
 end
