@@ -7,7 +7,7 @@ https://discord.gg/stalker-gamma
 
 ## Contributing
 
-Any Pull Request should be made **to the dev branch**. Anyone can contribute to this project.
+Any Pull Request should be made **to the dev2 branch**. Anyone can contribute to this project.
 
 ## Credits
 
