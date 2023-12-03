@@ -1,0 +1,128 @@
+local common = animation_common
+
+-- Flags
+common.add_flag("SHOTGUN_PUMP")
+
+-------------------------------------------------
+-- Animation Mutators
+-------------------------------------------------
+-- Animation: Append animation name with '_empty' if weapon is empty and has valid anim for it
+local function anm_empty(anm_table, item)
+    local section = item:section()
+    if IsWeapon(item) and item.get_ammo_in_magazine then
+        local ammo = item:get_ammo_in_magazine()
+        -- check if weapon is empty
+        if ammo == 0 then
+            -- check if anim is defined in config
+            common.mutate_anim(anm_table, "_empty", section)
+            common.set_flag("SHOTGUN_PUMP")
+        end
+    end
+end
+common.add_anim_mutator(anm_empty, 1)
+
+-- Animation: Append with '_g' if weapon has a grenade launcher and can fire a grenade
+--            Append with '_w_gl' if weapon has a grenade launcher, but is not in GL mode (can fire bullets)
+--            Append with '_alt' if weapon does not have a GL, but is in alt aim mode
+local function anm_alt_modes(anm_table, item)
+    local section = item:section()
+    local alt = item:weapon_in_grenade_mode()
+    local has_gl = utils_item.has_attached_gl(item)
+    
+    if alt and has_gl then
+        common.mutate_anim(anm_table, "_g", section)
+    elseif has_gl then
+        common.mutate_anim(anm_table, "_w_gl", section)
+    elseif alt then
+        common.mutate_anim(anm_table, "_alt", section)
+    end
+end
+common.add_anim_mutator(anm_alt_modes, 1.1)
+
+-- Animation: Append with  '_aim' is player is aiming down sights
+local function anm_ads(anm_table, item)
+    local section = item:section()
+
+    local wpn = item:cast_Weapon()
+    if not wpn then return end
+
+    if wpn:IsZoomed() then
+        common.mutate_anim(anm_table, "_aim", section)
+    end
+end
+common.add_anim_mutator(anm_ads, 1.3)
+
+-- Animation: Append with '_jammed' if weapon misfires (vanilla) or fails to eject (WPO)
+--            Append with '_superjammed' if magazine needs to be removed before unjam (WPO)
+local function anm_jammed(anm_table, item)
+    local section = item:section()
+    local jam_type = nil
+    -- Check for WPO jams
+    if arti_jamming then
+        local jam_status = arti_jamming.get_jam_status(item:id())
+        if jam_status == arti_jamming.JamType.FailureToEject then
+            jam_type = "_jammed"
+        elseif jam_status == arti_jamming.JamType.DoubleFeed then
+            jam_type = "_superjammed"
+        end
+    end
+    -- Check for vanilla jams (vanilla jams appear in anm_shots before WPO catches them)
+    if not jam_type then
+        local wpn = item:cast_Weapon()
+        if not wpn then return end
+        
+        jam_type = item:cast_Weapon():IsMisfire() and "_jammed" or nil
+    end
+    if jam_type then
+        local success = common.mutate_anim(anm_table, jam_type, section)
+        
+        -- Fallback to '_jammed' if '_superjammed' does not exist
+        if not success and jam_type == "_superjammed" then
+            common.mutate_anim(anm_table, jam_type, section)
+        end
+    end
+end
+common.add_anim_mutator(anm_jammed, 2)
+
+-- Animation: Prepend with _pump if performing empty reload
+local function anm_pump(anm_table, item)
+    local section = item:section()
+    if common.get_flag("SHOTGUN_PUMP") then
+        if anm_table.anm_name == "anm_close" then
+            common.mutate_anim(anm_table, "_pump", section)
+
+            -- Clear flag
+            common.remove_flag("SHOTGUN_PUMP")
+        elseif string.find(anm_table.anm_name, "anm_hide") then
+            common.remove_flag("SHOTGUN_PUMP")
+        end
+    end
+end
+common.add_anim_mutator(anm_pump, 3)
+
+-- Animation: Randomly select between variants of the same animation
+local function anm_variants(anm_table, item)
+    local section = item:section()
+    local variants = {anm_table.anm_name}
+    local i = 2
+    while (true) do
+        local anm_variant = anm_table.anm_name .. "_variant" .. (i-1)
+        if common.has_animation(section, anm_variant) then
+            variants[i] = "_variant" .. (i-1)
+        else
+            break
+        end
+        i = i + 1
+    end
+    if #variants > 1 then
+        local rand_i = random_number(1, #variants)
+        common.mutate_anim(anm_table, variants[rand_i], section)
+    end
+end
+common.add_anim_mutator(anm_variants, 4)
+
+-------------------------------------------------
+-- Callbacks
+-------------------------------------------------
+function on_game_start()
+end
