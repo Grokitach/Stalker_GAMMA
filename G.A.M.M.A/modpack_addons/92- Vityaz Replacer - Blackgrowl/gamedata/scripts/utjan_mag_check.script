@@ -1,0 +1,110 @@
+local common = animation_common
+
+do_ammo_check_anim = nil
+wpn_checking, det_active = nil
+
+if ammo_check_mcm then
+    base_check_Ammo = ammo_check_mcm.check_Ammo
+    function ammo_check_mcm.check_Ammo()
+        if ammo_check_mcm.busy_hands_fix then
+            base_check_Ammo()
+            return
+        end
+
+        if ammo_check_mcm.actor_on_hud_animation_play then
+            printf("!Old mag check script (ammo_check_mcm) detected. Remove it to get full features of mag checks")
+            base_check_Ammo()
+            return
+        end
+
+        local weapon = db.actor:active_item()
+
+        -- ends if no weapon is in hand etc.
+        if (weapon == nil or (not IsWeapon(weapon)) or IsItem("fake_ammo_wpn", nil, weapon)) then
+            base_check_Ammo()
+            return
+        end
+
+        local currentState = weapon:get_state()
+        if not (currentState == 0 or weapon:weapon_in_grenade_mode()) then
+            base_check_Ammo()
+            return
+        end
+
+        -- if magazine weapon
+        local currentAmmo = weapon:get_ammo_in_magazine()
+        if (currentAmmo == nil) then
+            base_check_Ammo()
+            return
+        end
+        
+        local anm_ammo_check = common.has_animation(weapon:section(), "anm_ammo_check")
+        if not anm_ammo_check then
+            base_check_Ammo()
+            return
+        end
+
+        if do_ammo_check_anim then return end -- If an ammo check is already happening, don't do anything
+
+        if ammo_check_mcm.busy_hands_fix ~= nil then -- If busy_hands_fix is unlocalized
+            local prev_hands_fix = ammo_check_mcm.busy_hands_fix
+            ammo_check_mcm.busy_hands_fix = true
+            base_check_Ammo()
+            ammo_check_mcm.busy_hands_fix = prev_hands_fix
+        else -- Else fall back to workaround
+            local prev_hands_fix = ui_mcm.get("rax_ammo_check/busy_hands_fix")
+            ui_mcm.set("rax_ammo_check/busy_hands_fix", true)
+            ammo_check_mcm.on_option_change()
+            base_check_Ammo()
+            ui_mcm.set("rax_ammo_check/busy_hands_fix", prev_hands_fix)
+            ammo_check_mcm.on_option_change()
+        end
+
+        do_ammo_check_anim = 1
+        weapon:switch_state(4)
+        det_active = db.actor:active_detector() or nil
+        if det_active then
+            det_active:switch_state(2)
+        end
+
+--[[         CreateTimeEvent("mag_check", "mag_check_reset", 3, function() 
+            do_ammo_check_anim = nil
+            return true
+        end)  ]]
+    end
+end
+
+-- Catch the inspect weapon state switch and do the ammo check animation instead
+function mag_check_animation(anm_table, obj)
+    if wpn_checking and obj and wpn_checking:id() == obj:id() and do_ammo_check_anim == 2 then
+        wpn_checking = nil
+        do_ammo_check_anim = nil
+
+        if det_active then
+            db.actor:show_detector(true)
+        end
+        det_active = nil
+    end
+
+	if do_ammo_check_anim == 1 and obj and obj:get_state() == 4 then
+        wpn_checking = obj
+
+        local is_supported, has_mag_data
+        if magazine_binder then
+            is_supported = magazine_binder.is_supported_weapon(obj:section())
+            has_mag_data = magazine_binder.get_mag_loaded(obj:id())
+        end
+        if is_supported and not has_mag_data and common.has_animation(obj:section(), "anm_ammo_check_no_mag") then
+            anm_table.anm_name = "anm_ammo_check_no_mag"
+        else
+            anm_table.anm_name = "anm_ammo_check"
+        end
+        do_ammo_check_anim = 2
+    end
+end
+
+if ammo_check_mcm.actor_on_hud_animation_play then
+    printf("!Old mag check script (ammo_check_mcm) detected. Remove it to get full features of mag checks")
+else
+    common.add_anim_mutator(mag_check_animation, 0.1)
+end

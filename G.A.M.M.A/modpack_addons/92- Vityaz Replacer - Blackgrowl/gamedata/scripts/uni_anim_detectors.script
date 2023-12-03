@@ -1,0 +1,76 @@
+local common = animation_common
+common.add_flag("QUICK_DETECTOR")
+
+-- Compatibility for FDDA: Use '_quick' if an FDDA animation is about to play
+playing_fdda_anim = false
+if enhanced_animations then
+    fdda_anim_prepare = enhanced_animations.anim_prepare
+    function enhanced_animations.anim_prepare()
+        playing_fdda_anim = true
+        fdda_anim_prepare()
+    end
+
+    fdda_call_my_slot_back = enhanced_animations.call_my_slot_back
+    function enhanced_animations.call_my_slot_back()
+        local result = fdda_call_my_slot_back()
+        if result == true then
+            playing_fdda_anim = false
+        end
+        return result
+    end
+
+    fdda_bp_call_my_slot_back = zzz_ea_addon_backpack.call_my_slot_back
+    function zzz_ea_addon_backpack.call_my_slot_back()
+        local result = fdda_bp_call_my_slot_back()
+        if result == true then
+            playing_fdda_anim = false
+        end
+        return result
+    end
+end
+
+-- Animation: Append with '_quick' for detectors if:
+--               - weapon in main hand is reloading or unjamming
+--               - player is climbing
+---@param anm_table any
+---@param item game_object
+local function anm_quick_detector(anm_table, item)
+    -- cancel if parent is not player
+    local parent = item:parent()
+    if not parent then return end
+    if parent:id() ~= AC_ID then return end
+
+    -- cancel if item is not detector
+    local player_detector = db.actor:active_detector()
+    if not player_detector then return end
+    if item:id() ~= player_detector:id() then return end
+
+    -- Add 'quick' if previous anim was also quick (intended for holster-draw pairs)
+    if common.get_flag("QUICK_DETECTOR") then
+        if string.find(anm_table.anm_name, "show") then
+            common.mutate_anim(anm_table, "_quick", item:section())
+        end
+        common.remove_flag("QUICK_DETECTOR")
+        return
+    end
+
+    local is_state_valid = {
+        [7] = true, -- reload
+        [8] = true, -- misfire
+    }
+
+    -- Add 'quick' suffix if above conditions are fulfilled
+    local player_wpn = db.actor:active_item()
+    if (
+        string.find(anm_table.anm_name, "hide")
+        and (
+            player_wpn and is_state_valid[player_wpn:get_state()]
+            or IsMoveState("mcClimb")
+            or playing_fdda_anim
+        )
+    ) then
+        common.mutate_anim(anm_table, "_quick", item:section())
+        common.set_flag("QUICK_DETECTOR")
+    end
+end
+common.add_anim_mutator(anm_quick_detector, 5)
