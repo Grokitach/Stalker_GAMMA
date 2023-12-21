@@ -65,7 +65,9 @@ end
 
 -- Iterative print of tables with optional sorting for spairs, formatting is similar to PHP print_r
 _G.print_r = function(t, sort, sorting_func)
-	if not t then return end
+	if not t then
+		return printf("nil")
+	end
 
 	local function vec_to_str(t)
 		if t.w then
@@ -87,6 +89,10 @@ _G.print_r = function(t, sort, sorting_func)
 			end
 		end
 		return printf("%s", t)
+	end
+
+	if is_empty(t) then
+		return printf("{}")
 	end
 
 	local function sort_func(t, a, b)
@@ -171,6 +177,27 @@ _G.nextTick = function(f, n)
 			return false
 		end
 	end)
+end
+
+-- Throttle function to fire every tg_throttle milliseconds
+_G.throttle = function(func, tg_throttle)
+    local tg = 0
+    if not tg_throttle or tg_throttle == 0 then
+        return function(...)
+            local t = time_global()
+            if t ~= tg then
+                tg = t
+                return func(...)
+            end
+        end
+    else
+        return function(...)
+            local t = time_global()
+            if t < tg then return end
+            tg = t + tg_throttle
+            return func(...)
+        end
+    end
 end
 
 _G.print_tip = function(text, ...)
