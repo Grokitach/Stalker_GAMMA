@@ -1,0 +1,113 @@
+local simm
+local level_vertex_id = level.vertex_id
+local level_vertex_position = level.vertex_position
+local random = math.random
+
+unsupported_mutants={
+	["SM_BURER"] = true,
+	["AI_CROW"] = true,	
+	["SM_CONTR"] = true,
+	["AI_RAT"] = true,
+}
+function teleport_dodge(npc)
+	simm = alife()
+	local st = db.storage[npc:id()] and db.storage[npc:id()].object
+	if(st and st:alive()) then
+		local pre_pos = st:position()
+
+		local post_pos = teleport_offset_random(pre_pos)
+
+		if((pre_pos.x ~= post_pos.x) and (pre_pos.y ~= post_pos.y) and (pre_pos.z ~= post_pos.z)) then
+			printf("[Fuji] Teleport: Move Stuck Monster")
+			st:set_npc_position(post_pos)
+		end
+	end
+end
+
+function teleport_offset_random(oldpos)
+	local min_radius = 1
+	local max_radius = 3
+	local int_radius = max_radius - min_radius
+
+	local pos = vector():set(0,0,0)
+
+  --Get random x offset
+	local off_x = min_radius + (int_radius * random(0.0,1.0))
+	if(random(0.0,1.0) <= 0.5) then
+		off_x = -(off_x)
+	end
+	local pos_x = oldpos.x + off_x
+  
+  --Get random y offset
+	local off_y = min_radius + (int_radius * random(0.0,1.0))
+	if(random(0.0,1.0) <= 0.5) then
+		off_y = -(off_y)
+	end
+	local pos_y = oldpos.y + off_y
+
+  --Get random z offset
+	local off_z = min_radius + (int_radius * random(0.0,1.0))
+	if(random(0.0,1.0) <= 0.5) then
+		off_z = -(off_z)
+	end
+	local pos_z = oldpos.z + off_z
+
+	--local pos_z = oldpos.z
+
+	pos = vector():set(pos_x, pos_y, pos_z)
+	local lvid = level_vertex_id(pos)
+
+	if(lvid < 4294967295) then
+		pos = level_vertex_position(lvid)
+	else
+		pos = oldpos
+	end
+	return pos
+end
+
+
+online_npcs_pos_x = {}
+online_npcs_pos_y = {}
+online_npcs_pos_z = {}
+trigger3 = 0
+delay3 = 72500
+local function monster_on_update(npc)
+	if npc and unsupported_mutants[npc:section()] then return end
+	tg = time_global()
+	
+	if trigger3 == 0 then
+       	grok_delay3 = tg + delay3
+		trigger3 = 1
+	end
+
+	if (trigger3 == 1 and tg > grok_delay3) then
+		trigger = 0
+		
+		if npc and npc:alive() then
+			local pos = npc:position()
+			local id = npc:id()
+			
+			if online_npcs_pos_x[id] and pos and pos.x == online_npcs_pos_x[id] and pos.y == online_npcs_pos_y[id] and pos.z == online_npcs_pos_z[id] then
+				teleport_dodge(npc)
+			else
+				online_npcs_pos_x[id] = pos.x
+				online_npcs_pos_y[id] = pos.y
+				online_npcs_pos_z[id] = pos.z
+			end
+		end
+		
+		nrows = 0
+		for k,v in pairs(online_npcs_pos_x) do
+			nrows = nrows + 1
+		end
+		if nrows > 30 then
+			online_npcs_pos_x = {}
+			online_npcs_pos_y = {}
+			online_npcs_pos_z = {}
+		end
+	else return end
+end
+
+function on_game_start()
+	RegisterScriptCallback("monster_on_update",monster_on_update)
+end

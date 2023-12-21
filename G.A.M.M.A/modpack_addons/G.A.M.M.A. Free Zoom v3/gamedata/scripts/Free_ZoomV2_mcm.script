@@ -51,6 +51,15 @@ special_weapons={
 	["wpn_desert_eagle_nimble"] = 0.58,
 	["wpn_ak12_m1"] = 0.78,
 	["wpn_sr25"] = 0.80,
+	["wpn_adar2_15"] = 0.78,
+	["wpn_pkm_siber"] = 0.78,
+	["wpn_pkp_siber"] = 0.78,
+	["wpn_pkm_zenit_siber"] = 0.78,
+	["wpn_svu"] = 0.5,	
+	["wpn_svu_alt"] = 0.5,	
+	["wpn_svu_nimble"] = 0.5,	
+	["wpn_val"] = 0.8,	
+	["wpn_val_modern"] = 0.8,		
 }
 
 local pressed = 0
@@ -113,7 +122,10 @@ end
 
 function on_key_press(key)
 	if (key == bind_to_dik(key_bindings.kWPN_ZOOM)) then
-		if wpn and string.match(wpn:section(), "device_pda") then return end
+		if (get_console():get_bool("wpn_aim_toggle")) then return end
+		if wpn and not IsWeapon(wpn) then return end
+		if wpn and IsMelee(wpn) then return end
+		if wpn and wpn:get_state() == 7 then return end
 		if pressed and pressed == 0 then
 			ads = true
 			dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal1", 0.035, reset_fov_to_normal, fov_before*ads_mult)
@@ -137,7 +149,7 @@ function on_key_press(key)
 		end
 	end
 	if (key == KEY_TOGGLE_ZOOM) then
-		if wpn and string.match(wpn:section(), "device_pda") then return end
+		if wpn and wpn:get_state() == 7 then return end
 		pressed = 1
 		released = 0
 		if ads then
@@ -159,22 +171,31 @@ function on_key_press(key)
 		speed.add_speed("freezoom_speed_run", run_coef, false, true)
 		speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
 	end
+	
+	if (key == bind_to_dik(key_bindings.kWPN_RELOAD)) then
+		dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal20", 0.045, reset_fov_to_normal, fov_before)
+		dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal20", 0.045, reset_mouse_sens_to_normal, mouse_sens_before)
+		dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal20", 0.045, reset_hud_fov_to_normal, hud_fov_before)
+	end
 end
 
 function on_key_release(key)
 	if (key == bind_to_dik(key_bindings.kWPN_ZOOM)) then
-		if wpn and string.match(wpn:section(), "device_pda") then return end
+		if wpn and wpn:get_state() == 7 then return end
+		if wpn and not IsWeapon(wpn) then return end
+		if wpn and IsMelee(wpn) then return end
+		if (get_console():get_bool("wpn_aim_toggle")) then return end
 		ads = false
 		if pressed and pressed == 0 then
-			dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal5", 0.035, reset_fov_to_normal, fov_before)
-			dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal5", 0.035, reset_hud_fov_to_normal, hud_fov_before)
-			dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal5", 0.035, reset_mouse_sens_to_normal, mouse_sens_before)
+			dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal5", 0.01, reset_fov_to_normal, fov_before)
+			dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal5", 0.01, reset_hud_fov_to_normal, hud_fov_before)
+			dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal5", 0.01, reset_mouse_sens_to_normal, mouse_sens_before)
 		end
 	end
 
 	if (key == KEY_TOGGLE_ZOOM) then
-		if wpn and string.match(wpn:section(), "device_pda") then return end
 		if not custom_zoom then return end
+		if wpn and wpn:get_state() == 7 then return end
 
 		custom_zoom = false
 		local run_coef = 1
@@ -195,26 +216,32 @@ function on_key_release(key)
 			end		
 		else
 			dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal7", 0.035, reset_fov_to_normal, fov_backup)
-			dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal7", 0.035, reset_hud_fov_to_normal, hud_fov_backup)
 			dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal7", 0.035, reset_mouse_sens_to_normal, mouse_sens_backup)
+			if wpn and saved_custom[wpn:section()] then
+				dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal7", 0.035, reset_hud_fov_to_normal, saved_custom[wpn:section()])
+			else
+				dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal7", 0.035, reset_hud_fov_to_normal, hud_fov_backup)
+			end
 		end
 	end
 	
 	if (key == bind_to_dik(key_bindings.kWPN_FIRE)) then
-		if wpn and string.match(wpn:section(), "device_pda") then return end
+		if wpn and not IsWeapon(wpn) then return end
+		if wpn and IsMelee(wpn) then return end
+		if wpn and wpn:get_state() == 7 then return end
 		if released == 1 then
 			if ads then
-				dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal8", 0.035, reset_fov_to_normal, fov_before*ads_mult)
-				dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal8", 0.035, reset_mouse_sens_to_normal, mouse_sens_before*ads_mult)
+				dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal8", 0.09, reset_fov_to_normal, fov_before*ads_mult)
+				dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal8", 0.09, reset_mouse_sens_to_normal, mouse_sens_before*ads_mult)
 				if wpn and saved_custom[wpn:section()] then
-					dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal8", 0.035, reset_hud_fov_to_normal, saved_custom[wpn:section()] * ads_mult)
+					dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal8", 0.09, reset_hud_fov_to_normal, saved_custom[wpn:section()] * ads_mult)
 				else
-					dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal8", 0.035, reset_hud_fov_to_normal, hud_fov_before * ads_mult)
+					dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal8", 0.09, reset_hud_fov_to_normal, hud_fov_before * ads_mult)
 				end	
 			else
-				dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal9", 0.035, reset_fov_to_normal, fov_before)
-				dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal9", 0.035, reset_hud_fov_to_normal, hud_fov_before)
-				dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal9", 0.035, reset_mouse_sens_to_normal, mouse_sens_before)
+				dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal9", 0.09, reset_fov_to_normal, fov_before)
+				dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal9", 0.09, reset_hud_fov_to_normal, hud_fov_before)
+				dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal9", 0.09, reset_mouse_sens_to_normal, mouse_sens_before)
 			end
 			local run_coef = 1
 			local sprint_coef = 1
