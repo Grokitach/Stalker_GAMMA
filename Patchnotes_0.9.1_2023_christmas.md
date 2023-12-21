@@ -20,6 +20,7 @@
 **Gunplay**
 - Added ADAR, PKP and PKM BAS 2022
 - Added Retrogue's AMB17 in game
+- RD-9x39 remade model and fixed animations: no canted sight, 30 rounders magazine model, fixed grenade launcher animations, fixed shoot animation clipping.
 - Doubled PKM rounds per box (easier crafting)
 - MP5 supports BAS scopes
 - SV98 shoot cam animation
