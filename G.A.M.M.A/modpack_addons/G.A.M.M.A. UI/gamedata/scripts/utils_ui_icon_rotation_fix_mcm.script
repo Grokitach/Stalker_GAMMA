@@ -1,0 +1,236 @@
+--[[
+	
+	EverybodyLies
+	03 February 2022
+
+	RELEASE:
+	- Fixed bug in UICellItem:Add_Icon/Add_Shadow functions when icon inside rotated cells is displayed incorrectly.
+	UPD.03/02/2022:
+	- Added UICellItem:Create_Layer() fix from RavenAscendant icon override script.
+	- Fixed compatibility issue then player have an icon override script.
+	- Script renamed to 'utils_ui_icon_rotation_fix_mcm.script' for loading early enough to modify the New Game screens.
+	UPD.11/02/2022:
+	- Upgrade icon in rotated cell is now displayed on the top-right corner.
+	UPD.13/02/2022:
+	- Added shadows for scopes, silencers and grenade launchers! Compatible with icon_override.
+	TODO:
+	+ Add shadows for equipped atachments on weapon.
+	- Add support for custom attachment icon on weapon, not only attachment item icon itself.
+
+]]--
+
+--  Credits to RavenAscendant for this fix
+	function utils_ui.UICellItem:Create_Layer(ele, base, sec_m, sec_l, str_x, str_y, str_scale)
+		local ratio = utils_xml.screen_ratio()
+		local grid_size = self.grid_size
+		local x = str_x and SYS_GetParam(2,sec_m, str_x) or 0 
+		local y = str_y and SYS_GetParam(2,sec_m, str_y) or 0
+		local w = SYS_GetParam(2,sec_l, "inv_grid_width",1) * grid_size
+		local h = SYS_GetParam(2,sec_l, "inv_grid_height",1) * grid_size
+		local scale = str_scale and SYS_GetParam(2,sec_m, str_scale) or 1
+		local scale_pos = scale * (grid_size/50)
+
+		local rot = ele:GetHeading() > 0
+		local x_s = x * ratio * scale_pos
+		local y_s = y * scale_pos 
+		local w_s = w * ratio * scale
+		local h_s = h * scale
+		local w_off = (w_s/2)
+		local h_off = (h_s/2)
+
+		if rot then
+			-- despite rotation, the dimensions of the base icon do not change! 
+			-- Move start pos to match the one for rotated base icon
+			-- Base icon rotates on its center. To calculate where the upper left corner went move to the center of the window then move along the rotated image
+			local w_b, h_b = base:GetWidth(), base:GetHeight()
+			local x_st = (w_b/2) - (h_b/2)*ratio --When the engine rotates an image it doesn't get streched. Which means it is efectivly ratio corected and centered, to move out from the center of the window to the top of the gun, we need to ratio corect the old height to get to the new width.
+			local y_st = (h_b/2) + (w_b/2) --no ratio corection here because movement out from the center is along the veritcal axis where no ratio adjustment is needed
+			-- printf("w:%s,h:%s, y:%s,x:%s",w_b, h_b, y_st,x_st)
+			-- On 90 rotation, x and y are inverted, y axis goes negative simulate normal x movement
+			x_s = x_st + (y * ratio * scale_pos)
+			y_s = y_st - (x * scale_pos) 
+			w_s = w * scale --window size doesn't change despite rotation so these dimensions don't get swapped. Because the icon is getting rotated ratio corection is moot and would just need to be compensated for in h_off
+			h_s = h * scale
+			w_off = (h_s/2) * ratio --because this is moving along the x axis it needs ratio corection
+			h_off = -(w_s/2)
+		end
+		
+		ele:InitTexture( utils_xml.get_icons_texture(sec_l) )
+		ele:SetTextureRect(Frect():set( utils_xml.get_item_axis(sec_l, nil, true) ))
+		ele:SetStretchTexture(true)
+		ele:SetWndPos(vector2():set( x_s + w_off , y_s + h_off ))
+		ele:SetWndSize(vector2():set( w_s , h_s ))
+		ele:Show(true)
+	end
+
+-------------------------------------------------------------------
+
+function utils_ui.UICellItem:Add_Attachements(xml, obj, sec, clsid)
+	-- Hide attachments
+	if self.ico_scope then self.ico_scope:Show(false) end
+	if self.shadow_ico_scope then self.shadow_ico_scope:Show(false) end
+	if self.ico_sil then
+		self.ico_sil:Show(false)
+		self.shadow_sil:Show(false)
+	end
+	if self.ico_gl then
+		self.ico_gl:Show(false)
+		self.shadow_gl:Show(false)
+	end
+	
+	-- On full stacking, hide counter
+	if self.container.stack_all and (self.childs and is_not_empty(self.childs)) then
+		return
+	end
+	
+	-- No attachments on showcase cells
+	if (self.showcase ~= 0) then
+		return
+	end
+	
+	-- No attachments for non-firearms
+	local magazined_wpn = IsWeapon(nil,clsid) and (not IsItem("fake_ammo_wpn",sec))
+	if (not magazined_wpn) then
+		return
+	end
+
+	-- Scope
+	local scope = (not utils_item.has_scope(sec)) and utils_item.get_attached_scope(obj)
+	if scope then
+		if (not self.ico_scope) then
+			if (not xml) then 
+				xml = self:GetXML()
+			end
+			self.ico_scope = xml:InitStatic(self.path .. ":" .. self.cx .. ":pic", self.ico)
+			self.shadow_ico_scope = xml:InitStatic(self.path .. ":" .. self.cx .. ":pic", self.shadow)
+		end
+		local scopes_sect = utils_item.get_param(sec, obj:id(), "scopes_sect", "string", false)
+		self:Create_Layer(self.ico_scope, self.ico, scopes_sect, scope, "scope_x", "scope_y")
+		self:Print(nil, "Show scope")
+
+		self:Create_Layer(self.shadow_ico_scope, self.shadow, scopes_sect, scope, "scope_x", "scope_y")
+		self.shadow_ico_scope:SetTextureColor( GetARGB(200, 20, 20, 20) )
+		self:Print(nil, "Show scope shadow")
+	end
+
+	-- Silencer
+	local sil = utils_item.get_attached_silencer(obj)
+	if sil then
+		if (not self.ico_sil) then
+			if (not xml) then 
+				xml = self:GetXML()
+			end
+			self.ico_sil = xml:InitStatic(self.path .. ":" .. self.cx .. ":pic", self.ico)
+			self.shadow_sil = xml:InitStatic(self.path .. ":" .. self.cx .. ":pic", self.shadow)
+		end
+		self:Create_Layer(self.ico_sil, self.ico, sec, sil, "silencer_x", "silencer_y")
+		self:Print(nil, "Show silencer")
+
+		self:Create_Layer(self.shadow_sil, self.shadow, sec, sil, "silencer_x", "silencer_y")
+		self.shadow_sil:SetTextureColor( GetARGB(200, 20, 20, 20) )
+		self:Print(nil, "Show silencer shadow")
+	end
+	
+	-- Grenade Launcher
+	local gl = utils_item.get_attached_gl(obj)
+	if gl then
+		if (not self.ico_gl) then
+			if (not xml) then 
+				xml = self:GetXML()
+			end
+			self.ico_gl = xml:InitStatic(self.path .. ":" .. self.cx .. ":pic", self.ico)
+			self.shadow_gl = xml:InitStatic(self.path .. ":" .. self.cx .. ":pic", self.shadow)
+		end
+		self:Create_Layer(self.ico_gl, self.ico, sec, gl, "grenade_launcher_x", "grenade_launcher_y")
+		self:Print(nil, "Show grenade launcher")
+
+		self:Create_Layer(self.shadow_gl, self.shadow, sec, gl, "grenade_launcher_x", "grenade_launcher_y")
+		self.shadow_gl:SetTextureColor( GetARGB(200, 20, 20, 20) )
+		self:Print(nil, "Show grenade launcher shadow")
+	end
+end
+
+
+function utils_ui.UICellItem:Add_Icon(sec, w, h)
+	local rot = self.ico:GetHeading() > 0
+
+	self.ico:InitTexture( utils_xml.get_icons_texture(sec) )
+	self.ico:SetTextureRect(Frect():set( utils_xml.get_item_axis(sec, nil, true) ))
+	self.ico:SetStretchTexture(true)
+	self.ico:SetWndSize(vector2():set( w * (rot and 1 or utils_xml.screen_ratio()) , h ))
+	self.ico:Show(true)
+	utils_xml.align_to_center(self.ico, self.cell)
+	
+	self:Print(nil, "Show icon")
+end
+
+
+function utils_ui.UICellItem:Add_Shadow(sec, w, h)
+	local rot = self.shadow:GetHeading() > 0
+
+	local shadow_offset_x, shadow_offset_y = 1, 2
+
+	self.shadow:InitTexture( utils_xml.get_icons_texture(sec) )
+	self.shadow:SetTextureRect(Frect():set( utils_xml.get_item_axis(sec, nil, true) ))
+	self.shadow:SetStretchTexture(true)
+	self.shadow:SetWndSize(vector2():set( w * (rot and 1 or utils_xml.screen_ratio()) , h ))
+	self.shadow:Show(true)
+	utils_xml.align_to_center(self.shadow, self.cell)
+	
+	local pos = self.ico:GetWndPos()
+	self.shadow:SetWndPos( vector2():set( pos.x + shadow_offset_x , pos.y + shadow_offset_y ) )
+	self.shadow:SetTextureColor( GetARGB(200, 20, 20, 20) )
+	
+	self:Print(nil, "Show shadow")
+end
+
+
+function utils_ui.UICellItem:Add_Upgrade(xml, obj, sec)
+	-- Hide upgrade indicator
+	if self.upgr then
+		self.upgr:Show(false)
+	end
+	
+	-- On full stacking, hide upgrade indicator
+	if self.container.stack_all and (self.childs and is_not_empty(self.childs)) then
+		return
+	end
+	
+	-- Bar is applied only to upgraded items
+	if (not utils_item.has_upgrades(obj, sec)) then
+		return
+	end
+	
+	-- Init if it doesn't exist
+	if (not self.upgr) then
+		if (not xml) then 
+			xml = self:GetXML()
+		end
+		self.upgr = xml:InitStatic(self.path .. ":cell:upgrade", self.ico)
+	end
+	
+	-- Positioning
+	local ico = self.ico
+	local xx = 1 * 1024/device().width --[px]
+	local yy = 1 * 768/device().height --[px]
+
+	local rot = ico:GetHeading() > 0
+
+	if rot then
+	-- top-right corner
+		local x_offset = -4 * 1024/device().width + (self.cell:GetWidth() - self.upgr:GetWidth()) --[px]
+		local y_offset = 4 * 768/device().height --[px]
+	-- bottom-left corner
+	--	x_offset = 4  * 1024/device().width --[px]
+	--	y_offset = -4  * 768/device().height + (cell_h - self.upgr:GetHeight()) --[px]
+
+		xx = x_offset - (self.cell:GetWidth() - ico:GetWidth())/2
+		yy = y_offset - (self.cell:GetHeight() - ico:GetHeight())/2
+	end
+	
+	self.upgr:SetWndPos(vector2():set( xx , yy ))
+	self.upgr:Show(true)
+	
+	self:Print(nil, "Show upgrade indicator")
+end
+
