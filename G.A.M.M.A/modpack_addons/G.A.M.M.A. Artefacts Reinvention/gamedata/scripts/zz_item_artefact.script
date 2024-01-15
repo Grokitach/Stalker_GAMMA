@@ -4,6 +4,7 @@ local rad_tg_step = 300 --[ms]
 local dgr_tg_step = 2000 --[ms]
 
 cond_t = {}
+dist_t = {}
 
 local art_dbg = false
 
@@ -154,6 +155,13 @@ item_artefact.artefact_binder.update = function(self, delta)
 		pr("condition changed by other addons, prev: %s || curr: %s", cond_t[self.object:id()] and r(cond_t[self.object:id()]) or "nil", r(self.object:condition()))
 		-- update this condition
 		cond_t[self.object:id()] = self.object:condition()
+	end
+	
+	-- calculate distance to artefact updated
+	local pos = db.actor:position()
+	local af_dist = pos:distance_to_sqr(self.object:position())
+	if af_dist then
+		dist_t[self.object:section()] = af_dist
 	end
 
     if self.first_call == true then
@@ -348,6 +356,17 @@ local function on_option_change()
 			settings[k] = ui_mcm.get("item_artefact/" .. k)
 		end
 	end
+	
+	local function set_af_condition(actor, obj)
+		local sec = obj:section()
+		if is_art_degradable(obj, sec) then
+			if cond_t and cond_t[obj:id()] then
+				obj:set_condition(cond_t[obj:id()])
+			end
+		end
+	end
+	
+	db.actor:iterate_inventory(set_af_condition, db.actor)
 end
 
 function server_entity_on_unregister(se_item)
