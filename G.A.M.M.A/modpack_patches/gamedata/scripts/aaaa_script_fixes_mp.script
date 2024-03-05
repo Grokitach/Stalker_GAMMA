@@ -65,52 +65,59 @@ if ini_cache then
 	empty_table(ini_cache)
 end
 
-_G.ini_file.r_string_ex = function(ini,s,k,def)
-	return ini:line_exist(s,k) and ini:r_string(s,k) or def
+_G.ini_file.r_string_ex = function(ini, s, k, def)
+	return ini:line_exist(s, k) and ini:r_string(s, k) or def
 end
-_G.ini_file.r_float_ex = function(ini,s,k,def)
-	if not ini:line_exist(s,k) then
+_G.ini_file.r_float_ex = function(ini, s, k, def)
+	if not ini:line_exist(s, k) then
 		return def
 	end
-	local v = ini:r_string(s,k)
+	local v = ini:r_string(s, k)
 	if v == nil then
 		return def
 	end
 	return tonumber(v) or def
 end
-_G.ini_file.r_bool_ex = function(ini,s,k,def)
-	if not ini:line_exist(s,k) then
+_G.ini_file.r_bool_ex = function(ini, s, k, def)
+	if not ini:line_exist(s, k) then
 		return def
 	end
-	local v = ini:r_string(s,k)
+	local v = ini:r_string(s, k)
 	if v == nil then
 		return def
 	end
 	return v == "true" or v == "1" or v == "yes" or v == "on"
 end
-_G.ini_file.r_sec_ex = function(ini,s,k,def)
-	local result = ini_file.r_string_ex(ini,s,k,def)
+_G.ini_file.r_sec_ex = function(ini, s, k, def)
+	local result = ini_file.r_string_ex(ini, s, k, def)
 	if result and ini_sys:section_exist(result) then
 		return result
 	end
 	return nil
 end
-_G.ini_file.r_line_ex = function(ini,s,k)
-	return ini:r_line(s,k,"","")
+_G.ini_file.r_line_ex = function(ini, s, k)
+	return ini:r_line(s, k, "", "")
 end
 
 -- ini_file_ex disabled cache
-_G.ini_file_ex.r_value = function(self,s,k,typ,def)
+_G.ini_file_ex.r_value = function(self, s, k, typ, def)
 	if not self.cleaned_cache then
 		self.cleaned_cache = true
 		empty_table(self.cache)
 	end
-	if not self.ini:line_exist(s,k) then
+	if not self.ini:line_exist(s, k) then
 		return def
 	end
-	local v = self.ini:r_string(s,k)
+	local v = self.ini:r_string(s, k)
 	if v == nil then
-		return def
+		-- Original 1.5.2 behaviour of r_value with bool type and r_bool_ex
+		-- is to return false if section and line exist and value is nil
+		-- In future it should be replaced with returning def 
+		if typ == 1 then
+			return false
+		else
+			return def
+		end
 	end
 	if typ == 1 then
 		return v == "true" or v == "1" or v == "yes" or v == "on"
@@ -120,24 +127,25 @@ _G.ini_file_ex.r_value = function(self,s,k,typ,def)
 	return v
 end
 
-_G.ini_file_ex.w_value = function(self,s,k,val,comment)
-	self.ini:w_string(s,k,val ~= nil and tostring(val) or "",comment ~= nil and tostring(comment) or "")
+_G.ini_file_ex.w_value = function(self, s, k, val, comment)
+	self.ini:w_string(s, k, val ~= nil and tostring(val) or "", comment ~= nil and tostring(comment) or "")
 end
 
-_G.ini_file_ex.line_exist = function(self,section,key)
-	return self.ini:line_exist(section,key)
+_G.ini_file_ex.line_exist = function(self, section, key)
+	return self.ini:line_exist(section, key)
 end
 
-_G.ini_file_ex.r_string_ex = function(self,s,k)
-	return self.ini:r_string_ex(s,k)
+_G.ini_file_ex.r_string_ex = function(self, s, k)
+	return self.ini:r_string_ex(s, k)
 end
 
-_G.ini_file_ex.r_bool_ex = function(self,s,k,def)
-	return self.ini:r_bool_ex(s,k,def)
+_G.ini_file_ex.r_bool_ex = function(self, s, k, def)
+	-- In future replace with self.ini:r_bool_ex(s, k, def)
+	return self:r_value(s, k, 1, def)
 end
 
-_G.ini_file_ex.r_float_ex = function(self,s,k)
-	return self.ini:r_float_ex(s,k)
+_G.ini_file_ex.r_float_ex = function(self, s, k)
+	return self.ini:r_float_ex(s, k)
 end
 
 -- SYS_GetParam disabled ini caching in benefit to use engine functions and reduce memory footprint
@@ -173,7 +181,7 @@ _G.SYS_GetParam = function(typ, sec, param, def)
 	return result
 end
 
--- ini_file_ex replacement that is inherited from ini_file, testing
+-- ini_file_ex replacement that is inherited from ini_file
 class "new_ini_file_ex" (ini_file)
 function new_ini_file_ex:__init(fname, advanced_mode)
 	super(fname)
@@ -196,7 +204,14 @@ function new_ini_file_ex:r_value(s, k, typ, def)
 	end
 	local v = self:r_string(s, k)
 	if v == nil then
-		return def
+		-- Original 1.5.2 behaviour of r_value with bool type and r_bool_ex
+		-- is to return false if section and line exist and value is nil
+		-- In future it should be replaced with returning def
+		if typ == 1 then
+			return false
+		else
+			return def
+		end
 	end
 	if typ == 1 then
 		return v == "true" or v == "1" or v == "yes" or v == "on"
@@ -208,6 +223,11 @@ end
 
 function new_ini_file_ex:w_value(s, k, val, comment)
 	self:w_string(s, k, val ~= nil and tostring(val) or "", comment ~= nil and tostring(comment) or "")
+end
+
+-- In future delete this override
+function new_ini_file_ex:r_bool_ex(s, k, def)
+	return self:r_value(s, k, 1, def)
 end
 
 function new_ini_file_ex:collect_section(section)
