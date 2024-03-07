@@ -1,7 +1,8 @@
--- gavrilenko tasks fix 
+-- gavrilenko tasks fix
 -- script written by G_FLAT
 -- I stole all the task stage processing thing from the autocomplete task mod
 -- what this mod does: completes tasks that are pointing to gavrilenko when you talk to him
+-- fixes by Magiel (20240123)
 
 function GUI_on_show(gui_name)
 	-- check if I'm in rostok
@@ -9,28 +10,29 @@ function GUI_on_show(gui_name)
 		if gui_name == "Dialog" then
 			-- find gavrilenko as object
 			local id = story_objects.object_id_by_story_id["bar_duty_security_squad_leader"]
-			if (id) then gavi = db.storage[id] and db.storage[id].object end
+			if id == nil then return end
+			gavi = db.storage[id] and db.storage[id].object
+			if gavi == nil then return end
 			-- check if I'm talking with gavi
 			if gavi:is_talking() then
-				if gavi == nil then return end
 				-- search for the tasks that point to gavi for completion
-				else local tm = task_manager.get_task_manager()
+				local tm = task_manager.get_task_manager()
 				for tid, tsk in pairs(tm.task_info) do
 					if (tsk.task_giver_id and tsk.task_giver_id == gavi:id()) then
 						-- filter out finished tasks
 						if tsk.stage ~= 255 then
 							-- check if tasks are in last stage
 							local parsed_data = utils_data.parse_ini_section_to_array(task_manager.task_ini, tid)
-							if tonumber(parsed_data.stage_complete) ~= tonumber(tsk.stage) then 
+							if tonumber(parsed_data.stage_complete) ~= tonumber(tsk.stage) then
 								-- news_manager.send_tip(db.actor, "stages are different (" .. tsk.stage .. "/" .. parsed_data.stage_complete .. ")")
 							else
 								-- complete those tasks
 								-- news_manager.send_tip(db.actor, "completing task")
-								CreateTimeEvent("gimme_a_sec", "gimme_a_sec", 1, function ()
-									tm:set_task_completed(tid)
-									return true
-									end)
-								end
+								CreateTimeEvent("gimme_a_sec", "gimme_a_sec", 1,
+												function ()
+													tm:set_task_completed(tid)
+													return true
+								                end)
 							end
 						end
 					end
