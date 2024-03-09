@@ -1,7 +1,16 @@
 # S.T.A.L.K.E.R. G.A.M.M.A.
 S.T.A.L.K.E.R. Anomaly G.A.M.M.A. modpack "actively updated" files are stored in this repository.
 
-For the complete client (heavy, rarely modified files) necessary for this repository to work, you need to download it from the associated discord server where a team of people is ready to help you with your questions and potential issues related to this project:
+See
+- [INSTALLATION](./docs/INSTALLATION.md) for links and instructions for the complete client (heavy, rarely modified files) necessary for this repository to work.
+- [TROUBLESHOOTING](./docs/TROUBLESHOOTING.md) for diagnosing and resolving issues
+- [FAQ](./docs/FAQ.md) for frequently asked questions
+- [KEYBINDS](./docs/KEYBINDS.md) for key bind scheme
+- [MANUAL](./docs/MANUAL.md) for description of in-game mechanics and objects
+- [FRAMERATE OPTIMISATION](./docs/FRAMERATE_OPTIMISATION.md) for tips on how to improve performance
+- [CUSTOM TEXTURES](./docs/CUSTOM_TEXTURES.md) for alternative texture versions
+
+Please also check associated discord server where a team of people is ready to help you with your questions and potential issues related to this project:
 
 https://discord.gg/stalker-gamma
 
@@ -36,4 +45,3 @@ Many addons are developped exclusively for this project, including:
 - Overhauled radiations effects and dynamic radiation areas.
 - Many fixes for some major addons including the Boomsticks and Sharpsticks gunpack.
 - And more!
-
