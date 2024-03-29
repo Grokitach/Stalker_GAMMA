@@ -1,5 +1,4 @@
 cached_r_string_ex = itms_manager.ini_parts.r_string_ex
-cached_parse_list = _G.parse_list
 parts_custom = {}
 parts_custom_ini = { 
     ["con_parts_list"] = ini_file_ex("items\\settings\\parts_custom\\con_parts_list\\base_parts.ltx"),
@@ -11,29 +10,12 @@ itms_manager.ini_parts.r_string_ex = function(self, s, k)
     return parts_custom[s] and parts_custom[s][k] or cached_r_string_ex(self, s, k)
 end
 
-_G.parse_list = function(ini, key, val, convert)
-    if parts_custom[key] then
-        --printf("Override [%s] [%s]", key, val)
-        local str = parts_custom[key][val]
-        local t = str and str ~= "" and str_explode(str,",") or {}
-        if (convert and #t > 0) then
-            local l = {}
-            for i=1,#t do
-                l[t[i]] = true
-            end
-            return l
-        end
-	    return t
-    end
-    return cached_parse_list(ini, key, val, convert)
-end
-
 function collect_parts(ini, t)
     local sections = ini:get_sections()
+    parts_custom[t] = {}
     for _, section in pairs(sections) do
         --printf("Section: [%s]", section)
         local _section = ini:collect_section(section)
-        parts_custom[t] = {}
         for k, v in pairs(_section) do
             --printf("Inserted into [%s]: [%s], [%s]", t, k, v)
             parts_custom[t][k] = v
