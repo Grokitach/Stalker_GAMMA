@@ -2,6 +2,7 @@ custom_bone_value	= {} -- this a table with each identifier being npcid_boneid, 
 custom_bone_ap	= {} 
 custom_bone_hf	= {} 
 custom_bone_dmg	= {}
+invincible_npcs_ids = {}
 ini_capture	 = ini_file("creatures\\grok_bo_models_capture.ltx")
 ini_bones		 = ini_file("creatures\\grok_bo_bone_profiles.ltx")
 ini_damage		= ini_file("creatures\\damages.ltx")
@@ -513,6 +514,15 @@ function npc_on_before_hit(npc,shit,bone_id)
 	printf("///////////   Stalker Hit registered: GBO v1.6.6  //////////////////")
 	printf('%s about to be hit by %s in bone %s', npc and npc:name(), shit and shit.draftsman and shit.draftsman:name(), bone_id)
 	
+--////////////// INVICIBILITY TRIGGER FOR ITHEON'S TASKS //////////////
+
+	if invincible_npcs_ids[npc:id()] then
+		invincible_mult = 0
+	else
+		invincible_mult = 1
+	end
+
+	
 --////////////// DATA PARSING OF HELL - A BONES AND BOOLETS TALE //////////////
 
 --	/////// BOOLETS //////
@@ -824,7 +834,7 @@ function npc_on_before_hit(npc,shit,bone_id)
 
 	local k_ap = k_ap * custom_bone_ap_scale * barrel_condition_corrected -- reduce bullet ap following npc ap scale and barrel condition
 
-	k_ap = k_ap / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * isg_res * silencer_boost * difficulty_multiplier[game_num] * 0.80 -- last multiplier is a new adjustment after the bone grouping update
+	k_ap = k_ap / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * isg_res * silencer_boost * difficulty_multiplier[game_num] * invincible_mult * 0.80 -- last multiplier is a new adjustment after the bone grouping update
 
 	shit.power = wpn_hit_power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * k_hit * custom_bone_dmg_mult * custom_bone_ap_scale * 1.1 * sniper_bad_bone_shit_reduce * barrel_condition_corrected * sin_res * difficulty_multiplier[game_num] * ammo_mult * silencer_boost
 
@@ -874,7 +884,7 @@ function npc_on_before_hit(npc,shit,bone_id)
 		shit.power = shit.power * 2
 	end
 	
-	life_remove = shit.power 
+	life_remove = shit.power * invincible_mult
 	
 	if surrender_bonus == 1 then
 		npc:set_health_ex(0.0)
