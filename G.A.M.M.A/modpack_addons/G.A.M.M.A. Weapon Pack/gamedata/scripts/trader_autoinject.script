@@ -29,13 +29,25 @@ local function c2t(ct)
 	return { Y=Y, M=M, D=D, h=h, m=m, s=s, ms=ms }
 end
 
+local furniture = {
+    ["esc_m_trader"] = true,
+    ["red_m_lesnik"] = true
+}
+
+local blacklisted_comms = {
+    ["trader"] = true,
+    ["monster"] = true
+}
 TraderUpdate = trade_manager.update
 function trade_manager.update(npc, force_refresh)
     local id = npc:id()
     
-    if not npc:alive() then
-        return default
+    if not npc or not npc:alive() then
+        return
     end
+    -- sid/forester fix - check if close by and then run
+    if furniture[npc:name()] and npc:position():distance_to(db.actor:position()) > 20 then return end
+    
     local reup_time = trade_manager.get_trade_profile(id, "resupply_time")
     TraderUpdate(npc, force_refresh)
     local restock_time = game_difficulties.get_eco_factor("restock") or 24
@@ -140,15 +152,6 @@ function merge_tables(tables)
 end
 
 
-local furniture = {
-    ["esc_m_trader"] = true,
-    ["red_m_lesnik"] = true
-}
-
-local blacklisted_comms = {
-    ["trader"] = true,
-    ["monster"] = true
-}
 
 -- used to get the real community of the NPC by checking spawn id
 -- author: HarukaSai
