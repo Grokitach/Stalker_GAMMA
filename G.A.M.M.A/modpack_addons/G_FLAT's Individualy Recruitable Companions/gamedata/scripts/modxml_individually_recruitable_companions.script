@@ -1,0 +1,116 @@
+--[[
+	Inserts dialogs for recruiting and hiring stalkers as companions individually
+	Used Proportional Medic Healing Price by Coverdrave as a template for dialog injection
+--]]
+
+function on_game_start()
+	RegisterScriptCallback("on_specific_character_dialog_list", function(character_id, dialog_list)
+		if dialog_list:has("friendly_companion_dialog") then
+			local res1 = dialog_list:add("friendly_companion_dialog_individually")
+		end
+		if dialog_list:has("paid_companion_dialog") then
+			local res2 = dialog_list:add("paid_companion_dialog_individually")
+		end
+	end)
+end
+
+function on_xml_read()
+	RegisterScriptCallback("on_xml_read", function(xml_file_name, xml_obj)
+		
+		if (xml_file_name == [[gameplay\dialogs.xml]]) then
+			local companion_dialogues = 
+			[[
+			<dialog id="friendly_companion_dialog_individually">
+				<precondition>dialogs_axr_companion.is_non_story</precondition>
+				<precondition>dialogs_axr_companion.is_not_actor_companion</precondition>
+				<precondition>dialogs_axr_companion.is_actor_friend</precondition>
+				<precondition>dialogs_axr_companion.is_not_hostage_task_giver</precondition>
+				<precondition>individually_recruitable_companions.is_room_for_one_in_actor_squad</precondition>
+				<precondition>individually_recruitable_companions.not_a_one_man_squad</precondition>
+				<precondition>individually_recruitable_companions.get_is_actor_stronger_if_script_is_available</precondition>
+				<precondition>tasks_guide.not_prec_1</precondition>
+				<phrase_list>
+					<phrase id="0">
+						<script_text>individually_recruitable_companions.get_friend_companion_ask_join_individually_text</script_text>
+						<next>1</next>
+					</phrase>
+					<phrase id="1">
+						<text>axr_phrase_friend_companion_answer_join</text>
+						<action>individually_recruitable_companions.become_actor_companion_individually</action>
+						<action>dialogs.break_dialog</action>
+					</phrase>
+				</phrase_list>
+			</dialog>
+
+			<dialog id="paid_companion_dialog_individually">
+				<precondition>dialogs.warfare_disabled</precondition>
+				<precondition>dialogs_axr_companion.is_non_story</precondition>
+				<precondition>dialogs_axr_companion.is_not_actor_companion</precondition>
+				<precondition>txr_paid_companions.is_actor_natural</precondition>
+				<precondition>txr_paid_companions.is_paid_companion_faction</precondition>
+				<precondition>txr_paid_companions.is_not_dangerous_map</precondition>
+				<precondition>dialogs_axr_companion.is_not_hostage_task_giver</precondition>
+				<precondition>individually_recruitable_companions.is_room_for_one_in_actor_squad</precondition>
+				<precondition>individually_recruitable_companions.not_a_one_man_squad</precondition>
+				<precondition>tasks_guide.not_prec_1</precondition>
+				<phrase_list>
+					<phrase id="0"> <!-- actor -->
+						<script_text>individually_recruitable_companions.get_paid_companion_dialog_text_individually_text</script_text>
+						<next>1</next>
+						<next>2</next>
+					</phrase>
+					<phrase id="1"> <!-- npc -->
+						<precondition>txr_paid_companions.is_squad_competent</precondition>
+						<script_text>txr_paid_companions.st_paid_companion_dialog_text_1</script_text>
+						<next>3</next>
+						<next>4</next>
+						<next>5</next>
+					</phrase>
+					<phrase id="2"> <!-- npc -->
+						<precondition>txr_paid_companions.is_squad_not_competent</precondition>
+						<text>st_paid_companion_dialog_text_2</text>
+						<next>9</next>
+					</phrase>
+					<phrase id="9"> <!-- actor -->
+						<text>st_paid_companion_dialog_text_9</text>
+					</phrase>
+					
+					<phrase id="3"> <!-- actor -->
+						<precondition>txr_paid_companions.have_guard_money_1</precondition>
+						<script_text>txr_paid_companions.st_paid_companion_dialog_text_3</script_text>
+						<next>6</next>
+					</phrase>
+					<phrase id="4"> <!-- actor -->
+						<precondition>txr_paid_companions.have_guard_money_2</precondition>
+						<script_text>txr_paid_companions.st_paid_companion_dialog_text_4</script_text>
+						<next>7</next>
+					</phrase>
+					<phrase id="5"> <!-- actor -->
+						<text>st_paid_companion_dialog_text_5</text>
+						<next>8</next>
+					</phrase>
+					
+					<phrase id="6"> <!-- npc -->
+						<text>st_paid_companion_dialog_text_6</text>
+						<action>txr_paid_companions.take_guard_money_1</action>
+						<action>individually_recruitable_companions.become_paid_actor_companion_individually_and_register</action>
+						<action>dialogs.break_dialog</action>
+					</phrase>
+					<phrase id="7"> <!-- npc -->
+						<text>st_paid_companion_dialog_text_7</text>
+						<action>txr_paid_companions.take_guard_money_2</action>
+						<action>individually_recruitable_companions.become_paid_actor_companion_individually_and_register</action>
+						<action>dialogs.break_dialog</action>
+					</phrase>
+					
+					<phrase id="8"> <!-- npc -->
+						<text>st_paid_companion_dialog_text_8</text>
+					</phrase>
+				</phrase_list>
+			</dialog>
+			]]
+			
+			xml_obj:insertFromXMLString(companion_dialogues)
+		end
+	end)
+end
