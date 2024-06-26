@@ -11,10 +11,20 @@ Any Pull Request should be made **to the dev2 branch**. Anyone can contribute to
 
 ## Credits
 
+S.T.A.L.K.E.R. G.A.M.M.A. is a fan-created modification for S.T.A.L.K.E.R. games, developed and wholly owned by GSC Game World. S.T.A.L.K.E.R. G.A.M.M.A. is not an official product of GSC Game World and is a derivative work based on their S.T.A.L.K.E.R. games.
+
+You can support GSC by buying the original games here (although, they are not needed to play GAMMA):
+
+Steam: https://store.steampowered.com/franchise/stalker
+GOG: https://www.gog.com/en/game/stalker_shadow_of_chernobyl | https://www.gog.com/en/game/stalker_clear_sky | https://www.gog.com/en/game/stalker_call_of_pripyat
+
+
 GAMMA is a large project using the work of many talented modders, and each and everyone one of them are contributing to making Stalker Anomaly a better experience. You can check the entire modlist, modder names and mod pages link used by GAMMA here:
 https://stalker-gamma.com/api/list
 
 I would like to thank all the modders involved in this project by making all the GAMMA addons free to use, edit and repost with modifications as long as the source is indicated (original addon author, from Stalker GAMMA). For numbered addons (105-), original authors must be contacted before repost and modifications. Repost of unmodified individual parts of this project are not recommended and may harm the community in the long run because updates happen quite often in this repository and it is thus better to directly post links to the relevant files stored here.
+
+
 
 
 ## Description
