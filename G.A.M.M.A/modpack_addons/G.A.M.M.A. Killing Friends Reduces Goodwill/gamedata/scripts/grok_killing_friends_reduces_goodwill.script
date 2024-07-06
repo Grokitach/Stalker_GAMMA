@@ -3,8 +3,6 @@ aggressive_npcs = {}
 local function npc_on_before_hit(npc,shit,bone_id, flags)
 	if not IsStalker(npc) then return end
 	
-	if has_alife_info("bar_arena_fight") then return end
-	
 	if shit and shit.draftsman and (shit.draftsman:id() == 0 or shit.draftsman:has_info("npcx_is_companion")) then
 		if xr_conditions.is_enemy_fighting_actor(npc,shit.draftsman) then
 			aggressive_npcs[npc:id()] = true
@@ -17,8 +15,6 @@ function relation_kill_check(victim, killer)
 	
 	if victim:has_info("npcx_is_companion") then return end
 	
-	if has_alife_info("bar_arena_fight") then return end
-	
 	if killer:id() == db.actor:id() or killer:has_info("npcx_is_companion") then
 		local v_id = victim and victim:id()
 		local k_id = killer and killer:id()
@@ -26,6 +22,8 @@ function relation_kill_check(victim, killer)
 		local k_faction = db.actor and character_community(db.actor)
 		
 	--    if victim:relation(killer) > game_object.enemy then
+
+		if v_faction == "arena_enemy" then return end
 
 		if (xr_conditions.is_factions_friends(nil, nil, { k_faction, v_faction })) or (xr_conditions.is_factions_neutrals(nil, nil, { k_faction, v_faction })) then
 			if v_faction then
