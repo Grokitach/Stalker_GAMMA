@@ -1,0 +1,44 @@
+local difficulty_condition = {
+	[1]  = 0.90,
+	[2]  = 0.85,
+	[3]  = 0.80,
+	[4]  = 0.75,
+}
+
+function set_weapon_fire_condition(obj, wpn, ammo_elapsed, grenade_elapsed, ammo_type, grenade_type)
+	if (obj:id() ~= AC_ID) then
+		return
+	end
+
+	local wpn_obj = utils_item.item_is_fa(wpn) and wpn
+	if wpn_obj then
+		wpn_obj:set_condition(cond)
+	end
+end
+
+function set_weapon_backpack_condition(item)
+	if item and IsWeapon(item) then
+		item:set_condition(cond)
+	end
+end
+
+function set_weapon_active_condition(item)
+	if item and IsWeapon(item) then
+		item:set_condition(cond)
+	end
+end
+
+function on_game_start()
+	local gameplay = alife_storage_manager.get_state().diff_game
+	if not (type(gameplay) == "table") then -- for old saves
+		alife_storage_manager.get_state().diff_game = {}
+		alife_storage_manager.get_state().diff_game["type"] = game_num
+		gameplay = alife_storage_manager.get_state().diff_game
+	end
+
+	local game_num = gameplay["type"] or game_num
+	local cond = difficulty_condition[game_num]
+	RegisterScriptCallback("actor_on_weapon_fired",set_weapon_fire_condition)
+	RegisterScriptCallback("actor_item_to_ruck",set_weapon_backpack_condition)
+	RegisterScriptCallback("actor_item_to_slot",set_weapon_active_condition)
+end
