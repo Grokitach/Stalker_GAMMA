@@ -1,0 +1,700 @@
+
+-------------------------------------
+-- Made by Tronex
+-- Engine exports: Searge
+-- Last modification: 2019/1/23
+
+-- Item name/description custom parsing
+-- Functions are called from the engine, you can control the translated strings and the engine will display them back in Item Info box
+-- Use functions here to get name/desc of your item
+-------------------------------------
+
+
+
+local string_find         = string.find
+local math_ceil           = math.ceil
+local math_floor          = math.floor
+local gc                  = game.translate_string
+
+
+local clr_g  = utils_xml.get_color("d_green")
+local clr_y  = utils_xml.get_color("yellow")
+local clr_o  = utils_xml.get_color("d_orange")
+local clr_r  = utils_xml.get_color("d_red")
+
+local clr_b  = utils_xml.get_color("d_cyan")
+local clr_b1 = utils_xml.get_color("pda_blue")
+local clr_b2 = utils_xml.get_color("d_blue")
+local clr_p  = utils_xml.get_color("d_purple")
+
+local clr_w  = utils_xml.get_color("pda_white")
+
+local clr_1  = utils_xml.get_color("ui_gray_2")
+local clr_2  = utils_xml.get_color("ui_gray_1")
+
+
+local str_tbl             = {}
+local last_n_id           = nil
+local last_sn_id          = nil
+local last_d_id           = nil
+local last_name_id        = nil
+local last_short_name_id  = nil
+local last_desc_id        = nil
+
+local last_n_sec          = nil
+local last_sn_sec         = nil
+local last_d_sec          = nil
+local last_name_sec       = nil
+local last_short_name_sec = nil
+local last_desc_sec       = nil
+
+
+------------------------------------------------------------
+-- Strings
+------------------------------------------------------------
+function refresh_strings()
+	gc = game.translate_string
+	
+	str_tbl.prop = gc("st_itm_desc_properties")
+	str_tbl.details = gc("st_itm_desc_details")
+	str_tbl.warning = gc("st_itm_desc_warning")
+	
+	str_tbl.con = gc("st_condition")
+	str_tbl.uses = gc("st_ui_number_of_uses")
+	
+	str_tbl.stat_posble_y = gc("st_itm_desc_state_possible")
+	str_tbl.stat_posble_n = gc("st_itm_desc_state_not_possible")
+	str_tbl.stat_avail = gc("st_itm_desc_state_avail")
+	str_tbl.stat_included = gc("st_itm_desc_state_not_included")
+	str_tbl.stat_low = gc("st_itm_desc_state_low")
+	str_tbl.stat_average = gc("st_itm_desc_state_average")
+	str_tbl.stat_high = gc("st_itm_desc_state_high")
+	str_tbl.stat_slight = gc("st_itm_desc_state_slight")
+	str_tbl.stat_moderate = gc("st_itm_desc_state_moderate")
+	str_tbl.stat_significant = gc("st_itm_desc_state_significant")
+	str_tbl.stat_increase = gc("st_itm_desc_state_increase")
+	str_tbl.stat_decrease = gc("st_itm_desc_state_decrease")
+	str_tbl.stat_unknown = gc("st_dyn_news_unknown_contact")
+	
+	str_tbl.arty_cont = gc("st_itm_desc_arty_cont")
+	str_tbl.arty_cont_rad = gc("st_itm_desc_arty_cont_rad")
+	
+	str_tbl.eat_sleepiness = gc("st_itm_desc_eat_sleepiness")
+	str_tbl.eat_thirstiness = gc("st_itm_desc_eat_thirst")
+	str_tbl.eat_rad_poison = gc("st_itm_desc_eat_radiation")
+	str_tbl.eat_health = gc("st_itm_desc_eat_health")
+	
+	str_tbl.pwr_left = gc("st_ui_power")
+	str_tbl.pwr_cons = gc("st_ui_power_consumption")
+	
+	str_tbl.out_upgr = gc("st_itm_desc_outfit_upgradable")
+	str_tbl.out_helm = gc("st_itm_desc_outfit_heardgear")
+	str_tbl.out_slots = gc("st_itm_desc_outfit_num_of_slots")
+	str_tbl.out_cw = gc("st_itm_desc_outfit_carry_weight")
+	str_tbl.out_run = gc("st_itm_desc_outfit_run")
+	str_tbl.out_patch = gc("st_itm_desc_outfit_patch_torn")
+	str_tbl.out_comm = gc("st_itm_desc_outfit_faction")
+	
+	str_tbl.workshop_tool = gc("st_itm_desc_workshop_tool")
+	str_tbl.repair_bonus = gc("st_itm_desc_outfit_repair_bonus")
+	str_tbl.repair_base_con = gc("st_itm_desc_repair_base_con")
+	str_tbl.repair_min_con = gc("st_itm_desc_repair_min_con")
+	str_tbl.require_tool = gc("st_itm_desc_outfit_required_tool")
+	str_tbl.repair_match = gc("st_itm_desc_repair_match")
+	
+	str_tbl.part_usable = gc("st_itm_desc_part_usable")
+	str_tbl.part_i = gc("st_itm_desc_part_i")
+	str_tbl.part_o = gc("st_itm_desc_part_o")
+	str_tbl.part_w = gc("st_itm_desc_part_w")
+	
+	str_tbl.upgr_usable = gc("st_itm_desc_upgr_usable")
+	str_tbl.upgr_o = gc("st_itm_desc_upgr_o")
+	str_tbl.upgr_w = gc("st_itm_desc_upgr_w")
+	
+	str_tbl.msv = gc("st_msv")
+	str_tbl.ah_sec = gc("st_ah_sec")
+	str_tbl.mah_sec = gc("st_mah_sec")
+	str_tbl.uah_sec = gc("st_uah_sec")
+	str_tbl.pah_sec = gc("st_pah_sec")
+	
+	str_tbl.cap_upgr_1 = gc("st_cap_upgr_1")
+	str_tbl.cap_upgr_2 = gc("st_cap_upgr_2")
+	str_tbl.cap_upgr_3 = gc("st_cap_upgr_3")
+	
+	str_tbl.cap_meal_1 = gc("st_cap_meal_1")
+	str_tbl.cap_meal_2 = gc("st_cap_meal_2")
+	str_tbl.cap_meal_3 = gc("st_cap_meal_3")
+	
+	str_tbl.cap_old = gc("st_cap_old")
+	str_tbl.cap_bad = gc("st_cap_verybad")
+end
+
+
+------------------------------------------------------------
+-- Functions
+------------------------------------------------------------
+function get_list_highlight()
+	return last_d_id
+end
+
+function get_article_name(str) --Returns name with the right article appended to the front ("an" or "a" etc)
+	local singular = 1
+	local length = string.len(str)
+	str = remove_parentheses(str)
+	
+	length = string.len(str)
+	if((string.find(str, "s")) == length) then
+	    singular = nil
+		str = "some "..str
+	end
+	local firstChar = string.lower((string.sub(str,1,1)))
+    local fourChar = string.lower((string.sub(str,1,5)))
+    local notISG = true
+    if(fourChar == "unisg")then
+        notISG = false    
+    end
+	if(singular) then
+			if(((firstChar == "a") or (firstChar == "e") or (firstChar == "o") or (firstChar == "u") or (firstChar == "i")) and notISG) then
+	            str = "an "..str
+			else if((firstChar == "b") or (firstChar == "c") or (firstChar == "d") or (firstChar == "f") or (firstChar == "g") or (firstChar == "h") or (firstChar == "j") or (firstChar == "k") or (firstChar == "l") or (firstChar == "m") or (firstChar == "n") or (firstChar == "p") or (firstChar == "q") or (firstChar == "r") or (firstChar == "s") or (firstChar == "t") or (firstChar == "v") or (firstChar == "w") or (firstChar == "x") or (firstChar == "y") or (firstChar == "z"))then
+			str = "a "..str
+			end
+		end
+	end
+	return str
+end
+
+function get_plural_name(str) --Returns name with appended "s" or "es" if needed
+	local length = string.len(str)
+
+	str = remove_parentheses(str)
+    length = string.len(str)
+    if((string.find(str, "s")) ~= length) then
+	   	local ending2 = string.sub(str, length - 1, length)
+	   	local ending = string.sub(str, length, length)
+	   	if(ending2 == "th" or ending2 == "ch" or ending == "z" or ending == "x") then
+	   		str =  str.."es"
+    	else
+    		str = str.."s"
+    	end
+    end
+	return str
+end
+
+function remove_parentheses(str) --Gets rid of parenthetical words because people don't talk like that
+	local length = string.len(str)
+	
+	if(string.find(str, "(old)")) then
+	    str = string.sub(str, 0, length - 6)
+		    
+	elseif (string.find(str, "(decorated sawn%-off)")) then
+	    str = string.sub(str, 0, length - 21)
+	    str = "sawn-off "..str    
+		
+	elseif (string.find(str, "(alternate sawn%-off)")) then
+	    str = string.sub(str, 0, length - 21)
+	    str = "sawn-off "..str    
+	    
+	elseif (string.find(str, "(custom sawn%-off)")) then
+	    str = string.sub(str, 0, length - 18)
+	    str = "sawn-off "..str
+	    
+	elseif (string.find(str, "(sawn%-off)")) then
+	    str = string.sub(str, 0, length - 11)
+	    str = "sawn-off "..str    
+	        
+	elseif (string.find(str, "(damaged)")) then
+	    str = string.sub(str, 0, length - 10)
+	    
+	elseif (string.find(str, "(Duty camouflage)")) then
+	    str = string.sub(str, 0, length - 18)
+
+    elseif (string.find(str, "(Freedom camouflage)")) then
+	    str = string.sub(str, 0, length - 21)
+    
+	elseif (string.find(str, "(alternate)")) then
+	    str = string.sub(str, 0, length - 12)
+    
+	elseif (string.find(str, "(modern)")) then
+	    str = string.sub(str, 0, length - 9)
+    
+	elseif (string.find(str, "(camouflaged)")) then
+	    str = string.sub(str, 0, length - 14)
+
+	elseif (string.find(str, "(new)")) then
+	    str = string.sub(str, 0, length - 6)
+    
+	elseif (string.find(str, "(customized)")) then
+	    str = string.sub(str, 0, length - 13)
+    
+	elseif (string.find(str, "(custom)")) then
+	    str = string.sub(str, 0, length - 9)
+			    
+	elseif (string.find(str, "(decorated)")) then
+	    str = string.sub(str, 0, length - 12)
+	    
+    end
+
+	return str
+end
+
+function get_sec_name(sec)
+	if (sec == last_n_sec) then
+		return last_name_sec or ""
+	end
+	
+	local str = gc(ini_sys:r_string_ex(sec,"inv_name")) or ""
+	str = build_name_first(nil,sec,str) -- Start
+	str = build_name_last(nil,sec,str) -- End
+	
+	last_n_sec = sec
+	last_name_sec = str
+	return str
+end
+
+function get_sec_short_name(sec)
+	if (sec == last_sn_sec) then
+		return last_short_name_sec or ""
+	end
+	
+	local str = gc(ini_sys:r_string_ex(sec,"inv_name_short")) or ""
+	str = build_short_name_first(nil,sec,str) -- End
+	
+	last_sn_sec = sec
+	last_short_name_sec = str
+	return str
+end
+
+function get_sec_desc(sec)
+	if (sec == last_d_sec) then
+		return last_desc_sec or ""
+	end
+	
+	local str = gc(ini_sys:r_string_ex(sec,"description")) or ""
+	str = build_desc_footer(nil,sec,str) -- Footer
+	
+	last_d_sec = sec
+	last_desc_sec = str
+	return str
+end
+
+
+function get_obj_name(obj)
+	if obj then
+		local sec = obj:section()
+		local str = gc(ini_sys:r_string_ex(sec,"inv_name"))
+		str = item_name(obj, str)
+		return str
+	end
+	return ""
+end
+
+function get_obj_short_name(obj)
+	if obj then
+		local sec = obj:section()
+		local str = gc(ini_sys:r_string_ex(sec,"inv_name_short"))
+		str = item_short_name(obj, str)
+		return str
+	end
+	return ""
+end
+
+function get_obj_desc(obj)
+	if obj then
+		local sec = obj:section()
+		local str = gc(ini_sys:r_string_ex(sec,"description"))
+		str = item_description(obj, str)
+		return str
+	end
+	return ""
+end
+
+
+function build_short_name_first(obj, sec, str) -- no obj used
+	str = str or gc(ini_sys:r_string_ex(sec,"inv_name_short"))
+	if (not str) then return "" end
+	
+	local _str = ""
+	if is_empty(str_tbl) then
+		refresh_strings()
+	end
+	
+	str = _str .. str
+	
+	return str
+end
+
+function build_name_first(obj, sec, str) -- no obj used
+	str = str or gc(ini_sys:r_string_ex(sec,"inv_name"))
+	if (not str) then return "" end
+	
+	local _str = ""
+	if is_empty(str_tbl) then
+		refresh_strings()
+	end
+	
+	if IsItem("ammo",sec) or IsItem("grenade_ammo",sec) then
+		
+		if string_find(sec,"bad") then
+			_str = str_tbl.cap_old .. " "
+		elseif string_find(sec,"verybad") then
+			_str = str_tbl.cap_bad .. " "
+		end
+	end
+	
+	str = _str .. str
+	
+	return str
+end
+
+function build_name_last(obj, sec, str) -- no obj used
+	str = str or gc(ini_sys:r_string_ex(sec,"inv_name"))
+	if (not str) then return "" end
+	
+	local _str = ""
+	if is_empty(str_tbl) then
+		refresh_strings()
+	end
+	
+	local meal_tier = IsItem("meal",sec)
+	local upgr_tier = IsItem("upgrade",sec)
+	
+	-- upgrades
+	if upgr_tier then
+		_str = _str .. " " .. str_tbl["cap_upgr_" .. upgr_tier]
+		
+	-- meals
+	elseif meal_tier then
+		_str = _str .. " " .. str_tbl["cap_meal_" .. meal_tier]
+	end
+	
+	str = str .. _str
+	
+	return str
+end
+
+function build_desc_header(obj, sec, str)  -- obj needed
+	str = str or gc(ini_sys:r_string_ex(sec,"description"))
+	if (not str) then return "" end
+	
+	local _str = ""
+	if is_empty(str_tbl) then
+		refresh_strings()
+	end
+	
+	-- Consumable uses
+	if IsItem("multiuse",sec) then
+		_str = clr_g .. " � " .. clr_2 .. str_tbl.uses .. ": " .. clr_g .. obj:get_remaining_uses() .. "\\n \\n" .. clr_2
+		
+	-- Device power
+	elseif IsItem("device",sec)
+	or IsItem("battery", sec)
+	then
+		local con = math_ceil(obj:condition() * 100)
+		local clr = clr_b1 --(con < 25 and clr_r) or (con < 50 and clr_o) or (con < 75 and clr_y) or clr_b1
+		_str = clr .. " � " .. clr_2 .. str_tbl.pwr_left .. ": " .. clr .. tostring(con) .. "%" .. "\\n \\n" .. clr_2
+		
+	-- Condition
+	elseif IsOutfit(obj)
+	or IsHeadgear(obj)
+	or IsItem("backpack",sec)
+	or IsItem("disassemble",sec)
+	then
+		local con = math_ceil(obj:condition() * 100)
+		local clr = utils_xml.get_color_con(con)
+		_str = clr .. " � " .. clr_2 .. str_tbl.con .. ": " .. clr .. tostring(con) .. "%" .. "\\n \\n" .. clr_2
+		
+	elseif ini_sys:r_bool_ex(sec,"cond_part") then
+		local con = obj:condition()
+		con = math_floor(con*100)
+		local clr = utils_xml.get_color_con(con)
+		_str = clr .. " � " .. clr_2 .. str_tbl.con .. ": " .. clr .. utils_xml.get_name_cond(con, nil, sec) .. "\\n \\n" .. clr_2
+	
+	-- Contained artefact
+	elseif string_find(sec,"af_") then
+		if (string_find(sec, "(lead.-_box)",3)) then
+			local break_con = "lead_box"
+			local break_arty = sec:gsub("_lead_box", "")
+			if ini_sys:section_exist(break_arty) then
+				_str = clr_o .. " � " .. clr_2 .. str_tbl.arty_cont .. ": " .. clr_o .. get_sec_name(break_arty) .. "\\n \\n" .. clr_2
+			end
+		elseif (string_find(sec, "(af.-_iam)",3)) then
+			local break_con = "af_iam"
+			local break_arty = sec:gsub("_af_iam", "")
+			if ini_sys:section_exist(break_arty) then
+				_str = clr_o .. " � " .. clr_2 .. str_tbl.arty_cont .. ": " .. clr_o .. get_sec_name(break_arty) .. "\\n \\n" .. clr_2
+			end
+		elseif (string_find(sec, "(af.-_aac)",3)) then
+			local break_con = "af_aac"
+			local break_arty = sec:gsub("_af_aac", "")
+			if ini_sys:section_exist(break_arty) then
+				_str = clr_o .. " � " .. clr_2 .. str_tbl.arty_cont .. ": " .. clr_o .. get_sec_name(break_arty) .. "\\n \\n" .. clr_2
+			end
+		elseif (string_find(sec, "(af.-_aam)",3)) then
+			local break_con = "af_aam"
+			local break_arty = sec:gsub("_af_aam", "")
+			if ini_sys:section_exist(break_arty) then
+				_str = clr_o .. " � " .. clr_2 .. str_tbl.arty_cont .. ": " .. clr_o .. get_sec_name(break_arty) .. "\\n \\n" .. clr_2
+			end
+		end
+		
+	end
+	
+	-- Patch missing
+	if se_load_var(obj:id(), nil, "unpatched") then
+		local comm = ini_sys:r_string_ex(sec,"community")
+		if comm and (comm ~= "") then
+			local patch_sec = gameplay_disguise.get_patch(comm,true)
+			local patch_name = patch_sec and get_sec_name(patch_sec)
+			if patch_name then
+				_str = _str .. clr_r .. str_tbl.warning .. ": " .. clr_2 .. strformat(str_tbl.out_patch, patch_name) .. "\\n \\n" .. clr_2
+			end
+		end
+	end
+	
+	str = _str .. str
+	
+	return str
+end
+
+function build_desc_footer(obj, sec, str) -- one obj used
+	str = str or gc(ini_sys:r_string_ex(sec,"description"))
+	if (not str) then return "" end
+
+	local _str = ""
+	if is_empty(str_tbl) then
+		refresh_strings()
+	end
+	
+	--[[
+	if string_find(sec,"af_") then
+		if (string_find(sec, "(af.-_iam)",3)) then
+			local break_con = "af_iam"
+			local rad_out = "12"
+			_str = _str .. "%c[0,225,225,225] � " .. clr_1 .. " " .. str_tbl.arty_cont_rad .. ": " .. clr2 .. rad_out .. " " .. gc("st_msv") .. " \\n"
+		elseif (string_find(sec, "(af.-_aac)",3)) then
+			local break_con = "af_aac"
+			local rad_out = "24"
+			_str = _str .. "%c[0,225,225,225] � " .. clr_1 .. " " .. str_tbl.arty_cont_rad .. ": " .. clr2 .. rad_out .. " " .. gc("st_msv") .. " \\n"
+		elseif (string_find(sec, "(af.-_aam)",3)) then
+			local break_con = "af_aam"
+			local rad_out = "36"
+			_str = _str .. "%c[0,225,225,225] � " .. clr_1 .. " " .. str_tbl.arty_cont_rad .. ": " .. clr2 .. rad_out .. " " .. gc("st_msv") .. " \\n"
+		end
+	end
+	--]]
+	
+	-- Outfit states
+	if IsOutfit(obj) then
+		local helmet_avaliable = ini_sys:r_bool_ex(sec,"helmet_avaliable") ~= false
+		local artefact_count = ini_sys:r_float_ex(sec,"artefact_count") or 0
+		local sprint_allowed = ini_sys:r_bool_ex(sec,"sprint_allowed") ~= false
+		local additional_inventory_weight = ini_sys:r_float_ex(sec,"additional_inventory_weight") or 0
+		local community = ini_sys:r_string_ex(sec,"community")
+		
+		_str = _str .. clr_2 .. " " .. str_tbl.prop .. ":\\n"
+		_str = _str .. clr_y .. "  � " .. clr_1 .. " " .. str_tbl.out_comm .. ": " .. clr_2 .. (community and gc("st_dyn_news_comm_" .. community .. "_6") or str_tbl.stat_unknown) .. " \\n"
+		_str = _str .. clr_p .. "  � " .. clr_1 .. " " .. str_tbl.out_helm .. ": " .. clr_2 .. (helmet_avaliable and str_tbl.stat_included or str_tbl.stat_avail) .. " \\n"
+--		_str = _str .. clr_p .. "  � " .. clr_1 .. " " .. str_tbl.out_slots .. ": " .. clr_2 .. tostring(artefact_count) .. " \\n"
+--		_str = _str .. clr_p .. "  � " .. clr_1 .. " " .. str_tbl.out_cw .. ": " .. clr_2 .. "+" .. tostring(additional_inventory_weight) .. " " .. gc("st_kg") .. " \\n"
+		_str = _str .. clr_p .. "  � " .. clr_1 .. " " .. str_tbl.out_run .. " " .. (sprint_allowed and str_tbl.stat_posble_y or str_tbl.stat_posble_n) .. " \\n"
+	
+	-- parts
+	elseif IsItem("part",sec) then
+		local part_o = string_find(sec,"prt_o") and true or false
+		local part_w = string_find(sec,"prt_w") and true or false
+		local part_type = (part_o and str_tbl.part_o) or (part_w and str_tbl.part_w) or (str_tbl.part_i)
+	
+		_str = _str .. clr_2 .. " " .. str_tbl.prop .. ":\\n"
+		_str = _str .. clr_p .. "  � " .. clr_1 .. " " .. part_type .. " \\n"
+		if part_o or part_w then
+			_str = _str .. clr_o .. "  � " .. clr_1 .. " " .. str_tbl.part_usable .. " \\n"
+		end
+		
+	-- upgrades
+	elseif IsItem("upgrade",sec) then
+		local upgr_o = string_find(sec,"upgr_o") and true or false
+		local part_type = upgr_o and str_tbl.upgr_o or str_tbl.upgr_w
+	
+		_str = _str .. clr_2 .. " " .. str_tbl.prop .. ":\\n"
+		_str = _str .. clr_p .. "  � " .. clr_1 .. " " .. part_type .. " \\n"
+		_str = _str .. clr_o .. "  � " .. clr_1 .. " " .. str_tbl.upgr_usable .. " \\n"
+	
+	-- Consumables (Sleepiness \ Thirstiness)
+	elseif IsItem("consumable",sec) then
+		local eat_sleepiness = ini_sys:r_float_ex(sec,"eat_sleepiness")
+		if eat_sleepiness then
+			local num = math.abs(eat_sleepiness) * 1000
+			local amount = ((num > 1000) and str_tbl.stat_significant) or ((num > 200) and str_tbl.stat_moderate) or str_tbl.stat_slight
+			local sign = (eat_sleepiness > 0 ) and str_tbl.stat_increase or str_tbl.stat_decrease
+			local clr = (eat_sleepiness > 0 ) and clr_r or clr_g
+			local str1_eat_sleepiness =  strformat(str_tbl.eat_sleepiness, amount, sign)
+			_str = _str .. clr .. "  � " .. clr_1 .. " " .. str1_eat_sleepiness .. " \\n"
+		end
+		
+		local eat_thirstiness = ini_sys:r_float_ex(sec,"eat_thirstiness")
+		if eat_thirstiness then
+			local num = math.abs(eat_thirstiness) * 1000
+			local amount = ((num > 1000) and str_tbl.stat_significant) or ((num > 200) and str_tbl.stat_moderate) or str_tbl.stat_slight
+			local sign = (eat_thirstiness > 0 ) and str_tbl.stat_increase or str_tbl.stat_decrease
+			local clr = (eat_thirstiness > 0 ) and clr_r or clr_g
+			local str1_eat_thirstiness =  strformat(str_tbl.eat_thirstiness, amount, sign)
+			_str = _str .. clr .. "  � " .. clr_1 .. " " .. str1_eat_thirstiness .. " \\n"
+		end
+		
+		local eat_health = ini_sys:r_float_ex(sec,"eat_health")
+		if eat_health and (eat_health < 0) then
+			_str = _str .. clr_r .. "  � " .. clr_1 .. " " .. str_tbl.eat_health .. " \\n"
+		end
+		
+		local eat_rad = ini_sys:r_float_ex(sec,"eat_radiation")
+		if eat_rad and (eat_rad > 0) then
+			local num = math.abs(eat_rad) * 10000
+			_str = _str .. clr_r .. "  � " .. clr_1 .. " " .. str_tbl.eat_rad_poison .. ": " .. clr_2 .. "+" .. math_ceil(num) .. " " .. str_tbl.msv .. " \\n"
+		end
+	end
+	
+	-- Power Consumption
+	if IsItem("device",sec) then
+		local val = item_device.dev_consumption_tot[sec]
+		if val then
+			local unit = str_tbl.ah_sec
+			if (val < 1) then
+				val = val * 1000
+				unit = str_tbl.mah_sec
+			end
+			if (val < 1) then
+				val = val * 1000
+				unit = str_tbl.uah_sec
+			end
+			if (val < 1) then
+				val = val * 1000
+				unit = str_tbl.pah_sec
+			end
+			
+			_str = _str .. clr_p .. "  � " .. clr_1 .. " " .. gc("st_ui_power_consumption") .. ": " .. clr_2 .. tostring(val) .. " " .. unit .. " \\n"
+		end
+	end
+	
+	-- Repair base condition
+	local repair_base = ini_sys:r_float_ex(sec,"repair_add_condition")
+	if repair_base then
+		_str = _str .. clr_o .. "  � " .. clr_1 .. " " .. str_tbl.repair_base_con .. ": " .. clr_2 .. " +" .. tostring(math_ceil(repair_base*100)) .. "% \\n"
+	end
+	
+	-- Repair min condition
+	local repair_min = ini_sys:r_float_ex(sec,"repair_min_condition")
+	if repair_min then
+		_str = _str .. clr_o .. "  � " .. clr_1 .. " " .. str_tbl.repair_min_con .. ": " .. clr_2 .. " " .. tostring(math_ceil(repair_min*100)) .. "% \\n"
+	end
+	
+	-- Repair bonus part
+	local repair_bonus = ini_sys:r_float_ex(sec,"repair_part_bonus")
+	if repair_bonus then
+		_str = _str .. clr_o .. "  � " .. clr_1 .. " " .. str_tbl.repair_bonus .. ": " .. clr_2 .. " +" .. tostring(math_ceil(repair_bonus*100)) .. "% \\n"
+	end
+	
+	-- Repair match parts
+	local is_part_match = ini_sys:r_bool_ex(sec,"repair_parts_match")
+	if is_part_match then
+		_str = _str .. clr_b .. "  � " .. clr_1 .. " " .. str_tbl.repair_match .. " \\n"
+	end
+	
+	-- Workshop tool
+	local is_workshop_tool = ini_sys:r_bool_ex(sec,"workshop_tool")
+	if is_workshop_tool then
+		_str = _str .. clr_p .. "  � " .. clr_1 .. " " .. str_tbl.workshop_tool .. " \\n"
+	end
+	
+	-- Required tool
+	local required_tool = ini_sys:r_string_ex(sec,"required_tool")
+	if required_tool and ini_sys:section_exist(required_tool) then
+		local required_tool_name = get_sec_name(required_tool)
+		_str = _str .. clr_o .. "  � " .. clr_1 .. " " .. str_tbl.require_tool .. ": " .. clr_2 .. " " .. required_tool_name .. " \\n"
+	end
+	
+	
+	str = str .. _str .. " \\n"
+	
+	return str
+end
+
+
+-- Called from Engine!
+function item_name(obj, str)
+	local id = obj:id()
+	local sec = obj:section()
+	
+	if (last_n_id == id) then
+		return last_name_id or ""
+	end
+	
+	str = build_name_first(obj,sec,str) -- Beginning
+	str = build_name_last(obj,sec,str) -- End
+	
+	last_n_id = id
+	last_name_id = str
+	
+	return str or ""
+end
+
+-- Called from Engine!
+function item_short_name(obj, str)
+	return str or ""
+	--[[
+	local id = obj:id()
+	local sec = obj:section()
+	
+	if (last_n_id == id) then
+		return last_name_id or ""
+	end
+	
+	str = build_short_name_first(obj,sec,str) -- Beginning
+	
+	last_n_id = id
+	last_name_id = str
+	
+	return str or ""
+	--]]
+end
+
+-- Called from Engine!
+function item_description(obj, str)
+	local id = obj:id()
+	local sec = obj:section()
+	
+	if (last_d_id == id) then
+		return last_desc_id or ""
+	end
+	
+	str = build_desc_header(obj,sec,str) -- Header
+	str = build_desc_footer(obj,sec,str) -- Footer
+	
+	last_d_id = id
+	last_desc_id = str
+	
+	return str or ""
+end
+
+
+------------------------------------------------------------
+-- Callbacks
+------------------------------------------------------------
+local function on_key_release(key)
+	--local bind = dik_to_bind(key)
+	
+	-- Reset strings on inventory button
+	--if (bind == key_bindings.kINVENTORY) then
+		last_n_id = nil
+		last_d_id = nil
+		last_name_id = nil
+		last_desc_id = nil
+	--end
+end
+
+function on_game_start()
+	refresh_strings()
+
+	RegisterScriptCallback("on_key_release",on_key_release)
+	RegisterScriptCallback("on_localization_change",refresh_strings)
+end 
