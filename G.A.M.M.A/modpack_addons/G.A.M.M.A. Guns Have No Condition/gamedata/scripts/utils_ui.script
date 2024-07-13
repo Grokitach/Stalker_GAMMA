@@ -1,0 +1,3528 @@
+
+--[[
+
+- Tronex
+- 2020/2/3
+- Item cell utilities
+- Simulation to engine CUI classes in LUA, have a full control over how things work
+
+Item cell:
+	Item icon and its related elements (Icon layers, attachments, condition bar, stack counter, upgrade indicator, color)
+	Support: set/update function to adapt to changes, highlight area with custom color
+
+Item container:
+	A place to holds and organize item cells together, easy to set or remove item cells with indexing methods
+	Support for cell hover/highlight, drag and drop and callbacks with owner classes
+
+Item properties:
+	Show a list of context that player can set and customize for the item cell
+
+Item info box:
+	For item cells
+	Consist of: name, weight, price/points (based on mode), description, stats list (icon / text), ammo list
+	Support stats comparison with equipped items of the same slot
+
+Upgrade info box:
+	For item upgrade cells
+	Consist of: name, description, state or pre-requirements, stats list (icon + text)
+
+
+------------------
+TODO:
+- Upgrades support for info box
+- info box pos relative to mouse need improvements
+
+--]]
+
+
+local ratio = utils_xml.screen_ratio()
+
+local XMLP = CScriptXmlInit()
+XMLP:ParseFile("utils.xml")
+
+-- Icon coloring base on inventory mode and interaction
+local clr_list = {
+	["def"]         = GetARGB(255, 255, 255, 255),
+	["red"]         = GetARGB(255, 255, 50, 50),
+	["green"]       = GetARGB(255, 100, 255, 150),
+	["blue"]        = GetARGB(255, 100, 150, 255),
+	["black"]       = GetARGB(255, 0, 0, 0),
+	
+	["drag"]        = GetARGB(150, 255, 255, 255),
+	["hide"]        = GetARGB(70, 255, 255, 255),
+	["shadow"]      = GetARGB(200, 20, 20, 20),
+	["hide_shadow"] = GetARGB(70, 20, 20, 20),
+	
+	["p1"]          = GetARGB(255, 170, 170, 170),
+	["n1"]          = GetARGB(255, 200, 50, 50),
+	["p2"]          = GetARGB(255, 51, 255, 102),
+	["n2"]          = GetARGB(255, 204, 0, 51),
+	
+	["info_def"]    = GetARGB(200, 255, 255, 255),
+	["info_p"]      = GetARGB(255, 56, 209, 115),
+	["info_n"]      = GetARGB(255, 238, 28, 36),
+	["info_p_txt"]  = GetARGB(200, 100, 255, 100),
+	["info_n_txt"]  = GetARGB(200, 255, 100, 100),
+}
+
+local clr_list_hl = {
+	["def"]         = GetARGB(25, 255, 255, 255),
+	["green"]       = GetARGB(30, 100, 255, 150),
+	["blue"]        = GetARGB(40, 100, 200, 255),
+}
+
+-- Progress bar profiles based on "condition_bar" parameter in item section
+local bar_list = {
+	["condition_progess_bar"] = { min= {255,196,18,18,0}, mid= {255,255,255,118,0.5}, max= {255,107,207,119,1}, background= true},
+	["power_progess_bar"]     = { def= GetARGB(255,86,196,209), background= true },
+	["uses_progess_bar"]      = { def= GetARGB(255,255,255,255), background= false },
+}
+
+-- UI events
+local K_M1      = DIK_keys.MOUSE_1
+local K_M2      = DIK_keys.MOUSE_2
+local K_SHFT    = DIK_keys.DIK_LSHIFT
+local E_PRESS   = ui_events.WINDOW_KEY_PRESSED
+local E_RELEASE = ui_events.WINDOW_KEY_RELEASED
+
+-- Utils
+local has_upgrades          = utils_item.has_upgrades
+local sync_element          = utils_xml.sync_element
+local sync_cursor           = utils_xml.sync_cursor
+local get_item_axis         = utils_xml.get_item_axis
+local get_item_trade_status = utils_item.get_item_trade_status
+local get_item_cost         = utils_item.get_item_cost
+local lerp_color			= utils_xml.lerp_color
+
+-- Main Menu
+local mm_active = true
+
+function main_menu_on()
+	mm_active = true
+end
+
+function main_menu_off()
+	mm_active = false
+end
+
+function on_game_start()
+	RegisterScriptCallback("main_menu_on_init", main_menu_on)
+	RegisterScriptCallback("main_menu_on_quit", main_menu_off)
+end
+
+function get_time()
+	return mm_active and time_continual() or time_global()
+end
+
+-- Item order
+local item_order = {}
+function set_item_order()
+	local n = ini_sys:line_count("item_kind_order")
+	for i=0,n-1 do
+		local result, kind, order = ini_sys:r_line_ex("item_kind_order",i,"","")
+		if kind and order then
+			item_order[kind] = tonumber(order) or 30
+		end
+	end
+	item_order["na"] = size_table(item_order) + 1
+end
+set_item_order()
+
+local ab_w, ab_h, ab_k = {}, {}, {}
+local a_sec, a_w, a_h, a_k
+local b_sec, b_w, b_h, b_k
+function sort_info(asec, bsec)
+	-- A
+	a_sec = asec
+	if (not ab_w[a_sec]) then ab_w[a_sec] = SYS_GetParam(2,a_sec,"inv_grid_width",1) end
+	if (not ab_h[a_sec]) then ab_h[a_sec] = SYS_GetParam(2,a_sec,"inv_grid_height",1) end
+	if (not ab_k[a_sec]) then
+		ab_k[a_sec] = SYS_GetParam(0,a_sec,"kind","na")
+		if (not item_order[ab_k[a_sec]]) then
+			ab_k[a_sec] = "na"
+		end
+	end
+	a_w = ab_w[a_sec]
+	a_h = ab_h[a_sec]
+	a_k = item_order[ab_k[a_sec]]
+	
+	-- B
+	b_sec = bsec
+	if (not ab_w[b_sec]) then ab_w[b_sec] = SYS_GetParam(2,b_sec,"inv_grid_width",1) end
+	if (not ab_h[b_sec]) then ab_h[b_sec] = SYS_GetParam(2,b_sec,"inv_grid_height",1) end
+	if (not ab_k[b_sec]) then
+		ab_k[b_sec] = SYS_GetParam(0,b_sec,"kind","na")
+		if (not item_order[ab_k[b_sec]]) then
+			ab_k[b_sec] = "na"
+		end
+	end
+	b_w = ab_w[b_sec]
+	b_h = ab_h[b_sec]
+	b_k = item_order[ab_k[b_sec]]
+end
+
+function sort_by_size(t,a,b)
+	if (type(t[a]) == "string") then
+		sort_info(t[a], t[b])
+	else
+		sort_info(t[a]:section(), t[b]:section())
+	end
+	
+	-- Comparison
+	--printf("%s - %s", a_sec, b_sec)
+	if (a_w == b_w) then
+		if (a_h == b_h) then
+			if (a_sec == b_sec) then
+				if (type(t[a]) == "string") then
+					return false --true
+				end
+				return t[a]:id() > t[b]:id()
+			end
+			return a_sec < b_sec -- alphaptic order
+		end
+		return a_h > b_h
+	end
+	return a_w > b_w
+end
+
+function sort_by_kind(t,a,b)
+	if (type(t[a]) == "string") then
+		sort_info(t[a], t[b])
+	else
+		sort_info(t[a]:section(), t[b]:section())
+	end
+	
+	if a_k == b_k then
+		return sort_by_size(t,a,b)
+	end
+	return a_k < b_k
+end
+
+function sort_by_index(t,a,b)
+	return t[a].index < t[b].index
+end
+
+function sort_by_sizekind(t,a,b)
+	if (type(t[a]) == "string") then
+		sort_info(t[a], t[b])
+	else
+		sort_info(t[a]:section(), t[b]:section())
+	end
+	
+	-- Comparison
+	--printf("%s - %s", a_sec, b_sec)
+	
+	--\\ bigger width wins
+	if (a_w == b_w) then
+		--\\ bigger height wins
+		if (a_h == b_h) then
+			--\\ important kind wins
+			if a_k == b_k then
+				--\\ alphaptic order wins
+				if (a_sec == b_sec) then
+					--\\ better condition wins
+					if (type(t[a]) == "string") then
+						return false --true
+					end
+					return t[a]:condition() > t[b]:condition()
+				end
+				return a_sec < b_sec
+			end
+			return a_k < b_k
+		end
+		return a_h > b_h
+	end
+	return a_w > b_w
+end
+
+function sort_by_props(t,a,b)
+	-- Only for objects with same sections
+	local sec = t[a]:section()
+	
+	-- For ammo, bigger ammo counts wins
+	if IsItem("ammo",sec) and (not IsItem("grenade_ammo",sec)) then
+		return t[a]:ammo_get_count() > t[b]:ammo_get_count()
+		
+	-- Upgraded items wins
+	elseif utils_item.has_upgrades(t[a]) and (not utils_item.has_upgrades(t[b])) then
+		return true
+	end
+	
+	-- Better condition wins
+	return t[a]:condition() > t[b]:condition()
+end
+
+
+-- Item stats
+stats_table = {}
+function prepare_stats_table()
+--[[
+	index        : showing stat by numric order
+	typ          : parameter value type, important for parsing the value out of parameter section
+	name         : translation string
+	icon_p       : icon to show on positive value
+	icon_n       : icon to show on negavtive value (empty means use positive icon for all occasions)
+	track        : should stat be represnted by a progress bar or text
+	magnitude    : multiplier for parameter value, to represent it to the player for better readings
+	unit         :
+	compare      : allow state comparison with different items (for item info box)
+	sign         : show number sign +/-
+	show_always  : should we show state even if value was 0
+	value_functor: calculate paramter value by using a special function
+--]]
+	if is_not_empty(stats_table) then return end
+	
+	stats_table["weapon"] = {
+		["accuracy"]       			   = { index= 1, typ= "float",   name= "ui_inv_accuracy", 		icon_p= "ui_wp_prop_tochnost", 			icon_n= "", track= true, 	magnitude= 1,   	unit= "", compare= false, sign= false, show_always= true, value_functor= {"utils_ui","prop_accuracry"} },
+		["handling"]                   = { index= 2, typ= "float",   name= "ui_inv_handling", 		icon_p= "ui_wp_prop_ergonomics", 		icon_n= "", track= true, 	magnitude= 1,      	unit= "", compare= false, sign= true, show_always= true, value_functor= {"utils_ui","prop_handling"} },
+		["damage"]                     = { index= 3, typ= "float",   name= "ui_inv_damage", 		icon_p= "ui_wp_prop_damage", 			icon_n= "", track= true, 	magnitude= 1,      	unit= "", compare= false, sign= true, show_always= true , value_functor= {"utils_ui","prop_damage"} },
+		["fire_rate"]                  = { index= 4, typ= "float",   name= "ui_inv_rate_of_fire", 	icon_p= "ui_wp_prop_skorostrelnost", 	icon_n= "", track= true, 	magnitude= 1, 		unit= "", compare= false, sign= false, show_always= true, value_functor= {"utils_ui","prop_rpm"} },
+		["ammo_mag_size"]              = { index= 5, typ= "float",   name= "ui_ammo_count", 		icon_p= "ui_wp_propery_07", 			icon_n= "", track= false, 	magnitude= 1,      	unit= "", compare= false, sign= false ,show_always= true },
+	}
+	
+	stats_table["outfit"] = {
+		["fire_wound_protection"]      = { index= 1, typ= "float",   name= "ui_inv_outfit_fire_wound_protection",    icon_p= "ui_am_propery_01",   icon_n= "", track= true, magnitude= (1/SYS_GetParam(2,"actor_condition","max_fire_wound_protection")), 	unit= "", condition= true,	compare= false, sign= true, show_always= true , value_functor= {"utils_item","get_outfit_protection", "FireWound"}},
+		["burn_protection"]            = { index= 2, typ= "float",   name= "ui_inv_outfit_burn_protection",          icon_p= "ui_am_prop_thermo",  icon_n= "", track= true, magnitude= (1/SYS_GetParam(2,"actor_condition","fire_zone_max_power")), 		unit= "", condition= true,	compare= false, sign= true, show_always= true , value_functor= {"utils_item","get_outfit_protection", "Burn"} },
+		["shock_protection"]           = { index= 3, typ= "float",   name= "ui_inv_outfit_shock_protection",         icon_p= "ui_am_prop_electro", icon_n= "", track= true, magnitude= (1/SYS_GetParam(2,"actor_condition","electra_zone_max_power")), 		unit= "", condition= true,	compare= false, sign= true, show_always= true , value_functor= {"utils_item","get_outfit_protection", "Shock"}},
+		["chemical_burn_protection"]   = { index= 4, typ= "float",   name= "ui_inv_outfit_chemical_burn_protection", icon_p= "ui_am_prop_chem",    icon_n= "", track= true, magnitude= (1/SYS_GetParam(2,"actor_condition","acid_zone_max_power")),     	unit= "", condition= true,	compare= false, sign= true, show_always= true , value_functor= {"utils_item","get_outfit_protection", "ChemicalBurn"}},
+		["radiation_protection"]       = { index= 5, typ= "float",   name= "ui_inv_outfit_radiation_protection",     icon_p= "ui_am_propery_09",   icon_n= "", track= true, magnitude= (1/SYS_GetParam(2,"actor_condition","radio_zone_max_power")), 		unit= "", condition= true,	compare= false, sign= true, show_always= true , value_functor= {"utils_item","get_outfit_protection", "Radiation"}},
+		["telepatic_protection"]       = { index= 6, typ= "float",   name= "ui_inv_outfit_telepatic_protection",     icon_p= "ui_am_propery_11",   icon_n= "", track= true, magnitude= (1/SYS_GetParam(2,"actor_condition","psi_zone_max_power")),      	unit= "", condition= true,	compare= false, sign= true, show_always= true , value_functor= {"utils_item","get_outfit_protection", "Telepatic"}},
+		["wound_protection"]           = { index= 7, typ= "float",   name= "ui_inv_outfit_wound_protection",         icon_p= "ui_am_prop_wound",   icon_n= "", track= true, magnitude= (1/SYS_GetParam(2,"actor_condition","max_wound_protection")), 		unit= "", condition= true,	compare= false, sign= true, show_always= true , value_functor= {"utils_item","get_outfit_protection", "Wound"}},
+		["strike_protection"]          = { index= 8, typ= "float",   name= "ui_inv_outfit_strike_protection",        icon_p= "ui_am_prop_strike",  icon_n= "", track= true, magnitude= 1,                                                                   unit= "", condition= true,	compare= false, sign= true, show_always= true , value_functor= {"utils_item","get_outfit_protection", "Strike"}},
+		["explosion_protection"]       = { index= 9, typ= "float",   name= "ui_inv_outfit_explosion_protection",     icon_p= "ui_am_prop_explo",   icon_n= "", track= true, magnitude= 1,                                                                   unit= "", condition= true,	compare= false, sign= true, show_always= true , value_functor= {"utils_item","get_outfit_protection", "Explosion"}},
+		["artefact_count"]			   = { index= 10, typ= "float",   name= "ui_inv_outfit_artefact_count",       	 icon_p= "ui_am_prop_artefact",icon_n= "", track= false, magnitude= 1,                                                                  unit= "",                   compare= false, sign= false,show_always= true , value_functor= {"utils_item","get_outfit_belt_size"}},
+		["additional_inventory_weight"]= { index= 11, typ= "float",   name= "ui_inv_outfit_additional_weight",       icon_p= "ui_am_propery_08",   icon_n= "ui_am_prop_carry_weight_negative", track= false, magnitude= 1,                                  unit= "st_kg",              compare= false, sign= true, show_always= true , value_functor= {"utils_item","get_outfit_property", "additional_inventory_weight"}},
+	}
+	
+	stats_table["backpack"] = {
+		["additional_inventory_weight"]= { index= 1, typ= "float",   name= "ui_inv_outfit_additional_weight",       icon_p= "ui_am_propery_08",   icon_n= "ui_am_prop_carry_weight_negative", track= false, magnitude= 1, unit= "st_kg", compare= false, sign= true, show_always= true},
+	}
+	
+	stats_table["artefact"] = {
+		["condition"]                  = { index= 1,  typ= "float",   name= "ui_inv_af_condition",                    icon_p= "ui_am_condition",                  icon_n= "",                                 track= false, magnitude= 100,   unit= "st_perc",    compare= false, sign= true, show_always= true , value_functor= {"utils_ui","prop_condition"} },
+		["health_restore_speed"]       = { index= 2,  typ= "float",   name= "ui_inv_health",                          icon_p= "ui_am_propery_05",                 icon_n= "ui_am_prop_health_negative",       track= false, magnitude= 6600,  unit= "",           condition= true,	compare= false, sign= true, show_always= false },
+		["radiation_restore_speed"]    = { index= 3,  typ= "float",   name= "ui_inv_radiation",                       icon_p= "ui_am_propery_09",                 icon_n= "ui_am_prop_radio_restore",         track= false, magnitude= 47000, unit= "st_msv_sec", condition= true,	compare= false, sign= true, show_always= false, sign_inverse= true },
+		["satiety_restore_speed"]      = { index= 4,  typ= "float",   name= "ui_inv_satiety",                         icon_p= "ui_am_prop_satiety_restore_speed", icon_n= "ui_am_prop_satiety",               track= false, magnitude= 100,   unit= "",           condition= true,	compare= false, sign= true, show_always= false },
+		["power_restore_speed"]        = { index= 5,  typ= "float",   name= "ui_inv_power",                           icon_p= "ui_am_propery_07",                 icon_n= "ui_am_prop_power_restore",         track= false, magnitude= 30000, unit= "st_perc",    condition= true,	compare= false, sign= true, show_always= false },
+		["bleeding_restore_speed"]     = { index= 6,  typ= "float",   name= "ui_inv_bleeding",                        icon_p= "ui_am_prop_restore_bleeding",      icon_n= "ui_am_prop_bleeding_restore",      track= false, magnitude= 15000, unit= "st_ml_min",  condition= true,	compare= false, sign= true, show_always= false },
+		["burn_immunity"]              = { index= 7,  typ= "float",   name= "ui_inv_outfit_burn_protection",          icon_p= "ui_am_prop_thermo",                icon_n= "ui_am_prop_burn_immunity",         track= false, magnitude= 84800, unit= "st_perc",    condition= true,	compare= false, sign= true, show_always= false ,section= "hit_absorbation_sect" },
+		["shock_immunity"]             = { index= 8,  typ= "float",   name= "ui_inv_outfit_shock_protection",         icon_p= "ui_am_prop_electro",               icon_n= "ui_am_prop_shock_immunity",        track= false, magnitude= 8000,  unit= "st_kv",      condition= true,	compare= false, sign= true, show_always= false ,section= "hit_absorbation_sect" },
+		["radiation_immunity"]         = { index= 9,  typ= "float",   name= "ui_inv_outfit_radiation_protection",     icon_p= "ui_am_propery_09",                 icon_n= "ui_am_prop_radiation_immunity",    track= false, magnitude= 750,   unit= "st_perc",    condition= true,	compare= false, sign= true, show_always= false ,section= "hit_absorbation_sect" },
+		["telepatic_immunity"]         = { index= 10, typ= "float",   name= "ui_inv_outfit_telepatic_protection",     icon_p= "ui_am_propery_11",                 icon_n= "ui_am_prop_telepat_immunity",      track= false, magnitude= 5800,  unit= "st_perc",    condition= true,	compare= false, sign= true, show_always= false ,section= "hit_absorbation_sect" },
+		["chemical_burn_immunity"]     = { index= 11, typ= "float",   name= "ui_inv_outfit_chemical_burn_protection", icon_p= "ui_am_prop_chem",                  icon_n= "ui_am_prop_chemburn_immunity",     track= false, magnitude= 19100, unit= "st_perc",    condition= true,	compare= false, sign= true, show_always= false ,section= "hit_absorbation_sect" },
+		["wound_immunity"]             = { index= 12, typ= "float",   name= "ui_inv_outfit_wound_protection",         icon_p= "ui_am_prop_wound",                 icon_n= "ui_am_prop_wound_minus",           track= false, magnitude= 2500,  unit= "st_j",       condition= true,	compare= false, sign= true, show_always= false ,section= "hit_absorbation_sect" },
+		["fire_wound_immunity"]        = { index= 13, typ= "float",   name= "ui_inv_outfit_fire_wound_protection",    icon_p= "ui_am_propery_01",                 icon_n= "ui_am_prop_fire_wound_negative",   track= false, magnitude= 2500,  unit= "st_j",       condition= true,	compare= false, sign= true, show_always= false ,section= "hit_absorbation_sect" },
+		["explosion_immunity"]         = { index= 14, typ= "float",   name= "ui_inv_outfit_explosion_protection",     icon_p= "ui_am_prop_explo",                 icon_n= "ui_am_prop_explo_minus",           track= false, magnitude= 2500,  unit= "st_j",       condition= true,	compare= false, sign= true, show_always= false ,section= "hit_absorbation_sect" },
+		["strike_immunity"]            = { index= 15, typ= "float",   name= "ui_inv_outfit_strike_protection",        icon_p= "ui_am_prop_strike",                icon_n= "ui_am_prop_strike_minus",          track= false, magnitude= 2500,  unit= "st_j",       condition= true,	compare= false, sign= true, show_always= false ,section= "hit_absorbation_sect" },
+		["additional_inventory_weight"]= { index= 16, typ= "float",   name= "ui_inv_outfit_additional_weight",        icon_p= "ui_am_propery_08",                 icon_n= "ui_am_prop_carry_weight_negative", track= false, magnitude= 1000,  unit= "st_g",       compare= false, sign= true, show_always= false },
+	}
+	
+	stats_table["booster"] = {
+		["boost_time"]                 = { index= 1,   typ= "float",  name= "ui_inv_effect_time",                     icon_p= "ui_am_prop_time_period",           icon_n= "",                                track= false, magnitude= 1,     unit= "ui_inv_seconds", compare= false, sign= true, show_always= false },
+		["boost_health_restore"]       = { index= 2,   typ= "float",  name= "ui_inv_health",                          icon_p= "ui_am_propery_05",                 icon_n= "",                                track= false, magnitude= 1000,   unit= "st_perc",       compare= false, sign= true, show_always= false },
+		["boost_radiation_restore"]    = { index= 3,   typ= "float",  name= "ui_inv_radiation",                       icon_p= "ui_am_propery_09",                 icon_n= "",                                track= false, magnitude= 30000,  unit= "st_msv_sec",    compare= false, sign= true, show_always= false, sign_inverse_txt= true },
+		["eat_satiety"]                = { index= 4,   typ= "float",  name= "ui_inv_satiety",                         icon_p= "ui_am_prop_satiety_restore_speed", icon_n= "ui_am_prop_satiety",              track= false, magnitude= 1000,   unit= "st_kcal",       compare= false, sign= true, show_always= false },
+		["boost_anabiotic"]            = { index= 5,   typ= "float",  name= "",                                       icon_p= "ui_am_prop_Vibros",                icon_n= "ui_am_prop_anabiotic",            track= false, magnitude= 1000,   unit= "",              compare= false, sign= true, show_always= false },
+		["boost_power_restore"]        = { index= 6,   typ= "float",  name= "ui_inv_power",                           icon_p= "ui_am_propery_07",                 icon_n= "ui_am_prop_power_restore",        track= false, magnitude= 100000, unit= "st_microg",     compare= false, sign= true, show_always= false },
+		["boost_bleeding_restore"]     = { index= 7,   typ= "float",  name= "ui_inv_bleeding",                        icon_p= "ui_am_prop_restore_bleeding",      icon_n= "ui_am_prop_bleeding_restore",     track= false, magnitude= 150000, unit= "st_ml_min",     compare= false, sign= true, show_always= false },
+		["boost_radiation_protection"] = { index= 8,   typ= "float",  name= "ui_inv_outfit_radiation_protection",     icon_p= "ui_am_propery_09",                 icon_n= "ui_am_prop_radiation_protection", track= false, magnitude= 12000,  unit= "st_msv",        compare= false, sign= true, show_always= false },
+		["boost_telepat_protection"]   = { index= 9,   typ= "float",  name= "ui_inv_outfit_telepatic_protection",     icon_p= "ui_am_propery_11",                 icon_n= "ui_am_prop_telepat_protection",   track= false, magnitude= 1500,   unit= "st_mt",         compare= false, sign= true, show_always= false },
+		["boost_chemburn_protection"]  = { index= 10,  typ= "float",  name= "ui_inv_outfit_chemical_burn_protection", icon_p= "ui_am_prop_chem",                  icon_n= "ui_am_prop_chemburn_protection",  track= false, magnitude= 24750,  unit= "st_perc",       compare= false, sign= true, show_always= false },
+		["boost_burn_immunity"]        = { index= 11,  typ= "float",  name= "ui_inv_outfit_burn_protection",          icon_p= "ui_am_prop_thermo",                icon_n= "ui_am_prop_burn_immunity",        track= false, magnitude= 300,    unit= "st_kw_m2",      compare= false, sign= true, show_always= false },
+		["boost_shock_immunity"]       = { index= 12,  typ= "float",  name= "ui_inv_outfit_shock_protection",         icon_p= "ui_am_prop_electro",               icon_n= "ui_am_prop_shock_immunity",       track= false, magnitude= 480,    unit= "st_v",          compare= false, sign= true, show_always= false },
+		["boost_radiation_immunity"]   = { index= 13,  typ= "float",  name= "ui_inv_outfit_radiation_protection",     icon_p= "ui_am_propery_09",                 icon_n= "ui_am_prop_radiation_immunity",   track= false, magnitude= 3000,   unit= "st_msv",        compare= false, sign= true, show_always= false },
+		["boost_telepat_immunity"]     = { index= 14,  typ= "float",  name= "ui_inv_outfit_telepatic_protection",     icon_p= "ui_am_propery_11",                 icon_n= "ui_am_prop_telepat_immunity",     track= false, magnitude= 300,    unit= "st_mt",         compare= false, sign= true, show_always= false },
+		["boost_chemburn_immunity"]    = { index= 15,  typ= "float",  name= "ui_inv_outfit_chemical_burn_protection", icon_p= "ui_am_prop_chem",                  icon_n= "ui_am_prop_chemburn_immunity",    track= false, magnitude= 380000, unit= "st_perc",       compare= false, sign= true, show_always= false },
+		["boost_max_weight"]           = { index= 16,  typ= "float",  name= "ui_inv_outfit_additional_weight",        icon_p= "ui_am_propery_08",                 icon_n= "ui_am_prop_max_weight",           track= false, magnitude= 1000,  unit= "st_g",           compare= false, sign= true, show_always= false },
+	}
+end
+
+function add_stats_table(k1,k2,v)
+	if is_not_empty(stats_table) then return end
+	
+	if (not stats_table[k1]) then
+		stats_table[k1] = {}
+	end
+	
+	stats_table[k1][k2] = v
+end
+
+function get_stats_table(sec)
+	prepare_stats_table()
+
+	if ini_sys:r_string_ex(sec, "ammo_class") and (not IsItem("fake_ammo_wpn", sec)) then
+		return stats_table["weapon"]
+	elseif IsItem("outfit", sec) or IsItem("helmet", sec) then 
+		return stats_table["outfit"]
+	elseif IsItem("artefact", sec) then
+		return stats_table["artefact"]
+	elseif IsItem("consumable", sec) then
+		return stats_table["booster"]
+	elseif IsItem("backpack", sec) then
+		return stats_table["backpack"]
+	end
+	return nil
+end
+
+function get_stats_value(obj, sec, gr, stat)
+	prepare_stats_table()
+	
+	if type(gr) == "string" then
+		gr = stats_table[gr]
+	end
+	if (not gr) then
+		return
+	end
+	
+	local sect = gr.section and SYS_GetParam(0, sec, gr.section) or sec
+	
+	local value = gr.value_functor and get_stats_func_value(obj, sec, unpack(gr.value_functor))
+	if (not value) then
+		value = utils_item.get_param(sect, obj and obj:id(), stat, (gr.typ or "float"), true)
+	end
+	
+	if obj and value and gr.condition then
+		value = value * obj:condition()
+	end
+	
+	return (value ~= 0) and value
+end
+
+function get_stats_func_value(obj, sec, file, func, ...)
+	if file and func and _G[file] and _G[file][func] then
+		return _G[file][func](obj,sec,...)
+	end
+end
+
+function get_stats_string_value(obj, sec, gr, stat, to_text)
+	if type(gr) == "string" then
+		gr = stats_table[gr]
+	end
+	if (not gr) then
+		return
+	end
+	
+	local value = get_stats_value(obj, sec, gr, stat)
+	if (not value) then
+		return
+	end
+	
+	if gr.track then
+		local valbar = clamp((math.abs(value) * gr.magnitude), 0, 1)
+		return to_text and (math.ceil(valbar * 100) .. "%") or valbar
+	else
+		local valbar = value * gr.magnitude
+		local unit = gr.unit and gr.unit ~= "" and game.translate_string(gr.unit) or ""
+		local clr = valbar >= 0 and clr_list["p1"] or clr_list["n1"]
+		valbar = math.ceil(valbar)
+		
+		if gr.sign_inverse then
+			clr = valbar < 0 and clr_list["p1"] or clr_list["n1"]
+		end
+		local sign = gr.sign and valbar > 0 and "+" or ""
+		
+		if gr.sign_inverse_txt then
+			if valbar > 0 then
+				sign = "-"
+			elseif valbar < 0 then
+				valbar = -1 * valbar
+				sign = "+"
+			end
+		end
+		
+		return ( sign .. valbar .. " " .. unit ), (clr == clr_list["n1"] and true or false)
+	end
+end
+
+function get_stats_xml(handler, obj, sec, gr, stat)
+	if type(gr) == "string" then
+		gr = stats_table[gr]
+	end
+	if (not gr) then
+		return
+	end
+	
+	local value, nclr = get_stats_string_value(obj, sec, gr, stat)
+	if (not value) then
+		return
+	end
+
+	local st = XMLP:InitStatic("item_info:stats_box", handler)
+	
+	-- Set up icon
+	local st_icon  = XMLP:InitStatic("item_info:stats_box:icon", st)
+	local icon_p = gr.icon_p
+	local icon_n = (gr.icon_n ~= "") and gr.icon_n or icon_p
+	local icon = icon_p
+	if (type(value) == "number") then
+		icon = value < 0 and icon_n or icon_p
+		if gr.sign_inverse then
+			icon = value < 0 and icon_p or icon_n
+		end
+	end
+	st_icon:InitTexture( icon )
+	
+	-- Set up name
+	local st_cap   = XMLP:InitTextWnd("item_info:stats_box:cap", st)
+	st_cap:SetText( game.translate_string(gr.name) )
+
+	-- Set up bar
+	if gr.track then
+		local st_bar   = XMLP:InitProgressBar("item_info:stats_box:prog_bar", st)
+		st_bar:SetProgressPos( clamp(value,0,1) )
+		st_bar:SetColor( clr_list["info_def"] )
+		
+	-- Set up text
+	else
+		local st_txt   = XMLP:InitTextWnd("item_info:stats_box:prog_txt", st)
+		st_txt:SetText( value )
+		st_txt:SetTextColor( nclr and clr_list["n1"] or clr_list["p1"] )
+	end
+	
+	st:SetAutoDelete(true)
+	
+	return st
+end
+
+
+
+-------------------------------------------------------------------
+-- Item Cell
+-------------------------------------------------------------------
+class "UICellItem"
+
+function UICellItem:__init(container, st, indx, manual)
+
+	-- To define free item cell:
+	-- 		UICellItem( { path= <string> , xml= <xml_file> , grid_size= <number>, grid_line= <number> } , { path= <string>, base= <xml_element>} )
+
+	self.manual    = manual -- manual placement on container, some properties are disabled
+	self.container = container
+	self.path      = container.path
+	self.indx      = indx
+	self.showcase  = 0 		-- [0] attached to object / [1] attached to section (showcase) / [2] same as 1 with no cell room adjust
+	self.cx        = manual and ("cell_" .. indx) or "cell" -- in manual placement, cells are specified by their index in xml file
+	
+	self.grid_size = container.grid_size or 41
+	self.grid_line = container.grid_line or 0
+	
+	self.flags	   		= {} -- you can pass custom info here
+	self.disable_bar	= container.disable_bar and true or false
+	
+	self:InitControls(self.path, st)
+	
+	self:Print(nil, "__init for path (%s)", self.path)
+end
+
+function UICellItem:InitControls(path, st)
+	local xml = self:GetXML()
+	
+	-- Free cell
+	local free_cell = (type(st) == "table")
+	if free_cell then
+		st = self.container.xml:InitStatic(st.path, st.base)
+		self.st = st
+	end
+
+	self.hl = xml:InitStatic(path .. ":" .. self.cx .. ":highlight", st)
+	self.cell = xml:InitStatic(path .. ":" .. self.cx, st)
+	self.shadow = xml:InitStatic(path .. ":" .. self.cx .. ":pic", self.cell)
+	self.ico = xml:InitStatic(path .. ":" .. self.cx .. ":pic", self.cell)
+	
+
+	-- Highlight texture
+	--self.hl:InitTexture("ui_button_inv_h")
+	self.hl:SetStretchTexture(true)
+	self.hl:Show(false)
+	sync_element(self.hl, self.cell)
+end
+
+function UICellItem:Set(obj, area)
+	local xml = self:GetXML()
+	local path = self.path
+	local is_obj = (self.showcase == 0)
+	local grid_size = self.grid_size
+	
+	local sec = is_obj and obj:section() or obj
+	local clsid = is_obj and obj:clsid()
+
+	local x = SYS_GetParam(2,sec, "inv_grid_x")
+	local y = SYS_GetParam(2,sec, "inv_grid_y")
+	local w = SYS_GetParam(2,sec, "inv_grid_width")
+	local h = SYS_GetParam(2,sec, "inv_grid_height")
+	
+	if not x or not y or not w or not h then
+		return false
+	end
+	
+	x = x * grid_size
+	y = y * grid_size
+	w = w * grid_size
+	h = h * grid_size
+	
+	self.ID = is_obj and obj:id() or nil
+	self.section = sec
+	self.area = area
+	--self.X = x
+	--self.Y = y
+	self.W = w
+	self.H = h
+
+	-- Trade mode
+	--if self:Check_TradeMode(obj, sec) then
+		--return false
+	--end
+	
+	-- Cell pos
+	if area and (not self.manual) then
+		local area_x = ((area.x * grid_size) - grid_size) * ratio
+		local area_y = (area.y * grid_size) - grid_size
+		local area_xl = self.grid_line * area.x
+		local area_yl = self.grid_line * area.y
+		
+		self.cell:SetWndPos(vector2():set( area_x + area_xl , area_y + area_yl ))
+		self.cell:SetWndSize(vector2():set(w * ratio , h))
+		sync_element(self.hl, self.cell)
+		self:Print(nil, "Set for [%s]  in (%s,%s,%s,%s)", sec, area_x, area_y, w, h)
+		
+	-- Cell pos (free cell)
+	elseif self.st then 
+		local st_x = ((self.st:GetWidth() /2) - ((w * ratio) /2))
+		local st_y = ((self.st:GetHeight() /2) - (h /2))
+		self.cell:SetWndPos(vector2():set( st_x , st_y ))
+		self.cell:SetWndSize(vector2():set(w * ratio , h))
+		sync_element(self.hl, self.cell)
+		self:Print(nil, "Set for [%s]  in free cell", sec)
+	end
+	
+	-- Icon
+	self:Add_Icon(sec, w, h)
+	self:Add_Shadow(sec, w, h)
+	
+	-- Icon layers
+	self:Add_Layers(xml, obj, sec, clsid)
+	
+	-- Update cell
+	local is_updated = self:Update(is_obj and obj)
+	if (not is_updated) then
+		self:Print(nil, "Updating failed for [%s] | Reset cell", sec)
+		self:Reset()
+		return false
+	end
+	
+	self.cell:Show(true)
+	return true
+end
+
+function UICellItem:Update(obj)
+	obj = obj or (self.ID and level.object_by_id(self.ID))
+	if (self.showcase == 0) and (not obj) then
+		self:ResetToChild()
+		return false
+	end
+	self:Print(nil, "Update for [%s]", sec)
+	
+	local sec = self.section
+	local xml = self:GetXML()
+	
+	if obj then
+		local clsid = obj:clsid()
+		
+		-- Update condition bar
+		self:Add_ProgressBar(xml, obj, sec, clsid)
+		
+		-- Update attachments
+		self:Add_Attachements(xml, obj, sec, clsid)
+	end
+
+	-- Update stack counter
+	self:Add_Counter(xml, obj, sec)
+	
+	-- Update upgrade indicator
+	self:Add_Upgrade(xml, obj, sec)
+	
+	-- Update trade mode
+	if self:Check_TradeMode(obj, sec) then
+		return false
+	end
+	
+	-- Update color
+	self:Colorize( self.flags.no_trade and "red" or "def" )
+	
+	return true
+end
+
+function UICellItem:Add_Icon(sec, w, h)
+	local rot = self.ico:GetHeading() > 0
+
+	self.ico:InitTexture( utils_xml.get_icons_texture(sec) )
+	self.ico:SetTextureRect(Frect():set( get_item_axis(sec, nil, true) ))
+	self.ico:SetStretchTexture(true)
+	self.ico:SetWndSize(vector2():set( w * (rot and 1 or ratio) , h * (rot and ratio or 1) ))
+	self.ico:Show(true)
+	utils_xml.align_to_center(self.ico, self.cell)
+	
+	self:Print(nil, "Show icon")
+end
+
+function UICellItem:Add_Shadow(sec, w, h)
+	local rot = self.shadow:GetHeading() > 0
+
+	self.shadow:InitTexture( utils_xml.get_icons_texture(sec) )
+	self.shadow:SetTextureRect(Frect():set( get_item_axis(sec, nil, true) ))
+	self.shadow:SetStretchTexture(true)
+	self.shadow:SetWndSize(vector2():set( w * (rot and 1 or ratio) , h * (rot and ratio or 1) ))
+	self.shadow:Show(true)
+	self.shadow:Show(true)
+	utils_xml.align_to_center(self.shadow, self.cell)
+	
+	local pos = self.ico:GetWndPos()
+	self.shadow:SetWndPos( vector2():set( pos.x + 1 , pos.y + 2 ) )
+	self.shadow:SetTextureColor( clr_list["shadow"] )
+	
+	self:Print(nil, "Show shadow")
+end
+
+function UICellItem:Add_Layers(xml, obj, sec, clsid)
+
+	-- Hide all layers
+	if self.layer then
+		for i=1,#self.layer do
+			self.layer[i]:Show(false)
+		end
+	end
+	
+	-- Add all possible layers
+	local ii = 0
+	while (SYS_GetParam(0, sec, (ii+1).."icon_layer") ~= nil) do
+		ii = ii + 1
+		
+		if (not self.layer) then
+			self.layer = {}
+		end
+		if (not self.layer[ii]) then
+			if (not xml) then 
+				xml = self:GetXML()
+			end
+			self.layer[ii] = xml:InitStatic(self.path .. ":" .. self.cx .. ":pic", self.ico)
+		end
+		
+		local icon_layer = SYS_GetParam(0, sec, ii.."icon_layer")
+		self:Create_Layer(self.layer[ii], self.ico, sec, icon_layer, ii.."icon_layer_x", ii.."icon_layer_y", ii.."icon_layer_scale")
+		
+		self:Print(nil, "Show layer (%s) [%s]", ii, icon_layer)
+	end
+end
+
+function UICellItem:Add_ProgressBar(xml, obj, sec, clsid)
+	
+	-- Hide all bars
+	if self.bar then
+		self.bar:Show(false)
+	end
+	
+	-- On full stacking, hide bar
+	if self.container.stack_all and (self.childs and is_not_empty(self.childs)) then
+		return
+	end
+	
+	-- No bar on showcase cells
+	if (self.showcase ~= 0) or self.disable_bar then
+		return
+	end
+	
+	-- Bar is applied only to classes that support conditon
+	local has_cond = SYS_GetParam(1,sec, "use_condition") or IsWeapon(nil,clsid) or IsOutfit(nil,clsid) or IsHeadgear(nil,clsid)
+	if (not has_cond) then
+		return
+	end
+
+	-- Get bar type
+	local str = SYS_GetParam(0,sec, "condition_bar","condition_progess_bar")
+	
+	-- Init if it doesn't exist
+	if (not self.bar) then
+		if (not xml) then 
+			xml = self:GetXML()
+		end
+		self.bar = xml:InitProgressBar(self.path .. ":" .. self.cx .. ":bar", self.cell)
+		--self.bar:UseColor( true )
+	end
+
+	-- Not manual -> bar is set at the left-bottom corner
+	if (not self.manual) then
+		local h_bar = self.bar:GetHeight()
+		self.bar:SetWndPos(vector2():set( 0 , (self.H - h_bar)))
+	end
+	
+	-- Set progress
+	local cond = obj:condition()
+	if IsItem("multiuse",sec) then
+		cond = (obj:get_remaining_uses()/10)
+	else
+		cond = round_idp(cond,1)
+	end
+
+	if IsWeapon(obj) then
+		cond = 0
+	end
+	self.bar:SetProgressPos( clamp(cond,0,1) )
+	
+	-- Bar properties
+	local props = bar_list[str]
+	local color = props.def or lerp_color( cond , props.min , props.mid , props.max )
+	if color then
+		self.bar:SetColor( color )
+	end
+	
+	self.bar:ShowBackground( props.background )
+	self.bar:Show(true)
+	
+	self:Print(nil, "Show progress bar: %s - cond: %s", str, cond)
+end
+
+function UICellItem:Add_Counter(xml, obj, sec)
+
+	-- Hide counter
+	if self.cnt then
+		self.cnt:Show(false)
+	end
+
+	-- We don't need counter for showcase icons
+	if (self.showcase ~= 0) then
+		return
+	end
+	
+	-- Bar is applied only to ammo or stacked items
+	local is_ammo = IsItem("ammo",sec) and (not IsItem("grenade_ammo",sec))
+	local has_childs = self:HasChild()
+	if not (is_ammo or has_childs) then
+		return
+	end
+	
+	-- Init if it doesn't exist
+	if (not self.cnt) then
+		if (not xml) then 
+			xml = self:GetXML()
+		end
+		self.cnt = xml:InitStatic(self.path .. ":" .. self.cx .. ":cnt", self.cell)
+	end
+	
+	-- Ammo count
+	if is_ammo then
+		local cnt = 0
+		if self.childs then
+			for id,c in pairs(self.childs) do
+				cnt = cnt + c
+			end
+		end
+		local ammo_cnt = ((self.showcase ~= 0) and IsItem("ammo",sec)) or (obj and obj:ammo_get_count()) or 0
+		self.cnt:TextControl():SetText("x" .. (ammo_cnt + cnt) )
+		self.cnt:Show(true)
+		
+	-- Stacked items
+	elseif has_childs then
+		self.cnt:TextControl():SetText("x" .. (size_table(self.childs) + 1) )
+		self.cnt:Show(true)
+	end
+	
+	self:Print(nil, "Show counter | ammo: %s - stacked: %s", is_ammo, has_childs)
+end
+
+function UICellItem:Add_Upgrade(xml, obj, sec)
+
+	-- Hide upgrade indicator
+	if self.upgr then
+		self.upgr:Show(false)
+	end
+	
+	-- On full stacking, hide upgrade indicator
+	if self.container.stack_all and (self.childs and is_not_empty(self.childs)) then
+		return
+	end
+	
+	-- Bar is applied only to upgraded items
+	if (not has_upgrades(obj, sec)) then
+		return
+	end
+	
+	-- Init if it doesn't exist
+	if (not self.upgr) then
+		if (not xml) then 
+			xml = self:GetXML()
+		end
+		self.upgr = xml:InitStatic(self.path .. ":cell:upgrade", self.ico)
+	end
+	
+	-- Positioning
+	local ico = self.ico
+	local xx = 1
+	local yy = 1
+	local rot = ico:GetHeading() > 0
+	if rot then
+		local w_b, h_b = ico:GetWidth(), ico:GetHeight()
+		local x_st = (w_b/2) - (h_b/2)
+		local y_st = h_b + x_st
+		xx = xx + x_st
+		yy = yy + (y_st - w_b)
+	end
+	
+	self.upgr:SetWndPos(vector2():set( xx , yy ))
+	self.upgr:Show(true)
+	
+	self:Print(nil, "Show upgrade indicator")
+end
+
+function UICellItem:Add_Attachements(xml, obj, sec, clsid)
+	
+	-- Hide attachments
+	if self.ico_scope then self.ico_scope:Show(false) end
+	if self.ico_sil then self.ico_sil:Show(false) end
+	if self.ico_gl then self.ico_gl:Show(false) end
+	
+	-- On full stacking, hide counter
+	if self.container.stack_all and (self.childs and is_not_empty(self.childs)) then
+		return
+	end
+	
+	-- No attachments on showcase cells
+	if (self.showcase ~= 0) then
+		return
+	end
+	
+	-- No attachments for non-firearms
+	local magazined_wpn = IsWeapon(nil,clsid) and (not IsItem("fake_ammo_wpn",sec))
+	if (not magazined_wpn) then
+		return
+	end
+
+	-- Scope
+	local scope = (not utils_item.has_scope(sec)) and utils_item.get_attached_scope(obj)
+	if scope then
+		if (not self.ico_scope) then
+			if (not xml) then 
+				xml = self:GetXML()
+			end
+			self.ico_scope = xml:InitStatic(self.path .. ":" .. self.cx .. ":pic", self.ico)
+		end
+		local scopes_sect = utils_item.get_param(sec, obj:id(), "scopes_sect", "string", false)
+		self:Create_Layer(self.ico_scope, self.ico, scopes_sect, scope, "scope_x", "scope_y")
+		self:Print(nil, "Show scope")
+	end
+	
+	-- Silencer
+	local sil = utils_item.get_attached_silencer(obj)
+	if sil then
+		if (not self.ico_sil) then
+			if (not xml) then 
+				xml = self:GetXML()
+			end
+			self.ico_sil = xml:InitStatic(self.path .. ":" .. self.cx .. ":pic", self.ico)
+		end
+		self:Create_Layer(self.ico_sil, self.ico, sec, sil, "silencer_x", "silencer_y")
+		self:Print(nil, "Show silencer")
+	end
+	
+	-- Grenade Launcher
+	local gl = utils_item.get_attached_gl(obj)
+	if gl then
+		if (not self.ico_gl) then
+			if (not xml) then 
+				xml = self:GetXML()
+			end
+			self.ico_gl = xml:InitStatic(self.path .. ":" .. self.cx .. ":pic", self.ico)
+		end
+		self:Create_Layer(self.ico_gl, self.ico, sec, gl, "grenade_launcher_x", "grenade_launcher_y")
+		self:Print(nil, "Show grenade launcher")
+	end
+end
+
+function UICellItem:Add_CustomText(txt, align_h, align_v, clr, fnt)
+	if self.ctxt then
+		self.ctxt:Show(false)
+		self.ctxts:Show(false)
+	end
+	
+	if (not txt) then
+		return
+	end
+	
+	if (not self.ctxt) then
+		local xml = self:GetXML()
+		self.ctxts = xml:InitTextWnd(self.path .. ":" .. self.cx .. ":ctxt", self.cell)
+		self.ctxt = xml:InitTextWnd(self.path .. ":" .. self.cx .. ":ctxt", self.cell)
+		self.ctxts:SetTextColor(clr_list["black"])
+	end
+	
+	utils_xml.sync_size(self.cell, self.ctxt)
+	utils_xml.sync_size(self.ctxt, self.ctxts)
+	
+	local pos = self.ctxt:GetWndPos()
+	self.ctxts:SetWndPos(vector2():set( pos.x+1 , pos.y+1 ))
+	
+	self.ctxt:SetText(txt)
+	self.ctxts:SetText(txt)
+	
+	if align_h then -- [2] center / [4] right
+		self.ctxt:SetTextAlignment(align_h)
+		self.ctxts:SetTextAlignment(align_h)
+	end 
+	if align_v then
+		self.ctxt:SetVTextAlignment(align_v)
+		self.ctxts:SetVTextAlignment(align_v)
+	end
+	
+	if fnt then
+		self.ctxt:SetFont(fnt)
+		self.ctxts:SetFont(fnt)
+	end
+	
+	self.ctxt:SetTextColor(clr or clr_list["def"])
+	
+	self.ctxt:Show(true)
+	self.ctxts:Show(true)
+	
+	self:Print(nil, "Show custom text | txt: %s", txt)
+end
+
+function UICellItem:Create_Layer(ele, base, sec_m, sec_l, str_x, str_y, str_scale)
+	local grid_size = self.grid_size
+	local x = str_x and SYS_GetParam(2,sec_m, str_x) or 0 
+	local y = str_y and SYS_GetParam(2,sec_m, str_y) or 0
+	local w = SYS_GetParam(2,sec_l, "inv_grid_width",1) * grid_size
+	local h = SYS_GetParam(2,sec_l, "inv_grid_height",1) * grid_size
+	local scale = str_scale and SYS_GetParam(2,sec_m, str_scale) or 1
+	local scale_pos = scale * (grid_size/50)
+
+	local rot = ele:GetHeading() > 0
+	local x_s = x * ratio * scale_pos
+	local y_s = y * scale_pos
+	local w_s = w * ratio * scale
+	local h_s = h * scale
+	local w_off = (w_s/2)
+	local h_off = (h_s/2)
+	
+	if rot then
+		-- despite rotation, movement for x and y stays normal! 
+		-- Move start pos to match the one for rotated base icon
+		local w_b, h_b = base:GetWidth(), base:GetHeight()
+		local x_st = (w_b/2) - (h_b/2)
+		local y_st = h_b + x_st
+		
+		-- On 90 rotation, x and y are inverted, y axis goes negative simulate normal x movement
+		x_s = x_st + (y * ratio * scale_pos)
+		y_s = y_st - (x * scale_pos) 
+		w_s = w * scale
+		h_s = h * ratio * scale
+		w_off = (h_s * (1/ratio))/2
+		h_off = -w_s/2
+	end
+	
+	ele:InitTexture( utils_xml.get_icons_texture(sec_l) )
+	ele:SetTextureRect(Frect():set( get_item_axis(sec_l, nil, true) ))
+	ele:SetStretchTexture(true)
+	ele:SetWndPos(vector2():set( x_s + w_off , y_s + h_off ))
+	ele:SetWndSize(vector2():set( w_s , h_s ))
+	ele:Show(true)
+end
+
+function UICellItem:Colorize(clr_id)
+	self:Print(nil, "Colorize [%s]", clr_id)
+	
+	local clr = clr_list[clr_id]
+	if self.ico then self.ico:SetTextureColor( clr ) end
+	if self.ico_scope then self.ico_scope:SetTextureColor( clr ) end
+	if self.ico_sil then self.ico_sil:SetTextureColor( clr ) end
+	if self.ico_gl then self.ico_gl:SetTextureColor( clr ) end
+	if self.layer then
+		for i=1,#self.layer do
+			self.layer[i]:SetTextureColor( clr )
+		end
+	end
+	
+	if self.shadow then
+		self.shadow:SetTextureColor( (clr_id == "hide") and clr_list["hide_shadow"] or clr_list["shadow"] )
+	end
+end
+
+function UICellItem:Highlight(state, clr_id, main_clr)
+	if state and (not self:IsShown()) and (not self.manual) then
+		return
+	end
+	
+	self.hl:Show(state)
+	if (not state) then
+		return
+	end
+	
+	if main_clr then
+		self.hl:SetTextureColor( clr_id and clr_list[clr_id] or clr_list["def"] )
+	else
+		self.hl:SetTextureColor( clr_id and clr_list_hl[clr_id] or clr_list_hl["def"] )
+	end
+end
+
+function UICellItem:Check_TradeMode(obj, sec)
+	
+	if (self.showcase ~= 0) then
+		return false
+	end
+	
+	-- Reset
+	self.flags.value = nil
+	self.flags.value_str = nil
+	self.flags.note = nil
+	self.flags.no_trade = nil
+	self.flags.note_str = nil
+	
+	local profile = self.container.trade_profile
+	if not (profile and profile.mode) then
+		return false
+	end
+	
+	local status = get_item_trade_status(obj, profile)
+	if status == 4 then
+		local cost = get_item_cost(obj, profile)
+		self.flags.value = math.floor(cost)
+		self.flags.value_str = (game.translate_string("st_base_cost") .. ": " .. math.floor(cost) .. " RU")
+		
+	elseif status == 3 or (not status) then
+		self:Print(nil, "Removed [%s] for NPC. Not proper item", sec)
+		return true
+		
+	elseif status == 1 or status == 2 then
+		self.flags.note = status
+		self.flags.no_trade = true
+		self.flags.note_str = game.translate_string("st_no_trade_tip_" .. status)
+	end
+	
+	return false
+end
+
+function UICellItem:GetCost()
+	
+end
+
+function UICellItem:AddChild(obj)
+	-- no need for childs in manual cells
+	if self.manual then
+		return false
+	end
+	
+	if (not self.childs) then
+		self.childs = {}
+	end
+	
+	-- Real
+	local sec = obj:section()
+	if (self.showcase == 0) then
+		local id = obj:id()
+		if (id ~= self.ID) then
+
+			-- Trade mode for child
+			local profile = self.container.trade_profile
+			if (profile and profile.mode == 2) then
+				local status = get_item_trade_status(obj, profile)
+				if (status == 3) then
+					self:Print(nil, "AddChild [%s] | not tradable by NPC!", obj:name())
+					return false
+				end
+			end
+			
+			self.childs[id] = IsAmmo(obj) and obj:ammo_get_count() or 1
+			
+			self:Update()
+			
+			return true
+		end
+		return false
+		
+	-- Dummy
+	else
+		table.insert(self.childs, IsItem("ammo",sec) or 1)
+	end
+	
+	return true
+end
+
+function UICellItem:PopChild(obj, id)
+	if self.childs then
+	
+		-- Real
+		if (self.showcase == 0) then
+			self.childs[ obj and obj:id() or id ] = nil
+			self:Update()
+			
+		-- Dummy
+		elseif #self.childs > 0 then
+			self.childs[ #self.childs ] = nil
+		end
+	end
+end
+
+function UICellItem:HasChild(obj, id)
+	if obj or id then
+		return self.childs and self.childs[ obj and obj:id() or id ]
+	end
+	return self.childs and is_not_empty(self.childs)
+end
+
+function UICellItem:CountChilds()
+	return self.childs and table_size(self.childs) or 0
+end
+
+function UICellItem:ResetToChild()
+	local id_child
+	if self.childs then
+		for id,cnt in pairs(self.childs) do
+			id_child = id
+			break
+		end
+	end
+	
+	if id_child then
+	
+		-- Real
+		if (self.showcase == 0) then
+			local obj = level.object_by_id(id_child)
+			self.childs[id_child] = nil
+			
+			self.ID = id_child
+			self.section = obj and obj:section()
+			self:Update(obj)
+			
+		-- Dummy
+		else
+			self.childs[id_child] = nil
+			self:Update()
+		end
+		
+		return false
+	else
+		self:Reset()
+		return true
+	end
+end
+
+function UICellItem:Reset()
+	self.ID = nil
+	self.section = nil
+	if self.childs then
+		empty_table(self.childs)
+	end
+	
+	empty_table(self.flags)
+	
+	self:Highlight(false)
+	if (self.manual) then
+		self.ico:Show(false)
+		self.shadow:Show(false)
+		if self.bar then self.bar:Show(false) end
+		if self.cnt then self.cnt:Show(false) end
+		if self.upgr then self.upgr:Show(false) end
+		if self.ctxt then self.ctxt:Show(false) end
+		if self.ctxts then self.ctxts:Show(false) end
+	else
+		if (self.showcase ~= 2) and self.container["FreeRoom"] then
+			-- Freeing cell area
+			local a = self.area
+			self.container:FreeRoom(a.y, a.x, a.w, a.h)
+		end
+		
+		self:Show(false)
+	end
+end
+
+function UICellItem:Show(state, obj)
+	if state then
+		self:Update(obj)
+	end
+	self.cell:Show(state)
+end
+
+function UICellItem:IsShown()
+	if self.manual then
+		return self.ico:IsShown()
+	end
+	return self.cell:IsShown()
+end
+
+function UICellItem:IsCursorOverWindow()
+	return self.cell:IsCursorOverWindow()
+end
+
+function UICellItem:GetXML()
+	return self.manual and self.container.xml or XMLP
+end
+
+function UICellItem:Print(mark, fmt,...)
+	--printf( (mark or "=") .. " UICellItem [%s] | " .. fmt, self.section, ...)
+end
+
+
+
+-------------------------------------------------------------------
+-- Container for item cells
+-------------------------------------------------------------------
+class "UICellContainer"
+
+function UICellContainer:__init(id, owner, path, prof, ele_base, manual, use_frame)
+	self.ID    = id -- unique id for class instance, so we can deal with many instances outside
+	self.owner = owner
+	self.path  = path or "container"
+	self.xml   = manual and owner.xml or XMLP
+	
+	-- Item cells
+	self.grid_size = 41
+	self.grid_line = 2
+	self.grid       = {} -- [row][col] = bool ( true = unoccupied , false = occupied )
+	self.cell       = {}
+	self.line		= {}
+	self.line_cnt	= 0
+	self.indx_id    = {} --[id] = idx
+	self.indx_sec   = {} --[sec][id] = idx
+	self.idxer      = 0
+	self.row_end    = 0
+	self.col_end    = 0
+	self.scroll_pos = 0
+	self.cell_vis_offset = 20 --[px]
+	self.rKind = { last = false , current = false , row = 1 }
+	
+	-- Properties
+	self.sort_method 	 	 = "sizekind"
+	self.showcase		     = false
+	self.manual              = manual
+	self.can_select          = false
+	self.stack_all	     	 = false
+	self.ignore_scroll       = false
+	self.disable_scroll      = manual
+	self.disable_scroll_dragdrop = false
+	self.disable_drag        = false
+	self.disable_highlight   = false
+	self.disable_info        = false
+	self.disable_stack	     = false
+	self.disable_bar         = false
+	self.disable_callback    = {} --[name] = true
+	self.scolling_power_up   = 3
+	
+	-- Cell management
+	self.selected          = nil
+	self.hover             = { idx = false }
+	self.hold              = { idx = false , ico = false , tg = 0 , w = 0 , h = 0 }
+	self.db                = { idx = false , tg = 0 }
+	self.drag_area         = { up = 0 , down = 0 , step = 200 }
+	self.pd				   = { update = false , off = 0 , start = 0 , hold = false , power = 1}
+	self.scolling_power    = 1
+	self.use_frame		   = use_frame
+
+	self:InitControls(owner, prof, ele_base)
+	self:EnableScrolling(not manual)
+	
+	self:Print(nil, "__init for path (%s)", path)
+end
+
+function UICellContainer:InitControls(owner, prof, ele_base)
+	local xml = self.xml
+	local path = self.path
+
+	if self.use_frame then
+		self.prof = owner.xml:InitFrame(prof, ele_base)
+	else
+		self.prof = owner.xml:InitStatic(prof, ele_base)
+	end
+	
+	-- Drag up area
+	self.drag_up = xml:InitStatic(path .. ":st", self.prof)
+	self.drag_up:SetWndPos(vector2():set( 0 , 0 ))
+	self.drag_up:SetWndSize(vector2():set( self.prof:GetWidth() , self.grid_size ))
+	
+	-- Drag down area
+	self.drag_down = xml:InitStatic(path .. ":st", self.prof)
+	self.drag_down:SetWndPos(vector2():set( 0 , self.prof:GetHeight() - self.grid_size ))
+	self.drag_down:SetWndSize(vector2():set( self.prof:GetWidth() , self.grid_size ))
+	
+	self.scroll = xml:InitScrollView(path .. ":scroll", self.prof)
+	utils_xml.sync_size( self.prof , self.scroll)
+	
+	self.st = xml:InitStatic(path .. ":st", nil)
+	utils_xml.sync_size( self.prof , self.st)
+	
+	-- Scroll pad
+	self.pad = xml:InitStatic(path .. ":st", self.prof)
+	self.pad:InitTexture("ui_inGame2_white_rect")
+	self.pad:SetTextureColor( GetARGB(100,255,255,255) )
+	self.pad:SetWndPos(vector2():set( self.prof:GetWidth() , 0 ))
+	self.pad:SetWndSize(vector2():set( 5 , self.prof:GetHeight() ))
+	self.pad:Show(false)
+	
+	self:SetGridSpecs()
+end
+
+function UICellContainer:Reinit(t, tf)
+
+	self:Reset()
+	
+	-- If no inventory is passed, this function will just clear cells
+	if (not t) then
+		return
+	end
+
+	-- Create cells
+	self.ignore_scroll = true
+	self:Print(nil, "Reset | START Number of cells: %s", #self.cell)
+	
+	local sort_order = self:GetSortMethod()
+	if self.showcase then
+		for i,sec in spairs(t, sort_order) do
+			self:AddItem(nil,sec, tf and tf[i])
+		end
+	else
+		for i,obj in spairs(t, sort_order) do
+			self:AddItem(obj, nil, tf and tf[i])
+		end
+	end
+	
+	self.ignore_scroll = false
+	self:Print(nil, "Reset | END Number of cells: %s", #self.cell)
+	
+	self:Scroll_Reinit()
+end
+
+function UICellContainer:AddIndex(id, sec, indx)
+	self:Print(nil, "AddIndex | id: %s - sec: %s - indx: %s", id, sec, indx)
+
+	self.indx_id[id] = indx
+	if (not sec) then
+		return
+	end
+	
+	if (not self.indx_sec[sec]) then
+		self.indx_sec[sec] = {}
+	end
+	self.indx_sec[sec][id] = indx
+end
+
+function UICellContainer:RemoveIndex(id, sec, indx)
+	self:Print(nil, "RemoveIndex | id: %s - sec: %s - indx: %s", id, sec, indx)
+	if (not id) then
+		return
+	end
+	
+	-- Deselect
+	if (self.selected == self.indx_id[id]) then
+		self:On_Select(false)
+	end
+	
+	self.indx_id[id] = nil
+	if (not sec) then
+		for s,t in pairs(self.indx_sec) do
+			if t[id] then
+				sec = s
+				break
+			end
+		end
+		if (not sec) then
+			return
+		end
+	end
+	
+	if self.indx_sec[sec] then
+		self.indx_sec[sec][id] = nil
+		
+		if is_empty(self.indx_sec[sec]) then
+			self.indx_sec[sec] = nil
+		end
+	end
+end
+
+function UICellContainer:GetCell_ID(id, only_indx)
+	local indx = self.indx_id[id]
+	if only_indx then
+		return indx
+	end
+	return indx and self.cell[indx]
+end
+
+function UICellContainer:GetCell_SEC(sec)
+	local indxes = self.indx_sec[sec]
+	if indxes then
+		for id,idx in pairs(indxes) do
+			self:Print(nil, "GetCell_SEC | sec: %s | found cell at index: %s", sec, idx)
+			return idx and self.cell[idx]
+		end
+	end
+	
+	self:Print(nil, "GetCell_SEC | sec: %s | no cell found", sec)
+	return false
+end
+
+function UICellContainer:GetCell_Selected(only_obj)
+	if (not self.can_select) then
+		return
+	end
+	
+	local ci = self.selected and self.cell[self.selected]
+	if only_obj and (not self.showcase) then
+		return ci and ci.ID and level.object_by_id(ci.ID)
+	end
+	return (not only_obj) and ci
+end
+
+function UICellContainer:GetCell_Focused(only_cell)
+	if self:IsShown() and self:IsCursorOverWindow() then
+		for idx, ci in pairs(self.cell) do
+			if (self.manual or ci:IsShown()) and ci:IsCursorOverWindow() then
+				if only_cell then
+					return ci
+				else
+					return self.ID, idx, self:GetObj(idx)
+				end
+			end
+		end
+	end
+end
+
+function UICellContainer:GetObj(idx)
+	local ci = self.cell[idx]
+	return ci and ci.ID and level.object_by_id(ci.ID)
+end
+
+function UICellContainer:GetID(obj, sec, create)
+	local id = obj and obj:id()
+	if (not id) then
+		if (not self.showcase) then
+			return
+		end
+		id = create and (#self.indx_id + 1) or random_key_table(self.indx_sec[sec])
+	end
+	return id
+end
+
+function UICellContainer:AddItemInCell(obj, sec, indx, area)
+	if (not self.cell[indx]) then
+		self:Print(nil, "AddItemInCell | Creating new cell | obj: %s - index: %s", obj and obj:name(), indx)
+		self.cell[indx] = UICellItem(self, self.st, indx)
+		if self.showcase then
+			self.cell[indx].showcase = self.manual and 2 or 1
+		end
+	end
+	
+	local set = self.cell[indx]:Set(obj or sec, area)
+	self:Print(nil, "AddItemInCell | Set in cell (%s) | obj: %s - index: %s", set, obj and obj:name(), indx)
+
+	self:Scroll_Reinit(true)
+	
+	return set
+end
+
+function UICellContainer:AddItem(obj, sec, info)
+	if (not sec) then
+		if (not obj) then
+			return
+		end
+		sec = obj and obj:section()
+	end
+	
+	local id = self:GetID(obj, sec, true)
+	if self.indx_id[id] then
+		self:Print(nil, "AddItem | ID [%s] already exists", id)
+		return
+	end
+	
+	local ci = self:FindSimilar(obj, sec)
+	if ci then
+		self:Print(nil, "AddItem | Found similar cell [%s]", ci.section)
+		if ci:AddChild( obj ) then
+			self:AddIndex(id, sec, ci.indx)
+			self:Callback( "On_CC_Add", self.ID, ci.indx, false )
+			return ci.indx
+		end
+	else
+		local area = self:FindFreeCell(obj, sec)
+		if area then
+			self:Print(nil, "AddItem | New cell [%s]", sec)
+			local indx = self.idxer + 1
+			if self:AddItemInCell(obj, sec, indx, area) then
+				self:AddIndex(id, sec, indx)
+				self.idxer = indx
+				if info then
+					ci = self.cell[indx]
+					ci.flags.info = info
+				end
+				
+				self:Callback( "On_CC_Add", self.ID, indx, true )
+				return indx
+			end
+		end
+	end
+end
+
+function UICellContainer:AddItemManual(obj, sec, indx)
+	if (not self.cell[indx]) then
+		self:Print(nil, "AddItemManual | Creating new cell | obj: %s - index: %s", obj and obj:name() or sec, indx)
+		self.cell[indx] = UICellItem(self, self.st, indx, true)
+		if self.showcase then
+			self.cell[indx].showcase = self.manual and 2 or 1
+		end
+	end
+	
+	if not (obj or sec) then
+		self.cell[indx]:Reset()
+		return
+	end
+	
+	local set = self.cell[indx]:Set(obj or sec)
+	if set and obj then
+		local id = self:GetID(obj, sec)
+		if (not id) then
+			return
+		end
+		sec = sec or (obj and obj:section())
+		self:AddIndex(id, sec, indx)
+		self:Callback( "On_CC_Add", self.ID, indx, true )
+		self:Print(nil, "AddItemManual | Set in cell (%s) | obj: %s - index: %s", set, obj and obj:name() or sec, indx)
+	end
+	
+	self:Scroll_Reinit(true)
+	
+	return set
+end
+
+function UICellContainer:RemoveItem(obj, sec)
+	if (not sec) then
+		if (not obj) then
+			return
+		end
+		sec = obj and obj:section()
+	end
+	
+	local id = self:GetID(obj, sec)
+	if (not id) then
+		return
+	end
+	
+	local ci = self:GetCell_ID(id)
+	if ci then
+		if ci:HasChild(obj) then
+			self:Print(nil, "RemoveItem [%s] | Removing inner child", obj and obj:name() or sec)
+			ci:PopChild(obj)
+			self:RemoveIndex(id, sec, ci.indx)
+			self:Callback( "On_CC_Remove", self.ID, ci.indx, true )
+			
+		elseif (id == ci.ID) or (sec and (not obj)) then
+			local cell_removed = ci:ResetToChild()
+			if cell_removed then
+				self:Print(nil, "RemoveItem [%s] | Removing base", obj and obj:name() or sec)
+				self:RemoveIndex(id, sec, ci.indx)
+				self:Callback( "On_CC_Remove", self.ID, ci.indx, false )
+			else
+				self:Print(nil, "RemoveItem [%s] | Removing outer child", obj and obj:name() or sec)
+				self:RemoveIndex(id, sec, ci.indx)
+				self:Callback( "On_CC_Remove", self.ID, ci.indx, true )
+			end
+		end
+	end
+end
+
+function UICellContainer:RemoveItem_byID(id)
+	-- Used if object no longer exists (non-showcase type)
+	if (not id) then
+		return
+	end
+	
+	local ci = self:GetCell_ID(id)
+	if ci then
+		if ci:HasChild(nil,id) then
+			self:Print(nil, "RemoveItem_byID [%s] | Removing inner child", id)
+			ci:PopChild(nil,id)
+			self:RemoveIndex(id, nil, ci.indx)
+			self:Callback( "On_CC_Remove", self.ID, ci.indx, true )
+			
+		elseif (id == ci.ID) then
+			local cell_removed = ci:ResetToChild()
+			if cell_removed then
+				self:Print(nil, "RemoveItem_byID [%s] | Removing base", id)
+				self:RemoveIndex(id, nil, ci.indx)
+				self:Callback( "On_CC_Remove", self.ID, ci.indx, false )
+			else
+				self:Print(nil, "RemoveItem_byID [%s] | Removing outer child", id)
+				self:RemoveIndex(id, nil, ci.indx)
+				self:Callback( "On_CC_Remove", self.ID, ci.indx, true )
+			end
+			
+		else
+			self:Print(nil, "RemoveItem_byID [%s] | No active cell found!", id)
+			self:RemoveIndex(id)
+		end
+	end
+end
+
+function UICellContainer:RemoveItemManual(indx)
+	local ci = self.cell[indx]
+	if ci then
+		local obj = ci.ID and self:GetObj(indx)
+		local sec = obj and obj:section() or ci.section
+		local id = self:GetID(obj, sec)
+		if ci.showcase ~= 0 and (not obj) then
+			printe("!ERROR UICellContainer:RemoveItemManual | can't get game object for [%s]", sec)
+			return
+		end
+		
+		local cell_removed = ci:ResetToChild()
+		if cell_removed and (obj or sec) then
+			self:Print(nil, "RemoveItem [%s] | Removing base", obj and obj:name() or sec)
+			self:RemoveIndex(id, sec, indx)
+			self:Callback( "On_CC_Remove", self.ID, indx, false )
+			self:Scroll_Reinit(true)
+		end
+	end
+end
+
+function UICellContainer:TransferItem(cont_to, obj, sec)
+	self:Print(nil, "TransferItem [%s]", obj and obj:name() or sec)
+	
+	if not (obj or sec) then
+		return
+	end
+	
+	local id = self:GetID(obj, sec)
+	if (not id) then
+		return
+	end
+	
+	local ci_from = self:GetCell_ID(id)
+	if ci_from then
+		-- Create object in new container
+		local indx = cont_to:AddItem(obj, sec)
+		local ci_to = indx and cont_to.cell[indx]
+		
+		-- Transfer trade data in trade mode
+		ci_to.flags = dup_table(ci_from.flags)
+		
+		-- Remove object from old container
+		self:RemoveItem(obj, sec)
+		
+		self:Callback( "On_CC_Trasfer", self.ID, cont_to.ID, ci_from.indx, ci_to.indx , obj or sec)
+		
+		return ci_to
+	end
+end
+
+function UICellContainer:UpdateItem(obj, sec)
+	local id = self:GetID(obj, sec)
+	local ci = id and self:GetCell_ID(id)
+	if ci then
+		ci:Update() -- force it to get game object again for updated stats
+	end
+end
+
+function UICellContainer:FindFreeCell(obj, sec)
+	if (not sec) then
+		if (not obj) then
+			return false
+		end
+		sec = obj and obj:section()
+	end
+	
+	local w = SYS_GetParam(2,sec, "inv_grid_width",1)
+	local h = SYS_GetParam(2,sec, "inv_grid_height",1)
+
+	-- Avoid icons that don't fit
+	if w > self.cols then
+		return false
+	end
+
+	-- Sorting by kind: when sorting a new kind, always start from last row taken by previous kind
+	if self.sort_method == "kind" then
+		self.rKind.current = item_order[ab_k[sec]]
+		if (self.rKind.last ~= self.rKind.current) then
+			--[[
+			local cnt = self.line_cnt + 1
+			if (not self.line[cnt]) then
+				self.line[cnt] = self.xml:InitStatic(self.path .. ":line", self.st)
+			end
+			
+			local y = (self.row_end) * (self.grid_size + self.grid_line)
+			self.line[cnt]:SetWndPos( vector2():set(0,y - 2.5) )
+			self.line[cnt]:SetWndSize( vector2():set(self.prof:GetWidth(),6) )
+			self.line[cnt]:Show(true)
+			self.line_cnt = cnt
+			--]]
+			
+			self.rKind.last = self.rKind.current
+			self.rKind.row = self.row_end + 1
+		end
+	end
+	
+	local row_s = self.rKind.row
+	local rows = #self.grid
+	local cols = self.cols + 1 - w
+	self:Print(nil, "FindFreeCell for [%s] (rows: %s, cols: %s, W: %s, H: %s)", sec, rows,cols,w,h)
+	for r=row_s, rows do
+		for c=1,cols do
+			if self:IsFreeRoom(r,c,w,h) then
+				return self:TakeRoom(r,c,w,h)
+			end
+		end
+	end
+	
+	self:Grow()
+	
+	return self:FindFreeCell(obj, sec)
+end
+
+function UICellContainer:IsFreeRoom(r,c,w,h)
+	for row = r, r+(h-1) do
+		for col = c, c+(w-1) do
+			if (not self.grid[row]) then
+				self:Print(nil, "IsFreeRoom row missing: %s", row)
+				return false
+			end
+			if self.grid[row][col] == false then
+				self:Print(nil, "IsFreeRoom | row: %s - col: %s is occupied", row, col)
+				return false
+			end
+		end
+	end
+	self:Print(nil, "IsFreeRoom (%s,%s,%s,%s) = %s", r,c,w,h, true)
+	return true
+end
+
+function UICellContainer:TakeRoom(r,c,w,h)
+	self:Print(nil, "TakeRoom (%s,%s,%s,%s)", r,c,w,h)
+	
+	local r_end = r+(h-1)
+	local c_end = c+(w-1)
+	for row = r, r_end do -- -1 because starting row/coloumn cell should be counted
+		for col = c, c_end do
+			self.grid[row][col] = false
+		end
+	end
+	
+	if (r_end > self.row_end) then
+		self.row_end = r_end
+	end
+	if (c_end > self.col_end) then
+		self.col_end = c_end
+	end
+	
+	return { y=r , x=c , w=w , h=h } -- rows are Y, coloumns are X
+end
+
+function UICellContainer:FreeRoom(r,c,w,h)
+	self:Print(nil, "FreeRoom (%s,%s,%s,%s)", r,c,w,h)
+	
+	for row = r, r+(h-1) do
+		for col = c, c+(w-1) do
+			self.grid[row][col] = true
+		end
+	end
+end
+
+function UICellContainer:FindSimilar(obj, sec)
+	if not (obj or sec) then	
+		printe("!ERROR UICellContainer:FindSimilar | no data recieved!")
+		return false
+	end
+	
+	if self.disable_stack then
+		return false
+	end
+	
+	if self.showcase or self.stack_all then
+		return self:GetCell_SEC(sec)
+	end
+	
+	local sec = obj:section()
+	
+	-- Ignore search if item isn't meant to stack
+	if SYS_GetParam(1,sec,"dont_stack") then
+		return false
+	end
+	
+	-- Ignore search if multiuse item is used
+	local max_uses = IsItem("multiuse",sec)
+	if max_uses and obj:get_remaining_uses() ~= max_uses then
+		return false
+	end
+	
+	-- items with no condition can stack, return a cell with same section
+	local clsid = obj:clsid()
+	local use_cond = SYS_GetParam(1,sec,"use_condition") or IsWeapon(nil,clsid) or IsOutfit(nil,clsid) or IsHeadgear(nil,clsid)
+	if (not use_cond) then
+		return self:GetCell_SEC(sec)
+	end
+	
+	-- Ignore search if item has upgrades
+	if has_upgrades(obj) then
+		return false
+	end
+	
+	-- items with condition, full search
+	for idx,ci in pairs(self.cell) do
+		if (ci.section == sec) then
+			-- full multiuse item can stack
+			if max_uses then
+				return ci 
+				
+			-- item with similar condition can stack
+			else
+				local cond = obj:condition()
+				local obj_2 = ci.ID and level.object_by_id(ci.ID)
+				if obj_2 and math.abs(obj_2:condition() - cond) < 0.1 then
+					return ci
+				end
+			end
+		end
+	end
+	
+	-- no similar item found
+	return false
+end
+
+function UICellContainer:Grow()
+	local rows = #self.grid
+	rows = rows + 1
+	self.grid[rows] = {}
+	
+	for i=1,self.cols do
+		self.grid[rows][i] = true
+	end
+	self:Print(nil, "Grow | new row: %s", rows)
+end
+
+function UICellContainer:IsTradable(obj)
+	local ci = obj and self:GetCell_ID(obj:id())
+	return ci and ci:IsShown() and (get_item_trade_status(obj, self.trade_profile) == 4)
+end
+
+function UICellContainer:GetCellCost(ci)
+	if not (ci and ci:IsShown() and self.trade_profile) then
+		return 0
+	end
+	
+	local t_id = {}
+	
+	t_id[ci.ID] = true
+	if ci:HasChild() then
+		for id,_ in pairs(ci.childs) do t_id[id] = true end
+	end
+	
+	local tot_cost = 0
+	for id,_ in pairs(t_id) do
+		local obj = level.object_by_id(id)
+		if obj and (get_item_trade_status(obj, self.trade_profile) == 4) then
+			tot_cost = tot_cost + get_item_cost(obj, self.trade_profile)
+		end
+	end
+	return tot_cost
+end
+
+function UICellContainer:On_Select(idx)
+
+	-- Forced deselect
+	if (not self.can_select) or (idx == false) then
+		local ci = self.selected and self.cell[self.selected]
+		if ci then
+			ci:Highlight(false)
+		end
+		self.selected = nil
+		return
+	end
+	
+	idx = idx or self.selected
+	
+	-- Deselect previous cell
+	if self.selected and (self.selected ~= idx) then
+		local ci = self.cell[self.selected]
+		if ci then
+			ci:Highlight(false)
+		end
+	end
+	
+	-- Select new cell
+	local ci = idx and self.cell[idx]
+	if ci then
+		ci:Highlight(true,"green")
+		self.selected = idx
+	end
+end
+
+function UICellContainer:On_Drag(idx, tg, set)
+
+	-- Hold icon should be declared after everything else, so it stays on top
+	-- Also it must be assigned on the base UI because we need x and y to start from absolute screen corner
+	if (not self.hold.ico) then
+		self.hold.ico = self.xml:InitStatic(self.path .. ":cell:pic", self.owner) 
+		self.hold.ico:Show(false)
+	end
+	
+	if (self.disable_drag) then
+		return
+	end
+	
+	-- Drag start / Drop
+	if set then
+		self:Print(nil, "Drag | hold_idx: %s - hold_tg: %s", idx, tg)
+		
+		-- Callback
+		if (not idx) and self.hold.idx and (self.hold.idx ~= self.hover.idx) then -- IF released mouse + drag item is captured + drag item is not hovered item
+			self:Callback( "On_CC_DragDrop", self.ID, self.hold.idx )
+		end
+		
+		-- Useful to prevent some actions for owner when there's a dragged item, by checking on (self.item_in_hold)
+		if self.owner.item_in_hold == self.ID then
+			self.owner.item_in_hold = false
+		end
+		if idx then
+			self.owner.item_in_hold = self.ID
+			
+			-- Hold the scroll and stop moving on dragging
+			self.scroll_pos = self.scroll:GetCurrentScrollPos()
+			
+			-- No point of holding empty cells
+			if (not self.cell[idx]:IsShown()) then
+				return
+			end
+		end
+		
+		self.hold.idx = idx
+		self.hold.tg = tg
+		self.hold.ico:Show(false)
+		return
+	end
+	
+	-- Drag
+	if self.hold.idx and tg - self.hold.tg > 100 then
+		
+		-- Set up drag item icon
+		if (not self.hold.ico:IsShown()) then
+			self:Print(nil, "Drag | set up icon")
+			local sec = self.cell[self.hold.idx].section
+			
+			if sec then
+				self.hold.w = SYS_GetParam(2,sec, "inv_grid_width") * self.grid_size * ratio
+				self.hold.h = SYS_GetParam(2,sec, "inv_grid_height") * self.grid_size
+				
+				self.hold.ico:InitTexture( utils_xml.get_icons_texture(sec) )
+				self.hold.ico:SetTextureRect(Frect():set( get_item_axis(sec, nil, true) ))
+				self.hold.ico:SetTextureColor( clr_list["drag"] )
+				self.hold.ico:SetStretchTexture(true)
+				self.hold.ico:SetWndSize(vector2():set(self.hold.w , self.hold.h))
+				self.hold.ico:Show(true)
+			end
+		end
+		
+		-- Sync with cursor pos
+		local pos = GetCursorPosition()
+		self.hold.ico:SetWndPos( pos )
+	end
+end
+
+function UICellContainer:On_Hover(idx)
+	if (not idx) then
+		-- UnHighlight old cell
+		if self.hover.idx then
+			local ci = self.cell[self.hover.idx]
+			if ci then
+				ci:Highlight(false)
+			end
+		end
+		
+		-- Unmark hovering
+		self.hover.idx = false
+		
+	elseif self.hover.idx ~= idx then
+	
+		-- UnHighlight old cell
+		if self.hover.idx then
+			local ci = self.cell[self.hover.idx]
+			if ci then
+				ci:Highlight(false)
+			end
+		end
+		
+		-- Mark hovered cell
+		self.hover.idx = idx
+		
+		-- Highlight new cell (on hover, cell must be shown)
+		local ci = self.cell[idx]
+		if ci and ci:IsShown() then
+			ci:Highlight(true)
+		end
+	end
+	
+	-- Callback, only if mouse on bag
+	if self:IsCursorOverWindow() then
+		self:Callback( "On_CC_Hover", self.ID, self.hover.idx )
+	end
+end
+
+function UICellContainer:On_Mouse1(idx)
+
+	-- Anticipate double click
+	local tg = get_time()
+	
+	if (tg - self.db.tg < 400) then
+		self.db.idx = idx --false
+		self.db.tg = tg
+		
+		local db_continue = self:On_Mouse1_DB(idx)
+		
+		-- when there's a value returned, allow consecutive db clicks
+		if (not db_continue) then
+			self.db.idx = false
+		end
+		
+		-- db_continue is false if no db callback is found in owner class, so we can pass the return and treat db click as normal click 
+		if (db_continue ~= false) then
+			return
+		end
+	end
+	
+	self.db.idx = idx
+	self.db.tg = tg
+	self:On_Select(idx)
+
+	self:Callback( "On_CC_Mouse1", self.ID, idx )
+end
+
+function UICellContainer:On_Mouse1_DB(idx)
+	return self:Callback( "On_CC_Mouse1_DB", self.ID, idx ) -- Returning true means no cooldown on double clicking if you keep clicking!
+end
+
+function UICellContainer:On_Mouse2(idx)
+	self:On_Select(idx)
+	
+	self:Callback( "On_CC_Mouse2", self.ID, idx )
+end
+
+function UICellContainer:On_Scroll()
+	if (self.disable_scroll) then
+		self:Scroll_SetPos(0)
+		return
+	end
+	
+	if (not self.scroll_pos) then
+		self.scroll_pos = self.scroll:GetCurrentScrollPos()
+		return
+	end
+	
+	-- Setting scroll pad size
+	if self.pd.update then
+		self:Scroll_Pad_Ctrl(true)
+		self.pd.update = false
+	end
+	
+	-- Prevent scrolling when it's paused
+	if self.scroll_pause then
+		self:Scroll_DragDrop_Ctrl()
+		self:Scroll_Pad_Ctrl()
+		self:Scroll_SetPos()
+		return
+	end
+	self.pd.off = false
+	self.pd.hold = false
+	
+	-- Prevent scrolling when holding item
+	if self.hold.idx or self.owner.item_in_hold then
+		self:Scroll_DragDrop_Ctrl()
+		self:Scroll_SetPos()
+		return
+	end
+	
+	-- small delay
+	if (not self.scroll_tg) then
+		self.scroll_tg = get_time()
+	end
+	-- get_time() may unreliable , try reset delay
+	if get_time() - self.scroll_tg < 0 then
+		self.scroll_tg = get_time()
+	end
+	if self.scroll_tg > (get_time() - 25) then
+		return
+	end
+	self.scroll_tg = get_time()
+	
+	-- Amplify scrolling
+	local curr_pos = self.scroll:GetCurrentScrollPos()
+	if (self.scroll_pos ~= curr_pos) then
+		if (curr_pos > self.scroll_pos) then
+			self:Scroll_SetPos( self.scroll_pos + ((self.grid_size + self.grid_line) * self.scolling_power) )
+		else
+			self:Scroll_SetPos( self.scroll_pos - ((self.grid_size + self.grid_line) * self.scolling_power) )
+		end
+		--printf("curr pos: %s - scroll pos: %s", curr_pos, self.scroll_pos)
+	end
+end
+
+function UICellContainer:Update(item_info, no_info, hide)
+
+	self:On_Drag(false, get_time())
+	self:On_Select()
+	self:On_Scroll()
+	if hide then
+		self:On_Hover(false)
+		
+		return false
+	end
+	
+	if self:IsCursorOverWindow() then -- For performance: There's no need to iterate cells, if the container is not focused in the first place
+		for i=1,#self.cell do
+			local ci = self.cell[i]
+			
+			-- Only update for hovered cell
+			-- Manual cells are special cases because we want to have hover interaction with them
+			if ci and ci:IsCursorOverWindow() and (ci.manual or ci:IsShown()) and self:IsCellVisible(ci) then
+				
+				-- No info if drag is active
+				if no_info or self.hold.ico:IsShown() then
+					if item_info then
+						item_info:Update()
+					end
+				elseif item_info and (not self.disable_info) and ci:IsShown() then
+					local obj = ci.ID and level.object_by_id(ci.ID)
+					item_info:Update( obj, ci.section, ci.flags)
+				end
+				
+				self:On_Hover(i)
+				
+				return true
+			end
+		end
+	end
+	
+	self:On_Hover(false)
+
+	return false
+end
+
+function UICellContainer:OnKeyboard(dik, keyboard_action)
+	
+	-- Pause scrolling when holding M1
+	if (dik == K_M1) then
+		if (keyboard_action == E_PRESS) then
+			self.scroll_pause = true
+		elseif (keyboard_action == E_RELEASE) then
+			self.scroll_pause = false
+		end
+	end
+	
+	-- Interaction with cells
+	local idx = self.hover.idx
+	if idx then
+
+		-- Mouse 1
+		if (dik == K_M1) then
+			if (keyboard_action == E_PRESS) then
+				self:On_Drag(idx, get_time(), true)
+				
+			elseif (keyboard_action == E_RELEASE) then
+				self:On_Drag(false, 0, true)
+				self:On_Mouse1(idx)
+			end
+		
+		-- Mouse 2
+		elseif (dik == K_M2) then
+			if (keyboard_action == E_RELEASE) then
+				self:On_Mouse2(idx)
+			end
+		end
+
+	-- We disable drag on releasing regardless of highlighted cell
+	elseif (dik == K_M1) and (keyboard_action == E_RELEASE) then
+		self:On_Drag(false, 0, true)
+	end
+	
+	-- Left shift
+	if (dik == K_SHFT) then
+		self.scolling_power = (keyboard_action == E_PRESS) and self.scolling_power_up or 1
+	end
+end
+
+function UICellContainer:Callback(func, ...)
+	-- This is needed for inventory UI to avoid endless loop for slots managements
+	if self.disable_callback[func] then
+		return
+	end
+	
+	if self.owner[func] then
+		return self.owner[func](self.owner,...)
+		
+	elseif (func == "On_CC_Mouse1_DB") then
+		return false
+	end
+end
+
+function UICellContainer:Reset()
+	self:Print(nil, "Reset")
+	
+	self.hover.idx = false
+	for idx,ci in pairs(self.cell) do
+		ci:Reset()
+	end
+	for cnt, ele in pairs(self.line) do
+		ele:Show(false)
+	end
+	self:On_Select(false)
+	self.idxer = 0
+	self.row_end = 0
+	self.col_end = 0
+	self.scroll_pos = 0
+	self.rKind.last = false
+	self.rKind.current = false
+	self.rKind.row = 1
+	self.line_cnt = 0
+	empty_table(self.indx_id)
+	empty_table(self.indx_sec)
+	self.pad:Show(false)
+	
+	self.selected  = nil
+	self.hold.idx = false
+	self.hold.tg = 0
+	self.hold.w = 0
+	self.hold.h = 0
+	if self.hold.ico then
+		self.hold.ico:Show(false)
+	end
+
+	self.db.idx = false
+	self.db.tg = 0 
+	
+	-- Reset Grid
+	for row,v in pairs(self.grid) do
+		for col,state in pairs(v) do
+			self.grid[row][col] = true
+		end
+	end
+end
+
+function UICellContainer:IsCellVisible(ci)
+-- This is important because we don't want to interact with cells that are outside of scroll view window
+
+	local pos_start      = self.scroll_pos
+	local pos_start_ci   = ci.cell:GetWndPos().y + self.cell_vis_offset
+	local pos_end        = pos_start + self.scroll:GetHeight()
+	local pos_end_ci     = pos_start_ci + ci.cell:GetHeight() - (self.cell_vis_offset * 2)
+
+	--printf("IsCellVisible | start: %s - start_ci: %s - end: %s - end_ci: %s - top visible: %s - end visible: %s", pos_start, pos_start_ci, pos_end, pos_end_ci, (pos_start_ci >= pos_start) , (pos_end_ci <= pos_end))
+	return (pos_start_ci >= pos_start) and (pos_end_ci <= pos_end)
+end
+
+function UICellContainer:Scroll_Reinit(keep_pos)
+	-- It's important to reset the scroll after cell changes because we want to adapt new cells
+	-- TODO: to prevent spawn of items flooding in container, we need to time this in update function
+
+	-- Used when reiniting cells, to prevent unneeded scroll adjusting when there's a mass amount of cells being recreated
+	if self.ignore_scroll then
+		return
+	end
+	
+	local cpos = (self.disable_scroll and 0) or (keep_pos and self.scroll:GetCurrentScrollPos())
+	
+	self.scroll:Clear()
+		
+	-- We decide container size according to the row with first unoccupied cell
+	if (not self.disable_scroll) then
+	
+		-- Determine scroll height
+		local h = self:Scroll_GetHeight(1)
+		h = h - self.scroll:GetHeight()
+		h = h > 0 and h or 0
+		
+		self.st:SetWndSize(vector2():set( self.scroll:GetWidth() , h ))
+		--printf("scroll: %s - st: %s", self.scroll:GetHeight(), self.st:GetHeight())
+	end
+
+	self.scroll:AddWindow(self.st, true)
+	self.st:SetAutoDelete(false)
+	
+	self.pd.update = true
+	
+	--[[
+	if cpos then
+		self.scroll:SetScrollPos(cpos)
+	end
+	--]]
+	self:Scroll_SetPos(cpos, true)
+end
+
+function UICellContainer:Scroll_SetPos(Y, force)
+	if (not Y) then
+		Y = self.scroll_pos or 0
+	end
+	
+	-- Prevent scrolling if scroll area is shorter than scoll height
+	if (((self.grid_size + self.grid_line) * self.row_end) < self.scroll:GetHeight()) then
+		Y = 0
+	end
+	
+	-- Keep scroll pos in range
+	if force then
+		-- This trick is used because for some reason the scroll doesn't have full scale on resetting, unless if we set its pos at least once
+		self.scroll:SetScrollPos(1)
+	end
+	
+	Y = clamp( math.floor(Y), self.scroll:GetMinScrollPos(), self.scroll:GetMaxScrollPos())
+	self.scroll:SetScrollPos(Y)
+	self.scroll_pos = Y
+
+	-- Adjust scrolling pad
+	if self.pad:IsShown() then
+		self.pad:SetWndPos(vector2():set( self.prof:GetWidth() , Y / self.pd.power ))
+	end
+	
+	--if (self.ID == "actor_bag") then printf("ID: %s - POS: %s - MIN: %s - MAX: %s - FROM: %s", self.ID, Y, self.scroll:GetMinScrollPos(), self.scroll:GetMaxScrollPos(), callstack(true,true)) end
+end
+
+function UICellContainer:Scroll_GetHeight(num, ele)
+	if ele then
+		return (self.scroll:GetHeight() + self.scroll:GetMaxScrollPos())
+	end
+	return (self.row_end + (num or 0)) * (self.grid_size + self.grid_line)
+end
+
+function UICellContainer:Scroll_DragDrop_Ctrl()
+	if self.disable_scroll_dragdrop then
+		return false
+	end
+	
+	if not (self.hold.idx or self.owner.item_in_hold) then
+		return false
+	end
+	
+	local dir = (self.drag_up:IsCursorOverWindow() and 1) or (self.drag_down:IsCursorOverWindow() and 2) or 0
+	if dir == 0 then
+		return false
+	end
+	
+	if (dir == 1) and (get_time() - self.drag_area.up > self.drag_area.step) then
+		self.drag_area.up = get_time()
+		self:Scroll_SetPos( self.scroll_pos - ((self.grid_size + self.grid_line) * self.scolling_power) )
+		--printf("On_Scroll_DragDrop UP | old: %s - new: %s", self.scroll_pos, new_pos)
+		return true
+		
+	elseif (dir == 2) and (get_time() - self.drag_area.down > self.drag_area.step) then
+		self.drag_area.down = get_time()
+		self:Scroll_SetPos( self.scroll_pos + ((self.grid_size + self.grid_line) * self.scolling_power) )
+		--printf("On_Scroll_DragDrop DOWN | old: %s - new: %s", self.scroll_pos, new_pos)
+		return true
+	end
+	return false
+end
+
+function UICellContainer:Scroll_Pad_Ctrl(update)
+	
+	-- Scroll pad state and size
+	if update then
+		local h_view = self.scroll:GetHeight()
+		local h_max = h_view + self.scroll:GetMaxScrollPos()
+		if (h_max <= h_view + 1) or (self.disable_scroll) then
+			self.pad:Show(false)
+		else
+			local h_scroll = (h_max - h_view)
+			local ratio = (h_view / h_max)
+			local h_pad =  h_view * ratio
+			self.pd.power = h_scroll/(h_view - h_pad)
+			--printf("h_view: %s - h_scroll: %s - h_max: %s - h_pad: %s - ratio: %s - power: %s", h_view, h_scroll, h_max, h_pad, ratio, self.pd.power)
+			self.pad:SetWndPos(vector2():set( self.prof:GetWidth() , self.scroll_pos / self.pd.power ))
+			self.pad:SetWndSize(vector2():set( 5 , math.floor(h_pad) ))
+			self.pad:Show(true)
+		end
+		return
+	end
+	
+	-- No interaction if pad isn't shown
+	if (not self.pad:IsShown()) then
+		return
+	end
+	
+	-- No interaction if pad is not focused
+	if not (self.pd.hold or self.pad:IsCursorOverWindow()) then
+		return
+	end
+	
+	-- Storing start pos for the first time on holding
+	if (not self.pd.off) then
+		self.pd.off = GetCursorPosition().y
+		self.pd.start = self.scroll_pos
+		self.pd.hold = true
+		return
+	end
+	
+	-- Set scroll pos according to mouse pos
+	local offset = GetCursorPosition().y - self.pd.off
+	self.scroll_pos = self.pd.start + (offset * self.pd.power)
+	--printf("offset: %s - scroll_pos: %s", offset, self.scroll_pos)
+end
+
+function UICellContainer:GetSortMethod()
+	if self.sort_method == "sizekind" then
+		return sort_by_sizekind
+	elseif self.sort_method == "props" then
+		return sort_by_props
+	elseif self.sort_method == "kind" then
+		return sort_by_kind
+	end
+	
+	return sort_by_sizekind
+end
+
+function UICellContainer:AdjustWnd(x, y, w, h)
+	local pos = x and y and vector2():set(x,y) or self.prof:GetWndPos()
+	self.prof:SetWndPos( pos )
+
+	self.prof:SetWndSize(vector2():set( (w or self.prof:GetWidth()) , (h or self.prof:GetHeight()) ))
+	utils_xml.sync_size( self.prof , self.scroll )
+end
+
+function UICellContainer:AdjustHeightToCell()
+	local h = self.row_end * (self.grid_size + self.grid_line)
+	if self.use_frame then
+		h = h + 30
+		if h < 36 then h = 36 end
+		self.scroll:SetWndPos(vector2():set( 15 , 15 ))
+	end
+	self.prof:SetWndSize(vector2():set( self.prof:GetWidth() , h  ))
+	utils_xml.sync_size( self.prof , self.scroll )
+end
+
+function UICellContainer:AdjustWidthToCell()
+	local w = self.col_end * (self.grid_size + self.grid_line)
+	w = w * ratio
+	if self.use_frame then
+		w = w + 30
+		if w < 36 then w = 36 end
+		self.scroll:SetWndPos(vector2():set( 15 , 15 ))
+	end
+	self.prof:SetWndSize(vector2():set( w , self.prof:GetHeight() ))
+	utils_xml.sync_size( self.prof , self.scroll )
+end
+
+function UICellContainer:SetBackground(path, clr)
+	if (type(path) == "string") then
+		self.prof:InitTexture(path)
+	end
+	self.prof:SetTextureColor(clr)
+end
+
+function UICellContainer:SetGridSpecs(size, line)
+	self.grid_size = size or self.grid_size
+	self.grid_line = line or self.grid_line
+	self.cols = math.floor( (self.scroll:GetWidth() * (1/ratio)) / (self.grid_size + self.grid_line) )
+	
+	self:Print(nil, "SetGridSpecs | size: %s - line: %s - num of colomns: %s", self.grid_size, self.grid_line, self.cols)
+end
+
+function UICellContainer:Show(state)
+	self.prof:Show(state)
+	
+	if (not state) then
+		-- Hide hold icon
+		self.hold.idx = false
+		if self.hold.ico then
+			self.hold.ico:Show(false)
+		end
+		
+		self.hover.idx = false
+		self.db.idx = false
+	end
+end
+
+function UICellContainer:IsShown()
+	return self.prof:IsShown()
+end
+
+function UICellContainer:EnableScrolling(state)
+	self.disable_scroll = (not state)
+	self.scroll:Enable(state)
+end
+
+function UICellContainer:IsCursorOverWindow()
+	return self.prof:IsShown() and self.prof:IsCursorOverWindow()
+end
+
+function UICellContainer:Print(mark, fmt,...)
+	--printf( (mark or "+") .. " UICellContainer [%s] | " .. fmt, self.ID, ...)
+end
+
+
+-------------------------------------------------------------------
+-- Item info box
+-------------------------------------------------------------------
+
+class "UIInfoItem"
+
+function UIInfoItem:__init(owner, delay)
+	self.owner = owner
+	self.id = nil
+	self.section = nil
+	
+	self.can_compare = false
+	self.timer = 0
+	self.delay = delay or 700
+	self.ammo_parse = { [1]=true , [4] = true , [7] = true , [10] = true }
+
+	prepare_stats_table()
+	
+	self:InitControls()
+	self:Show(false)
+end
+
+function UIInfoItem:InitControls()
+	--[[
+	self.xml				= CScriptXmlInit()
+	local xml = self.xml
+	xml:ParseFile			("ui_item_info.xml")
+	--]]
+	self.dialog = XMLP:InitStatic("item_info", self.owner)
+	
+	self.frame    = XMLP:InitFrame("item_info:background_frame", self.dialog)
+	self.name     = XMLP:InitTextWnd("item_info:name", self.dialog)
+	self.weight   = XMLP:InitTextWnd("item_info:weight", self.dialog)
+	self.value     = XMLP:InitTextWnd("item_info:cost", self.dialog)
+	self.note 	  = XMLP:InitTextWnd("item_info:no_trade", self.dialog)
+	self.desc     = XMLP:InitTextWnd("item_info:description", self.dialog)
+	
+	-- Stats
+	self.stats_dialog = XMLP:InitStatic("item_info:stats_dialog", self.dialog)
+	self.stats = {}
+	for i=1,16 do
+		self.stats[i]        = {}
+		self.stats[i].base   = XMLP:InitStatic("item_info:stats_box", self.stats_dialog)
+		self.stats[i].icon   = XMLP:InitStatic("item_info:stats_box:icon", self.stats[i].base)
+		self.stats[i].cap    = XMLP:InitTextWnd("item_info:stats_box:cap", self.stats[i].base)
+		self.stats[i].bar2   = XMLP:InitProgressBar("item_info:stats_box:prog_bar", self.stats[i].base)
+		self.stats[i].bar1   = XMLP:InitProgressBar("item_info:stats_box:prog_bar", self.stats[i].base)
+		self.stats[i].txt    = XMLP:InitTextWnd("item_info:stats_box:prog_txt", self.stats[i].base)
+		self.stats[i].comp   = XMLP:InitTextWnd("item_info:stats_box:compare", self.stats[i].base)
+	end
+	
+	-- Ammo type
+	self.ammo          = XMLP:InitStatic("item_info:ammo_type", self.dialog)
+	self.ammo_cap      = XMLP:InitStatic("item_info:ammo_type:cap_ammo_types", self.ammo)
+	self.ammo_txt      = XMLP:InitTextWnd("item_info:ammo_type:cap_ammo_used_type", self.ammo)
+	self.ammo_ico      = {}
+	self.ammo_ico_temp = {}
+	for i=1,12 do
+		if self.ammo_parse[i] then
+			self.ammo_ico[i] = XMLP:InitStatic("item_info:ammo_type:static_ammo_type" .. i, self.ammo)
+			self.ammo_ico_temp[i] = XMLP:InitStatic("item_info:ammo_type:static_ammo_type" .. i, self.ammo)
+		end
+	end
+end
+
+function UIInfoItem:Update(obj, sec, flags)
+	if not self:Pass(obj, sec) then
+		self:Show(false)
+		return
+	end
+
+	-- item info box is shown at cursor
+	sync_cursor(self.dialog, self.frame, 0, 0)
+	
+	-- no need to process if it's same item
+	if obj then
+		if obj:id() == self.id then
+			self:Show(true)
+			return
+		end
+	elseif sec then
+		if sec == self.section then
+			self:Show(true)
+			return
+		end
+	end
+	
+	-- gather basic info
+	sec = obj and obj:section() or sec
+	local typ = self:GetType(sec)
+	--printf("-updating | section [%s] - type: %s", sec, typ)
+	
+	self.id = obj and obj:id() or nil
+	self.section = sec
+		
+	-- Name
+	local name = obj and ui_item.get_obj_name(obj) or ui_item.get_sec_name(sec)
+	self.name:SetText( name )
+	
+	-- Weight
+	local weight = obj and obj:weight() or ini_sys:r_float_ex(sec,"inv_weight")
+	self.weight:SetText( round_100(weight) .. " " .. game.translate_string("st_kg") )
+	
+	-- Cost
+	if flags and flags.value_str and (not flags.note_str) then
+		self.value:SetText( flags.value_str )
+		self.value:Show(true)
+	else
+		self.value:Show(false)
+	end
+	
+	-- Note
+	if flags and flags.note_str then
+		self.note:SetText( flags.note_str )
+		self.note:Show(true)
+	else
+		self.note:Show(false)
+	end
+	
+	-- Description
+	local desc = obj and ui_item.get_obj_desc(obj) or ui_item.get_sec_desc(sec)
+	self.desc:SetText( desc )
+	self.desc:AdjustHeightToText()
+	
+	-- Stop here?
+	if self:Sync_Finale( (not stats_table[typ]), nil, self.desc, self.frame, 10 ) then
+		self.stats_dialog:Show(false)
+		self.ammo:Show(false)
+		return
+	end
+	
+	-- Stats
+	for i=1,#self.stats do
+		self.stats[i].base:Show(false)
+	end
+	
+	-- Comparison
+	local obj_b
+	if self.can_compare and obj then
+		local cls = obj:clsid()
+		local slot = SYS_GetParam(2,sec,"slot",-1) + 1
+		obj_b = slot > 0 and db.actor:item_in_slot(slot)
+	end
+	
+	local v = stats_table[typ]
+	local cnt, y = 0, 0
+	local cnt_last
+	for stat,gr in spairs(v,sort_by_index) do
+		
+		-- get stat value
+		local val_a = get_stats_value(obj, sec, gr, stat)
+		if val_a then
+			if gr.show_always or ((not gr.show_always ) and val_a ~= 0) then
+				cnt = cnt + 1
+				local ele = self.stats[cnt]
+				
+				-- Set up icon
+				local icon_p = gr.icon_p
+				local icon_n = (gr.icon_n ~= "") and gr.icon_n or icon_p
+				local icon = val_a < 0 and icon_n or icon_p
+				if gr.sign_inverse then
+					icon = val_a < 0 and icon_p or icon_n
+				end
+				ele.icon:InitTexture( icon )
+				
+				-- Set up name
+				ele.cap:SetText( game.translate_string(gr.name) )
+				
+				-- Reset
+				ele.bar2:Show(false)
+				ele.bar1:Show(false)
+				ele.txt:Show(false)
+				ele.comp:Show(false)
+				
+				-- Progress bar
+				if gr.track then
+					local valbar_a = clamp((math.abs(val_a) * gr.magnitude), 0, 1)
+					
+					-- Comparison item
+					local val_b = obj_b and get_stats_value(obj_b, obj_b:section(), gr, stat)
+					local valbar_b = val_b and clamp((math.abs(val_b) * gr.magnitude), 0, 1)
+					if valbar_b and (valbar_a ~= valbar_b) then
+					
+						-- If focued item's value is bigger than slot item's value -> focued item's bar: green + 2nd layer
+						if valbar_a > valbar_b then
+							ele.bar1:SetProgressPos( valbar_b )
+							ele.bar1:SetColor( clr_list["info_def"] )
+							
+							ele.bar2:SetProgressPos( valbar_a )
+							ele.bar2:SetColor( clr_list["info_p"] )
+							
+							ele.comp:SetTextColor( clr_list["info_p_txt"] )
+							
+						-- If focued item's value is smaller than slot item's value -> focued item's bar: red + 1nd layer
+						else
+							ele.bar1:SetProgressPos( valbar_a )
+							ele.bar1:SetColor( clr_list["info_def"] )
+							
+							ele.bar2:SetProgressPos( valbar_b )
+							ele.bar2:SetColor( clr_list["info_n"] )
+							
+							ele.comp:SetTextColor( clr_list["info_n_txt"] )
+						end
+						
+						local diff_val = math.ceil( (valbar_a - valbar_b) * 100 )
+						ele.comp:SetText( (diff_val > 0 and "+" or "") .. diff_val .. "%" )
+						ele.comp:Show(true)
+						ele.bar1:Show(true)
+						ele.bar2:Show(true)
+						ele.bar1:ShowBackground(false)
+						
+					-- No comparison
+					else
+						ele.bar1:SetProgressPos( valbar_a )
+						ele.bar1:SetColor( clr_list["info_def"] )
+						ele.bar1:Show(true)
+						ele.bar1:ShowBackground(true)
+					end
+					
+				-- Text
+				elseif ele.txt then
+					local valbar_a = val_a * gr.magnitude
+					local unit = gr.unit and gr.unit ~= "" and game.translate_string(gr.unit) or ""
+					local clr = valbar_a >= 0 and clr_list["p1"] or clr_list["n1"]
+					valbar_a = math.ceil(valbar_a)
+					
+					if gr.sign_inverse then
+						clr = valbar_a < 0 and clr_list["p1"] or clr_list["n1"]
+						--valbar_a = -1 * valbar_a -- invert sign again if needed
+					end
+					local sign = gr.sign and valbar_a > 0 and "+" or ""
+
+					-- Comparison item
+					local val_b = obj_b and get_stats_value(obj_b, obj_b:section(), gr, stat)
+					local valbar_b = val_b and val_b * gr.magnitude
+					if valbar_b and (valbar_a ~= valbar_b) then
+						local diff_val = math.ceil(valbar_a - valbar_b)
+						ele.comp:SetText( "(" .. (diff_val > 0 and "+" or "") .. diff_val .. ")" )
+						ele.comp:Show(true)
+						clr = (valbar_a > valbar_b) and clr_list["info_p_txt"] or clr_list["info_n_txt"]
+					end
+					
+					if gr.sign_inverse_txt then
+						if valbar_a > 0 then
+							sign = "-"
+						elseif valbar_a < 0 then
+							valbar_a = -1 * valbar_a
+							sign = "+"
+						end
+					end
+					
+					ele.txt:SetText( sign .. valbar_a .. " " .. unit )
+					ele.txt:SetTextColor( clr )
+					ele.txt:Show(true)
+				end
+				
+				
+				y = y + ele.base:GetHeight()
+				--printf("stat ele [%s] [%s] | cnt: %s - y: %s - value: %s", sec, stat, cnt, y, val_a)
+				
+				local ele_prev = cnt_last and self.stats[cnt_last]
+				self:Sync_Y(ele_prev and ele_prev.base, ele.base, 0)
+				cnt_last = cnt
+
+				ele.base:Show(true)
+			end
+		end
+	end
+
+	self.stats_dialog:SetWndSize(vector2():set( self.stats_dialog:GetWidth() , y + 10 ))
+	self.stats_dialog:Show(true)
+	
+	-- Stop here?
+	if self:Sync_Finale( (typ ~= "weapon"), self.desc, self.stats_dialog, self.frame, 10 ) then
+		self.ammo:Show(false)
+		return
+	end
+	
+	-- Ammo type
+	if (typ == "weapon") then
+		local ammo_list = utils_item.get_ammo(sec, self.id, nil)
+		local ammo_name = ini_sys:r_string_ex(ammo_list[1], "inv_name_short") or ""
+		self.ammo_txt:SetText( game.translate_string(ammo_name) )
+		for i=1,12 do
+			if self.ammo_ico[i] then
+				if ammo_list[i] and (ammo_list[i] ~= "ammo_12x70_buck_self") then
+					utils_xml.set_icon(ammo_list[i], nil, self.ammo_ico[i], self.ammo_ico_temp[i])
+					self.ammo_ico[i]:Show(true)
+					self.ammo_ico_temp[i]:Show(true)
+				else
+					self.ammo_ico[i]:Show(false)
+					self.ammo_ico_temp[i]:Show(false)
+				end
+			end
+		end
+		
+		self.ammo:Show(true)
+	else
+		self.ammo:Show(false)
+	end
+
+	-- Finale
+	self:Sync_Finale( true, self.stats_dialog, self.ammo, self.frame, 10 )
+	return
+end
+
+function UIInfoItem:Pass(obj, sec)
+
+	-- hide when no info is passed
+	if not (obj or sec) then
+		self:Reset()
+		return false
+	end
+	
+	-- anticipate different object 
+	if self.id then
+		if (not obj) then
+			self:Reset()
+			return false
+		else
+			if (obj:id() == self.id) then
+				return true
+			else
+				self:Reset()
+				return false
+			end
+		end
+	end
+	
+	-- anticipate different section 
+	if self.section then
+		if (not sec) then
+			self:Reset()
+			return false
+		else
+			if (sec == self.section) then
+				return true
+			else
+				self:Reset()
+				return false
+			end
+		end
+	end
+	
+	-- delay
+	local tg = get_time()
+	if (tg < self.timer + self.delay) then
+		return false
+	end
+	
+	self.timer = tg
+	return true
+end
+
+function UIInfoItem:GetType(sec)
+	if ini_sys:r_string_ex(sec, "ammo_class") and (not IsItem("fake_ammo_wpn", sec)) then
+		return "weapon"
+	elseif IsItem("outfit", sec) or IsItem("helmet", sec) then 
+		return "outfit"
+	elseif IsItem("artefact", sec) then
+		return "artefact"
+	elseif IsItem("consumable", sec) then
+		return "booster"
+	elseif IsItem("backpack", sec) then
+		return "backpack"
+	end
+	return "none"
+end
+
+function UIInfoItem:GetUpgrades(obj)
+	if obj and IsWeapon(obj) and has_upgrades(obj) then
+		return utils_item.get_upgrades_installed(nil, obj:id())
+	end
+	return nil
+end
+
+function UIInfoItem:Sync_Finale(cond, ele_syncer, ele_resizer, ele_adapter, offset)
+
+-- Stage 1: syncing
+-- Adjust element position (ele_resizer) to go below another (ele_syncer)
+	if ele_syncer then
+		self:Sync_Y(ele_syncer, ele_resizer, offset)
+	end
+
+-- Stage 2: checking
+-- if condition is true, go to stage 3 to finilize the info box
+	if (not cond) then
+		return false
+	end
+	
+-- Stage 3: resizng
+-- Adjust elemet height (ele_adapter) to contain another (ele_resizer)
+	self:Sync_H(ele_resizer, ele_adapter, offset)
+	self:Show(true)
+	return true
+end
+
+function UIInfoItem:Sync_Y(parent, child, offset)
+	local pos_c = child:GetWndPos()
+	if (not parent) then
+		local y = 0 + (offset or 10)
+		child:SetWndPos(vector2():set( pos_c.x , y ))
+		return y
+	end
+	
+	local pos_p = parent:GetWndPos()
+	local h_p = parent:GetHeight()
+	local y = pos_p.y + h_p + (offset or 10)
+	child:SetWndPos(vector2():set( pos_c.x , y ))
+	return y
+end
+
+function UIInfoItem:Sync_H(parent, child, offset)
+	local pos_p = parent:GetWndPos()
+	local h_p = parent:GetHeight()
+	local h = pos_p.y + h_p + offset
+	if h < 300 then h = 300 end
+	child:SetWndSize(vector2():set( child:GetWidth() , h ))
+	return h
+end
+
+function UIInfoItem:Reset_Y(ele)
+	ele:SetWndPos(vector2():set( ele:GetWndPos().x , 0 ))
+end
+
+function UIInfoItem:Reset()
+	self.id = nil
+	self.section = nil
+	self.timer = get_time()
+end
+
+function UIInfoItem:IsShown()
+	return self.dialog:IsShown()
+end
+
+function UIInfoItem:Show(state)
+	if state == false then
+		-- hide all extended info
+		self.stats_dialog:Show(false)
+		self.ammo:Show(false)
+	end
+	
+	self.dialog:Show(state)
+end
+
+
+-------------------------------------------------------------------
+-- Upgrade info box
+-------------------------------------------------------------------
+class "UIInfoUpgr"
+
+function UIInfoUpgr:__init(owner, delay)
+	self.owner = owner
+	self.section = nil
+	
+	self.timer = 0
+	self.delay = delay or 500
+	
+	self:InitControls()
+	self:Show(false)
+end
+
+function UIInfoUpgr:InitControls()
+	self.dialog = XMLP:InitStatic("upgrade_info", self.owner)
+	self.frame    = XMLP:InitFrame("upgrade_info:background_frame", self.dialog)
+	self.name     = XMLP:InitTextWnd("upgrade_info:info_name", self.dialog)
+	self.cost     = XMLP:InitTextWnd("upgrade_info:info_cost", self.dialog)
+	self.desc     = XMLP:InitTextWnd("upgrade_info:info_desc", self.dialog)
+	self.prereq     = XMLP:InitTextWnd("upgrade_info:info_prerequisites", self.dialog)
+
+	self.prop_frame = XMLP:InitStatic("upgrade_info:properties", self.dialog)
+	self.prop = {}
+	self.prop_h = self.prop_frame:GetHeight()
+	local pos
+	for i=1,5 do
+		self.prop[i] = {}
+		self.prop[i].ico = XMLP:InitStatic("upgrade_info:properties:icon", self.prop_frame)
+		pos = self.prop[i].ico:GetWndPos()
+		self.prop[i].ico:SetWndPos(vector2():set( pos.x , pos.y + (self.prop_h * i) ))
+
+		self.prop[i].txt = XMLP:InitTextWnd("upgrade_info:properties:txt", self.prop_frame)
+		pos = self.prop[i].txt:GetWndPos()
+		self.prop[i].txt:SetWndPos(vector2():set( pos.x , pos.y + (self.prop_h * i) ))
+	end
+end
+
+function UIInfoUpgr:Update(upgr, prereq, installed)
+	if not self:Pass(upgr) then
+		self:Show(false)
+		return
+	end
+	
+	-- info box is shown at cursor
+	sync_cursor(self.dialog, self.frame, 0, 0)
+	
+	-- no need to process if it's same item
+	if (upgr and upgr == self.section) then
+		self:Show(true)
+		return
+	end
+	
+	self.section = upgr
+	
+	local sec = ini_sys:r_string_ex(upgr,"section")
+	
+	local name = ini_sys:r_string_ex(upgr,"name")
+	self.name:SetText( game.translate_string(name) )
+	self.name:AdjustHeightToText()
+	
+	self.cost:SetText( inventory_upgrades.get_upgrade_cost(sec) .. " RU" )
+	self:Sync_Y(self.name, self.cost, 10)
+	
+	local desc = ini_sys:r_string_ex(upgr,"description")
+	self.desc:SetText( game.translate_string(desc) )
+	self.desc:AdjustHeightToText()
+	self:Sync_Y(self.cost, self.desc, 10)
+	
+	self.prereq:SetText(prereq or "")
+	self.prereq:SetTextColor(installed and clr_list["p2"] or clr_list["n2"])
+	self.prereq:AdjustHeightToText()
+	self:Sync_Y(self.desc, self.prereq, 10)
+
+	local props = parse_list(ini_sys, upgr, "property")
+	for i,prop in ipairs(props) do
+		local icon = ini_sys:r_string_ex(prop,"icon")
+		self.prop[i].ico:InitTexture(icon)
+		self.prop[i].ico:Show(true)
+		
+		local value = self:ExtractFunctor(prop, "functor", sec, prop) or ""
+		self.prop[i].txt:SetText(value)
+		self.prop[i].txt:Show(true)
+		
+		--printf("$UIInfoUpgr | i: %s - prop: %s - icon: %s - value: %s", i, prop, icon, value)
+	end
+	
+	for i=(#props + 1), 5 do
+		self.prop[i].ico:Show(false)
+		self.prop[i].txt:Show(false)
+	end
+	
+	self:Sync_Y(self.prereq, self.prop_frame, 10)
+	self:Sync_H(self.prop_frame, self.frame, (self.prop_h * #props) )
+	return
+end
+
+function UIInfoUpgr:Pass(sec)
+
+	-- hide when no info is passed
+	local tg = get_time()
+	if (not sec) then
+		self.timer   = tg
+		self.section = nil
+		return false
+	end
+	
+	-- anticipate different section 
+	if self.section then
+		if (not sec) then
+			self:Reset()
+			return false
+		elseif sec and (sec == self.section) then
+			return true
+		end
+	end
+	
+	-- delay
+	if (tg < self.timer + self.delay) then
+		return false
+	end
+	
+	self.timer = tg
+	return true
+end
+
+function UIInfoUpgr:ExtractFunctor(sec, param, ...)
+	local func = ini_sys:r_string_ex(sec, param)
+	func = str_explode(func,"%.")
+	return func and _G[func[1]] and _G[func[1]][func[2]] and _G[func[1]][func[2]](...) or nil
+end
+
+function UIInfoUpgr:Sync_Y(parent, child, offset)
+	local pos_c = child:GetWndPos()
+	if (not parent) then
+		local y = 0 + (offset or 10)
+		child:SetWndPos(vector2():set( pos_c.x , y ))
+		return y
+	end
+
+	local y = parent:GetWndPos().y + parent:GetHeight() + (offset or 10)
+	child:SetWndPos(vector2():set( pos_c.x , y ))
+	return y
+end
+
+function UIInfoUpgr:Sync_H(parent, child, offset)
+	local h = parent:GetWndPos().y + parent:GetHeight() + offset
+	if (h < 265) then
+		h = 265
+	end
+	child:SetWndSize(vector2():set( child:GetWidth() , h ))
+	return h
+end
+
+function UIInfoUpgr:Reset()
+	self.section = nil
+	self.timer = get_time()
+end
+
+function UIInfoUpgr:IsShown()
+	return self.dialog:IsShown()
+end
+
+function UIInfoUpgr:Show(state)
+	self.dialog:Show(state)
+end
+
+
+
+-------------------------------------------------------------------
+-- Properties list for item cells
+-------------------------------------------------------------------
+class "UICellProperties" (CUIScriptWnd)
+
+function UICellProperties:__init(owner) super()
+	self.owner = owner
+	
+	-- frame size limit, game will crash if the frame size is less that it's min defines. Always check for frame corners defines in textures_desc
+	self.W_L = 58
+	self.H_L = 40
+	self.PDW = 10
+	self.PDH = 10
+	self.action_moment = false
+	
+	self:InitControls()
+	self:InitCallBacks()
+end 
+
+function UICellProperties:__finalize()
+	if (self.owner) then
+		--self.owner.disabled = false
+	end
+end
+
+function UICellProperties:InitControls()
+	self:SetWndRect(Frect():set(0,0,1024,768))
+	self:SetAutoDelete(true)
+	
+	-- these windows are just to get width/height from xml to be use for context item
+	local ctrl = CUIWindow()
+	ctrl:SetAutoDelete(true)
+	XMLP:InitWindow("properties:file_item:main",0,ctrl)
+
+	self.file_item_main_sz = vector2():set(ctrl:GetWidth(),ctrl:GetHeight())
+
+	XMLP:InitWindow("properties:file_item:fn",0,ctrl)
+	self.file_item_fn_sz = vector2():set(ctrl:GetWidth(),ctrl:GetHeight())
+
+	-- form background
+	self.form = XMLP:InitStatic("properties:form",self)
+
+	-- List Box
+	self.frame = XMLP:InitFrame("properties:form:list_frame",self.form)
+	self.highlight = XMLP:InitStatic("properties:highlight",self.form)
+	self.list_box = XMLP:InitListBox("properties:form:list",self.form)
+	
+
+	self.list_box:ShowSelectedItem(true)
+	self:Register(self.list_box, "UICellProperties_list_view")
+end
+
+function UICellProperties:Update()
+	CUIScriptWnd.Update(self)
+	
+	--[[
+	local pos = GetCursorPosition()
+	local rect = Frect():set(0,0,0,0)
+	self.form:GetAbsoluteRect(rect)
+
+	if not (utils_data.pos_in_rect(pos,rect)) then
+		if (self:IsShown()) then
+			self:OnHide()
+			return
+		end
+	end
+	if (self.owner) then
+		self.owner.disabled = true
+	end
+	--]]
+	
+	
+	for i=0,self.list_box:GetSize() do
+		local _itm = self.list_box:GetItemByIndex(i)
+		if _itm and _itm:IsCursorOverWindow() then
+			local pos = _itm:GetWndPos()
+			self.highlight:SetWndPos( vector2():set( pos.x + self.PDH/2 , pos.y + self.PDW ) )
+			self.highlight:SetWndSize(vector2():set( _itm.textControl:GetWidth() , _itm.textControl:GetHeight() ))
+			self.highlight:Show(true)
+			return
+		end
+	end
+	
+	self.highlight:Show(false)
+	-- self:AllowMovement(ui_inventory.GUI.mode == "inventory")
+end
+
+function UICellProperties:Reset(pos_override, action_list, name_list, params_list)
+
+	self.H = 0
+	self.W = 0
+	
+	-- Reset list
+	self:FillList(action_list, name_list, params_list)
+	self.action_moment = false
+	
+	-- Cursor
+	local pos = GetCursorPosition() -- because ShowDialog moves mouse cursor to center
+	self:ShowDialog()
+	SetCursorPosition(pos)
+	
+	sync_cursor(self.form)
+	--[[
+	pos = pos_override and vector2():set(pos_override.x,pos_override.y) or GetCursorPosition()
+	pos.x = pos.x - self.form:GetWidth() --/2
+	--pos.y = pos.y - 22
+	
+	if (pos.x < 0) then 
+		pos.x = 0 
+	end
+	self.form:SetWndPos(pos)
+	--]]
+end
+
+function UICellProperties:FillList(action_list, name_list, params_list)
+	self.list_box:RemoveAll()
+	
+	for i,str_id in pairs(name_list) do
+		self:AddItemToList(i, str_id, action_list[i], params_list[i])
+	end
+	
+	if self.H < self.H_L then self.H = self.H_L end
+	if self.W < self.W_L then self.W = self.W_L end
+	
+	local sz = vector2():set(self.W , self.H)
+	self.form:SetWndSize(sz)
+	self.frame:SetWndSize(sz)
+	self.list_box:SetWndSize(sz)
+	self.highlight:Show(false)
+end
+
+function UICellProperties:OnListItemClicked()
+	if self.list_box:GetSize()==0 then return end
+
+	local item = self.list_box:GetSelectedItem()
+
+	if not (item) then
+		return
+	end
+end
+
+function UICellProperties:OnListItemDbClicked()
+	if self.list_box:GetSize()==0 then return end
+
+	local item = self.list_box:GetSelectedItem()
+	if not (item) then
+		return
+	end
+	
+	if self.owner and (item.func) then 
+		if item.params then
+			self.owner[item.func](self.owner, unpack(item.params))
+		else
+			self.owner[item.func](self.owner)
+		end
+		
+		self.action_moment = get_time()
+	end
+	
+	if (self:IsShown()) then
+		self:OnHide()
+	end
+end
+
+function UICellProperties:InitCallBacks()
+	self:AddCallback("button_ok",ui_events.BUTTON_CLICKED,self.OnButton_ok,self)
+	self:AddCallback("UICellProperties_list_view",ui_events.LIST_ITEM_CLICKED,self.OnListItemDbClicked,self)
+	--self:AddCallback("UICellProperties_list_view",ui_events.WINDOW_LBUTTON_DB_CLICK,self.OnListItemDbClicked,self)
+end
+
+function UICellProperties:AddItemToList(index, str_id, func, params)
+	local _itm = UICellProperties_item()
+	_itm:SetWndSize(self.file_item_main_sz)
+	
+	_itm.textControl:SetWndPos(vector2():set(0,0))
+	_itm.textControl:SetWndSize(self.file_item_fn_sz)
+	_itm.textControl:SetText(game.translate_string(str_id))
+	
+	_itm.textControl:AdjustWidthToText()
+	local h = self.file_item_fn_sz.y
+	local w = math.ceil(_itm.textControl:GetWidth())
+	w = w + self.PDW
+	local sz = vector2():set( w , h )
+	_itm.textControl:SetWndSize(sz)
+	_itm:SetWndSize(sz)
+	
+	if w > self.W then self.W = w + self.PDW end
+	if self.H == 0 then self.H = h end
+	self.H = self.H + h
+	
+	_itm.func = func
+	_itm.params = params
+	
+	self.list_box:AddExistingItem(_itm)
+end
+
+function UICellProperties:OnKeyboard(dik, keyboard_action)
+	CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (keyboard_action == ui_events.WINDOW_KEY_PRESSED) then
+		if (dik == DIK_keys.MOUSE_1) or (dik == DIK_keys.MOUSE_2) then
+			if (not self.form:IsCursorOverWindow()) then
+				if (self:IsShown()) then
+					self:OnHide()
+				end
+			end
+			
+		elseif (dik == DIK_keys.DIK_ESCAPE) then
+			if (self:IsShown()) then
+				self:OnHide()
+			end
+		end
+	end
+	return true
+end
+
+function UICellProperties:OnHide()
+	if (self.owner) then
+		--self.owner.disabled = false
+	end
+	
+	self:HideDialog()
+end
+
+----
+class "UICellProperties_item" (CUIListBoxItem)
+
+function UICellProperties_item:__init() super()
+	self:SetTextColor(GetARGB(255, 170, 170, 170))
+	self.textControl = self:GetTextItem()
+	self.textControl:SetFont(GetFontLetterica16Russian())
+	self.textControl:SetEllipsis(true)
+end
+
+function UICellProperties_item:__finalize()
+
+end
+
+
+-------------------------------------------------------------------
+-- Hint window
+-------------------------------------------------------------------
+class "UIHint"
+
+function UIHint:__init(owner, delay, path)
+	self.owner = owner
+	self.txt = ""
+	self.path = path or "hint_wnd"
+
+	self.timer = 0
+	self.delay = delay or 500 --[ms]
+
+	self:InitControls()
+	self:Show(false)
+end
+
+function UIHint:InitControls()
+	self.dialog = XMLP:InitFrame(self.path .. ":background",self.owner)
+	self.dialog_text = XMLP:InitTextWnd(self.path .. ":text",self.dialog)
+end
+
+function UIHint:Update(txt)
+	if not self:Pass(txt) then
+		self:Show(false)
+		return
+	end
+
+	-- no need to process if it's same txt
+	if (txt == self.txt) then
+		sync_cursor(self.dialog)
+		self:Show(true)
+		return
+	end
+
+	-- Set text
+	self.dialog_text:SetText(txt)
+	self.dialog_text:AdjustHeightToText()
+	
+	-- Set wnd size
+	local w = self.dialog:GetWidth()
+	w = w >= 96 and w or 96
+	local h = self.dialog_text:GetHeight()+44
+	h = h >= 96 and h or 96
+	self.dialog:SetWndSize(vector2():set(w,h))
+
+	FitInRect(self.dialog,Frect():set(0,0,1024,768),0,100)
+	
+	-- box is shown at cursor
+	sync_cursor(self.dialog)
+	
+	self.txt = txt
+	return
+end
+
+function UIHint:Pass(txt)
+
+	-- hide when no info is passed
+	local tg = get_time()
+	if not (txt and txt ~= "") then
+		self.timer   = tg
+		self.txt      = nil
+		return false
+	end
+	
+	if txt == self.txt then
+		return true
+	end
+	
+	-- delay
+	if (tg < self.timer + self.delay) then
+		return false
+	end
+	
+	self.timer = tg
+	return true
+end
+
+function UIHint:Show(state)
+	self.dialog:Show(state)
+end
+
+
+
+------------------------------------------------------------
+-- Utilities
+------------------------------------------------------------
+
+function prop_accuracry(obj,sec)
+	local fire_dispersion_base = utils_item.get_wpn_param(obj, sec, "fire_dispersion_base", 0)
+	return normalize(fire_dispersion_base, 1.5, 0)
+end
+
+function prop_handling(obj,sec)
+	local id = obj and obj:id()
+	local PDM_disp_base = utils_item.get_wpn_param(obj, sec, "PDM_disp_base", 0)
+	local control_inertion_factor = utils_item.get_wpn_param(obj, sec, "control_inertion_factor", 0)
+	return (normalize(PDM_disp_base, 2.1, 0) + normalize(control_inertion_factor, 3, 1))/2
+end
+
+function prop_damage(obj,sec)
+	local id = obj and obj:id()
+	local hit_power = utils_item.get_wpn_param(obj, sec, "hit_power", 0)
+	local ammo_list = utils_item.get_ammo(sec, id)
+	if ammo_list[1] then
+		local k_hit = ini_sys:r_float_ex(ammo_list[1], "k_hit") or 1
+		hit_power = (hit_power ~= 0) and (k_hit*hit_power) or k_hit
+	end
+	
+	return normalize(hit_power, 0, 1.5)
+end
+
+function prop_rpm(obj,sec)
+	local rpm = utils_item.get_wpn_param(obj, sec, "rpm", 0)
+	return normalize(rpm, 0, 1000)
+end
+
+function prop_condition(obj,sec)
+	return obj and obj:condition() or 1
+end
+
+function get_utils_xml()
+	return XMLP
+end
