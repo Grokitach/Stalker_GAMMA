@@ -1,0 +1,86 @@
+
+local storage_data = {}
+
+function level_is_bar()
+	return (level.name() == "l05_bar")
+end
+
+function npcs_friendly_to_community(npc_1,npc_2,com)
+	local com_1 = npc_1 and character_community(npc_1)
+	local com_2 = npc_2 and character_community(npc_2)
+	--printf("GhenTuong: %s %s %s %s %s",com_1,com_2,com,game_relations.is_factions_enemies(com_1,com),game_relations.is_factions_enemies(com_2,com))
+	if (com_1 and com_2 and (not game_relations.is_factions_enemies(com_1,com)) and (not game_relations.is_factions_enemies(com_2,com))) then
+		return true
+	end
+	return false
+end
+
+function npc_on_before_hit(npc,shit,bone_id,flags)
+	if not (level_is_bar()) then
+		return
+	end
+	if (storage_data.bar_actor_crime) then
+		return
+	end
+	-- oleh5230
+	if (npc and character_community(npc) and character_community(npc) == "arena_enemy") then
+		return
+	end
+	-- oleh5230 end
+	if (shit and shit.draftsman) then
+		if (shit.draftsman:id() == AC_ID) then
+			if (npcs_friendly_to_community(npc,shit.draftsman,"dolg")) then
+				storage_data.bar_actor_crime = true
+			end
+		end
+	end
+end
+
+
+function on_enemy_eval(npc,ene,flags)
+	if not (level_is_bar()) then
+		return
+	end
+	if not (IsStalker(npc) and IsStalker(ene)) then
+		return
+	end
+	-- oleh5230
+	if (npc and character_community(npc) and character_community(npc) == "arena_enemy") then
+		return
+	end
+	-- oleh5230 end
+	if (npcs_friendly_to_community(npc,ene,"dolg")) then
+		if (storage_data.bar_actor_crime and (ene:id() == AC_ID)) then
+			return
+		end
+		flags.override = true
+		flags.result = false
+	end
+end
+
+
+
+
+
+function save_state(m_data)
+	m_data.gameplay_peace_zone = storage_data
+end
+
+function load_state(m_data)
+	storage_data = m_data.gameplay_peace_zone or {}
+end
+
+function on_level_changing()
+	storage_data.bar_actor_crime = nil
+end
+
+--[[----------------------------------------------------------------------------------------------------
+	Registers
+------------------------------------------------------------------------------------------------------]]
+function on_game_start()
+    RegisterScriptCallback("save_state",save_state)
+    RegisterScriptCallback("load_state",load_state)
+	RegisterScriptCallback("on_level_changing",on_level_changing)
+	RegisterScriptCallback("npc_on_before_hit",npc_on_before_hit)
+	RegisterScriptCallback("on_enemy_eval",on_enemy_eval)
+end
