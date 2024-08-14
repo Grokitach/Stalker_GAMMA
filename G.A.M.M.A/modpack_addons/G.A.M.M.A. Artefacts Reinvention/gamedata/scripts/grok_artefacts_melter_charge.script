@@ -72,13 +72,13 @@ function recharge(obj, num) --reduce use of multiuse item
 	num = num or 3
 	if IsItem("multiuse",nil,obj) then
 		local uses = obj:get_remaining_uses()
-		if uses then
-			obj:set_remaining_uses(uses + num)
-			--print_dbg("discharge | discharged item (%s) by %s", obj:section(), num)
-			return uses + num
-		elseif uses >= 10 then
-			uses = 10
-		end
+		if not uses then return 0 end
+		if uses >= 10 then return 0 end
+		
+		new_charges = clamp(uses + num, 0, 10)
+		obj:set_remaining_uses(new_charges)
+		--print_dbg("discharge | discharged item (%s) by %s", obj:section(), num)
+		return new_charges
 	end
 end
 
@@ -96,11 +96,17 @@ local function on_item_drag_dropped(obj_1, obj_2, slot_from, slot_to)
 			return
 		end
 			
-		local regen_val = regen_val_table[sec_2] or 1
-		recharge( obj_1 , regen_val )
-		alife_release(obj_2)
-		--level.add_cam_effector('camera_effects\\item_use_fast.anm', 9209, false,'')
-		xr_sound.set_sound_play(AC_ID,"inv_aam_open")
+		regen_val = regen_val_table[sec_2] or 1
+		regen_val = regen_val_table[sec_2] or 1
+		local should_release = recharge( obj_1 , regen_val ) or 0
+		if should_release > 0 then
+			alife_release(obj_2)
+			--level.add_cam_effector('camera_effects\\item_use_fast.anm', 9209, false,'')
+			xr_sound.set_sound_play(AC_ID,"inv_aam_open")
+			-- print_dbg("[Melter Charge] Melter charged to %s using %s (charges given: %s)", should_release, sec_2, regen_val)
+		else
+			-- print_dbg("[Melter Charge] Melter was already full charge. Returning %s...", sec_2)
+		end
 	end
 end
 
