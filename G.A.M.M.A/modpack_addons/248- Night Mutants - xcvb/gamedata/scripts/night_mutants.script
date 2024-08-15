@@ -1,7 +1,7 @@
 --	picks a random squad from "squad_descr_night_mutants.ltx" every "spawn_time_interval" game minutes
 --	spawns on smart terrains available for mutants and if current population of smart is 0 or if no default night mutants are on this smart online
 
-local spawn_time_interval = 45	-- game minutes
+local spawn_time_interval = 30	-- game minutes
 local safe_radius = 75					-- no spawn in this player's radius
 
 local night_start = 20					-- time at which mutants start to spawn
@@ -63,7 +63,7 @@ function try_to_spawn()
 	local actor_level = sim:level_name(gg:vertex(sim:actor().m_game_vertex_id):level_id())
 	local whitelist = whitelisted_maps[actor_level]
 
-	if not is_night() or whitelist == 1 then
+	if whitelist == 1 or not is_night() then
 		if is_not_empty(spawned_mutants) then
 			delete_mutants()
 			empty_table(spawned_mutants)
@@ -137,11 +137,21 @@ end
 
 function delete_mutants()
 	for level_name, t in pairs(spawned_mutants) do
-		for idx, squad_id in ipairs(t) do
-			local squad = alife_object(squad_id)
-			if squad then
-				pr("squad id: %s deleted", squad_id)
-				squad:remove_squad()
+		for idx = #t, 1, -1 do
+			if t[idx] then
+				local squad = alife_object(t[idx])
+				if squad then
+					if squad.get_script_target then
+						printf("delete_mutants (xcvb mutants): squad id: %s deleted || sec: %s", t[idx], squad:section_name())
+						alife_release(squad)
+						if t[idx] then	-- in case it wasnt removed by callbacks
+							table.remove(spawned_mutants[level_name], idx)
+						end
+					else
+						printf("! not squad, remove from table (xcvb mutants): obj id: %s || sec: %s", t[idx], squad:section_name())
+						table.remove(spawned_mutants[level_name], idx)
+					end
+				end
 			end
 		end
 	end
@@ -150,10 +160,26 @@ end
 
 function server_entity_on_unregister(obj)
 	for level_name, t in pairs(spawned_mutants) do
-		for idx, squad_id in ipairs(t) do
-			if obj.id == squad_id then
-				pr("removing squad_id: %s from table", squad_id)
+		for idx = #t, 1, -1 do
+			if t[idx] and obj.id == t[idx] then
+				local mutant_squad = alife_object(t[idx])
+				printf("server_entity_on_unregister (xcvb mutants): squad_id: %s || sec: %s", t[idx], mutant_squad and mutant_squad:section_name() or "")
 				table.remove(spawned_mutants[level_name], idx)
+			end
+		end
+	end
+
+end
+
+function squad_on_npc_death(squad, se_obj, killer)
+	for level_name, t in pairs(spawned_mutants) do
+		for idx = #t, 1, -1 do
+			if t[idx] then
+				local mutant_squad = alife_object(t[idx])
+				if mutant_squad and mutant_squad.id == squad.id and squad:npc_count() <= 1 then
+					printf("squad_on_npc_death (xcvb mutants): squad_id: %s || sec: %s", t[idx], mutant_squad and mutant_squad:section_name() or "")
+					table.remove(spawned_mutants[level_name], idx)
+				end
 			end
 		end
 	end
@@ -236,6 +262,7 @@ end
 function on_game_start()
 	RegisterScriptCallback("actor_on_update", try_to_spawn)
 	RegisterScriptCallback("server_entity_on_unregister", server_entity_on_unregister)
+	RegisterScriptCallback("squad_on_npc_death", squad_on_npc_death)
 	RegisterScriptCallback("actor_on_first_update", save_mutant_smarts)
 	RegisterScriptCallback("save_state", save_state)
 	RegisterScriptCallback("load_state", load_state)
