@@ -58,6 +58,42 @@ _G.CHudItem__PlayHUDMotion = function(anm_table, obj, owner)
 	return anm_table
 end
 
+-- item_device and itms_manager faulty callbacks with flags
+item_device_on_anomaly_touch = item_device.on_anomaly_touch
+item_device.on_anomaly_touch = function(obj, flags)
+	if flags.ret_value then
+		item_device_on_anomaly_touch(obj, flags)
+	end
+end
+
+itms_manager_actor_on_item_before_use = itms_manager.actor_on_item_before_use
+itms_manager.actor_on_item_before_use = function(obj, flags)
+	if flags.ret_value then
+		itms_manager_actor_on_item_before_use(obj, flags)
+	end
+end
+
+-- xrs_facer faulty hit_callback
+function xrs_facer.hit_callback(obj, amount, dir, who, bone_index)
+	if not xrs_facer.Enabled then return end
+	if bone_index == "from_death_callback" then return end
+	if not db.storage[obj:id()].facer then return end
+
+	if who and (IsStalker(who) or IsMonster(who)) and who:alive() and xrs_facer.check_enemy(who, obj) then
+		local target_id = load_var(obj, "facer_target", nil)
+		local target = target_id and db.storage[target_id] and db.storage[target_id].object
+		if
+			not target
+			or obj:relation(target) ~= game_object.enemy
+			or target:position():distance_to_sqr(obj:position()) > 4
+		then
+			save_var(obj, "facer_target", who:id())
+			db.storage[obj:id()].facer.check_time = time_global() + xrs_facer.facer_sets.check_prd
+		end
+	end
+end
+
+
 -- Disable caching of ini values to utilize engine functions and reduce memory footprint
 _G.USE_INI_MEMOIZE = false
 clear_ini_cache(ini_sys)
