@@ -1,0 +1,355 @@
+-- On weapon shot, plays a delayed sound of cartridge falling on the ground with different sounds for different ground types.
+-- Based on Haruka Exo jump sound player code.
+-- Grok 17/04/2023
+
+--[[
+Revisited by oleh5230, 19/03/2024:
+- Calls up to six sound playbacks simultaneously
+- Positional sounds (with offset depending on ejection port orintation)
+- Volume and delay adjustments if player is crouched or prone
+- Mud sounds during rain
+- Tables updated and moved to .ltx files
+- MCM settings
+
+oleh5230, 15/05/2024:
+- Switched to play_no_feedback(): no concurrent playbacks limit, minimized time events usage
+- Separated eject and falling delay
+- Most parameters are now fetched on first shot only
+- .ltx parsed to lua tables instead of direct reading
+- UBGL reload casings sounds
+
+Credits:
+- xcvb: get_body_state()
+- Maid: .ltx parser
+
+To Do:
+- last shot exception?
+]]
+
+local ini_wpn = ini_file_ex("plugins\\grok_casings_sounds_weapons.ltx")
+local ini_ammo = ini_file_ex("plugins\\grok_casings_sounds_ammo.ltx")
+local ini_gren = ini_file_ex("plugins\\grok_casings_sounds_grenades.ltx")
+local ini_mag = ini_file_ex("plugins\\grok_casings_sounds_magazines.ltx")
+local wpn_params, ammo_params, gren_params, mag_params = {}, {}, {}, {}
+
+mat_to_sound = {
+    ["earth"] = "_dirt_",
+    ["dirt"] = "_dirt_",
+    ["bush"] = "_grass_",
+    ["grass"] = "_grass_",
+    -- ["body"] = "_grass_",
+    -- ["cloth"] = "_grass_",
+    ["wood"] = "_wood_",
+    ["tree"] = "_wood_",
+    ["metal"] = "_metal_",
+    ["tin"] = "_metal_",
+    ["gravel"] = "_concrete_",
+    ["asphalt"] = "_concrete_",
+    ["tile"] = "_concrete_",
+    ["concrete"] = "_concrete_",
+    ["shifer"] = "_concrete_",
+    ["bricks"] = "_concrete_",
+    ["water"] = "_water_",
+    --["actor"] = "_water_",
+}
+
+local enabled = true
+local volume_base = 2
+local last_weapon_id
+
+function load_mcm_options()
+    if ui_mcm then
+        enabled = ui_mcm.get("grok_casings_sounds/enabled") or false
+        volume_base = ui_mcm.get("grok_casings_sounds/volume") or 2
+        ice_patch = ui_mcm.get("grok_casings_sounds/ice_patch") or false
+    end
+    if ice_patch then
+        mat_to_sound["water"] = "_concrete_"
+    else
+        mat_to_sound["water"] = "_water_"
+    end
+    if not enabled then
+        printf("Grok's Casing Falling Sounds are disabled in MCM, unregistering callbacks")
+        UnregisterScriptCallback("actor_on_footstep",actor_on_footstep)
+        UnregisterScriptCallback("actor_on_weapon_fired",actor_on_weapon_fired)
+        UnregisterScriptCallback("actor_on_hud_animation_play", actor_on_hud_animation_play)
+    end
+end
+
+function actor_on_footstep(material, power, hud_view, flags)
+    current_material = tostring(material)
+
+	for k,v in pairs(mat_to_sound) do
+		found_mat = string.find(current_material, k)
+		if found_mat then
+			current_material = k
+			break
+		end
+	end
+    current_material_sound = mat_to_sound[current_material]
+
+    -- change soft material to mud during rain
+    local wetness = level.rain_wetness()
+    if wetness > 0.2 and (current_material_sound == "_dirt_" or current_material_sound == "_grass_") then
+        local roll = math.random(99)
+        if wetness * 100 > roll then
+            current_material_sound = "_mud_"
+        end
+    end
+    --printf("grok_casings_sounds // %s, %s, wetness: %s", material, current_material_sound, wetness)
+end
+
+function get_const_params(wpn)
+    local wpn_sec = wpn:section()
+    local wpn_sec_par = ini_sys:r_string_ex(wpn_sec,"parent_section") or wpn_sec
+    local particle = ini_sys:r_string_ex(wpn_sec_par,"shell_particles") or false
+    local sub_coef = particle and 1.5 or 1
+
+    local ammo_list = utils_item.get_ammo(wpn_sec)
+    local ammo_sec = ammo_list[1]
+    local casing_class = ammo_params[ammo_sec] or "556mm"
+
+    local _wpn_params = {}
+    if wpn_params[wpn_sec_par] then
+        for i,v in pairs(wpn_params[wpn_sec_par]) do
+            _wpn_params[i] = v
+        end
+    end
+
+    local eject_delay = _wpn_params[1] or 0
+    local fall_delay = _wpn_params[2] or particle and 1.2 or 0.6
+    local orient = _wpn_params[3] or 0
+
+    -- local _wpn_params = wpn_params[wpn_sec_par] and str_explode(wpn_params[wpn_sec_par], ",")
+    -- local eject_delay = tonumber(_wpn_params[1]) or 0
+    -- local fall_delay = tonumber(_wpn_params[2]) or 0.6
+    -- local orient = tonumber(_wpn_params[3]) or 1
+    -- if orient == -1 then return end
+
+    return eject_delay, fall_delay, sub_coef, volume, orient, casing_class, material_sound
+end
+
+-- play casing sound after shot
+function actor_on_weapon_fired(obj, wpn)
+	if obj and wpn and not IsMelee(wpn) then
+
+        if not last_weapon_id or last_weapon_id ~= wpn:id() then
+            last_weapon_id = wpn:id()
+            eject_delay, fall_delay, sub_coef, volume, orient, casing_class, material_sound = get_const_params(wpn)
+        end
+
+        if casing_class == "no_sound" or orient == -1 then return end
+        local material_sound = current_material_sound or "_dirt_"
+        local volume = material_sound == "_grass_" and volume_base/4 or volume_base
+
+        if eject_delay and eject_delay > 0 then
+            CreateTimeEvent("grok_casings", "grok_casings_sound", eject_delay, play_sound, obj, fall_delay, 1, volume, orient, casing_class, material_sound)
+        else
+            play_sound(obj, fall_delay, sub_coef, volume, orient, casing_class, material_sound)
+        end
+        --printf("grok_casings_sounds // %s, %s, eject_delay: %s", wpn:section(), utils_item.get_ammo(wpn:section())[wpn:get_ammo_type()+1], eject_delay)
+
+        -- CreateTimeEvent("grok_casings", "grok_casings_sound_" .. count, delay + (math.random(10)/100), function()
+            -- sound_to_play = sound_object("casings\\" .. casing_class .. material_sound .. math.random(4))
+            -- sound_to_play:play_at_pos(obj, pos)
+            -- sound_to_play.volume = volume or 1
+
+            --printf("grok_casings_sounds // %s, %s, class: %s, delay: %s, volume: %s", wpn_sec_par, ammo_list[wpn:get_ammo_type()+1], casing_class, delay, volume)
+            --printf("grok_casings_sounds //   actor: %s, %s, %s", string.format("%.2f",db.actor:position().x), string.format("%.2f",db.actor:position().y), string.format("%.2f",db.actor:position().z))
+            --printf("grok_casings_sounds //  sound: %s, %s, %s", string.format("%.2f",pos.x), string.format("%.2f",pos.y), string.format("%.2f",pos.z))
+            --printf("grok_casings_sounds //  offset: %s, %s, %s, total: %s", string.format("%.2f",pos.x-db.actor:position().x), string.format("%.2f",pos.y-db.actor:position().y), string.format("%.2f",pos.z-db.actor:position().z), string.format("%.2f", math.sqrt(((pos.x-db.actor:position().x)^2 + (pos.z-db.actor:position().z)^2))))
+        --     return true
+        -- end)
+	end
+end
+
+function play_sound(obj, fall_delay, sub_coef, volume, orient, casing_class, material_sound)
+    if not obj then return end
+    -- adjust delay, volume and offset altitude
+    local pos, dir = obj:position(), obj:direction()
+    body_st = get_body_state()
+    if body_st == "low_crouch" then
+        fall_delay = fall_delay - (0.3 * sub_coef)
+        volume = volume * 0.7
+        pos.y = pos.y - 0.0016
+    elseif body_st == "crouch" then
+        fall_delay = fall_delay - (0.1 * sub_coef)
+        volume = volume * 0.9
+        pos.y = pos.y - 0.0064
+    else
+        pos.y = pos.y - 0.0092
+    end
+    offset_casing_sound(orient, pos, dir)
+
+    sound_to_play = sound_object("casings\\" .. casing_class .. material_sound .. math.random(4))
+    sound_to_play:play_no_feedback(obj, sound_object.s3d, fall_delay + (math.random(10)/100), pos, 1, 1)
+    sound_to_play.volume = volume
+    --printf("grok_casings_sounds // class: %s, fall_delay: %s, orient: %s, volume: %s", casing_class, fall_delay, orient, volume)
+
+    --draw_part = particles_object("_samples_particles_\\flash_light")
+    --draw_part:play_at_pos(vector():set(pos.x,pos.y - 0.5,pos.z))
+    return true
+end
+
+function get_body_state()
+	local crouch = IsMoveState('mcCrouch')
+	local accel = IsMoveState('mcAccel')
+	local body_st = "stand"
+
+	if crouch then
+		if accel then body_st = "low_crouch"
+		else body_st = "crouch"
+		end
+	end
+    return body_st
+end
+
+-- offset casing collision point
+function offset_casing_sound(orient, pos, dir)
+    if orient == 2 then
+        return pos
+    elseif orient == 1 then
+        pos.x = pos.x - dir.z -- + dir.x/3
+        pos.z = pos.z + dir.x -- + dir.z/3
+        return pos
+    else
+        pos.x = pos.x + dir.z*1.33 + dir.x/2
+        pos.z = pos.z - dir.x*1.33 + dir.z/2
+        return pos
+    end
+end
+
+-- play casing sound during UBGL reload
+function actor_on_hud_animation_play(anm_table, wpn)
+    if anm_table.anm_name == "anm_reload_g" and wpn then
+        local wpn_sec = wpn:section()
+        local wpn_sec_par = ini_sys:r_string_ex(wpn_sec,"parent_section") or wpn_sec
+
+        local material_sound = current_material_sound or "_dirt_"
+        local casing_class = material_sound == "_water_" and "127mm_water" or "m209"
+        local volume = material_sound == "_grass_" and volume_base/4 or material_sound == "_dirt_" and volume_base/1.7 or volume_base
+        local eject_delay, fall_delay = gren_params[wpn_sec_par], 0.6
+        if not eject_delay then return end
+
+	    -- local ammo_list = str_explode(ini_sys:r_string_ex(wpn_sec,"grenade_class"), ",")
+        -- local ammo_sec = ammo_list[1]
+
+        CreateTimeEvent("grok_casings", "grok_casings_reload_sound", eject_delay, function()
+            -- adjust delay, volume and offset altitude
+            local actor = db.actor
+            if not actor then return true end
+            local pos, dir = actor:position(), actor:direction()
+            body_st = get_body_state()
+            if body_st == "low_crouch" then
+                fall_delay = fall_delay - 0.3
+                volume = volume * 0.2
+                pos.y = pos.y - 0.0016
+            elseif body_st == "crouch" then
+                fall_delay = fall_delay - 0.1
+                volume = volume * 0.75
+                pos.y = pos.y - 0.0064
+            else
+                pos.y = pos.y - 0.0092
+            end
+            pos.x = pos.x + dir.x/3
+            pos.z = pos.z + dir.z/3
+
+            --printf("grok_casings_sounds // delay: %s, %s, volume: %s", eject_delay, fall_delay, volume)
+            sound_to_play = sound_object("casings\\" .. casing_class .. "_" .. math.random(4))
+            sound_to_play:play_no_feedback(actor, sound_object.s3d, fall_delay, pos, 1, 1)
+            sound_to_play.volume = volume
+            return true
+        end)
+    end
+end
+
+function actor_on_hud_animation_play_mag_drop(anm_table, wpn)
+    if anm_table.anm_name and wpn then
+		local wpn_sec = wpn:section()
+        local wpn_sec_par = ini_sys:r_string_ex(wpn_sec,"parent_section") or wpn_sec
+
+        local params = ini_mag:r_string_ex(wpn_sec_par,anm_table.anm_name)
+        if not params then return end
+        local _params = str_explode(params,",")
+
+        local class    = _params[1]
+		local time     = tonumber(_params[2]) or 0.75
+        local velocity = tonumber(_params[3]) or 1
+        local volume   = tonumber(_params[4]) or 1
+        local offset_x = tonumber(_params[5]) or 0
+        local offset_z = tonumber(_params[6]) or 0
+        --printf("%s, %s, %s, %s, %s, %s", class, time, velocity, volume, offset_x, offset_z)
+
+        local material_sound = current_material_sound or "_dirt_"
+
+        CreateTimeEvent("grok_casings", "grok_mag_sound_get_pos", time, function()
+            if db.actor then
+                local actor = db.actor
+                pos, dir = actor:position(), actor:direction()
+            end
+
+            -- adjust delay, volume and altitude
+            body_st = get_body_state()
+            if body_st == "low_crouch" then
+                fall_delay = 0.15 / velocity
+                volume = volume * 0.3
+                pos.y = pos.y - 0.0016
+                pos.x = pos.x + (dir.z*offset_x) * 0.3 + (dir.x*0.2) + (dir.x*offset_z)
+                pos.z = pos.z - (dir.x*offset_x) * 0.3 + (dir.z*0.2) + (dir.z*offset_z)
+            elseif body_st == "crouch" then
+                fall_delay = 0.35 / velocity
+                volume = volume * 0.8
+                pos.y = pos.y - 0.0064
+                pos.x = pos.x + (dir.z*offset_x) * 0.8 + (dir.x*0.2) + (dir.x*offset_z)
+                pos.z = pos.z - (dir.x*offset_x) * 0.8 + (dir.z*0.2) + (dir.z*offset_z)
+            else
+                fall_delay = 0.4 / velocity
+                pos.y = pos.y - 0.0092
+                pos.x = pos.x + (dir.z*offset_x) + (dir.x*0.2) + (dir.x*offset_z)
+                pos.z = pos.z - (dir.x*offset_x) + (dir.z*0.2) + (dir.z*offset_z)
+            end
+
+            sound_to_play = sound_object("magazines\\" .. class .. "_dirt_" .. 1) --check params
+            sound_to_play:play_no_feedback(db.actor, sound_object.s3d, fall_delay, pos, 1, 1)
+            sound_to_play.volume = volume
+            sound_to_play.min_distance = 1
+            return true
+        end)
+    end
+end
+
+-- parse .ltx files
+function actor_on_first_update()
+    local wpn_sections = ini_wpn:get_sections()
+    for i,v in pairs(wpn_sections) do
+        wpn_params[v] = {
+            ini_wpn:r_float_ex(v,"eject_delay"),
+            ini_wpn:r_float_ex(v,"fall_delay"),
+            ini_wpn:r_float_ex(v,"port_orientation"),
+        }
+        -- local eject_delay = ini_wpn:r_float_ex(v,"eject_delay") or 0
+        -- local fall_delay = ini_wpn:r_float_ex(v,"fall_delay") or 0.6
+        -- local orient = ini_wpn:r_float_ex(v,"port_orientation") or 1
+        -- wpn_params[v] = eject_delay..","..fall_delay..","..orient
+    end
+
+    local ammo_sections = ini_ammo:get_sections()
+    for i,v in pairs(ammo_sections) do
+        ammo_params[v] = ini_ammo:r_string_ex(v,"sound_class") or "556mm"
+    end
+
+    local gren_sections = ini_gren:get_sections()
+    for i,v in pairs(gren_sections) do
+        gren_params[v] = ini_gren:r_float_ex(v,"eject_delay")
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_footstep", actor_on_footstep)
+    RegisterScriptCallback("actor_on_weapon_fired", actor_on_weapon_fired)
+    RegisterScriptCallback("actor_on_hud_animation_play", actor_on_hud_animation_play)
+    --RegisterScriptCallback("actor_on_hud_animation_play", actor_on_hud_animation_play_mag_drop)
+    RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+    RegisterScriptCallback("on_option_change", load_mcm_options)
+    load_mcm_options()
+end
