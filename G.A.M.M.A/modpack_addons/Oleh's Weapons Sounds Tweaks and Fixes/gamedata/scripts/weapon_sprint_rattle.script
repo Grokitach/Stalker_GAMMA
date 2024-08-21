@@ -1,0 +1,53 @@
+-- Plays weapon rattle sound during sprint - oleh5230
+-- Original script by Aoldri
+
+local cached_id, snd_obj
+function actor_on_hud_animation_play(anm_table, item)
+	if not item then return end
+    cached_id = item:id()
+    if snd_obj and snd_obj:playing() then snd_obj:stop() end
+
+    if string.find(anm_table.anm_name, "idle_sprint") then
+        section = item:section()
+        if not section then return end
+
+        -- check if weapon has a valid sound in config
+        local snd_value = ini_sys:r_string_ex(section, "snd_idle_sprint")
+        if not snd_value then return end
+
+        local snd_values = str_explode(snd_value,",")
+        local snd_path = snd_values[1]
+        local volume = snd_values[2] or 0.25
+        local frequency = snd_values[3] or 1
+
+        -- play sound
+        snd_obj = sound_object(snd_path)
+        if not snd_obj then return end
+        snd_obj:play(db.actor, 0, sound_object.s2d + sound_object.looped)
+        snd_obj.volume = volume
+        snd_obj.frequency = frequency
+    end
+end
+
+function actor_item_to_ruck(item)
+    if item and item:id() and item:id() == cached_id and snd_obj and snd_obj:playing() then
+        snd_obj:stop()
+    end
+end
+
+function actor_on_item_drop(item)
+    if item and item:id() and item:id() == cached_id and snd_obj and snd_obj:playing() then
+        snd_obj:stop()
+    end
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_hud_animation_play", actor_on_hud_animation_play)
+    RegisterScriptCallback("actor_item_to_ruck", actor_item_to_ruck)
+    RegisterScriptCallback("actor_on_item_drop", actor_on_item_drop)
+    --RegisterScriptCallback("actor_on_footstep", actor_on_footstep) -- uncomment to disable footsteps sounds
+end
+
+function actor_on_footstep(material, power, hud_view, flags)
+    flags.ret_value = false
+end
