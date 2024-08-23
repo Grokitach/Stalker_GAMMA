@@ -1,0 +1,87 @@
+--[[
+Plays extra weapon sounds
+- oleh5230 15/05/2024
+
+License: Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)  
+Credits: Aoldri, demonized
+
+To Do:
+- add sound variants support
+- add volume/delay parameters?
+]]
+
+local charged_guns = {}
+local prefire_flag
+function actor_on_weapon_before_fire(flags)
+    prefire_flag = true
+
+    -- play extra trigger mechanism sound on first dry shot
+    local wpn = db.actor:active_item()
+    if wpn and IsWeapon(wpn) and not (IsMelee(wpn) or IsGrenade(wpn)) then
+        local wpn_id = wpn:id()
+        local state = wpn:get_state()
+        local dryfire = ini_sys:r_string_ex(wpn:section(),"snd_empty_first")
+
+        --printf("%s %s %s %s %s", dryfire, wpn:get_ammo_in_magazine(), isMisfireWeapon(wpn, wpn_id), state, charged_guns[wpn_id])
+        if dryfire and (wpn:get_ammo_in_magazine() == 0 or isMisfireWeapon(wpn, wpn_id)) and state == 0 and charged_guns[wpn_id] then
+            sound_to_play = sound_object(dryfire)
+            sound_to_play:play(db.actor, 0, sound_object.s2d)
+            charged_guns[wpn_id] = false
+        end
+    end
+end
+
+function actor_on_weapon_fired(obj, wpn)
+    -- recharge weapon on shot
+    charged_guns[wpn:id()] = true
+
+    -- play extra sound on first shot in a burst
+    if prefire_flag then
+        local prefire
+        if wpn:weapon_is_silencer() then
+            prefire = ini_sys:r_string_ex(wpn:section(),"snd_silncer_shot_first")
+        else
+            prefire = ini_sys:r_string_ex(wpn:section(),"snd_shoot_first")
+        end
+        if not prefire then return end
+
+        sound_to_play = sound_object(prefire)
+        sound_to_play:play_no_feedback(db.actor, sound_object.s2d, 0, vector(), 1.0, 1.0)
+        prefire_flag = false
+    end
+end
+
+-- recharge weapon on unjamming
+function actor_on_hud_animation_play(anm_table, wpn)
+    --printf("%s", anm_table.anm_name)
+    if string.find(anm_table.anm_name, "anm_reload_misfire") then
+        charged_guns[wpn:id()] = true
+    end
+end
+
+isMisfireWeapon = function(wpn, wpn_id)
+    return false
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_weapon_before_fire", actor_on_weapon_before_fire)
+    RegisterScriptCallback("actor_on_weapon_fired", actor_on_weapon_fired)
+    RegisterScriptCallback("actor_on_hud_animation_play", actor_on_hud_animation_play)
+
+    -- ugly patch for WPO
+    if arti_jamming then
+        if arti_jamming.get_jam_status then
+            isMisfireWeapon = function(wpn, wpn_id)
+                return wpn:cast_Weapon() and wpn:cast_Weapon():IsMisfire() or arti_jamming.get_jam_status(wpn_id)
+            end
+        elseif arti_jamming.get_jammed then
+            isMisfireWeapon = function(wpn, wpn_id)
+                return wpn:cast_Weapon() and wpn:cast_Weapon():IsMisfire() or arti_jamming.get_jammed(wpn_id)
+            end
+        end
+    else
+        isMisfireWeapon = function(wpn, wpn_id)
+            return wpn:cast_Weapon() and wpn:cast_Weapon():IsMisfire()
+        end
+    end
+end

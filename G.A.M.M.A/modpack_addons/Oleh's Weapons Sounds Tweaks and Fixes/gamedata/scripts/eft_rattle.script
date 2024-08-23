@@ -1,0 +1,88 @@
+local opt_aim_rattle = true
+local opt_lower_raise_rattle = false
+
+function load_settings()
+    if ui_mcm then
+        opt_aim_rattle = ui_mcm.get("eft_rattle/aim_rattle")
+        opt_lower_raise_rattle = ui_mcm.get("eft_rattle/lower_raise_rattle")
+    end
+end
+
+-- oleh5230, 24.06.2024:
+-- volume and tempo depends on weapon weight
+-- removed redundant code
+
+local cache = 0
+function play_aim_sound(dir, name, volume, frequency)
+    -- local player = db.actor
+    -- if not (player and player:alive()) then return end
+
+    -- local ct = time_global()
+    -- if not tm or ct > tm then
+        -- local list = getFS():file_list_open("$game_sounds$", dir, bit_or(FS.FS_ListFiles, FS.FS_RootOnly)) -- Perhaps cache the result...?
+        -- printf("%s", list:Size())
+        -- if list then
+            local roll = math.random(10)
+            if cache == roll then roll = math.random(10) end
+            cache = roll
+
+            local sound = xr_sound.get_safe_sound_object(dir .. name .. roll) --list:Size()
+            sound:play(db.actor, 0, sound_object.s2d)
+            sound.volume = volume or 0.5
+            sound.frequency = frequency or 1
+            --printf("eft_rattle: %s %s", volume, frequency)
+            -- tm = ct + 175
+        -- end
+    -- end
+end
+
+local volume = 0.5
+local cached_wpn
+function get_wpn_params(wpn)
+    if not wpn then return end
+    wpn = wpn:section()
+    if not cached_wpn or wpn ~= cached_wpn then
+        cached_wpn = wpn
+        weight     = ini_sys:r_string_ex(wpn, "inv_weight")
+        volume     = 0.25 + weight*0.2
+        frequency  = 1.1 - weight*0.02
+        if frequency < 0.85 then frequency = 0.85 end
+    end
+end
+
+function actor_on_weapon_zoom_in(wpn)
+    if opt_aim_rattle then
+        get_wpn_params(wpn)
+        play_aim_sound("weapons\\rattle\\raise\\", "raise_", volume, frequency) --"weapons\\rattle\\aimin\\", "aim_in_"
+    end
+end
+
+function actor_on_weapon_zoom_out(wpn)
+    if opt_aim_rattle then
+        get_wpn_params(wpn)
+        play_aim_sound("weapons\\rattle\\lower\\", "lower_", volume, frequency) --"weapons\\rattle\\aimout\\", "aim_out_"
+    end
+end
+
+function actor_on_weapon_raise(wpn)
+    if opt_lower_raise_rattle then
+        get_wpn_params(wpn)
+        play_aim_sound("weapons\\rattle\\raise\\", "raise_", volume, frequency)
+    end
+end
+
+function actor_on_weapon_lower(wpn)
+    if opt_lower_raise_rattle then
+        get_wpn_params(wpn)
+        play_aim_sound("weapons\\rattle\\lower\\", "lower_", volume, frequency)
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_first_update", load_settings)
+	RegisterScriptCallback("on_option_change", load_settings)
+    RegisterScriptCallback("actor_on_weapon_zoom_in", actor_on_weapon_zoom_in)
+    RegisterScriptCallback("actor_on_weapon_zoom_out", actor_on_weapon_zoom_out)
+    RegisterScriptCallback("actor_on_weapon_raise", actor_on_weapon_raise)
+    RegisterScriptCallback("actor_on_weapon_lower", actor_on_weapon_lower)
+end
