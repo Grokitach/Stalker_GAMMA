@@ -78,12 +78,16 @@ local af_by_tiers = {
 	["af_fire_loop"] = 3,		
 }
 
+function actor_on_first_update()	
+	actor_status.add_indicator("Artefact"       	   	, { index= 16 	,typ= "state"	,functor= {"grok_artefacts_bip","get_artefact",true}	                    ,icon= "ui\\alticons\\ArtefactIndicator.dds"           ,background= "ui\\alticons\\bg1.dds"	,anim_icon= true	,anim_bk= false  })
+end
+
 local af_detection_dist = 500
-local delay = 2140
+local delay = 921
 local trigger = 0
 function actor_on_update()
 	local obj_det = db.actor:active_detector()
-	if obj_det then return end
+
 	if not enabled then return end
 	
     tg = time_global()
@@ -98,13 +102,16 @@ function actor_on_update()
 		available_det_tier = 0
 
 -- Detector works passively at half the distance
-		local det = db.actor:item_in_slot(9)
+		local det = db.actor:active_detector()
+		
+		if not det then
+			det = db.actor:item_in_slot(9)
+		end
+		
 		if det then
 			local sec = det:section()
 			if sec and detectors[sec] then
-				if available_det_tier and available_det_tier < detectors[sec] then
-					available_det_tier = detectors[sec]
-				end
+				available_det_tier = detectors[sec]
 			end
 		end
 
@@ -120,13 +127,15 @@ function actor_on_update()
 --		end, actor)
 		
 		local play_sound = false
+--		local af_detected = false
 		
 		if zz_item_artefact.dist_t then
 			for af,dist in pairs(zz_item_artefact.dist_t) do		
 				if dist and dist >= 0.1 then
 					if af and af_detection_dist and available_det_tier and af_by_tiers[af] then				
 						if (af_by_tiers[af] <= available_det_tier) and (dist < af_detection_dist) then
-							play_sound = true
+							af_detected = 1
+							play_sound = false
 						end
 					end
 				end
@@ -140,6 +149,29 @@ function actor_on_update()
 	end
 end
 
+function get_artefact(visual)
+	if af_detected == 1 then 
+		artefact = 1
+	else
+		artefact = 0
+	end
+	
+	if (not visual) then
+		return artefact
+	end
+	
+	-- for indicator
+	if artefact and artefact >= 1 then
+		artefact = 0
+		af_detected = 0
+		return 1
+	end
+	
+	af_detected = 0
+	return 0
+end
+
 function on_game_start()
     RegisterScriptCallback("actor_on_update",actor_on_update)
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
 end
