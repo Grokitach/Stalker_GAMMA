@@ -305,33 +305,37 @@ function get_jam_chance(wpn)
 			local jam_chance_parts = item_parts.get_parts_con(wpn, nil, true)
 			local jam_chance_table = {}
 			
-			for k, v in pairs(jam_chance_parts) do
-				if is_part(k) then
-					jam_chance_table[k] = v
+			if jam_chance_parts then
+				for k, v in pairs(jam_chance_parts) do
+					if is_part(k) then
+						jam_chance_table[k] = v
+					end
 				end
-			end
 
-			local jc_count = 0
-			local jc_mechanism_cond = #jam_chance_table
-			for k, v in pairs(jam_chance_table) do -- skip barrel
-				local severity = math_floor(v / 20)
-				if (severity < 4) then
-					jc_mechanism_cond = jc_mechanism_cond + (PARTS_JAM[1] * math.pow(PARTS_JAM[2], 3 - severity))
+				local jc_count = 0
+				local jc_mechanism_cond = #jam_chance_table
+				for k, v in pairs(jam_chance_table) do -- skip barrel
+					local severity = math_floor(v / 20)
+					if (severity < 4) then
+						jc_mechanism_cond = jc_mechanism_cond + (PARTS_JAM[1] * math.pow(PARTS_JAM[2], 3 - severity))
+					end
+					-- print_dbg("Part: [%s], cond: [%s], severity: [%s], sum jam chance: [%s]", k,v, severity, jc_mechanism_cond) 
+					jc_count = jc_count + 1
 				end
-				-- print_dbg("Part: [%s], cond: [%s], severity: [%s], sum jam chance: [%s]", k,v, severity, jc_mechanism_cond) 
-				jc_count = jc_count + 1
-			end
 
-			-- jam chance. if we roll this twice, upgraded to severe jam
-			local jc = math_floor(jc_mechanism_cond/jc_count) or 0
-			
-			jc = jc * get_config("jamchance")
-			jc = jc * get_overheat_modifier(wpn)
-			-- also apply condition
-			local jc_cond = wpn:condition()
-			if jc_cond < 1 then
-				local jc_ratio = (1.0-jc_cond)/0.7 - 0.05
-				jc = jc * (1 + jc_ratio)
+				-- jam chance. if we roll this twice, upgraded to severe jam
+				local jc = math_floor(jc_mechanism_cond/jc_count) or 0
+				
+				jc = jc * get_config("jamchance")
+				jc = jc * get_overheat_modifier(wpn)
+				-- also apply condition
+				local jc_cond = wpn:condition()
+				if jc_cond < 1 then
+					local jc_ratio = (1.0-jc_cond)/0.7 - 0.05
+					jc = jc * (1 + jc_ratio)
+				end
+			else
+				jc = 0
 			end
 			
 			printf("Final jam chance is %s", jc)
