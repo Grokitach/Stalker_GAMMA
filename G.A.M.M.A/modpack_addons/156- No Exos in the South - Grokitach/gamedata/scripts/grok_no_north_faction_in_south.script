@@ -1,3 +1,4 @@
+local dte = demonized_time_events
 
 function Set(t)
   local s = {}
@@ -219,6 +220,14 @@ local north_factions = {
 trigger = 0
 delay = 250
 
+local function iterate(owner,item)
+	local kind = SYS_GetParam(0, item:section(), "kind")
+	
+	if kind == "i_arty_junk" or kind == "i_arty" then
+		npc_has_af = 1
+	end
+end	
+
 local function npc_on_update(npc)
 	tg = time_global()
 	
@@ -235,6 +244,7 @@ local function npc_on_update(npc)
 				if important_npcs[npc:section()] then return end
 				if get_object_story_id(npc:id()) then return end
 				if npc:has_info("npcx_is_companion") then return end
+				if db.actor:has_info("lttz_ll_turn_off_brain_scorcher_task_done") then return end
 				
 				local squad = get_object_squad(npc)
 				if squad then
@@ -254,7 +264,21 @@ local function npc_on_update(npc)
 
 				if whitelist == 1 then
 					--printf("// Deleted a north faction member in the south")
-					alife():release(alife():object(npc:id()))
+					
+					local npc_has_af = 0
+					if npc then
+						npc:iterate_inventory(iterate,npc)
+					end
+						
+					if npc_has_af == 1 then return end
+					
+					if npc then
+						npc:set_health_ex(0.0)
+						dte.CreateTimeEvent("grok_north_faction", "grok_north_faction_despawn", 0.15, function()
+							alife():release(alife():object(npc:id()))
+							return true
+						end)
+					end
 				end
 			end
 		end
