@@ -1,0 +1,116 @@
+local nvg_type = "nightvision_1.ppe"
+local nvg_active = false
+local has_nvg = false
+local toggle = false
+local zoomed = false
+local PPE_ID = 13280
+
+local function zoom_in()
+    local weapon = db.actor:active_item()
+
+    zoomed = true
+    if weapon:has_upgrade("up_secone_binoc") then
+        has_nvg = true
+        nvg_type = "nightvision_2.ppe"
+    elseif weapon:has_upgrade("up_seconc_binoc") then
+        has_nvg = true
+        nvg_type = "nightvision_1.ppe"
+	elseif weapon:has_upgrade("up_secona_binoc") then
+        has_nvg = true
+        --nvg_type = "contrast.ppe"
+		nvg_type = "brighten.ppe"
+    else
+        nvg_active = false
+    end
+	if has_nvg then RegisterScriptCallback("actor_on_update", actor_on_update) end
+	do_check()
+end
+
+local function zoom_out()
+    zoomed = false
+	has_nvg = false
+    deactivate(true)
+    UnregisterScriptCallback("actor_on_update", actor_on_update)
+end
+
+local tmr = 0
+function actor_on_update()
+    local tg = time_global()
+    if tg > tmr then
+        tmr = tg + 50
+        do_check()
+    end
+end
+
+function do_check()
+    -- do not use binoculars NVG if device NVG is on
+    if item_device.nv_state then
+        has_nvg = false
+    end
+
+    if toggle and has_nvg and not nvg_active and device().fov <= 50 then
+        activate()
+    elseif ((not toggle) or (not has_nvg)) and nvg_active then
+        deactivate(toggle)
+    end
+end
+
+function activate()
+    level.add_pp_effector(nvg_type, PPE_ID, true)
+    nvg_active = true
+	UnregisterScriptCallback("actor_on_update", actor_on_update)
+	level.set_pp_effector_factor(PPE_ID, 1)
+end
+
+function deactivate(immediate)
+	if immediate then level.set_pp_effector_factor(PPE_ID, 0) end
+    level.remove_pp_effector(PPE_ID)
+    nvg_active = false
+end
+
+local function on_key_release(key)
+    local bind = dik_to_bind(key)
+    if (bind ~= key_bindings.kNIGHT_VISION or not has_nvg or not zoomed) then return end
+    toggle = not toggle
+	if toggle and has_nvg and not nvg_active then actor_menu.set_msg(1,  game.translate_string("st_tpabobap_bino_nv_on"), 2 ) end
+	if not toggle and nvg_active then actor_menu.set_msg(1,  game.translate_string("st_tpabobap_bino_nv_off"), 2 ) end
+    do_check()
+end
+
+local function save_state(mdata)
+    mdata.tpabobap_bino_nvg_flag = toggle
+end
+
+local function load_state(mdata)
+    toggle = mdata.tpabobap_bino_nvg_flag
+end
+
+local bas_zoom_in
+function patched_bas_zoom_in(upg)
+    local weapon = db.actor:active_item()
+    if not string.find(weapon:section(),"wpn_binoc") then
+        printf("NVG patched_bas_zoom_in - NOT a BINO - call saved method")
+        bas_zoom_in(upg)
+        return
+    end
+    printf("NVG patched_bas_zoom_in - BINO - skip saved method")
+    bas_nvg_scopes.nvg_scope = false
+    bas_nvg_scopes.alt_wpn = false
+    bas_nvg_scopes.do_check()
+end
+
+function patch_methods()
+    if bas_nvg_scopes and bas_nvg_scopes.zoom_in then
+        bas_zoom_in = bas_nvg_scopes.zoom_in
+        bas_nvg_scopes.zoom_in = patched_bas_zoom_in
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_weapon_zoom_in", zoom_in)
+    RegisterScriptCallback("actor_on_weapon_zoom_out", zoom_out)
+    RegisterScriptCallback("on_key_release", on_key_release)
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
+   patch_methods()
+end
