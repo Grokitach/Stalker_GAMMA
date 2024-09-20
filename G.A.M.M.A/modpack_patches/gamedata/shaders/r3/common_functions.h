@@ -24,7 +24,7 @@ void        tonemap              (out half4 low, out half4 high, half3 rgb, half
 {
         rgb     =      	rgb*scale       ;
 
-		if (HDR_IS_ENABLED) {
+		if (HDR10_IS_ENABLED) {
 			low = half4(rgb, 0);
 			high = half4(rgb/def_hdr, 0);
 		} else {
