@@ -2,10 +2,10 @@
 FDDA backpack addon script
 Author: Feel_Fried
 Anims author: Blindside
-18.01.2022
+20.08.2022
 --]]
 local ini_eff = {}
-local fov_prev,active_slot,item_after_backpack,backpack_open_flag,crouch_value,crouching
+local fov_prev,active_slot,item_after_backpack,backpack_open_flag,crouch_value,crouching,ea_force_inventory_close
 local anim_enabled = false
 local ea_debug = false
 local crouch_toggle = false
@@ -23,6 +23,7 @@ local skip_anims = {
 	["container_tool_af_aac_dummy"] = true,
 	["container_tool_af_aam_dummy"] = true,
 	["container_tool_af_iam_dummy"] = true,
+	["package_content"] = true,
 }
 
 local bool_to_int = {
@@ -50,12 +51,20 @@ function a_crouch()
 end
 
 function backpack_m_close(name)
-	if name == "UIInventory" and active_slot then
+	if name ~="UIInventory" then return end
+	if ea_force_inventory_close then
+		if ea_debug then
+			printf("force found")
+		end
+		return
+	end
+
+	if active_slot then
 		item_after_backpack = true
 	end
-	game.stop_hud_motion()
-	if backpack_open_flag ==  nil then return end
 
+	if backpack_open_flag == nil then return end
+	db.actor:hide_weapon()
 	if fov_prev then
 		get_console():execute("g_crouch_toggle "..bool_to_int[crouch_value] or get_console_cmd(2, "g_crouch_toggle"))
 		exec_console_cmd("hud_fov " .. fov_prev)
@@ -68,31 +77,29 @@ function backpack_m_close(name)
 	if enhanced_animations.used_item then
 		backpack_open_flag = nil
 		return
-	 end
+	end
 
 	if not db.actor or not db.actor:alive() then
 		return
 	end
 
-	if name == "UIInventory" then
-		if ea_debug then
-			printf("inventory close")
-		end
-		backpack_open_flag = nil
-		if item_use_flag then
-			if ea_debug then
-				printf("item was used before closing backpack")
-			end
-			game.stop_hud_motion()
-			call_my_slot_back()
-			item_use_flag = nil
-			return
-		end
-		if ea_debug then
-			printf("called backpack close anim")
-		end
-		backpack_close()
+	if ea_debug then
+		printf("inventory close")
 	end
+	backpack_open_flag = nil
+	if item_use_flag then
+		if ea_debug then
+			printf("item was used before closing backpack")
+		end
+		game.stop_hud_motion()
+		call_my_slot_back()
+		item_use_flag = nil
+		return
+	end
+	if ea_debug then
+		printf("called backpack close anim")
+	end
+	backpack_close()
 end
 
 local originalPIF = actor_effects.play_item_fx
@@ -107,6 +114,34 @@ function actor_effects.play_item_fx(item)
 	if ea_debug then
 		printf(item)
 	end
+end
+
+local originalUIV = ui_pda_npc_tab.use_view
+function ui_pda_npc_tab.use_view(obj)
+	if not anim_enabled then
+		originalUIV(obj)
+		return
+	end
+	local p = obj:parent()
+	if not (p and p:id() == AC_ID) then
+		return
+	end
+	active_slot = nil
+	item_use_flag = nil
+	backpack_open_flag = nil
+	item_after_backpack = nil
+	db.actor:hide_weapon()
+	if fov_prev then
+		get_console():execute("g_crouch_toggle "..bool_to_int[crouch_value] or get_console_cmd(2, "g_crouch_toggle"))
+		exec_console_cmd("hud_fov " .. fov_prev)
+		fov_prev = nil
+		if (crouch_value and not crouching) or not crouch_value  then
+			a_crouch()
+		end
+	end
+	game.stop_hud_motion()
+	ea_force_inventory_close = true
+	originalUIV(obj)
 end
 
 function backpack_open()
@@ -127,32 +162,25 @@ function backpack_open()
 	active_slot = db.actor:active_slot()
 	det_active = db.actor:active_detector() or nil
 	level.disable_input()
-	--recalc_actor_campos()
-	enhanced_animations.used_item = "backpack_open"
+	backpack_faction = character_community(db.actor):sub(7)
+	enhanced_animations.used_item = "backpack_open" .. "_" .. backpack_faction
 	enhanced_animations.anim_section = ini_eff:r_string_ex(enhanced_animations.used_item, "anm")
 	enhanced_animations.anim_prepare()
 end
 
-function recalc_actor_campos()
-	local dir2 = device().cam_dir
-	local pos = device().cam_pos
-	pos.y = pos.y - 0.5
-	pos.x = pos.x + dir2.x
-	pos.z = pos.z + dir2.z
-	db.actor:actor_look_at_point(pos)
-end
-
 function backpack_close()
-	enhanced_animations.used_item = "backpack_close"
+	enhanced_animations.used_item = "backpack_close" .. "_" .. backpack_faction
 	enhanced_animations.anim_section = ini_eff:r_string_ex(enhanced_animations.used_item, "anm")
 	enhanced_animations.anim_prepare()
 end
 
 function EA_anim_stop(used_item)
-	if used_item == "backpack_open" then
+	if used_item:sub(1,13) == "backpack_open" then
+		db.actor:restore_weapon()
 		fov_prev = axr_main.config:r_value("temp", "fov_value", 2)
 		fov_anim_manager.change_fov(0.45)
-		game.play_hud_motion(2, "item_ea_backpack_open_hud", "anm_ea_idle", false, 1)
+		idle = "item_ea_backpack_open_" .. backpack_faction  .. "_" .. "hud"
+		game.play_hud_motion(2, idle, "anm_ea_idle", false, 1)
 		level.enable_input()
 		ea_invent_flag = true
 		RemoveTimeEvent("ea_slot_returner", "call_my_slot_back")
@@ -162,7 +190,7 @@ function EA_anim_stop(used_item)
 end
 
 function ea_on_item_use(used_item,tm)
-	if used_item == "backpack_close" then
+	if used_item:sub(1,14) == "backpack_close" then
 		CreateTimeEvent("ea_b_slot_returner", "b_call_my_slot_back", (tm + 0.55), call_my_slot_back)
 		return
 	end
@@ -186,9 +214,16 @@ end
 
 local originalUIinvenory_start =ui_inventory.start
 function ui_inventory.start(mode, obj)
-	if mode == "inventory" and ea_invent_flag == nil and anim_enabled then return end
-	if ea_invent_flag then ea_invent_flag = nil end
 	originalUIinvenory_start(mode, obj)
+	if mode == "inventory" and ea_invent_flag == nil and anim_enabled then
+		ea_force_inventory_close = true
+		ui_inventory.hide_hud_inventory()
+		return
+	end
+	if ea_invent_flag then
+		ea_invent_flag = nil
+		ea_force_inventory_close = nil
+	end
 end
 
 function actor_on_item_use(item)
@@ -218,8 +253,8 @@ end
 
 function loadsettings()
 	if ui_mcm then
-		anim_enabled = false --ui_mcm.get("EA_settings/enable_backpack_addon")
-		crouch_toggle = false --ui_mcm.get("EA_settings/enable_crouch_toggle_backpack_addon")
+		anim_enabled = false -- ui_mcm.get("EA_settings/enable_backpack_addon")
+		crouch_toggle = false -- ui_mcm.get("EA_settings/enable_crouch_toggle_backpack_addon")
 		ea_debug = ui_mcm.get("EA_settings/ea_debug")
 	end
 	if anim_enabled then
