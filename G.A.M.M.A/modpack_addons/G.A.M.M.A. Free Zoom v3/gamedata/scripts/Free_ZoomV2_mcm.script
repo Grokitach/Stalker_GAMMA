@@ -159,6 +159,7 @@ function on_key_press(key)
 			end			
 		end
 	end
+
 	if (key == KEY_TOGGLE_ZOOM) then
 		if wpn and wpn:get_state() == 7 then return end
 		if wpn and z_3d_scopes and not IsGrenade(wpn) then
@@ -235,8 +236,16 @@ function on_key_release(key)
 		else
 			dte.CreateTimeEvent("free_zoom_fov", "reset_fov_to_normal7", 0.035, reset_fov_to_normal, fov_backup)
 			dte.CreateTimeEvent("free_zoom_mouse", "reset_mouse_sens_to_normal7", 0.035, reset_mouse_sens_to_normal, mouse_sens_backup)
-			if wpn and saved_custom[wpn:section()] then
-				dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal7", 0.035, reset_hud_fov_to_normal, saved_custom[wpn:section()])
+			if wpn then
+				local sec = wpn:section()
+				local is_pistol = SYS_GetParam(0, sec, "kind", "") == "w_pistol" 
+				if saved_custom[wpn:section()] then
+					dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal7", 0.035, reset_hud_fov_to_normal, saved_custom[wpn:section()])
+				elseif wpn and is_pistol then
+					dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal7", 0.035, reset_hud_fov_to_normal, hud_fov_backup * pistol_mult)
+				else
+					dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal7", 0.035, reset_hud_fov_to_normal, hud_fov_backup)
+				end
 			else
 				dte.CreateTimeEvent("free_zoom_hud_fov", "reset_hud_fov_to_normal7", 0.035, reset_hud_fov_to_normal, hud_fov_backup)
 			end
