@@ -1,0 +1,189 @@
+--[[
+	=====================================================================
+	Addon      : Mark Switch
+	Link       : https://www.moddb.com/mods/stalker-anomaly/addons/mark-switch
+	Author     : party_50
+	Date       : 10.02.2024
+	Last Edit  : 15.09.2024
+	=====================================================================
+--]]
+
+
+local KEYBIND
+local SOUND
+local ALL_PARAMETERS = {
+	ms_count = "float",
+	ms_colors = "ms_color"
+}
+
+local current_marks = {}
+local last_weapon_id
+
+local markswitch_colors = {
+	["scope_black"] = "0, 0, 0, 1",
+	["scope_red"] = "1, 0.2, 0.2, 1",
+	["scope_green"] = "0, 0.9, 0.25, 1",
+}
+
+function init()	
+	SOUND = sound_object('interface\\mark_adjust')
+end
+
+function on_option_change()
+	KEYBIND = z_mark_switch_mcm.get_config("keybind")
+end
+
+function get_mark_count(section)
+	return ini_sys:r_float_ex(section, "ms_count")
+end
+
+function get_mark_color(section, i)
+	local colors = parse_list(ini_sys, section, "ms_colors")
+	if not colors or #colors == 0 then
+		return nil
+	end
+	
+	if i >= #colors then
+		i = #colors - 1
+	end
+	
+	local color = markswitch_colors[colors[i + 1]]
+	if not color then
+		color = "0, 0, 0, 1"
+	end
+	
+	return color
+end
+
+function get_sight_section(wpn_section)
+	local parent = ini_sys:r_string_ex(wpn_section, "parent_section") or wpn_section
+	if #parent == #wpn_section then
+		return wpn_section
+	end
+
+	return wpn_section:sub(#parent + 2)
+end
+
+function parse_key(section, key, type, current_mark)
+	if key == "ms_count" then
+		return get_mark_count(section)
+	elseif key == "ms_colors" then
+		return get_mark_color(section, current_mark)
+	end
+end
+
+function parse_parameters(wpn)
+	local values = {}
+	
+	local current_mark = current_marks[wpn:id()] or 0
+	values["ms_current"] = current_mark
+
+	wpn:iterate_installed_upgrades(
+		function(upgr_sec)
+			for key, type in pairs(ALL_PARAMETERS) do
+				values[key] = parse_key(upgr_sec, key, type, current_mark)
+			end
+		end
+	)
+	
+	local wpn_section = wpn:section()
+	local sight_section = get_sight_section(wpn_section)
+	for key, type in pairs(ALL_PARAMETERS) do
+		if not values[key] then
+			values[key] = parse_key(wpn_section, key, type, current_mark)
+		end
+		if not values[key] then
+			values[key] = parse_key(sight_section, key, type, current_mark)
+		end
+	end
+	
+	return values
+end
+
+function get(info, key, default)
+	if info[key] then
+		return info[key]
+	end
+	return default
+end
+
+function update_shader(wpn, info)
+	get_console():execute("markswitch_current " .. get(info, "ms_current", 0))
+	get_console():execute("markswitch_count " .. get(info, "ms_count", 1))
+	get_console():execute("markswitch_color " .. get(info, "ms_colors", "0, 0, 0, 0"))
+end
+
+function apply_next_mark(wpn, info)
+	SOUND:play(db.actor, 0, sound_object.s2d)
+	game.play_hud_anm("script\\mark_adjust.anm", 2, 2, 1, false, false)
+	
+	local mark = get(info, "ms_current", 0)
+	mark = (mark + 1) % get(info, "ms_count", 1)
+	current_marks[wpn:id()] = mark
+	
+	info = parse_parameters(wpn)	 
+	update_shader(wpn, info)
+end
+
+function on_key_release(key)
+	if key == KEYBIND then
+		if not (db.actor and db.actor:alive()) then
+			return
+		end
+	
+		local wpn = db.actor:active_item()
+		if not wpn then
+			return
+		end
+		
+		local info = parse_parameters(wpn)
+		if get(info, "ms_count", 1) < 2 then
+			return
+		end
+		
+		apply_next_mark(wpn, info)
+	end
+end
+
+function actor_on_update()
+	if not (db.actor and db.actor:alive()) then
+		return
+	end
+	
+	local wpn = db.actor:active_item()
+	if not wpn then
+		last_weapon_id = nil
+		return
+	end
+	
+	if not last_weapon_id or last_weapon_id ~= wpn:id() then
+		last_weapon_id = wpn:id()
+		local info = parse_parameters(wpn)
+		update_shader(wpn, info)
+	end
+end
+
+function server_entity_on_unregister(obj)
+	if current_marks[obj.id] then
+		current_marks[obj.id] = nil
+	end
+end
+
+function save_state(m_data)
+	m_data.mark_switch_current_marks = current_marks
+end
+
+function load_state(m_data)
+	current_marks = type(m_data.mark_switch_current_marks) == "table" and m_data.mark_switch_current_marks or {}
+end
+
+function on_game_start()
+	init()
+	on_option_change()
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("on_key_release", on_key_release)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("server_entity_on_unregister", server_entity_on_unregister)
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
+end
