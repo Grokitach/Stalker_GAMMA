@@ -417,7 +417,7 @@ function get_protection(shit,bone_id,k_ap)
 	end
 
 	-- Total protection adjusted by damage source
-	printf('%s + %s + %s + %s', helmet_protection, armor_protection, artefacts_protection, booster_protection)
+	printf('%s protec: %s + %s + %s + %s / %s', protection, helmet_protection, armor_protection, artefacts_protection, booster_protection, limiter)
 
 
 	-- Special case if ammo do not penetrate armor
@@ -450,6 +450,8 @@ function get_protection(shit,bone_id,k_ap)
 	if total_prot > limiter then
 		total_prot = limiter
 	end
+	
+	return total_prot, limiter
 end
 
 local pba = perk_based_artefacts
@@ -492,11 +494,11 @@ function shit_booster(shit, bone_id, k_ap)
 		end
 	end
 	
-	get_protection(shit,bone_id,k_ap)
+	player_protection = get_protection(shit,bone_id,k_ap)
 
 	if shit.type == hit.telepatic then
 		game_num = gameplay["type"] or game_num
-		damage = shit.power * ( 1 - total_prot ) * difficulty_multiplier[game_num] * 0.90
+		damage = shit.power * ( 1 - player_protection ) * difficulty_multiplier[game_num] * 0.90
 		local m_data = alife_storage_manager.get_state() 
 		arszi_psy.save_state(m_data)
 		local psy_table = m_data.psy_table
@@ -522,7 +524,7 @@ function shit_booster(shit, bone_id, k_ap)
 	PBA_a_obh(pbadamage, bone_id, flags)
 	shit.power = pbadamage.power
 
-	damage = shit.power * ( 1 - total_prot )
+	damage = shit.power * ( 1 - player_protection )
 
 	-- Body part damage multiplier (already applied by engine in shit.power)
 	local body_part = hitboxes[bone_id]
@@ -536,7 +538,7 @@ function shit_booster(shit, bone_id, k_ap)
 	end
 	printf('Hit by %s %s damages', shit.power, protection)
 	printf('part hit = %s', hitboxes[bone_id])
-	printf('total protection = %s', total_prot)
+	printf('total protection = %s', player_protection)
 	printf('damage to actor = %s', damage)
 	
 	if zzz_player_injuries and zzz_player_injuries_mcm then
