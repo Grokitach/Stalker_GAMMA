@@ -233,6 +233,7 @@ function UIInventory:__init() super()
 		["power"]      = { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_power_restore_speed"))   },
 		["thirst"]		= { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_power_restore_speed"))   },
 		["sleep"]		= { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_power_restore_speed"))   },
+		["br_class"]	= { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_fire_wound_protection")) , hint= "ui_inv_fire_wound_protection"   },		
 	}
 	self.boost_id = {
 		[ BoosterID["HpRestore"] ]              = "health_restore",
@@ -1836,7 +1837,7 @@ function UIInventory:UpdateStats()
 			self.stat["radia"].text_bonus:SetTextColor(clr_bars_text[1])
 			radia_bonus_symbol = "+"
 		end
-		self.stat["radia"].text_bonus:SetText(strformat("%s%s%s", radia_bonus_symbol, InvRoundStats(radia_bonus * 10000), perc))
+		self.stat["radia"].text_bonus:SetText(strformat("%s%s%s", radia_bonus_symbol, math.floor(radia_bonus * 10000), perc))
 	else
 		self.stat["radia"].text_bonus:SetText()
 	end
@@ -1854,37 +1855,39 @@ function UIInventory:UpdateStats()
 	
 	s_hit.type = hit.chemical_burn
 	local acid_val, acid_bonus = get_protection(s_hit,s_hit.bone_id)
-	self.stat["acid"].text:SetText(strformat("%s%s", InvRoundStats(acid_val * 100), perc))
-	self.stat["acid"].text_bonus:SetText(strformat("%s  %s%s", bonus_symbol, InvRoundStats(acid_bonus * 100) , perc))
+	self.stat["acid"].text:SetText(strformat("%s%s", math.floor(acid_val * 100), perc))
+	self.stat["acid"].text_bonus:SetText(strformat("%s  %s%s", bonus_symbol, acid_bonus * 100 , perc))
 
 
 	s_hit.type = hit.shock
 	local shock_val, shock_bonus = get_protection(s_hit,s_hit.bone_id)
-	self.stat["shock"].text:SetText(strformat("%s%s", InvRoundStats(shock_val * 100), perc))
-	self.stat["shock"].text_bonus:SetText(strformat("%s  %s%s", bonus_symbol, InvRoundStats(shock_bonus * 100) , perc))
+	self.stat["shock"].text:SetText(strformat("%s%s", math.floor(shock_val * 100), perc))
+	self.stat["shock"].text_bonus:SetText(strformat("%s  %s%s", bonus_symbol, shock_bonus * 100 , perc))
 
 
 	s_hit.type = hit.burn
 	local fire_val, fire_bonus = get_protection(s_hit,s_hit.bone_id)
-	self.stat["fire"].text:SetText(strformat("%s%s", InvRoundStats(fire_val * 100), perc))
-	self.stat["fire"].text_bonus:SetText(strformat("%s  %s%s", bonus_symbol, InvRoundStats(fire_bonus * 100), perc))
+	self.stat["fire"].text:SetText(strformat("%s%s", math.floor(fire_val * 100), perc))
+	self.stat["fire"].text_bonus:SetText(strformat("%s  %s%s", bonus_symbol, fire_bonus * 100, perc))
 
 
 	s_hit.type = hit.telepatic
 	local psi_val, psi_bonus = get_protection(s_hit,s_hit.bone_id)
-	self.stat["psi"].text:SetText(strformat("%s%s", InvRoundStats(psi_val * 100), perc))
-	self.stat["psi"].text_bonus:SetText(strformat("%s  %s%s", bonus_symbol, InvRoundStats(psi_bonus *100), perc))
+	self.stat["psi"].text:SetText(strformat("%s%s", math.floor(psi_val * 100), perc))
+	self.stat["psi"].text_bonus:SetText(strformat("%s  %s%s", bonus_symbol, psi_bonus *100, perc))
 
 
 	s_hit.type = hit.wound
 	local wound_val, wound_bonus = get_protection(s_hit,s_hit.bone_id)
-	self.stat["wound"].text:SetText(strformat("%s%s", InvRoundStats(wound_val *100), perc))
-	self.stat["wound"].text_bonus:SetText(strformat("%s  %s%s", bonus_symbol, InvRoundStats(wound_bonus) * 100, perc))
+	self.stat["wound"].text:SetText(strformat("%s%s", math.floor(wound_val *100), perc))
+	self.stat["wound"].text_bonus:SetText(strformat("%s  %s%s", bonus_symbol, wound_bonus * 100, perc))
 
 
 	s_hit.type = hit.fire_wound
-	local fire_wound_val, fire_wound_bonus = get_protection(s_hit,s_hit.bone_id, 12)
-	self.stat["fire_wound"].text:SetText(strformat("%s%s", InvRoundStats(fire_wound_val * 100), perc))
+	local fire_wound_val, fire_wound_bonus,tmp1,tmp2,armor_br = get_protection(s_hit,s_hit.bone_id, 12)
+	self.stat["fire_wound"].text:SetText(strformat("%s%s", fire_wound_val * 100, perc))
+	self.stat["br_class"].text:SetText(strformat("%s", armor_br *100))
+	
 
 	local h_hit = hit()
 	h_hit.bone = "bip01_head"
@@ -1893,8 +1896,10 @@ function UIInventory:UpdateStats()
 	h_hit.draftsman = db.actor
 	h_hit.type = hit.fire_wound
 	h_hit.direction = VEC_Z
-	local fire_wound_helm = get_protection(h_hit,19, 12)
-	self.stat["fire_wound"].text_bonus_regen:SetText(strformat("%s%s", InvRoundStats(fire_wound_helm * 100), perc))
+	local fire_wound_helm,tmp1,tmp2,tmp3,tmp4,helm_br = get_protection(h_hit,19, 12)
+	self.stat["fire_wound"].text_bonus_regen:SetText(strformat("%s%s", fire_wound_helm * 100, perc))
+	self.stat["br_class"].text_bonus_regen:SetText(strformat("%s", helm_br * 100))
+
 	
 	-- Special case for power (similar to engine method)
 	local power = actor:cast_Actor():conditions():V_SatietyPower() --db.actor.satiety
