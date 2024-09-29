@@ -18,6 +18,10 @@ oleh5230, 15/05/2024:
 - .ltx parsed to lua tables instead of direct reading
 - UBGL reload casings sounds
 
+oleh5230, 06/09/2024:
+- Rain mud material indoors fix
+- Delay calculation tweak
+
 Credits:
 - xcvb: get_body_state()
 - Maid: .ltx parser
@@ -54,12 +58,14 @@ mat_to_sound = {
 }
 
 local enabled = true
+local ubgl_enabled = true
 local volume_base = 2
 local last_weapon_id
 
 function load_mcm_options()
     if ui_mcm then
         enabled = ui_mcm.get("grok_casings_sounds/enabled") or false
+        ubgl_enabled = ui_mcm.get("grok_casings_sounds/ubgl_enabled") or false
         volume_base = ui_mcm.get("grok_casings_sounds/volume") or 2
         ice_patch = ui_mcm.get("grok_casings_sounds/ice_patch") or false
     end
@@ -73,6 +79,9 @@ function load_mcm_options()
         UnregisterScriptCallback("actor_on_footstep",actor_on_footstep)
         UnregisterScriptCallback("actor_on_weapon_fired",actor_on_weapon_fired)
         UnregisterScriptCallback("actor_on_hud_animation_play", actor_on_hud_animation_play)
+    end
+    if enabled and not ubgl_enabled then
+        UnregisterScriptCallback("actor_on_hud_animation_play",actor_on_hud_animation_play)
     end
 end
 
@@ -89,14 +98,13 @@ function actor_on_footstep(material, power, hud_view, flags)
     current_material_sound = mat_to_sound[current_material]
 
     -- change soft material to mud during rain
-    local wetness = level.rain_wetness()
-    if wetness > 0.2 and (current_material_sound == "_dirt_" or current_material_sound == "_grass_") then
-        local roll = math.random(99)
-        if wetness * 100 > roll then
+    if level.rain_wetness() > 0.25 and level.rain_hemi() > 0.25 and (current_material_sound == "_dirt_" or current_material_sound == "_grass_") then
+        -- local roll = math.random(50)
+        -- if wetness * 100 > roll then
             current_material_sound = "_mud_"
-        end
+        -- end
     end
-    --printf("grok_casings_sounds // %s, %s, wetness: %s", material, current_material_sound, wetness)
+    --printf("grok_casings_sounds // %s, %s, wetness: %s, hemi: %s", material, current_material_sound, level.rain_wetness(), level.rain_hemi())
 end
 
 function get_const_params(wpn)
@@ -140,7 +148,7 @@ function actor_on_weapon_fired(obj, wpn)
 
         if casing_class == "no_sound" or orient == -1 then return end
         local material_sound = current_material_sound or "_dirt_"
-        local volume = material_sound == "_grass_" and volume_base/4 or volume_base
+        local volume = material_sound == "_grass_" and volume_base/10 or volume_base
 
         if eject_delay and eject_delay > 0 then
             CreateTimeEvent("grok_casings", "grok_casings_sound", eject_delay, play_sound, obj, fall_delay, 1, volume, orient, casing_class, material_sound)
@@ -169,11 +177,11 @@ function play_sound(obj, fall_delay, sub_coef, volume, orient, casing_class, mat
     local pos, dir = obj:position(), obj:direction()
     body_st = get_body_state()
     if body_st == "low_crouch" then
-        fall_delay = fall_delay - (0.3 * sub_coef)
-        volume = volume * 0.7
+        fall_delay = fall_delay * 0.6
+        volume = volume * 0.6
         pos.y = pos.y - 0.0016
     elseif body_st == "crouch" then
-        fall_delay = fall_delay - (0.1 * sub_coef)
+        fall_delay = fall_delay * 0.9
         volume = volume * 0.9
         pos.y = pos.y - 0.0064
     else
@@ -184,6 +192,7 @@ function play_sound(obj, fall_delay, sub_coef, volume, orient, casing_class, mat
     sound_to_play = sound_object("casings\\" .. casing_class .. material_sound .. math.random(4))
     sound_to_play:play_no_feedback(obj, sound_object.s3d, fall_delay + (math.random(10)/100), pos, 1, 1)
     sound_to_play.volume = volume
+
     --printf("grok_casings_sounds // class: %s, fall_delay: %s, orient: %s, volume: %s", casing_class, fall_delay, orient, volume)
 
     --draw_part = particles_object("_samples_particles_\\flash_light")
