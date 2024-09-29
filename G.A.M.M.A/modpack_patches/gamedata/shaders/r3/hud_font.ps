@@ -3,7 +3,7 @@
 
 struct 	v2p
 {
- 	half2 	tc0: 	TEXCOORD0;	
+ 	half2 	tc0: 	TEXCOORD0;
  	half4	c0:		COLOR0;
 };
 
@@ -11,14 +11,22 @@ struct 	v2p
 // Pixel
 float4 main ( p_TL I ) : SV_Target
 {
-	float4 r = s_base.Sample( smp_base, I.Tex0 );
-	
-	if (HDR_IS_RENDERING_PDA) {
-		r.rgb = I.Color;
-	} else {
-		r.rgb = sRGBToHDR10(I.Color, HDR_UI_NITS_SCALAR);
+	float4 r =  s_base.Sample( smp_base, I.Tex0 );
+	r.rgb    =  I.Color;
+	r.a      *= I.Color.a;
+
+	if (!HDR10_IS_ENABLED) {
+		return r;
 	}
-	
-	r.a *= I.Color.a;
+
+	if (HDR10_IS_RENDERING_PDA) {
+		r.rgb = pow(r.rgb, 2.2f);
+		r.rgb *= HDR10_UI_NITS_SCALAR;
+		r.rgb *= HDR10_PDA_INTENSITY;
+		r.rgb = pow(r.rgb, 1.0f / 2.2f);
+	} else {
+		r.rgb = HDR10_ToDisplay_UI(r.rgb, HDR10_UI_NITS_SCALAR);
+	}
+
 	return r;
 }

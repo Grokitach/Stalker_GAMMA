@@ -1,5 +1,5 @@
 function normal(shader, t_base, t_second, t_detail)
-  shader:begin("effects_sun","effects_sun_flare")
+  shader:begin("effects_sun","stub_default")
 --        : sorting        (2, false)
 --        : blend                (true,blend.srcalpha,blend.invsrcalpha)
 --        : blend                (true,blend.one,blend.one)
