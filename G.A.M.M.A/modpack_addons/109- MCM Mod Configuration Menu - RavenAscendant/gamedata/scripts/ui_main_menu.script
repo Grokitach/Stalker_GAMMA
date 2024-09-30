@@ -21,9 +21,9 @@ class "main_menu" (CUIScriptWnd)
 function main_menu:__init() super()
 	math.randomseed(device():time_continual())
 	self.mbox_mode = 0
-    self:InitControls()
+	ui_mcm.init_opt_base() 
+	self:InitControls()
     self:InitCallBacks()
-	ui_mcm.init_opt_base()
 	SendScriptCallback("main_menu_on_init",self)
 	RegisterScriptCallback("on_localization_change",self)
 	
@@ -55,6 +55,10 @@ function main_menu:InitControls()
 		flavor_name = " - " .. anomaly_flavor.get_flavor()
 	end
 	_ver:TextControl():SetText		(game.translate_string("ui_st_game_version") .. flavor_name .. (DEV_DEBUG and " (Debug mode - Press F1 for help)" or ""))
+
+	local _disc = xml:InitStatic    ("static_disclaimer",self)
+	_disc:TextControl():SetTextColor(GetARGB(223, 223, 223, 223))
+	_disc:TextControl():SetText     (game.translate_string("ui_mm_disclaimer"))
 	
 	-- Message Window 
 	self.msg_wnd = xml:InitFrame("msg_wnd:background",self)
@@ -70,6 +74,7 @@ function main_menu:InitCallBacks()
 	self:AddCallback("btn_newgame",		ui_events.BUTTON_CLICKED,				self.OnButton_new_game,				self)
 	self:AddCallback("btn_options",     ui_events.BUTTON_CLICKED,				self.OnButton_options_clicked,		self)
 	self:AddCallback("btn_mcm",     	ui_events.BUTTON_CLICKED,				self.OnButton_mcm_clicked,			self)
+	self:AddCallback("btn_originals",   ui_events.BUTTON_CLICKED,				self.OnButton_originals_clicked,	self)
 	self:AddCallback("btn_load",        ui_events.BUTTON_CLICKED,				self.OnButton_load_clicked,			self)
 	self:AddCallback("btn_save",		ui_events.BUTTON_CLICKED,				self.OnButton_save_clicked,			self)
 	self:AddCallback("btn_quit",		ui_events.BUTTON_CLICKED,				self.OnButton_quit_clicked,			self)
@@ -137,6 +142,9 @@ function main_menu:OnButton_new_game()
 	self:ShowFactionUI()
 end
 
+function main_menu:OnButton_originals_clicked()
+	game.open_originals_link()
+end											   
 function main_menu:OnButton_quit_clicked()
 	self.message_box:InitMessageBox("message_box_quit_windows")
 	self.message_box:ShowDialog(true)
@@ -191,7 +199,7 @@ end
 function main_menu:OnButton_mcm_clicked()
 	printf("MCMBTN press")
 	if (self.mcm_dlg == nil) then
-		self.mcm_dlg = ui_mcm.UIMCM()
+		self.mcm_dlg = ui_mcm.UI_MCM()
 		self.mcm_dlg.owner = self
 	end
 
