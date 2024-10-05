@@ -1,0 +1,49 @@
+#include "hdr10.h"
+#include "hdr10_lens_flare.h"
+
+float3 HDR10_SampleChromatic(float2 tc, float2 dir, float3 rgb_distortion)
+{
+    return float3(
+        HDR10_SampleFlareTexel(tc + dir * rgb_distortion.r).r,
+        HDR10_SampleFlareTexel(tc + dir * rgb_distortion.g).g,
+        HDR10_SampleFlareTexel(tc + dir * rgb_distortion.b).b
+    );
+}
+
+float4 main(p_screen I) : SV_TARGET
+{
+    static const float2 tc_center = float2(0.5, 0.5);
+
+    // flip tc to have screen center odd symmetry
+    float2 tc             = -I.tc0.xy + float2(1.0, 1.0);
+    float2 dxdy           = HDR10_FLARE_SRC_DXDY;
+    float3 rgb_distortion = float3(-dxdy.x, 0.0, dxdy.x);
+    float3 color          = float3(0, 0, 0);
+
+    // ghosts generation
+    float2 ghost_dir      = (tc_center - tc) * HDR10_FLARE_GHOST_DISPERSAL;
+    float2 norm_ghost_dir = normalize(ghost_dir);
+
+    const int nghosts = HDR10_FLARE_GHOSTS;
+    for (int ii = 0; ii < nghosts; ii++) {
+        float2 tc_offset = frac(tc + ghost_dir * (ii + 1));
+
+        float weight = length(tc_center - tc_offset) / length(tc_center);
+        weight = pow(1.0 - weight, 10.0 * HDR10_FLARE_CENTER_FALLOFF);
+
+        color += weight * HDR10_SampleChromatic(tc_offset, norm_ghost_dir, rgb_distortion * HDR10_FLARE_GHOST_CA);
+    }
+    color *= HDR10_FLARE_GHOST_INTENSITY;
+
+    // halo generation
+    float2 halo_dir = norm_ghost_dir * HDR10_FLARE_HALO_SCALE;
+    float weight = length(tc_center - frac(tc + halo_dir)) / length(tc_center);
+    weight = pow(1.0 - weight, 5.0 * HDR10_FLARE_CENTER_FALLOFF);
+    color += HDR10_FLARE_HALO_INTENSITY * weight * HDR10_SampleChromatic(tc + halo_dir, norm_ghost_dir, rgb_distortion * HDR10_FLARE_HALO_CA);
+
+    // tint by lens color with increasing radial distance
+    float blend = length(tc_center - tc) / length(tc_center);
+    color *= lerp(float3(1,1,1), HDR10_FLARE_LENS_COLOR, pow(blend, 0.4));
+
+    return float4(color, 1.0);
+}

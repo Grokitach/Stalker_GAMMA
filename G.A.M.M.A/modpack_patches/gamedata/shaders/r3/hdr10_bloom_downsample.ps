@@ -1,0 +1,53 @@
+#include "hdr10_bloom.h"
+
+float4 main(p_screen I) : SV_TARGET
+{
+    float x = I.tc0.x;
+    float y = I.tc0.y;
+
+    float dx = HDR10_BLOOM_SRC_DX;
+    float dy = HDR10_BLOOM_SRC_DY;
+
+    // sample pattern
+    // a - b - c
+    // - j - k -
+    // d - e - f
+    // - l - m -
+    // g - h - i
+
+    float3 a = HDR10_SampleGameTexel(x - 2 * dx, y - 2 * dy);
+    float3 b = HDR10_SampleGameTexel(x         , y - 2 * dy);
+    float3 c = HDR10_SampleGameTexel(x + 2 * dx, y - 2 * dy);
+
+    float3 d = HDR10_SampleGameTexel(x - 2 * dx, y         );
+    float3 e = HDR10_SampleGameTexel(x         , y         );
+    float3 f = HDR10_SampleGameTexel(x + 2 * dx, y         );
+
+    float3 g = HDR10_SampleGameTexel(x - 2 * dx, y + 2 * dy);
+    float3 h = HDR10_SampleGameTexel(x         , y + 2 * dy);
+    float3 i = HDR10_SampleGameTexel(x + 2 * dx, y + 2 * dy);
+
+    float3 j = HDR10_SampleGameTexel(x - 1 * dx, y - 1 * dy);
+    float3 k = HDR10_SampleGameTexel(x + 1 * dx, y - 1 * dy);
+    float3 l = HDR10_SampleGameTexel(x - 1 * dx, y + 1 * dy);
+    float3 m = HDR10_SampleGameTexel(x + 1 * dx, y + 1 * dy);
+
+    // compute karis average to eliminate fireflies
+    float3 g1 = 0.25 * (a + b + d + e);
+    float3 g2 = 0.25 * (b + c + e + f);
+    float3 g3 = 0.25 * (d + e + g + h);
+    float3 g4 = 0.25 * (e + f + h + i);
+    float3 g5 = 0.25 * (j + k + l + m);
+
+    float g1w = HDR10_KarisWeight_Rec709(g1);
+    float g2w = HDR10_KarisWeight_Rec709(g2);
+    float g3w = HDR10_KarisWeight_Rec709(g3);
+    float g4w = HDR10_KarisWeight_Rec709(g4);
+    float g5w = HDR10_KarisWeight_Rec709(g5);
+
+    float3 karis_avg;
+    karis_avg  = g1w * g1 + g2w * g2 + g3w * g3 + g4w * g4 + g5w * g5;
+    karis_avg /= g1w + g2w + g3w + g4w + g5w;
+
+    return float4(karis_avg, 1.0);
+}

@@ -3,6 +3,19 @@ local tonumber = tonumber
 local tostring = tostring
 local unpack = unpack
 
+function get_game_version()
+	local function table_of_strings_to_number(t)
+		local res = {}
+		for i, v in ipairs(t) do
+			res[i] = tonumber(v)
+		end
+		if not res[2] then res[2] = 0 end
+		if not res[3] then res[3] = 0 end
+		return res
+	end
+	return GAME_VERSION and table_of_strings_to_number(str_explode(GAME_VERSION, "%.")) or {0, 0, 0}
+end
+
 -- Correct behaviour of actor_on_item_before_pickup callback
 function bind_stalker_ext.actor_on_item_before_pickup(item) -- called from engine!
 	-- Called when actor is pressing use key to pick up an item
@@ -48,12 +61,17 @@ function ui_pda_npc_tab.use_view(obj)
 end
 
 -- NLTP_ASHES: Fix for ActorMenu_on_item_after_move callback sending nil values
-ui_inventory_UIInventory_Action_Move = ui_inventory.UIInventory.Action_Move
-function ui_inventory.UIInventory:Action_Move(obj, bag)
-  obj = self:CheckItem(obj,"Action_Move")
-  if obj then
-    ui_inventory_UIInventory_Action_Move(self, obj, bag)
-  end
+do
+	local ver = get_game_version()
+	if ver[2] <= 5 and ver[3] <= 2 then
+		ui_inventory_UIInventory_Action_Move = ui_inventory.UIInventory.Action_Move
+		function ui_inventory.UIInventory:Action_Move(obj, bag)
+		  obj = self:CheckItem(obj,"Action_Move")
+		  if obj then
+		    ui_inventory_UIInventory_Action_Move(self, obj, bag)
+		  end
+		end
+	end
 end
 
 -- Additional params for callbacks
