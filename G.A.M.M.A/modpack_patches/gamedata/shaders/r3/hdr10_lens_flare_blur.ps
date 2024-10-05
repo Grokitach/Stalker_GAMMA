@@ -1,0 +1,39 @@
+#include "hdr10_lens_flare.h"
+
+float4 main(p_screen I) : SV_TARGET
+{
+    float x = I.tc0.x;
+    float y = I.tc0.y;
+
+    float dx = HDR10_FLARE_SRC_DX;
+    float dy = HDR10_FLARE_SRC_DY;
+
+    if (HDR10_FLARE_HORZ) {
+        // 3 bilinear samples
+        // [a b c]
+        float3 a = HDR10_SampleFlareTexel(x - 1 * dx, y);
+        float3 b = HDR10_SampleFlareTexel(x         , y);
+        float3 c = HDR10_SampleFlareTexel(x + 1 * dx, y);
+
+        // blur kernel
+        // 0.25 * [1 2 1]
+        float3 color = 0.25 * 2.0 * b;
+        color       += 0.25 * 1.0 * (a + c);
+
+        return float4(color, 1.0f);
+
+    } else {
+        // 3 bilinear samples
+        // [a; b; c]
+        float3 a = HDR10_SampleFlareTexel(x, y - 1 * dy);
+        float3 b = HDR10_SampleFlareTexel(x, y         );
+        float3 c = HDR10_SampleFlareTexel(x, y + 1 * dy);
+
+        // blur kernel
+        // 0.25 * [1; 2; 1]
+        float3 color = 0.25 * 2.0 * b;
+        color       += 0.25 * 1.0 * (a + c);
+
+        return float4(color, 1.0);
+    }
+}
