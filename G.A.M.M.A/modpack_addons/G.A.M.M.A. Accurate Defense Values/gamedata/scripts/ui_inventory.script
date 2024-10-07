@@ -1880,13 +1880,13 @@ function UIInventory:UpdateStats()
 	s_hit.type = hit.wound
 	local wound_val, wound_bonus = get_protection(s_hit,s_hit.bone_id)
 	self.stat["wound"].text:SetText(strformat("%s%s", math.floor(wound_val *100), perc))
-	self.stat["wound"].text_bonus:SetText(strformat("%s  %s%s", bonus_symbol, wound_bonus * 100, perc))
+	self.stat["wound"].text_bonus:SetText(strformat("%s  %s%s", bonus_symbol, math.floor(wound_bonus * 100), perc))
 
 
 	s_hit.type = hit.fire_wound
 	local fire_wound_val, fire_wound_bonus,tmp1,tmp2,armor_br = get_protection(s_hit,s_hit.bone_id, 12)
-	self.stat["fire_wound"].text:SetText(strformat("%s%s", fire_wound_val * 100, perc))
-	self.stat["br_class"].text:SetText(strformat("%s", armor_br *100))
+	self.stat["fire_wound"].text:SetText(strformat("%s%s", math.floor(fire_wound_val * 100), perc))
+	self.stat["br_class"].text:SetText(strformat("%s", math.floor(armor_br *100)))
 	
 
 	local h_hit = hit()
@@ -1900,41 +1900,27 @@ function UIInventory:UpdateStats()
 	self.stat["fire_wound"].text_bonus_regen:SetText(strformat("%s%s", fire_wound_helm * 100, perc))
 	self.stat["br_class"].text_bonus_regen:SetText(strformat("%s", helm_br * 100))
 
-	
-	-- Special case for power (similar to engine method)
-	local power = actor:cast_Actor():conditions():V_SatietyPower() --db.actor.satiety
-	power = power + self.stat_arty["power"]
-	if outfit then
-		power = power + self.stat_outfit["power"]
-		local power_loss = outfit:cast_CustomOutfit().m_fPowerLoss or 0
-		if power_loss ~= 0 then
-			power = power / power_loss
-		end
-	else
-		power = power / 0.5
-	end
-	power = power / self.stat_list["power"].max
-	self.stat["power"].bar:SetProgressPos( clamp( power , 0, 15) )
-	--]]
-
 	-- Satiety Bar
 	local satiety = actor:cast_Actor():conditions():GetSatiety()
-	satiety = (satiety - 0.1) / 5		-- 5.7
-	self.stat["power"].bar:SetProgressPos( clamp( satiety , 0, 0.2) )
+	satiety = (satiety - 0.1)		-- 5.7
+--	self.stat["power"].bar:SetProgressPos( clamp( satiety , 0, 0.2) )
+	self.stat["power"].text:SetText(strformat("%s%s", math.floor(clamp( satiety , 0, 1) * 1.123  * 100), perc))
 
 	-- Thirst Bar
 	local thirst = actor_status_thirst.get_last_drink()
 	local thirst_red_icon = actor_status_thirst.get_thirst_blur_4()
 	thirst = thirst_red_icon - thirst
-	thirst = (thirst / thirst_red_icon) / 5.65
-	self.stat["thirst"].bar:SetProgressPos( clamp( thirst, 0, 0.185))
+	thirst = (thirst / thirst_red_icon)
+--	self.stat["thirst"].bar:SetProgressPos( clamp( thirst, 0, 0.185))
+	self.stat["thirst"].text:SetText(strformat("%s%s", math.floor(clamp( thirst, 0, 1) * 100), perc))
 
 	-- Sleep bar
 	local sleep = actor_status_sleep.get_last_sleep()
 	local sleep_red_icon = actor_status_sleep.get_sleep_blur_4()
 	sleep = sleep_red_icon - sleep
-	sleep = (sleep / sleep_red_icon) / 5.65
-	self.stat["sleep"].bar:SetProgressPos( clamp( sleep, 0, 0.185))
+	sleep = (sleep / sleep_red_icon)
+--	self.stat["sleep"].bar:SetProgressPos( clamp( sleep, 0, 0.185))
+	self.stat["sleep"].text:SetText(strformat("%s%s", math.floor(clamp( sleep, 0, 1) * 100), perc))
 
 
 -- Blinking Icons
