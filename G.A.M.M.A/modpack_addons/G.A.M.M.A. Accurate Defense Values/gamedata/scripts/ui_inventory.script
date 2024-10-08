@@ -230,6 +230,8 @@ function UIInventory:__init() super()
 		["psi"]        = { min= 0 , max= (SYS_GetParam(2,"actor_condition","psi_zone_max_power"))        , hint= "ui_inv_telepatic_protection"},
 		["wound"]      = { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_wound_protection"))      , hint= "ui_inv_wound_protection" },
 		["fire_wound"] = { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_fire_wound_protection")) , hint= "ui_inv_fire_wound_protection" },
+		["explosion"] = { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_fire_wound_protection")) , hint= "ui_inv_fire_wound_protection" },
+		["strike"] = { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_fire_wound_protection")) , hint= "ui_inv_fire_wound_protection" },
 		["power"]      = { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_power_restore_speed"))   },
 		["thirst"]		= { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_power_restore_speed"))   },
 		["sleep"]		= { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_power_restore_speed"))   },
@@ -465,6 +467,8 @@ function UIInventory:InitControls()
 		self.stat[name].ico_n:InitTexture("ui_inGame2_inv_state_N_" .. name)
 		self.stat[name].ico_n:Show(false)
 	end
+
+	self.stat["fire_wound"].text_bonus2	 = xml:InitTextWnd("equipment:actor_state_info:" .. "fire_wound" .. "_sensor:stats_bonus2", self.stat["fire_wound"].base)
 	
 	-- Sorter
 	self.sort_dialog            = xml:InitStatic("equipment:sorter", self.equ_dialog)
@@ -1842,6 +1846,8 @@ function UIInventory:UpdateStats()
 		self.stat["radia"].text_bonus:SetText()
 	end
 	
+	-- This part is for GAMMA actor damage balancer to display protection as % in UI.
+	
 	local get_protection = grok_actor_damage_balancer.get_protection
 	
 	local s_hit = hit()
@@ -1856,36 +1862,52 @@ function UIInventory:UpdateStats()
 	s_hit.type = hit.chemical_burn
 	local acid_val, acid_bonus = get_protection(s_hit,s_hit.bone_id)
 	self.stat["acid"].text:SetText(strformat("%s%s", math.floor(acid_val * 100), perc))
-	self.stat["acid"].text_bonus:SetText(strformat("%s  %s%s", bonus_symbol, acid_bonus * 100 , perc))
+	self.stat["acid"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, acid_bonus * 100 , perc))
 
 
 	s_hit.type = hit.shock
 	local shock_val, shock_bonus = get_protection(s_hit,s_hit.bone_id)
 	self.stat["shock"].text:SetText(strformat("%s%s", math.floor(shock_val * 100), perc))
-	self.stat["shock"].text_bonus:SetText(strformat("%s  %s%s", bonus_symbol, shock_bonus * 100 , perc))
+	self.stat["shock"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, shock_bonus * 100 , perc))
 
 
 	s_hit.type = hit.burn
 	local fire_val, fire_bonus = get_protection(s_hit,s_hit.bone_id)
 	self.stat["fire"].text:SetText(strformat("%s%s", math.floor(fire_val * 100), perc))
-	self.stat["fire"].text_bonus:SetText(strformat("%s  %s%s", bonus_symbol, fire_bonus * 100, perc))
+	self.stat["fire"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, fire_bonus * 100, perc))
 
 
 	s_hit.type = hit.telepatic
 	local psi_val, psi_bonus = get_protection(s_hit,s_hit.bone_id)
 	self.stat["psi"].text:SetText(strformat("%s%s", math.floor(psi_val * 100), perc))
-	self.stat["psi"].text_bonus:SetText(strformat("%s  %s%s", bonus_symbol, psi_bonus *100, perc))
+	self.stat["psi"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, psi_bonus *100, perc))
 
 
 	s_hit.type = hit.wound
 	local wound_val, wound_bonus = get_protection(s_hit,s_hit.bone_id)
 	self.stat["wound"].text:SetText(strformat("%s%s", math.floor(wound_val *100), perc))
-	self.stat["wound"].text_bonus:SetText(strformat("%s  %s%s", bonus_symbol, math.floor(wound_bonus * 100), perc))
+	self.stat["wound"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, math.floor(wound_bonus * 100), perc))
 
+	s_hit.type = hit.wound
+	local wound_val, wound_bonus = get_protection(s_hit,s_hit.bone_id)
+	self.stat["wound"].text:SetText(strformat("%s%s", math.floor(wound_val *100), perc))
+	self.stat["wound"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, math.floor(wound_bonus * 100), perc))
+
+	s_hit.type = hit.explosion
+	local explosion_val, explosion_bonus = get_protection(s_hit,s_hit.bone_id)
+	self.stat["explosion"].text:SetText(strformat("%s%s", math.floor(explosion_val *100), perc))
+	self.stat["explosion"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, math.floor(explosion_bonus * 100), perc))
+
+	s_hit.type = hit.strike
+	local strike_val, strike_bonus = get_protection(s_hit,s_hit.bone_id)
+	self.stat["strike"].text:SetText(strformat("%s%s", math.floor(strike_val *100), perc))
+	self.stat["strike"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, math.floor(strike_bonus * 100), perc))
 
 	s_hit.type = hit.fire_wound
 	local fire_wound_val, fire_wound_bonus,tmp1,tmp2,armor_br = get_protection(s_hit,s_hit.bone_id, 12)
 	self.stat["fire_wound"].text:SetText(strformat("%s%s", math.floor(fire_wound_val * 100), perc))
+	self.stat["fire_wound"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, math.floor(fire_wound_bonus * 100), perc))
+	self.stat["fire_wound"].text_bonus2:SetText(strformat("%s%s%s", bonus_symbol, math.floor(fire_wound_bonus * 100), perc))
 	self.stat["br_class"].text:SetText(strformat("%s", math.floor(armor_br *100)))
 	
 
