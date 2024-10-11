@@ -2,7 +2,12 @@ custom_bone_value	= {} -- this a table with each identifier being npcid_boneid, 
 custom_bone_ap	= {} 
 custom_bone_hf	= {} 
 custom_bone_dmg	= {}
+custom_bone_real_ap = {}
+custom_bone_power = {}
 invincible_npcs_sections = {}
+
+headshot_feedback_particle = "anomaly2\\effects\\body_tear_blood_01"
+headshot_feedback_enable = true
 ini_capture	 = ini_file("creatures\\grok_bo_models_capture.ltx")
 ini_bones		 = ini_file("creatures\\grok_bo_bone_profiles.ltx")
 ini_damage		= ini_file("creatures\\damages.ltx")
@@ -845,6 +850,9 @@ function npc_on_before_hit(npc,shit,bone_id)
 
 	shit.power = wpn_hit_power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * k_hit * custom_bone_dmg_mult * custom_bone_ap_scale * 1.1 * sniper_bad_bone_shit_reduce * barrel_condition_corrected * sin_res * difficulty_multiplier[game_num] * ammo_mult * silencer_boost
 
+	custom_bone_real_ap[custom_bone_id] = k_ap
+	custom_bone_power[custom_bone_id] = shit.power
+
 	-- etapomom: run pba before armor so that they actually feel like they're doing something.
 	pbadamage = hit(shit)
 	PBA_obh(npc, pbadamage, bone_id, flags)
@@ -879,8 +887,8 @@ function npc_on_before_hit(npc,shit,bone_id)
 	end
 	
 	-- Add even more feedback on headshots
-	if (k_ap > new_bone_armor) and headBones[bone_id] then
-		fx = particles_object("anomaly2\\effects\\body_tear_blood_01")
+	if (k_ap > new_bone_armor) and headBones[bone_id] and headshot_feedback_enable then
+		fx = particles_object(headshot_feedback_particle)
 		pos = npc:bone_position(custom_bone_name)
 		fx:play_at_pos(pos)
 	end
