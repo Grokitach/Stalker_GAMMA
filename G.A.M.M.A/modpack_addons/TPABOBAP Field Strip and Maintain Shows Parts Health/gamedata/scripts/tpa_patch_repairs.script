@@ -1,0 +1,84 @@
+local remove_name
+local replace_name
+local get_suitable_kit
+local is_part
+local act_fieldstrip
+local replace_part
+
+function on_game_start()
+    patch_methods()
+end
+
+function patch_methods()
+    remove_name = zzzz_arti_jamming_repairs.remove_name
+	replace_name = zzzz_arti_jamming_repairs.replace_name
+	get_suitable_kit = zzzz_arti_jamming_repairs.get_suitable_kit
+    is_part = zzzz_arti_jamming_repairs.is_part
+    act_fieldstrip = zzzz_arti_jamming_repairs.act_fieldstrip
+	replace_part = zzzz_arti_jamming_repairs.replace_part
+
+    zzzz_arti_jamming_repairs.init_fieldstrip_menu = patched_init_strip
+	zzzz_arti_jamming_repairs.init_maintenance_menu = patched_init_maintain
+end
+
+local fs_gui
+function patched_init_strip(obj)
+    local context_str = {}
+    local context_action = {}
+    local context_params = {}
+
+    local parts = item_parts.get_parts_con(obj)
+    local num = 0
+    for k, v in pairs(parts) do
+        if is_part(k) and not arti_jamming.is_barrel(k) and v > 0 then
+            table.insert(context_str, remove_name(k) .. " (" .. v .. "%)")
+            table.insert(context_action, "remove_part")
+            table.insert(context_params, { obj:id(), k, v })
+            num = num + 1
+        end
+    end
+    -- remove all
+    if num > 1 then
+        table.insert(context_str, remove_name(nil))
+        table.insert(context_action, "remove_part")
+        table.insert(context_params, { obj:id(), k, v })
+    end
+    if not fs_gui then fs_gui = utils_ui_custom.UICellPropertiesCustom(act_fieldstrip) end
+    fs_gui:Reset(GetCursorPosition(), context_action, context_str, context_params)
+    ui_inventory.GUI:PlaySND(sound_object([[interface\inv_properties_2]]))
+end
+
+
+local maint_gui
+function patched_init_maintain(obj)
+	
+	local context_str = {}
+	local context_action = {}
+	local context_params = {}
+
+	local parts = item_parts.get_parts_con(obj)
+	local clean_kit = get_suitable_kit(obj, true)
+	local repair_kit = get_suitable_kit(obj, false)
+	for k,v in pairs(parts) do
+		if is_part(k) then
+			if  v < 60 and repair_kit then
+				table.insert(context_str, replace_name(k, false) .. " (" .. v .. "%)")
+				table.insert(context_action,  "replace_part")
+				table.insert(context_params, {obj:id(), k, repair_kit:section(), false})
+			elseif v >= 60 and v < 98 then
+				if clean_kit then
+					table.insert(context_str, replace_name(k, true) .. " (" .. v .. "%)")
+					table.insert(context_action,  "clean_part")
+					table.insert(context_params, {obj:id(), k, clean_kit:section(), true})
+				else
+					table.insert(context_str, replace_name(k, true) .. " (" .. v .. "%)")
+					table.insert(context_action,  "replace_part")
+					table.insert(context_params, {obj:id(), k, repair_kit:section(), true})
+				end
+			end
+		end
+	end
+	if not maint_gui then maint_gui = utils_ui_custom.UICellPropertiesCustom(replace_part) end
+	maint_gui:Reset(GetCursorPosition(), context_action, context_str, context_params)
+	ui_inventory.GUI:PlaySND(sound_object([[interface\inv_properties_2]]))
+end
