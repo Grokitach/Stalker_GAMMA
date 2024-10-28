@@ -4,7 +4,7 @@ local items = {
 	["porn"]    = {minutes = 180},
 	["porn2"]   = {minutes = 180},
 	["journal"] = {minutes = 120},
-    ["cards"]   = {minutes = 60},
+	["cards"]   = {minutes = 60},
 }
 
 function allowing_wait()
@@ -13,15 +13,20 @@ function allowing_wait()
 end
 
 function wait(obj)
-	wait_allowed = false
-	CreateTimeEvent("allowing_wait_again", "allowing_wait_again", 7, allowing_wait)
-	local sec = obj:section()
-    alife_release_id(items[obj:section()])
--- change time + fade out + play sound
-	local minutes = items[sec].minutes
-	hide_hud_inventory()
-	level.change_game_time(0, 0, minutes)
-	level.add_pp_effector("fade_nine_sec.ppe", 8551213, false)
+	if obj then
+		local sec = obj:section()
+		if items[sec] then
+			wait_allowed = false
+			CreateTimeEvent("allowing_wait_again", "allowing_wait_again", 7, allowing_wait)
+			local id = obj:id()
+			alife_release_id(id)
+		-- change time + fade out + play sound
+			local minutes = items[sec].minutes
+			hide_hud_inventory()
+			level.change_game_time(0, 0, minutes)
+			level.add_pp_effector("fade_nine_sec.ppe", 8551213, false)
+		end
+	end
 end
 
 function menu_wait(obj)
@@ -39,24 +44,26 @@ end
 NameCustom = ui_inventory.UIInventory.Name_Custom
 
 function ui_inventory.UIInventory:Name_Custom(obj, bag, temp, i)
-	local active_item = db.actor:active_item()
-	local active_id = active_item and active_item:id()
 	obj = self:CheckItem(obj,"Name_Custom " .. i)
-	if i == 9 and items[obj:section()] and wait_allowed then
-        return menu_wait(obj)
-	else
-		return NameCustom(self, obj, bag, temp, i)
+	if obj then
+		sec = obj:section()
+		if i == 9 and items[sec] and wait_allowed then
+			return menu_wait(obj)
+		else
+			return NameCustom(self, obj, bag, temp, i)
+		end
 	end
 end
 
 ActionCustom = ui_inventory.UIInventory.Action_Custom
 function ui_inventory.UIInventory:Action_Custom(obj, bag, temp, i)
-	local active_item = db.actor:active_item()
-	local active_id = active_item and active_item:id()
 	obj = self:CheckItem(obj,"Action_Custom " .. i)
-	if i == 9 and items[obj:section()] and wait_allowed then
-		func_wait(obj)
-	else
-		ActionCustom(self, obj, bag, temp, i)
+	if obj then
+		sec = obj:section()
+		if i == 9 and items[sec] and wait_allowed then
+			func_wait(obj)
+		else
+			ActionCustom(self, obj, bag, temp, i)
+		end
 	end
 end
