@@ -260,7 +260,7 @@ end
 
 se_artefact.se_artefact.on_register = function(self)
     cse_alife_item_artefact.on_register(self)
-    -- Проверяем кастомдату обьекта на наличие стори айди.
+    -- Проверѝем каѝтомдату обьекта на наличие ѝтори айди.
     story_objects.check_spawn_ini_for_story_id(self)
     
     -- persistent storage
@@ -343,11 +343,36 @@ end
 ui_inventory.SYS_GetParam = new_get_param
 utils_ui.SYS_GetParam = new_get_param
 
+local knifesm = { 
+					["wpn_knife"]  = { min = 0.25 , max = 0.40 },
+					["wpn_knife2"] = { min = 0.35 , max = 0.50 },
+					["wpn_knife3"] = { min = 0.45 , max = 0.60 },
+					["wpn_knife4"] = { min = 0.55 , max = 0.70 },
+					["wpn_knife5"] = { min = 0.65 , max = 0.85 },
+					["wpn_knife6"] = { min = 0.75 , max = 0.98 },
+					["wpn_knife7"] = { min = 0.75 , max = 0.98 },
+					["wpn_knife8"] = { min = 0.75 , max = 0.98 },
+				 }
+
 -- Adding mutant loot condition setup
 local create_part = alife_create_item
 local function new_create_part(section, obj, t)
-	t.cond_r = {settings.mutant_part_condition_min, settings.mutant_part_condition_max}
-	t.cond_cr = {settings.mutant_part_condition_min, settings.mutant_part_condition_max}
+	function itr(_, item)
+        if knifesm[item:section()] then
+			if max_mutant_part_cond then
+				if max_mutant_part_cond < knifesm[item:section()].max then
+            		max_mutant_part_cond = knifesm[item:section()].max
+					min_mutant_part_cond = knifesm[item:section()].min
+				end
+			else
+				max_mutant_part_cond = knifesm[item:section()].max
+				min_mutant_part_cond = knifesm[item:section()].min
+			end
+        end
+    end
+	db.actor:iterate_inventory(itr, db.actor)
+	t.cond_r = {min_mutant_part_cond, max_mutant_part_cond}
+	t.cond_cr = {min_mutant_part_cond, max_mutant_part_cond}
 	return create_part(section, obj, t)
 end  
 
