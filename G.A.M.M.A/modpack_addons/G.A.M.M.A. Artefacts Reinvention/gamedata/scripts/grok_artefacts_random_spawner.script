@@ -1,6 +1,4 @@
 spawned = 0
-delay1 = 68520
-delay2 = 162500
 
 regular_fields_chance = 40
 dynamic_fields_chance = 22
@@ -34,7 +32,11 @@ function grok_artefact_spawner()
     tg = time_global()
 
     if spawned == 0 then
-        grok_delay = tg + math.random(delay1,delay2)
+		delay1 = delay1 * 1.2 or 45520
+		delay2 = delay2 * 1.2 or 128450
+		delay = math.random(delay1,delay2)
+        grok_delay = tg + delay
+		printf("Spawning artefacts in %s",delay)
         spawned = 1
     end
     
@@ -75,7 +77,42 @@ function bind_anomaly_zone.force_spawn_artefacts()
 	end
 end
 
+function set_delay()
+	local sim = alife()
+	local gg = game_graph()
+	local actor_level = sim:level_name(gg:vertex(sim:actor().m_game_vertex_id):level_id())
+	printf(actor_level)
+
+	if map_previous_name then
+		if map_previous_name ~= actor_level then
+			delay1 = 45520
+			delay2 = 128450
+		end
+	else
+		delay1 = 45520
+		delay2 = 128450
+	end
+	
+	map_previous_name = actor_level
+end
+
+function save_state(m_data)
+    m_data.map_previous_name = map_previous_name
+	m_data.delay1 = delay1
+	m_data.delay2 = delay2
+end
+
+function load_state(m_data)
+    map_previous_name = m_data.map_previous_name
+	delay1 = m_data.delay1
+	delay2 = m_data.delay2
+end
+
+
 function on_game_start()
 --    RegisterScriptCallback("on_key_press",on_key_press)
     RegisterScriptCallback("actor_on_update",grok_artefact_spawner)
+	RegisterScriptCallback("actor_on_first_update",set_delay)
+	RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
 end
