@@ -112,27 +112,34 @@ function on_game_start()
 	RegisterScriptCallback("on_key_release", on_key_release)
 end
 
-full_stats_keys = {
-	[DIK_keys.DIK_LMENU] = true, 
-}
-
 show_full_stats = false
 
 function on_key_press(key)
     if (key == bind_to_dik(key_bindings.kCROUCH)) then
-		printf("full stats")
+		--printf("full stats")
 		show_full_stats = true
+		update_gui(ui_inventory.GUI)
 	end
 end
 
 function on_key_release(key)
     if (key == bind_to_dik(key_bindings.kCROUCH)) then
-		printf("full stats")
+		--printf("full stats")
 		show_full_stats = false
+		update_gui(ui_inventory.GUI)
 	end
 end
 
-
+function update_gui(gui)
+	if gui and gui.item_info then
+		local self = gui
+		self:UpdateInfo(true)
+		if self.item_info then
+			local self = self.item_info
+			self:Update(hovered_obj)
+		end
+	end
+end
 
 function get_time()
 	return mm_active and time_continual() or time_global()
@@ -2654,12 +2661,12 @@ function UIInfoItem:Update(obj, sec, flags)
 	sync_cursor(self.dialog, self.frame, 0, 0)
 	
 	-- no need to process if it's same item
-	if obj then
+	if obj and not show_full_stats then
 		if obj:id() == self.id then
 			self:Show(true)
 			return
 		end
-	elseif sec then
+	elseif sec and not show_full_stats then
 		if sec == self.section then
 			self:Show(true)
 			return
