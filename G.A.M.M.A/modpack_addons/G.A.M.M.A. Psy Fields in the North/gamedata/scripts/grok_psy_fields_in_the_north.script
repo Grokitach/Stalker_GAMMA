@@ -2,7 +2,7 @@
 local psy_extra_levels = {
 	["l10_limansk"] = true,
     ["l10_red_forest"] = true,
-    ["l10_radar"] = true,
+    ["l10_radar"] = false,
     ["zaton"] = true,
     ["jupiter"] = true,
     ["pripyat"] = true,
@@ -30,19 +30,24 @@ local function actor_on_first_update()
 	local faction = get_actor_true_community()
 
 	psy_damage = 0
-	if (psy_immune_factions[faction] or has_alife_info("yan_labx16_switcher_primary_off") or has_alife_info("story_mode_disabled")) then
+	if (psy_immune_factions[faction] or has_alife_info("story_mode_disabled")) then
+		return
+	end
+	
+	if has_alife_info("yan_labx16_switcher_primary_off") and has_alife_info("bar_deactivate_radar_done") then 
 		return
 	end
 
 	if (psy_extra_levels[lvl_name]) then
-		actor_menu.set_msg(1, game.translate_string("st_gamma_psi_danger"),7)
 		psy_damage = 1
+		actor_menu.set_msg(1, game.translate_string("st_gamma_psi_danger"),3)
 	end
 end
 
-
+local dte = demonized_time_events
 trigger = 0
-delay = 7500
+delay = 2000
+one_shot = 0
 function actor_on_update()
 	tg = time_global()
 
@@ -52,13 +57,30 @@ function actor_on_update()
 	end
 
 	if (trigger == 1 and tg > grok_delay and psy_damage == 1) then
-		damage = 0.14
-		local m_data = alife_storage_manager.get_state() 
-		arszi_psy.save_state(m_data)
-		local psy_table = m_data.psy_table
-		psy_table.actor_psy_health = psy_table.actor_psy_health - damage
-		actor_menu.set_msg(1, game.translate_string("st_gamma_psi_danger"),5)
 		trigger = 0
+		level.add_pp_effector("adb_psy_feedback.ppe", 99651, false)
+		local snd = sound_object("grok_adb\\heartbeat")
+		snd:play_no_feedback(db.actor, sound_object.s2d, 0, VEC_ZERO, 1.0, 1.0)
+		snd.volume = math.random(40,65)/100
+		actor_menu.set_msg(1, game.translate_string("st_gamma_psi_danger"),2)
+		if one_shot == 2 then return end
+		one_shot = 2
+		
+		dte.CreateTimeEvent("grok_north_psi_sound", "grok_north_psi_sound_kill", 8, function()
+			psi_fx_death = sound_object("grok\\psisfx")
+			psi_fx_death:play(db.actor, 0, sound_object.s2d)
+			return true
+		end)
+		
+		dte.CreateTimeEvent("grok_north_psi_barrier", "grok_north_psi_barrier_kill", 23.1, function()
+			local m_data = alife_storage_manager.get_state() 
+			arszi_psy.save_state(m_data)
+			local psy_table = m_data.psy_table
+			damage = 999
+			psy_table.actor_psy_health = psy_table.actor_psy_health - damage
+			level.remove_pp_effector(99651)
+			return true
+		end)
 	end
 end
 
