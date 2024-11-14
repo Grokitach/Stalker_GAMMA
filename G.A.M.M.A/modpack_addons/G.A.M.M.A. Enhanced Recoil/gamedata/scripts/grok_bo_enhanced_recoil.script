@@ -14,8 +14,23 @@ local function parse_anims(sec)
 		tbl.s = {}
 		local s = ini_eff:r_string_ex(sec_p,"s")
 		local _s = str_explode(s,",")
+		
+		exo_reduction = 0
+		
+		if item_exo_device and _s then
+			if item_exo_device.is_wearing_exo() and item_exo_device.exo_charged() then
+				exo_reduction = 1
+			end
+		end
+		
 		for i=1,#_s do
-			tbl.s[#tbl.s + 1] = tonumber(_s[i])
+			recoil_str = tonumber(_s[i]) - exo_reduction
+			
+			if recoil_str < 1 then
+				recoil_str = 1
+			end
+			
+			tbl.s[#tbl.s + 1] = recoil_str
 		end
 		
 		-- parse strength randomizer
@@ -28,7 +43,13 @@ local function parse_anims(sec)
 		for i=1,#_e do
 			local __e = str_explode(_e[i],":")
 			for j=1,#__e do
-				__e[j] = tonumber(__e[j])
+				climb_str = tonumber(__e[j]) - exo_reduction
+				
+				if climb_str < 0 then
+					climb_str = 0
+				end
+				
+				__e[j] = climb_str
 			end
 			tbl.e[#tbl.e + 1] = __e
 		end
