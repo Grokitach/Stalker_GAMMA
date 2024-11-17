@@ -22,6 +22,9 @@ oleh5230, 06/09/2024:
 - Rain mud material indoors fix
 - Delay calculation tweak
 
+oleh5230, 10/11/2024:
+- Offset accepts arbitrary values
+
 Credits:
 - xcvb: get_body_state()
 - Maid: .ltx parser
@@ -117,10 +120,8 @@ function get_const_params(wpn)
     local wpn_sec = wpn:section()
     local wpn_sec_par = ini_sys:r_string_ex(wpn_sec,"parent_section") or wpn_sec
     local particle = ini_sys:r_string_ex(wpn_sec_par,"shell_particles") or false
-
     local ammo_list = utils_item.get_ammo(wpn_sec)
     local ammo_sec = ammo_list[1]
-    local casing_class = ammo_params[ammo_sec] or "556mm"
 
     local _wpn_params = {}
     if wpn_params[wpn_sec_par] then
@@ -129,17 +130,11 @@ function get_const_params(wpn)
         end
     end
 
-    local eject_delay = _wpn_params[1] or 0
-    local fall_delay = _wpn_params[2] or particle and 1.2 or 0.6
-    local orient = _wpn_params[3] or 0
-
-    -- local _wpn_params = wpn_params[wpn_sec_par] and str_explode(wpn_params[wpn_sec_par], ",")
-    -- local eject_delay = tonumber(_wpn_params[1]) or 0
-    -- local fall_delay = tonumber(_wpn_params[2]) or 0.6
-    -- local orient = tonumber(_wpn_params[3]) or 1
-    -- if orient == -1 then return end
-
-    return eject_delay, fall_delay, orient, casing_class
+    return
+    _wpn_params[1] or 0,
+    _wpn_params[2] or particle and 1.2 or 0.6,
+    _wpn_params[3] or "1.33, 0.5",
+    ammo_params[ammo_sec] or "556mm"
 end
 
 -- play casing sound after shot
@@ -148,17 +143,17 @@ function actor_on_weapon_fired(obj, wpn)
 
         if not last_weapon_id or last_weapon_id ~= wpn:id() then
             last_weapon_id = wpn:id()
-            eject_delay, fall_delay, orient, casing_class = get_const_params(wpn)
+            eject_delay, fall_delay, offset, casing_class = get_const_params(wpn)
         end
 
-        if casing_class == "no_sound" or orient == -1 then return end
+        if casing_class == "no_sound" or eject_delay == -1 then return end
         local material_sound = current_material_sound or "_dirt_"
         local volume = volume_base
 
         if eject_delay and eject_delay > 0 then
-            CreateTimeEvent("grok_casings", "grok_casings_sound", eject_delay, play_sound, obj, fall_delay, volume, orient, casing_class, material_sound)
+            CreateTimeEvent("grok_casings", "grok_casings_sound", eject_delay, play_sound, obj, fall_delay, volume, offset, casing_class, material_sound)
         else
-            play_sound(obj, fall_delay, volume, orient, casing_class, material_sound)
+            play_sound(obj, fall_delay, volume, offset, casing_class, material_sound)
         end
         --printf("grok_casings_sounds // %s, %s, eject_delay: %s", wpn:section(), utils_item.get_ammo(wpn:section())[wpn:get_ammo_type()+1], eject_delay)
 
@@ -176,29 +171,29 @@ function actor_on_weapon_fired(obj, wpn)
 	end
 end
 
-function play_sound(obj, fall_delay, volume, orient, casing_class, material_sound)
+function play_sound(obj, fall_delay, volume, offset, casing_class, material_sound)
     if not obj then return end
-    -- adjust delay, volume and offset altitude
+    -- adjust delay, volume and offset
     local pos, dir = obj:position(), obj:direction()
     body_st = get_body_state()
     if body_st == "low_crouch" then
         fall_delay = fall_delay * 0.6
         volume = volume * 0.6
-        pos.y = pos.y - 0.0016
+        pos.y = pos.y - 0.001
     elseif body_st == "crouch" then
         fall_delay = fall_delay * 0.9
         volume = volume * 0.9
-        pos.y = pos.y - 0.0064
+        pos.y = pos.y - 0.0067
     else
-        pos.y = pos.y - 0.0092
+        pos.y = pos.y - 0.009
     end
-    offset_casing_sound(orient, pos, dir)
+    pos = offset_casing_sound(pos, dir, offset)
 
     sound_to_play = sound_object("casings\\" .. casing_class .. material_sound .. math.random(4))
     sound_to_play:play_no_feedback(obj, sound_object.s3d, fall_delay + (math.random(10)/100), pos, 1, 1)
     sound_to_play.volume = volume
 
-    --printf("grok_casings_sounds // class: %s, fall_delay: %s, orient: %s, volume: %s", casing_class, fall_delay, orient, volume)
+    --printf("grok_casings_sounds // class: %s, fall_delay: %s, offset: %s, volume: %s", casing_class, fall_delay, offset, volume)
 
     --draw_part = particles_object("_samples_particles_\\flash_light")
     --draw_part:play_at_pos(vector():set(pos.x,pos.y - 0.5,pos.z))
@@ -219,28 +214,35 @@ function get_body_state()
 end
 
 -- offset casing collision point
-function offset_casing_sound(orient, pos, dir)
-    if orient == 2 then
-        pos.x = pos.x + dir.x/4
-        pos.z = pos.z + dir.z/4
-        return pos
-    elseif orient == 21 then
-        pos.x = pos.x + dir.x/2
-        pos.z = pos.z + dir.z/2
-        return pos
-    elseif orient == 22 then
-        pos.x = pos.x - dir.x/2
-        pos.z = pos.z - dir.z/2
-        return pos
-    elseif orient == 1 then
-        pos.x = pos.x - dir.z + dir.x/4
-        pos.z = pos.z + dir.x + dir.z/4
-        return pos
-    else
-        pos.x = pos.x + dir.z*1.33 + dir.x/2
-        pos.z = pos.z - dir.x*1.33 + dir.z/2
-        return pos
-    end
+function offset_casing_sound(pos, dir, offset)
+    _offset = str_explode(offset,",")
+    offset_x, offset_z = _offset[1], _offset[2]
+
+    pos.x = pos.x + dir.z * offset_x + dir.x * offset_z
+    pos.z = pos.z - dir.x * offset_x + dir.z * offset_z
+    return pos
+
+    -- if orient == 2 then
+    --     pos.x = pos.x + dir.x/4
+    --     pos.z = pos.z + dir.z/4
+    --     return pos
+    -- elseif orient == 21 then
+    --     pos.x = pos.x + dir.x/2
+    --     pos.z = pos.z + dir.z/2
+    --     return pos
+    -- elseif orient == 22 then
+    --     pos.x = pos.x - dir.x/2
+    --     pos.z = pos.z - dir.z/2
+    --     return pos
+    -- elseif orient == 1 then
+    --     pos.x = pos.x - dir.z + dir.x/4
+    --     pos.z = pos.z + dir.x + dir.z/4
+    --     return pos
+    -- else
+    --     pos.x = pos.x + dir.z*1.33 + dir.x/2
+    --     pos.z = pos.z - dir.x*1.33 + dir.z/2
+    --     return pos
+    -- end
 end
 
 -- play casing sound during UBGL reload
@@ -267,13 +269,13 @@ function actor_on_hud_animation_play(anm_table, wpn)
             if body_st == "low_crouch" then
                 fall_delay = fall_delay * 0.55
                 volume = volume * 0.55
-                pos.y = pos.y - 0.0016
+                pos.y = pos.y - 0.001
             elseif body_st == "crouch" then
                 fall_delay = fall_delay * 0.8
                 volume = volume * 0.8
-                pos.y = pos.y - 0.0064
+                pos.y = pos.y - 0.0067
             else
-                pos.y = pos.y - 0.0092
+                pos.y = pos.y - 0.009
             end
             pos.x = pos.x + dir.x/3
             pos.z = pos.z + dir.z/3
@@ -281,7 +283,7 @@ function actor_on_hud_animation_play(anm_table, wpn)
             --printf("grok_casings_sounds // delay: %s, %s, volume: %s", eject_delay, fall_delay, volume)
             sound_to_play = sound_object("casings\\" .. casing_class .. material_sound .. math.random(4))
             sound_to_play:play_no_feedback(actor, sound_object.s3d, fall_delay, pos, 1, 1)
-            sound_to_play.volume = volume
+            -- sound_to_play.volume = volume -- has no effect on play_no_feedback()
             return true
         end)
     end
@@ -349,12 +351,12 @@ function actor_on_first_update()
         wpn_params[v] = {
             ini_wpn:r_float_ex(v,"eject_delay"),
             ini_wpn:r_float_ex(v,"fall_delay"),
-            ini_wpn:r_float_ex(v,"port_orientation"),
+            ini_wpn:r_string_ex(v,"offset")
         }
         -- local eject_delay = ini_wpn:r_float_ex(v,"eject_delay") or 0
         -- local fall_delay = ini_wpn:r_float_ex(v,"fall_delay") or 0.6
-        -- local orient = ini_wpn:r_float_ex(v,"port_orientation") or 1
-        -- wpn_params[v] = eject_delay..","..fall_delay..","..orient
+        -- local offset = ini_wpn:r_float_ex(v,"offset")
+        -- wpn_params[v] = eject_delay..","..fall_delay..","..offset
     end
 
     local ammo_sections = ini_ammo:get_sections()
