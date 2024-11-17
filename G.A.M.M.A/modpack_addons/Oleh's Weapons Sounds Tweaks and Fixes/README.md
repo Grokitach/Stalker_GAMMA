@@ -417,10 +417,35 @@ and misc tweaks and bugfixes of course
 - AK 5,45 (650 RPM): remastered gunfire
 - FAL/SCAR: remastered suppressed gunfire
 - PB/APS: tweaked mech
-- Desert Eagle: repalced reload (credits: relax_68)
+- Desert Eagle: replaced reload (credits: relax_68)
 - RAPTR: replaced draw/holster/inspect (credits: relax_68)
 - Howa 20: replaced unsuppressed mech
 - SCAR: tweaked gunfire volume
 - Fixed Vector missing suppressed tail
 - Fixed AN-94 unjam w/ UBGL animation
 - Fixed `eft_rattle.script:83` crash
+
+## Version 2.5 Beta -- 16.11.2024
+**Change log:**
+- NPC gunfire rework (testing needed):
+ - Dedicated suppressed distant and far layers
+ - Tweaked suppressed volume and bass
+ - Replaced some close gunfire sounds
+ - Streamlined close samples distances
+- Patched [AK Family Reanimation](<https://www.moddb.com/mods/stalker-anomaly/addons/ak-reanimation-moddb-release>) (credits: relax_68)
+- Patched [Desert Eagle Re-animated](<https://www.moddb.com/mods/stalker-anomaly/addons/desert-eagle-re-animated>) (credits: relax_68)
+- Replaced Desert Tech MDR reload (credits: relax_68)
+- Partially replced Pretty Pistols Reanimated reloads (credits: relax_68)
+- 9mm SMG: replaced suppressed gunfire
+- MP5/MP7/PP-2000: replaced gunfire
+- 5,45 AK: replaced remaining suppressed gunfire
+- 7,62 AK: replaced unsuppressed mech
+- FAL: replaced suppressed gunfire
+- Restored legacy `wpn_ar15_snd_silenced` `wpn_r700acissp_snd_silenced` sections
+- Casing sounds now accept arbitrary offset values
+- Quieter casing sounds on dirt
+- Aim rattle now also plays on aim mode change (credits: NLTP_ASHES)
+- Removed low ammo sound for single shot weapons
+- Disabled pistols sprint rattle (desync too noticeable)
+- Fixed sprint rattle playing after moving weapon between slots
+- Fixed sprint rattle playing after entering vehicles

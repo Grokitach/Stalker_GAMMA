@@ -39,13 +39,13 @@ function actor_on_hud_animation_play(anm_table, item)
         snd_obj = sound_object(snd_path)
         if not snd_obj then return end
         -- delay to avoid duplicate playback during transition animations
-        snd_obj:play(db.actor, 0.2, sound_object.s2d + sound_object.looped)
+        snd_obj:play(db.actor, 0.15, sound_object.s2d + sound_object.looped)
         snd_obj.volume = volume_base * volume
         snd_obj.frequency = frequency
     end
 end
 
-function actor_on_item_drop(item)
+function actor_on_item_moved(item)
     if item and item:id() and item:id() == cached_id and snd_obj and snd_obj:playing() then
         snd_obj:stop()
     end
@@ -59,8 +59,10 @@ end
 
 function on_game_start()
 	RegisterScriptCallback("actor_on_hud_animation_play", actor_on_hud_animation_play)
-    RegisterScriptCallback("actor_item_to_ruck", actor_on_item_drop)
-    RegisterScriptCallback("actor_on_item_drop", actor_on_item_drop)
+    RegisterScriptCallback("actor_item_to_ruck", actor_on_item_moved)
+    RegisterScriptCallback("actor_on_item_drop", actor_on_item_moved)
+    RegisterScriptCallback("actor_item_to_slot", actor_on_item_moved)
+    RegisterScriptCallback("actor_on_attach_vehicle", stop_sound_playback)
 	RegisterScriptCallback("actor_on_before_death", stop_sound_playback)
 	RegisterScriptCallback("actor_on_net_destroy", stop_sound_playback)
     RegisterScriptCallback("on_option_change", load_mcm_options)
