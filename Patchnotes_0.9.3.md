@@ -159,6 +159,7 @@ Thanks to all the modders and this wonderful modding community without which thi
 ### Belt Items 2.0
 - Complete rework of all stats of all belt items: Artefacts, Pelts and Tech items.
 - Only one pelt can be equipped at a time.
+- Pelt conditions depend on the knives you have in your inventory. Pelts condition range is indicated in each knife stats. Upgrading your knife is now really important to get the best stats for your pelts.
 - Pelts are x4 more common than before.
 - Tech items upgrade recipes rebalance.
 - Artefacts values are tiered in 5%, 10%, 15%, 20% etc increments. Negatives have been reworked to use new mechanics such as positive / negative bleed recovery, positive / negative radiation resistance, positive / negative carry weight, on top of the classic resistances. For more information see  the paragraph below and see the following Miro board: https://miro.com/app/board/uXjVKaB9zO4=/?share_link_id=535823804635
