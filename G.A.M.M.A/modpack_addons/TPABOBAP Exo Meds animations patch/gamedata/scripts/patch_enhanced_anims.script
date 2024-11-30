@@ -1,0 +1,30 @@
+function on_game_start()
+    patch_methods()
+end
+
+function patch_methods()
+    enhanced_animations.use_item = patched_use_item
+end
+
+function patched_use_item(obj)
+    local item = obj:section()
+    local outfit = db.actor:item_in_slot(7)
+    outfit = outfit and outfit:section() or item
+    local hud = SYS_GetParam(0, outfit, "player_hud_section", "")
+    --allow Nosorog exos to have same fast med use animations as regular exos have
+    --THAP rework changes `player_hud_section` for nosorogs
+    if hud:find("exo$") or hud:find("exo_nosorog$") then
+        item = item .. "_exo"
+        if not enhanced_animations.ini_eff:r_string_ex(item, "snd") then
+            -- Revert back
+            item = obj:section()
+        end
+    end
+    enhanced_animations.item = item
+    enhanced_animations.obj_m = obj
+    enhanced_animations.used_item = item
+    hide_hud_inventory()
+    enhanced_animations.anim_section = enhanced_animations.ini_eff:r_string_ex(item, "anm")
+    enhanced_animations.mask_hud_switcher()
+    enhanced_animations.anim_prepare()
+end
