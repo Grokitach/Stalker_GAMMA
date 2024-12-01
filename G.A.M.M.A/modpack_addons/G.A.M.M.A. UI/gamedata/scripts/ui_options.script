@@ -97,8 +97,11 @@ options = {
 		{ id= "screen_mode"            ,type= "radio_h"  ,val= 2	,curr= {curr_screen_mode} 			,content= {{1,"fullscreen"} , {2,"borderless"} , {3,"windowed"}} 	,functor = {func_screen_mode}		},
 		{ id= "lighting"  		       ,type= "button"   ,functor_ui= {start_lighting_ui}  				,precondition= {level_present}		,precondition_1= {for_renderer,"renderer_r2a","renderer_r2","renderer_r2.5","renderer_r3","renderer_r4"}    },
 },},
-	{ id= "advanced"     	,presets= {"video_extreme","video_high","video_default","video_low","video_minimum"} ,sh=true ,gr={
+	--,presets= {"video_extreme","video_high","video_default","video_low","video_minimum"}
+	{ id= "advanced"	,sh=true ,gr={
 		{ id= "slide_vid_adv"		   ,type= "slide"	  ,link= "ui_options_slider_video_advanced"	 ,text= "ui_mm_title_video_advanced"		,size= {512,50}		},
+
+		{ id= "ssfx_settings_hint"		,type= "desc"    ,text= "ui_mm_desc_ssfx_settings_hint"			 ,clr= {255,125,175,200}	,precondition = {ssfx_enabled}	},
 
 		{ id= "ai_torch"               ,type= "check"    ,val= 1	,cmd= "ai_use_torch_dynamic_lights"	 },
 		{ id= "v_sync"                 ,type= "check"    ,val= 1	,cmd= "rs_v_sync"	                 },
@@ -117,6 +120,7 @@ options = {
 		{ id= "geometry_lod"           ,type= "track"    ,val= 2	,cmd= "r__geometry_lod"	            ,min= 0.1   ,max= 1.5   ,step= 0.1 },
 		{ id= "mipbias"           	   ,type= "track"    ,val= 2	,cmd= "r__tf_mipbias"	            ,min= -0.5  ,max= 0.5   ,step= 0.1 	,no_str= true 	  ,invert= true },
 		{ id= "tf_aniso"               ,type= "track"    ,val= 2	,cmd= "r__tf_aniso"	                ,min= 1     ,max= 16    ,step= 4    ,vid= true	},
+		{ id= "aa_3dss_settings_hint"  ,type= "desc"     ,text= "ui_mm_desc_aa_3dss_settings_hint"		,clr= {255,200,75,75}	,precondition = {z_3d_scopes_enabled}	},
 		{ id= "ssample"                ,type= "track"    ,val= 2	,cmd= "r__supersample"	            ,min= 1     ,max= 8     ,step= 1       ,vid= true      ,precondition= {for_renderer,"renderer_r1","renderer_r2a","renderer_r2","renderer_r2.5"} },
 		{ id= "ssample_list"           ,type= "list"     ,val= 0	,cmd= "r3_msaa"	                    ,content={ {"st_opt_off","st_opt_off"},{"2x","x2"},{"4x","x4"},{"8x","x8"} }	    ,vid= true          ,precondition= {for_renderer,"renderer_r3","renderer_r4"} , no_str= true  },
 		{ id= "smaa"           		   ,type= "list"     ,val= 0	,cmd= "r2_smaa"	                    ,content={ {"off","st_opt_off"},{"low","st_opt_low"},{"medium","st_opt_medium"},{"high","st_opt_high"},{"ultra","st_opt_ultra"} } ,precondition= {for_renderer,"renderer_r2a","renderer_r2","renderer_r2.5","renderer_r3","renderer_r4"}, no_str= true  },
@@ -137,7 +141,7 @@ options = {
 		{ id= "slight_fade"            ,type= "track"    ,val= 2	,cmd= "r2_slight_fade"	            ,min= 0.2   ,max= 1     ,step= 0.1      ,vid= true      ,precondition= {for_renderer,"renderer_r2a","renderer_r2","renderer_r2.5","renderer_r3","renderer_r4"} },
 		{ id= "ls_squality"            ,type= "track"    ,val= 2	,cmd= "r2_ls_squality"	            ,min= 0.5   ,max= 1     ,step= 0.5      ,vid= true      ,precondition= {for_renderer,"renderer_r2a","renderer_r2","renderer_r2.5","renderer_r3","renderer_r4"} },
 		{ id= "actor_shadow"           ,type= "check"    ,val= 1	,cmd= "r__actor_shadow"	            ,precondition= {for_renderer,"renderer_r2","renderer_r2.5","renderer_r3","renderer_r4"}	},
-		{ id= "gloss_factor"           ,type= "track"    ,val= 2	,cmd= "r2_gloss_factor"	            ,min= 0     ,max= 10    ,step= 0.5      ,precondition= {for_renderer,"renderer_r2a","renderer_r2","renderer_r2.5","renderer_r3","renderer_r4"} },
+		{ id= "gloss_factor"           ,type= "track"    ,val= 2	,cmd= "r2_gloss_factor"	            ,min= 0     ,max= 10    ,step= 0.5      ,precondition= {for_renderer,"renderer_r2a","renderer_r2","renderer_r2.5","renderer_r3","renderer_r4"}  ,precondition_1= {ssfx_wetness_disabled} },
 		{ id= "sun"                    ,type= "check"    ,val= 1	,cmd= "r2_sun"	                    ,vid= true      ,precondition= {for_renderer,"renderer_r2","renderer_r2.5","renderer_r3","renderer_r4"} },		
 		{ id= "sun_quality"            ,type= "list"     ,val= 0	,cmd= "r2_sun_quality"	            ,content={cont_sun_quality}		   		,vid= true          ,precondition= {for_renderer,"renderer_r2.5","renderer_r3","renderer_r4"} },
 --		{ id= "sun_details"            ,type= "check"    ,val= 1	,cmd= "r2_sun_details"	            ,vid= true      ,precondition= {for_renderer,"renderer_r2","renderer_r2.5","renderer_r3","renderer_r4"} },
@@ -151,9 +155,9 @@ options = {
 
 		{ id= "line"				   ,type= "line"	 ,precondition= {for_renderer,"renderer_r2.5","renderer_r3","renderer_r4"}},
 		{ id= "title"				   ,type= "title"	 ,text= "ui_mm_header_effects" 					,align= "l"	,clr= {255,200,200,200} 	,precondition= {for_renderer,"renderer_r2.5","renderer_r3","renderer_r4"}},
-		{ id= "soft_water"             ,type= "check"    ,val= 1	,cmd= "r2_soft_water"	            ,vid= true  ,precondition= {for_renderer,"renderer_r2.5","renderer_r3","renderer_r4"} },
+		{ id= "soft_water"             ,type= "check"    ,val= 1	,cmd= "r2_soft_water"	            ,vid= true  ,precondition= {for_renderer,"renderer_r2.5","renderer_r3","renderer_r4"}, precondition_1 = {ssfx_water_disabled} },
 		{ id= "soft_particles"         ,type= "check"    ,val= 1	,cmd= "r2_soft_particles"	        ,vid= true  ,precondition= {for_renderer,"renderer_r2.5","renderer_r3","renderer_r4"} },
-		{ id= "dof_enable"             ,type= "check"    ,val= 1	,cmd= "r2_dof_enable"	            ,precondition= {for_renderer,"renderer_r2.5","renderer_r3","renderer_r4"} },
+		{ id= "dof_enable"             ,type= "check"    ,val= 1	,cmd= "r2_dof_enable"	            ,precondition= {for_renderer,"renderer_r2.5","renderer_r3","renderer_r4"} ,precondition_1= {ssfx_weapons_dof_disabled} },
 		{ id= "mblur_enable"           ,type= "check"    ,val= 1	,cmd= "r2_mblur_enabled"	        ,vid= true  ,precondition= {for_renderer,"renderer_r2.5","renderer_r3","renderer_r4"} },
 		{ id= "mblur"           	   ,type= "track"    ,val= 2 	,def= 0.4	,cmd= "r2_mblur"	    ,min= 0     ,max= 1    ,step= 0.05 ,precondition= {for_renderer,"renderer_r2.5","renderer_r3","renderer_r4"} },
 		{ id= "dynamic_wet_surfaces"   ,type= "check"    ,val= 1	,cmd= "r3_dynamic_wet_surfaces"	    ,vid= true  ,precondition= {for_renderer,"renderer_r3","renderer_r4"}   },
@@ -194,7 +198,7 @@ options = {
 		{ id= "item_swap_animation"	   ,type= "check"    ,val= 1	,def= true },
 		{ id= "shoot_effects"	       ,type= "check"    ,val= 1	,def= false },
 		
-		{ id= "radiation_effect"	   ,type= "check"    ,val= 1	,def= true },
+		--{ id= "radiation_effect"	   ,type= "check"    ,val= 1	,def= true },
 		{ id= "blood_splash"	       ,type= "check"    ,val= 1	,def= false },
 		{ id= "bleed_effect"	       ,type= "check"    ,val= 1	,def= true },
 		--{ id="tiny_pfx"	           ,type= "check"    ,val= 1	,def= true },
@@ -247,8 +251,8 @@ options = {
 		{ id= "master_volume"           ,type= "track"    ,val= 2	,cmd= "snd_volume_eff"	            ,min= 0   ,max= 1   ,step= 0.1                 },
 		{ id= "music_volume"            ,type= "track"    ,val= 2	,cmd= "snd_volume_music"	        ,min= 0   ,max= 1   ,step= 0.1                 },
 		{ id= "sound_device"            ,type= "list"     ,val= 0	,cmd= "snd_device"					,no_str= true            	,restart= true     },
-		{ id= "eax"               		,type= "check"    ,val= 1	,cmd= "snd_efx"	                                               	},
-		{ id= "dynamic_music"           ,type= "check"    ,val= 1	,cmd= "g_dynamic_music"	                                        },
+		--{ id= "eax"               		,type= "check"    ,val= 1	,cmd= "snd_efx"	                                               	},
+		--{ id= "dynamic_music"           ,type= "check"    ,val= 1	,cmd= "g_dynamic_music"	                                        },
 		{ id= "caption"               	,type= "radio_v"  ,val= 0	,def= "none" 	 ,content={ {"none"},{"storyonly"},{"all"} }	},
 	},},
 	{ id= "environment"  	,sh=true ,gr={
@@ -421,8 +425,9 @@ options = {
 	{ id= "general"      	,sh=true ,gr={
 		{ id= "slide_alife"		,type= "slide"	  ,link= "ui_options_slider_alife"	 ,text= "ui_mm_title_alife"		,size= {512,50}		},
 
-		{ id= "alife_mutant_pop"  		,type= "list"    ,val= 2  ,def= 0.75 	 ,content= {{0.25} , {0.5} , {0.75} , {1}}		,no_str= true  },
-		{ id= "alife_stalker_pop"  		,type= "list"    ,val= 2  ,def= 0.5 	 ,content= {{0.25} , {0.5} , {0.75} , {1}}		,no_str= true  },
+		{ id= "alife_mutant_pop"  		,type= "list"    ,val= 2  ,def= 0.75 	 ,content= {{0.25} , {0.5} , {0.75} , {1}}		,no_str= true	,precondition = {smr_stalkers_mcm_disabled}  },
+		{ id= "alife_stalker_pop"  		,type= "list"    ,val= 2  ,def= 0.5 	 ,content= {{0.25} , {0.5} , {0.75} , {1}}		,no_str= true	,precondition = {smr_mutants_mcm_disabled}  },
+		{ id= "zcp_settings_hint"    	,type= "desc"    ,text= "ui_mm_desc_zcp_settings_hint"			 ,clr= {255,125,175,200}	,precondition = {smr_mcm_enabled}	},
 		{ id= "offline_combat"  		,type= "list"    ,val= 0  ,def= "full" 	 ,content= {{"full","full"} , {"on_smarts_only","on_smarts_only"}, {"off","off"}} },
 		{ id= "excl_dist"  				,type= "list"    ,val= 2  ,def= 75 	 	 ,content= {{0} , {25} , {50} , {75} , {100}}	,no_str= true  },
 		{ id= "dynamic_anomalies"        ,type= "check"    ,val= 1	,def= true	 },
@@ -769,6 +774,67 @@ function for_renderer(...)
 	end
 	return result
 end
+-- oleh5230
+function ssfx_weapons_dof_disabled()
+	if ssfx_weapons_dof then
+		return false
+	else
+		return true
+	end
+end
+function ssfx_water_disabled()
+	if ssfx_water then
+		exec_console_cmd("r2_soft_water 1")
+		return false
+	else
+		return true
+	end
+end
+function ssfx_wetness_disabled()
+	if ssfx_wetness then
+		return false
+	else
+		return true
+	end
+end
+function ssfx_enabled()
+	if ssfx_001_mcm then
+		return true
+	else
+		return false
+	end
+end
+
+function smr_stalkers_mcm_disabled()
+	if smr_stalkers_mcm then
+		return false
+	else
+		return true
+	end
+end
+function smr_mutants_mcm_disabled()
+	if smr_mutants_mcm then
+		return false
+	else
+		return true
+	end
+end
+function smr_mcm_enabled()
+	if smr_stalkers_mcm or smr_mutants_mcm then
+		return true
+	else
+		return false
+	end
+end
+
+function z_3d_scopes_enabled()
+	if z_3d_scopes then
+		return true
+	else
+		return false
+	end
+end
+-- oleh5230 end
 
 -- Default values
 function def_radio_playlist(i)

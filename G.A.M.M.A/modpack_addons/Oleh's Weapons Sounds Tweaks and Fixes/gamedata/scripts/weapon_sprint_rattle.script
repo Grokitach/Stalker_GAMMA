@@ -1,9 +1,22 @@
 -- Plays weapon rattle sound during sprint - oleh5230
 -- Original script by Aoldri
 
+-- To Do:
+-- Lower Weapon Sprint rattle (unlocalizing needed)
+
+local enabled = true
+local volume_base = 1
+function load_mcm_options()
+    if ui_mcm then
+        enabled = ui_mcm.get("grok_casings_sounds/enabled_sprint_rattle") or false
+        volume_base = ui_mcm.get("grok_casings_sounds/volume_sprint_rattle") or 1
+    end
+end
+
 local cached_id, snd_obj
 function actor_on_hud_animation_play(anm_table, item)
-	if not item then return end
+    --printf("%s, %s", anm_table.anm_name, lower_weapon_sprint and lower_weapon_sprint.lower_weapon_sprint_status)
+    if not enabled and item then return end
     cached_id = item:id()
     if snd_obj and snd_obj:playing() then snd_obj:stop() end
 
@@ -19,18 +32,26 @@ function actor_on_hud_animation_play(anm_table, item)
         local snd_path = snd_values[1]
         local volume = snd_values[2] or 0.25
         local frequency = snd_values[3] or 1
+        -- somehow passing delay as variable causes ctd
+        local delay = snd_values[4] or 0
 
         -- play sound
         snd_obj = sound_object(snd_path)
         if not snd_obj then return end
-        snd_obj:play(db.actor, 0, sound_object.s2d + sound_object.looped)
-        snd_obj.volume = volume
+        -- delay to avoid duplicate playback during transition animations
+        snd_obj:play(db.actor, 0.15, sound_object.s2d + sound_object.looped)
+        snd_obj.volume = volume_base * volume
         snd_obj.frequency = frequency
     end
 end
 
-function stop_sound_playback(item)
-    --if item and item:id() and item:id() == cached_id and snd_obj and snd_obj:playing() then
+function actor_on_item_moved(item)
+    if item and item:id() and item:id() == cached_id and snd_obj and snd_obj:playing() then
+        snd_obj:stop()
+    end
+end
+
+function stop_sound_playback()
     if snd_obj and snd_obj:playing() then
         snd_obj:stop()
     end
@@ -38,10 +59,15 @@ end
 
 function on_game_start()
 	RegisterScriptCallback("actor_on_hud_animation_play", actor_on_hud_animation_play)
-    RegisterScriptCallback("actor_item_to_ruck", stop_sound_playback)
-    RegisterScriptCallback("actor_on_item_drop", stop_sound_playback)
+    RegisterScriptCallback("actor_item_to_ruck", actor_on_item_moved)
+    RegisterScriptCallback("actor_on_item_drop", actor_on_item_moved)
+    RegisterScriptCallback("actor_item_to_slot", actor_on_item_moved)
+    RegisterScriptCallback("actor_on_attach_vehicle", stop_sound_playback)
 	RegisterScriptCallback("actor_on_before_death", stop_sound_playback)
 	RegisterScriptCallback("actor_on_net_destroy", stop_sound_playback)
+    RegisterScriptCallback("on_option_change", load_mcm_options)
+    load_mcm_options()
+
     --RegisterScriptCallback("actor_on_footstep", actor_on_footstep) -- uncomment to disable footsteps sounds
 end
 

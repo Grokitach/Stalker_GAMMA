@@ -4,15 +4,16 @@ local rad_tg_step = 300 --[ms]
 local dgr_tg_step = 2000 --[ms]
 
 cond_t = {}
+dist_t = {}
 
 local art_dbg = false
 
 if drx_da_main then
-	arti_min_eff = 20
-	arti_max_eff = 30
+	arti_min_eff = 29
+	arti_max_eff = 37
 else
-	arti_min_eff = 20
-	arti_max_eff = 40
+	arti_min_eff = 30
+	arti_max_eff = 44
 end
 
 -- containers
@@ -155,6 +156,18 @@ item_artefact.artefact_binder.update = function(self, delta)
 		-- update this condition
 		cond_t[self.object:id()] = self.object:condition()
 	end
+	
+	-- calculate distance to artefact updated
+	local pos = db.actor:position()
+	local af_dist = pos:distance_to_sqr(self.object:position())
+	local p = self.object:parent()
+	if af_dist then
+		if not p then
+			dist_t[self.object:section()] = af_dist
+		else
+			dist_t[self.object:section()] = false
+		end
+	end
 
     if self.first_call == true then
 		local se_obj = alife_object(self.object:id())
@@ -247,7 +260,7 @@ end
 
 se_artefact.se_artefact.on_register = function(self)
     cse_alife_item_artefact.on_register(self)
-    -- Проверяем кастомдату обьекта на наличие стори айди.
+    -- Проверѝем каѝтомдату обьекта на наличие ѝтори айди.
     story_objects.check_spawn_ini_for_story_id(self)
     
     -- persistent storage
@@ -330,11 +343,36 @@ end
 ui_inventory.SYS_GetParam = new_get_param
 utils_ui.SYS_GetParam = new_get_param
 
+local knifesm = { 
+					["wpn_knife"]  = { min = 25 , max = 40 },
+					["wpn_knife2"] = { min = 35 , max = 50 },
+					["wpn_knife3"] = { min = 45 , max = 60 },
+					["wpn_knife4"] = { min = 55 , max = 70 },
+					["wpn_knife5"] = { min = 65 , max = 85 },
+					["wpn_knife6"] = { min = 75 , max = 98 },
+					["wpn_knife7"] = { min = 75 , max = 98 },
+					["wpn_knife8"] = { min = 75 , max = 98 },
+				 }
+
 -- Adding mutant loot condition setup
 local create_part = alife_create_item
 local function new_create_part(section, obj, t)
-	t.cond_r = {settings.mutant_part_condition_min, settings.mutant_part_condition_max}
-	t.cond_cr = {settings.mutant_part_condition_min, settings.mutant_part_condition_max}
+	function itr(_, item)
+        if knifesm[item:section()] then
+			if max_mutant_part_cond then
+				if max_mutant_part_cond < knifesm[item:section()].max then
+            		max_mutant_part_cond = knifesm[item:section()].max
+					min_mutant_part_cond = knifesm[item:section()].min
+				end
+			else
+				max_mutant_part_cond = knifesm[item:section()].max
+				min_mutant_part_cond = knifesm[item:section()].min
+			end
+        end
+    end
+	db.actor:iterate_inventory(itr, db.actor)
+	t.cond_r = {min_mutant_part_cond, max_mutant_part_cond}
+	t.cond_cr = {min_mutant_part_cond, max_mutant_part_cond}
 	return create_part(section, obj, t)
 end  
 

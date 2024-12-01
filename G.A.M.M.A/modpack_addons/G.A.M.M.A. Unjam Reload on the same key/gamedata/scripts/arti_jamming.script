@@ -296,6 +296,58 @@ local function calculate_jam(wpn, old_ammo)
 	end
 end
 
+function get_jam_chance(wpn)
+	if wpn and IsWeapon(wpn) and not IsMelee(wpn) then 
+			
+			
+		--printf("current sec %s", wpn:section()) else printf("current wpn is nil") 
+			
+		local jam_chance_parts = item_parts.get_parts_con(wpn, nil, true)
+		local jam_chance_table = {}
+			
+		if jam_chance_parts then
+			for k, v in pairs(jam_chance_parts) do
+				if is_part(k) then
+					jam_chance_table[k] = v
+				end
+			end
+
+			local jc_count = 0
+			local jc_mechanism_cond = #jam_chance_table
+			for k, v in pairs(jam_chance_table) do -- skip barrel
+				local severity = math_floor(v / 20)
+				if (severity < 4) then
+					jc_mechanism_cond = jc_mechanism_cond + (PARTS_JAM[1] * math.pow(PARTS_JAM[2], 3 - severity))
+				end
+				-- print_dbg("Part: [%s], cond: [%s], severity: [%s], sum jam chance: [%s]", k,v, severity, jc_mechanism_cond) 
+				jc_count = jc_count + 1
+			end
+
+			-- jam chance. if we roll this twice, upgraded to severe jam
+			local jc = math_floor(jc_mechanism_cond/jc_count) or 0
+				
+			jc = jc * get_config("jamchance")
+			jc = jc * get_overheat_modifier(wpn)
+
+			-- also apply condition
+			local jc_cond = 0.83
+
+			if jc_cond < 1 then
+				local jc_ratio = (1.0-jc_cond)/0.7 - 0.05
+				printf(jc_ratio)
+				jc = jc * (1 + jc_ratio)
+				printf(jc)
+			end
+				
+			if jc then
+				return jc / 1000 * 100
+			else
+				return 0
+			end
+		end
+	end
+end
+
 -- Randomly damage 1 part of the weapon by DAMAGE, skipping barrels
 local function damage_part(wpn)
 	local to_damage = random_key_table(cgd.parts)
@@ -489,14 +541,17 @@ local function actor_on_weapon_before_fire(flags)
 					last_wpn_snd_empty[3] = snd[2] or 1
 				end
 			end
-				--ADDED jam_swearing()
-			jam_swearing()			
-			start_jammin(2)
+			
 			-- Play empty clip sound
+			local tg = time_global()
 			if (last_wpn_snd_empty[2] ~= "$no_sound") and (tg > tg_snd_empty) then
 				utils_obj.play_sound( last_wpn_snd_empty[2], last_wpn_snd_empty[3] or 1 )
 				tg_snd_empty = tg + delay_snd_empty
 			end
+			
+				--ADDED jam_swearing()
+			jam_swearing()			
+			start_jammin(2)
 			if (get_config("verbosity") == 2 and jammed_guns[id] == 3) then
 				str = gc("ui_st_superjam")
 			else
@@ -930,5 +985,6 @@ function on_game_start()
 	RegisterScriptCallback("actor_on_update",actor_on_update)
 	RegisterScriptCallback("npc_on_before_hit",npc_on_before_hit)
 	RegisterScriptCallback("monster_on_before_hit",monster_on_before_hit)
+	RegisterScriptCallback("ActorMenu_on_item_focus_receive", get_jam_chance)
 	exec_console_cmd("bind wpn_reload kF10")
 end

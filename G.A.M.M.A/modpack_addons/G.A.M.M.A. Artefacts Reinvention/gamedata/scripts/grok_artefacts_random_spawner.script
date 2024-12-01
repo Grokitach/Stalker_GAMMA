@@ -1,23 +1,22 @@
 spawned = 0
-delay1 = 35210
-delay2 = 120210
 
-regular_fields_chance = 7
-dynamic_fields_chance = 2
+regular_fields_chance = 40
+dynamic_fields_chance = 22
+per_field_probability = 35
 
 black_listed_levels = {
-	["l03u_agr_underground"] = 1,
-	["l04u_labx18"] = 1,
-	["l08u_brainlab"] = 1,
-	["jupiter_underground"] = 1,
+	["l03u_agr_underground"] = 0,
+	["l04u_labx18"] = 0,
+	["l08u_brainlab"] = 0,
+	["jupiter_underground"] = 0,
 	["l10u_bunker"] = 1,
-	["l11_hospital"] = 1,
-	["l12_stancia"] = 1,
-	["l12_stancia_2"] = 1,
+	["l11_hospital"] = 0,
+	["l12_stancia"] = 0,
+	["l12_stancia_2"] = 0,
 	["l12u_control_monolith"] = 1,
 	["l12u_sarcofag"] = 1,
 	["l13u_warlab"] = 1,
-	["labx8"] = 1,
+	["labx8"] = 0,
 }
 
 --local d_key = "DIK_K"
@@ -33,33 +32,87 @@ function grok_artefact_spawner()
     tg = time_global()
 
     if spawned == 0 then
-        grok_delay = tg + math.random(delay1,delay2)
+		delay1 = delay1 * 1.2 or 45520
+		delay2 = delay2 * 1.2 or 128450
+		delay = math.random(delay1,delay2)
+        grok_delay = tg + delay
+		printf("Spawning artefacts in %s",delay)
         spawned = 1
     end
     
     if (spawned == 1 and tg > grok_delay) then
+		printf("Spawning artefacts")
         local lvl_name = level.name()
 
         if black_listed_levels[lvl_name] == 1 then
             spawned = 0
             return
         end
-
-			  if drx_da_main then
-				    if math.random(1,100) <= dynamic_fields_chance then
-					      drx_da_main.spawn_artefacts_on_level()
-					      spawned = 0
-				    end
+		
+		if drx_da_main then
+			if math.random(1,100) <= dynamic_fields_chance then
+				printf("Tried Spawning artefacts dynamic")
+				drx_da_main.spawn_artefacts_on_level()
+			end
         end
 
-			  if math.random(1,100) <= regular_fields_chance then
-				    bind_anomaly_zone.force_spawn_artefacts()
-				    spawned = 0
-			  end
+		if math.random(1,100) <= regular_fields_chance then
+			printf("Tried Spawning artefacts in field")
+			bind_anomaly_zone.force_spawn_artefacts()
 		end
+		
+		spawned = 0
+	end
 end
+
+function bind_anomaly_zone.force_spawn_artefacts()
+	local anomalies = db.anomaly_by_name
+	for k,v in pairs(anomalies) do
+		spawn_chance = math.random(1,100)
+		
+		if spawn_chance <= per_field_probability then
+			--printf("Artefact spawned with %s chance", spawn_chance)
+			v:respawn_artefacts_and_replace_anomaly_zone()
+		end
+	end
+end
+
+function set_delay()
+	local sim = alife()
+	local gg = game_graph()
+	local actor_level = sim:level_name(gg:vertex(sim:actor().m_game_vertex_id):level_id())
+	printf(actor_level)
+
+	if map_previous_name then
+		if map_previous_name ~= actor_level then
+			delay1 = 45520
+			delay2 = 128450
+		end
+	else
+		delay1 = 45520
+		delay2 = 128450
+	end
+	
+	map_previous_name = actor_level
+end
+
+function save_state(m_data)
+    m_data.map_previous_name = map_previous_name
+	m_data.delay1 = delay1
+	m_data.delay2 = delay2
+end
+
+function load_state(m_data)
+    map_previous_name = m_data.map_previous_name
+	delay1 = m_data.delay1
+	delay2 = m_data.delay2
+end
+
 
 function on_game_start()
 --    RegisterScriptCallback("on_key_press",on_key_press)
     RegisterScriptCallback("actor_on_update",grok_artefact_spawner)
+	RegisterScriptCallback("actor_on_first_update",set_delay)
+	RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
 end

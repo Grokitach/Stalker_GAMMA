@@ -1,0 +1,107 @@
+-- Stalker Cloning Utility, by G_FLAT
+-- Spawns an NPC's clone 
+
+function clone_stalker(npc, stop_inv_duplication, stop_tasks_transfer)
+	-- get npc's squad's section name
+	local se_npc = alife_object(npc:id())
+	local squad_section = alife_object(se_npc.group_id):section_name()
+	if not squad_section then return end
+	
+	-- create empty squad at npc's postition
+	local pos = npc:position()
+	local lvid = npc:level_vertex_id()
+	local gvid = npc:game_vertex_id()
+	local clone_squad = alife_create(squad_section, pos, lvid, gvid)
+
+	-- populate squad with clone of same section as npc
+	local sec = npc:section()
+	local se_clone = create_one_npc(clone_squad, sec, pos, lvid, gvid)
+	
+	-- copy npc data onto clone (name, visual, rank, etc)
+	local data = utils_stpk.get_stalker_data(se_npc)
+	utils_stpk.set_stalker_data(data, se_clone)
+
+	-- copy goodwill with player
+	local goodwill = npc:goodwill(db.actor)
+	se_clone:force_set_goodwill(goodwill, db.actor)
+
+	-- copy npc statistics (stalker kills, mutant kills, artifacts found, etc)
+	copy_statistics(se_npc, se_clone)
+
+	-- duplicate npc's inventory
+	if not stop_inv_duplication then
+		duplicate_inventory(se_npc, se_clone)
+	end
+
+	-- transfer npc's tasks to clone (commander of clone_squad)
+	if not stop_tasks_transfer then
+		transfer_tasks(clone_squad, se_npc)
+	end
+
+	return se_clone.id
+end
+
+-- took create_npc function and stripped it to the bare minimum
+function create_one_npc(squad, sec, pos, lvid, gvid)
+	local id = squad:add_squad_member(sec, pos, lvid, gvid)
+	local se_obj = id and alife_object(id)
+	SIMBOARD:setup_squad_and_group(se_obj)
+	
+	squad:set_squad_relation()
+	squad:refresh()
+
+	return se_obj
+end
+
+-- copies npc statistics onto clone
+function copy_statistics(se_npc, se_clone)
+	local m_data_npc 	= alife_storage_manager.get_se_obj_state(se_npc)
+	local m_data_clone 	= alife_storage_manager.get_se_obj_state(se_clone, true)
+
+	if (m_data_npc and m_data_clone) then
+		m_data_clone["killed_stalkers"]	 = m_data_npc["killed_stalkers"] or 0
+		m_data_clone["killed_monsters"]	 = m_data_npc["killed_monsters"] or 0
+		m_data_clone["artefacts_found"]	 = m_data_npc["artefacts_found"] or 0
+		m_data_clone["wounded_helped"]	 = m_data_npc["wounded_helped"]  or 0
+		m_data_clone["corpse_looted"]	 = m_data_npc["corpse_looted"]   or 0
+	end
+
+end
+
+-- empties clone inventory then copies npc items
+function duplicate_inventory(se_npc, se_clone)
+	for id in alife():get_children(se_clone) do
+		local se_item = alife_object(id)
+		if se_item then
+			alife_release(se_item)
+		end
+	end
+
+	for id in alife():get_children(se_npc) do
+		local item = level.object_by_id(id)
+		if item then
+			local sec = item:section()
+			local con = item:condition() or 1
+			local uss = item:get_remaining_uses() or 1
+			local cnt = item:ammo_get_count() or 1
+			
+			alife_create_item(sec, se_clone, {cond = con, uses = uss, ammo = cnt})
+		end
+	end
+end
+
+-- this is just squad_on_npc_death from axr_task_manager
+function transfer_tasks(squad, se_npc)
+	-- unregister ID as task giver or pass id onto squad leader if is_sim task
+	local task_info = task_manager.get_task_manager().task_info
+	for k,v in pairs(task_info) do
+		if (v.task_giver_id and v.task_giver_id == se_npc.id) then
+			if (squad:npc_count() > 0 and string.find(k,"simulation_task_")) then
+				task_info[k].task_giver_id = squad:commander_id()
+			else
+				task_info[k].task_giver_id = nil
+			end
+			return
+		end
+	end
+end

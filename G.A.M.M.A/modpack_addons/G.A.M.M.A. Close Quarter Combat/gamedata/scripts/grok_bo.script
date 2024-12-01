@@ -2,6 +2,7 @@ custom_bone_value	= {} -- this a table with each identifier being npcid_boneid, 
 custom_bone_ap	= {} 
 custom_bone_hf	= {} 
 custom_bone_dmg	= {}
+invincible_npcs_sections = {}
 ini_capture	 = ini_file("creatures\\grok_bo_models_capture.ltx")
 ini_bones		 = ini_file("creatures\\grok_bo_bone_profiles.ltx")
 ini_damage		= ini_file("creatures\\damages.ltx")
@@ -23,6 +24,28 @@ integrated_silencer = {
 	["wpn_mp5sd"] = true,
 	["wpn_mp5sd_custom"] = true,
 	["wpn_mp5sd_new"] = true,
+}
+
+
+snipers = {
+	["wpn_dvl10_m1"] = true,
+	["wpn_dvl10"] = true,
+	["wpn_l96a1"] = true,
+	["wpn_l96a1m"] = true,
+	["wpn_m98b"] = true,
+	["wpn_m24"] = true,
+	["wpn_remington700"] = true,
+	["wpn_remington700_archangel"] = true,
+	["wpn_remington700_lapua700"] = true,
+	["wpn_remington700_magpul_pro"] = true,
+	["wpn_remington700_mod_x_gen3"] = true,
+	["wpn_remington700_steyr_scout_big"] = true,
+	["wpn_sv98"] = true,
+	["wpn_sv98_custom"] = true,
+	["wpn_k98_mod"] = true,
+	["wpn_wa2000"] = true,
+	["wpn_trg"] = true,
+	["wpn_mosin"] = true,
 }
 
 local difficulty_multiplier = {
@@ -186,6 +209,7 @@ hp_rounds = {
 	["ammo_23x75_shrapnel"] = 2,
 	["ammo_23x75_barrikada"] = 3.5,
 	["ammo_20x70_buck"] = 2,
+	["ammo_338_federal"] = 10,
 }
 
 function perk_based_artefacts.npc_on_before_hit(npc, shit, bone_id, flags) end
@@ -513,6 +537,15 @@ function npc_on_before_hit(npc,shit,bone_id)
 	printf("///////////   Stalker Hit registered: GBO v1.6.6  //////////////////")
 	printf('%s about to be hit by %s in bone %s', npc and npc:name(), shit and shit.draftsman and shit.draftsman:name(), bone_id)
 	
+--////////////// INVICIBILITY TRIGGER FOR ITHEON'S TASKS //////////////
+
+	if invincible_npcs_sections[npc:section()] then
+		invincible_mult = 0
+	else
+		invincible_mult = 1
+	end
+
+	
 --////////////// DATA PARSING OF HELL - A BONES AND BOOLETS TALE //////////////
 
 --	/////// BOOLETS //////
@@ -755,6 +788,13 @@ function npc_on_before_hit(npc,shit,bone_id)
 			fx:play_at_pos(pos)			
 		end
 		
+--	/////// CHECK IF NPC IS FROM THE ZOMBIED FACTION TO REDUCE DAMAGES //////
+
+		if faction == "zombied" then
+			sin_res = 0.3
+			isg_res = 1
+		end
+		
 --	/////// CHECK IF NPC IS FROM THE ISG FACTION TO REDUCE PENETRATION AND DAMAGE //////
 
 		isg_res = 1
@@ -821,10 +861,14 @@ function npc_on_before_hit(npc,shit,bone_id)
 			k_ap = ( k_ap + 0.040 )
 		end
 	end
+	
+	if snipers[wpn:section()] then
+		k_ap = k_ap + 0.05
+	end
 
 	local k_ap = k_ap * custom_bone_ap_scale * barrel_condition_corrected -- reduce bullet ap following npc ap scale and barrel condition
 
-	k_ap = k_ap / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * isg_res * silencer_boost * difficulty_multiplier[game_num] * 0.80 -- last multiplier is a new adjustment after the bone grouping update
+	k_ap = k_ap / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * isg_res * silencer_boost * difficulty_multiplier[game_num] * invincible_mult * 0.80 -- last multiplier is a new adjustment after the bone grouping update
 
 	shit.power = wpn_hit_power / ( 1 + dist / 200 * ( air_res * 0.5 / ( 1 - air_res + 0.1 ))) * k_hit * custom_bone_dmg_mult * custom_bone_ap_scale * 1.1 * sniper_bad_bone_shit_reduce * barrel_condition_corrected * sin_res * difficulty_multiplier[game_num] * ammo_mult * silencer_boost
 
@@ -874,7 +918,7 @@ function npc_on_before_hit(npc,shit,bone_id)
 		shit.power = shit.power * 2
 	end
 	
-	life_remove = shit.power 
+	life_remove = shit.power * invincible_mult
 	
 	if surrender_bonus == 1 then
 		npc:set_health_ex(0.0)

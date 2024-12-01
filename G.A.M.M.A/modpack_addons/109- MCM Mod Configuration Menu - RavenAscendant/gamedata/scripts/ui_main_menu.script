@@ -1,0 +1,411 @@
+--[[
+
+	File:        UI_MAIN_MENU.SCRIPT
+	Description: Load Dialog for STALKER
+	Created:     28.10.2004
+	Last edit:	10.01.2015
+	Copyright:   2004 GSC Game World
+	Author:      Serhiy Vynnychenko (narrator@gsc-game.kiev.ua)
+	Version:     0.9
+	
+	-----------------------------------------------------
+	
+	Modified by Tronex
+	2018/7/17 - Prevent saving when hardcore save modes are active
+	2019/10/28 - New keybinds and actions
+	
+--]]
+
+class "main_menu" (CUIScriptWnd)
+
+function main_menu:__init() super()
+	math.randomseed(device():time_continual())
+	self.mbox_mode = 0
+	ui_mcm.init_opt_base() 
+	self:InitControls()
+    self:InitCallBacks()
+	SendScriptCallback("main_menu_on_init",self)
+	RegisterScriptCallback("on_localization_change",self)
+	
+	if not (level.present()) then
+		xrs_debug_tools.on_game_start()
+	end
+end
+
+function main_menu:__finalize()
+end
+
+function main_menu:InitControls()
+	self:SetWndRect					(Frect():set(0,0,1024,768))
+
+    local xml						= CScriptXmlInit()
+    xml:ParseFile					("ui_mm_main.xml")
+
+    xml:InitStatic					("background", self)
+    self.shniaga					= xml:InitMMShniaga("shniaga_wnd",self);
+
+	self.message_box				= CUIMessageBoxEx()
+	self:Register					(self.message_box, "msg_box")
+
+	local _ver = xml:InitStatic		("static_version",self)
+	local mm						= _G.main_menu.get_main_menu()
+	_ver:TextControl():SetTextColor (GetARGB(190, 190, 190, 190))
+	local flavor_name = ""
+	if anomaly_flavor then
+		flavor_name = " - " .. anomaly_flavor.get_flavor()
+	end
+	_ver:TextControl():SetText		(game.translate_string("ui_st_game_version") .. flavor_name .. (DEV_DEBUG and " (Debug mode - Press F1 for help)" or ""))
+
+	local _disc = xml:InitStatic    ("static_disclaimer",self)
+	_disc:TextControl():SetTextColor(GetARGB(223, 223, 223, 223))
+	_disc:TextControl():SetText     (game.translate_string("ui_mm_disclaimer"))
+	
+	-- Message Window 
+	self.msg_wnd = xml:InitFrame("msg_wnd:background",self)
+	self.msg_wnd:SetAutoDelete(false)
+	self.msg_wnd_text = xml:InitTextWnd("msg_wnd:text",self.msg_wnd)
+	self.msg_wnd_text:SetTextAlignment(2)
+	
+	self.msg_wnd:Show(false)
+	self.msg_wnd:SetColor(GetARGB(255,0,0,0))
+end
+
+function main_menu:InitCallBacks()
+	self:AddCallback("btn_newgame",		ui_events.BUTTON_CLICKED,				self.OnButton_new_game,				self)
+	self:AddCallback("btn_options",     ui_events.BUTTON_CLICKED,				self.OnButton_options_clicked,		self)
+	self:AddCallback("btn_mcm",     	ui_events.BUTTON_CLICKED,				self.OnButton_mcm_clicked,			self)
+	self:AddCallback("btn_originals",   ui_events.BUTTON_CLICKED,				self.OnButton_originals_clicked,	self)
+	self:AddCallback("btn_load",        ui_events.BUTTON_CLICKED,				self.OnButton_load_clicked,			self)
+	self:AddCallback("btn_save",		ui_events.BUTTON_CLICKED,				self.OnButton_save_clicked,			self)
+	self:AddCallback("btn_quit",		ui_events.BUTTON_CLICKED,				self.OnButton_quit_clicked,			self)
+	self:AddCallback("btn_quit_to_mm",	ui_events.BUTTON_CLICKED,				self.OnButton_disconnect_clicked,	self)
+	self:AddCallback("btn_ret",			ui_events.BUTTON_CLICKED,				self.OnButton_return_game,			self)
+	self:AddCallback("btn_lastsave",	ui_events.BUTTON_CLICKED,				self.OnButton_last_save,			self)
+	
+	-- message box
+	self:AddCallback("msg_box",     	ui_events.MESSAGE_BOX_OK_CLICKED,		self.OnMsgOk,						self)
+	self:AddCallback("msg_box",     	ui_events.MESSAGE_BOX_CANCEL_CLICKED,	self.OnMsgCancel,					self)
+	self:AddCallback("msg_box",     	ui_events.MESSAGE_BOX_YES_CLICKED,		self.OnMsgYes,						self)
+	self:AddCallback("msg_box",     	ui_events.MESSAGE_BOX_NO_CLICKED,		self.OnMsgNo,						self)
+	self:AddCallback("msg_box",			ui_events.MESSAGE_BOX_QUIT_GAME_CLICKED,self.OnMessageQuitGame,				self)
+	self:AddCallback("msg_box",			ui_events.MESSAGE_BOX_QUIT_WIN_CLICKED,	self.OnMessageQuitWin,				self)
+
+	self:Register(self, "self")
+	self:AddCallback("self",	ui_events.MAIN_MENU_RELOADED, self.OnMenuReloaded, self)
+end
+
+function main_menu:Update()
+	CUIScriptWnd.Update(self)
+	-- Warning messages timer 
+	if (self.msg_wnd_timer) then 
+		self.msg_wnd_timer = self.msg_wnd_timer - 1
+		if (self.msg_wnd_timer <= 0) then
+			self.msg_wnd_timer = nil
+			self.msg_wnd:Show(false)
+		end
+	end
+end 
+
+function main_menu:Show(f)
+	self.shniaga:SetVisibleMagnifier(f)
+end
+
+
+function main_menu:OnButton_last_save()	
+
+    if ( alife() == nil) then
+        local flist = getFS():file_list_open_ex("$game_saves$",bit_or(FS.FS_ListFiles,FS.FS_RootOnly),"*"..".scop")
+        flist:Sort(FS.FS_sort_by_modif_down)
+        local file = flist:GetAt(0)
+		if not (file) then 
+			return
+		end
+        local file_name = string.sub(file:NameFull(), 0, (string.len(file:NameFull()) - string.len(".scop")))
+       
+        exec_console_cmd("main_menu off")
+        exec_console_cmd("start server("..file_name.."/single/alife/load) client(localhost)")
+        return
+    end
+ 
+    if ( (db.actor ~= nil) and (db.actor:alive() == false) ) then
+        self:LoadLastSave   ()
+        return
+    end
+ 
+    self.mbox_mode          = 1
+    self.message_box:InitMessageBox ("message_box_confirm_load_save")
+    self.message_box:ShowDialog(true)
+end
+
+function main_menu:OnButton_new_game()
+	--game.start_tutorial("credits_seq")
+	self:ShowFactionUI()
+end
+
+function main_menu:OnButton_originals_clicked()
+	game.open_originals_link()
+end											   
+function main_menu:OnButton_quit_clicked()
+	self.message_box:InitMessageBox("message_box_quit_windows")
+	self.message_box:ShowDialog(true)
+end
+
+function main_menu:OnButton_disconnect_clicked()
+
+	self.message_box:InitMessageBox("message_box_quit_game")
+
+	if (level.game_id() ~= 1) then
+		self.message_box:SetText("ui_mm_disconnect_message")	-- MultiPlayer
+	else
+		self.message_box:SetText("ui_mm_quit_game_message")		-- SinglePlayer
+	end
+	self.message_box:ShowDialog(true)
+end
+
+function main_menu:OnButton_save_clicked()
+	
+	--	Saving will be interrupted if flags.ret is set to true by a custom script that have "on_before_save_input"
+	if level.present() then
+		local flags = {ret = false}
+		SendScriptCallback("on_before_save_input", flags, 1, game.translate_string("st_ui_save"))
+		if (flags.ret == true) then 
+			return
+		end
+	end
+
+	if self.save_dlg == nil then
+		self.save_dlg = ui_save_dialog.UISaveDialog()
+		self.save_dlg.owner = self
+	end
+
+	self.save_dlg:FillList()
+	self.save_dlg:ShowDialog(true)
+	self:HideDialog()
+	self:Show(false)
+end
+
+function main_menu:OnButton_options_clicked()
+	if (self.opt_dlg == nil) then
+		self.opt_dlg = ui_options.UIOptions()
+		self.opt_dlg.owner = self
+	end
+
+	self.opt_dlg:ShowDialog(true)
+	self:HideDialog()
+	self:Show(false)
+	self.opt_dlg:Reset_last_opt()
+end
+
+function main_menu:OnButton_mcm_clicked()
+	printf("MCMBTN press")
+	if (self.mcm_dlg == nil) then
+		self.mcm_dlg = ui_mcm.UI_MCM()
+		self.mcm_dlg.owner = self
+	end
+
+	self.mcm_dlg:ShowDialog(true)
+	self:HideDialog()
+	self:Show(false)
+	self.mcm_dlg:Reset_last_opt()
+end
+
+function main_menu:OnButton_load_clicked()
+	
+	if self.load_dlg ==nil then
+		self.load_dlg = ui_load_dialog.UILoadDialog()
+		self.load_dlg.owner = self
+	end
+
+	self.load_dlg:FillList()
+	self.load_dlg:ShowDialog(true)
+	self:HideDialog()
+	self:Show(false)
+end
+
+function main_menu:OnButton_return_game()
+	exec_console_cmd("main_menu off")
+	SendScriptCallback("main_menu_on_quit",self)
+end
+
+
+function main_menu:OnMsgOk()
+	if (self.mbox_mode == 2) then
+		if mcm_log then
+			mcm_log.close_logs()
+		end
+		exec_console_cmd("quit")
+	end
+	self.mbox_mode = 0
+end
+
+function main_menu:OnMsgCancel()
+	self.mbox_mode = 0
+end
+
+function main_menu:OnMsgYes()
+
+	if 	self.mbox_mode == 1 then
+		self:LoadLastSave()
+	end
+
+	self.mbox_mode = 0
+end
+
+function main_menu:OnMsgNo()
+	self.mbox_mode = 0
+end
+
+function main_menu:OnMessageQuitGame()
+	exec_console_cmd("disconnect")
+end
+
+function main_menu:OnMessageQuitWin()
+	if mcm_log then
+		mcm_log.close_logs()
+	end
+	exec_console_cmd("quit")
+end
+
+
+function main_menu:StartGame()
+	if (alife() ~= nil) then
+		exec_console_cmd("disconnect")
+	end
+	device():pause(false)
+	exec_console_cmd("start server(all/single/alife/new) client(localhost)")
+	exec_console_cmd("main_menu off")
+end
+
+function main_menu:ShowFactionUI()
+	if self.new_game_dlg == nil then
+		self.new_game_dlg = ui_mm_faction_select.UINewGame(self)
+	end
+
+	self.new_game_dlg:ShowDialog(true)
+	self:HideDialog()
+	self:Show(false)
+end 
+
+function main_menu:LoadLastSave()
+	exec_console_cmd("main_menu off")
+	exec_console_cmd("load_last_save")
+end
+
+function main_menu:on_localization_change()
+	self.opt_dlg = nil
+	self.mcm_dlg = nil
+	self.new_game_dlg = nil
+end
+
+function main_menu:Dispatch(cmd, param)  --virtual function
+	if cmd == 2 then
+		self:OnButton_multiplayer_clicked()
+	end
+	return true
+end
+
+function main_menu:OnKeyboard(dik, keyboard_action)  --virtual function
+	CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	local bind = dik_to_bind(dik)
+
+	SendScriptCallback("main_menu_on_keyboard",dik,keyboard_action,self,level.present())
+
+	if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+		if (level.present()) then 
+			if (dik == DIK_keys.DIK_ESCAPE) then
+				if (db.actor and db.actor:alive()) or (IsGameTypeSingle() ~= true) then
+					self:OnButton_return_game()
+				end
+				return true
+			elseif (bind == key_bindings.kQUICK_SAVE) then
+				level_input.action_quick_save()
+				return true
+			elseif (bind == key_bindings.kQUICK_LOAD) then 
+				level_input.action_quick_load()
+				return true
+			
+			-- F6 in menu = Hardsave (script originally made by NamelessWanderer)
+			elseif (dik == DIK_keys.DIK_F6) then
+				
+				--	Saving will be interrupted if flags.ret is set to true by a custom script that have "on_before_save_input"
+				if level.present() then
+					local flags = {ret = false}
+					SendScriptCallback("on_before_save_input", flags, 3, game.translate_string("st_ui_save"))
+					if (flags.ret == true) then 
+						return true
+					end
+				end
+				
+				if level.present() and (db.actor ~= nil) and db.actor:alive() then
+					local Y, M, D, h
+					Y, M, D, h = game.get_game_time():get(Y, M, D, h)
+					
+					m = level.get_time_minutes()
+					if m < 10 then
+						m = ("0"..m)
+					end
+					local comm = utils_xml.get_special_txt(db.actor:character_community())
+					local map = utils_xml.get_special_txt(level.name())
+					exec_console_cmd("main_menu off")
+					exec_console_cmd("save " .. comm .. " - " .. map .. " - hardsave - " .. string.format("%d.%d.%d %d-%d", D, M, Y, h, m))
+				end
+			end	
+		else
+			if (dik == DIK_keys.DIK_F2) and DEV_DEBUG then
+				axr_main.config:w_value("character_creation","new_game_test",true)
+				--axr_main.config:w_value("character_creation","new_game_story_mode",true)
+				axr_main.config:w_value("character_creation","new_game_difficulty",1)
+				axr_main.config:w_value("character_creation","new_game_economy",1)
+				--axr_main.config:w_value("character_creation","new_game_opened_routes",true)
+				axr_main.config:w_value("character_creation","new_game_faction","stalker")
+				axr_main.config:w_value("character_creation","new_game_loadout", "device_pda_1")
+				axr_main.config:save()
+				
+				self:StartGame()
+				
+			elseif (bind == key_bindings.kQUICK_LOAD) then
+				self:OnButton_last_save()	
+				return true
+			end
+		end
+		
+		if (dik == DIK_keys.DIK_Q) then
+			self:OnMessageQuitWin()
+			
+		elseif (dik == DIK_keys.DIK_NUMPAD0) and DEV_DEBUG then
+			reload_ini_sys()
+			game.reload_language()
+			printf("system_ini_reload = success!")
+			
+		elseif (dik == DIK_keys.DIK_F1) and DEV_DEBUG then
+			self:SetMsg( game.translate_string("st_ui_dbg_help"), 10 , 3)
+		end
+	end
+
+	return true
+end
+
+function main_menu:OnMenuReloaded()
+	printf("- main_menu:OnMenuReloaded()")
+	--self:OnButton_options_clicked()
+end
+
+function main_menu:SetMsg(text,tmr,align)
+	if (text == "") then 
+		return 
+	end
+	self.msg_wnd:Show(true)
+	
+	align = align or 2
+	local _x = (align == 3) and -512 or 0
+	self.msg_wnd_text:SetTextAlignment(align)
+	self.msg_wnd_text:SetText(text)
+	self.msg_wnd_text:AdjustHeightToText()
+	self.msg_wnd_text:SetWndSize(vector2():set(1024,self.msg_wnd_text:GetHeight()+10))
+	self.msg_wnd_text:SetWndPos(vector2():set(_x,20))
+	
+	self.msg_wnd:SetWndSize(vector2():set(1024,self.msg_wnd_text:GetHeight()+44))
+	self.msg_wnd:SetWndPos(vector2():set(0,80))
+
+	self.msg_wnd_timer = 100*tmr
+end

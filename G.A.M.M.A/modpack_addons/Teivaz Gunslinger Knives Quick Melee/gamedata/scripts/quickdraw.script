@@ -1,0 +1,176 @@
+--[[
+	ToDo: 
+	- Optional MCM options for anim speed and if possible move keybinding in the MCM menu.
+	- Figure out if we can check for a certain mod and reimplement BaS support.
+]]--
+
+function on_game_start()
+	RegisterScriptCallback("on_game_load",on_game_load)
+	RegisterScriptCallback("on_key_press",on_key_press)
+	RegisterScriptCallback("actor_on_update",actor_on_update)
+end
+
+function on_game_load()
+	--nix
+end
+
+local anm_state = 0
+local anm_slot = 14
+	
+local knife_name = nil
+local knifesm = { 
+					"wpn_knife",
+					"wpn_knife2",
+					"wpn_knife3",
+					"wpn_knife4",
+					"wpn_knife5",
+					"wpn_knife6",
+					"wpn_knife7",
+					"wpn_knife8",
+				 }	
+
+local hit_slot = {
+	[0] = true,
+	[1] = true,
+	[2] = true,
+	[3] = true,
+	[4] = true,
+	[5] = true,
+}
+
+function actor_on_update()
+
+	hit_animation()
+end
+
+function on_key_press(key)
+
+	local bind = dik_to_bind(key)
+	if (bind == key_bindings.kCUSTOM24) then
+		hit_key()
+    end
+
+end
+
+function hit_key()
+	
+	if (actor_menu.get_last_mode() ~= 0) then return end
+	
+	if not (hit_slot[db.actor:active_slot()]) then return end
+
+	if (anm_state ~= 0) then
+		--printf("hit_key "..anm_state)
+		return 
+	end
+
+	if (db.actor:active_detector()) then return end
+	
+	--test
+
+	if ( db.actor:object(knifesm[1]) ~= nil ) then
+		knife_to_degrade = db.actor:object(knifesm[1])
+		knife_name = "animation_hit_"..db.actor:object(knifesm[1]):section()
+	end
+	
+	if ( db.actor:object(knifesm[2]) ~= nil ) then
+		knife_to_degrade = db.actor:object(knifesm[2])
+		knife_name = "animation_hit_"..db.actor:object(knifesm[2]):section()
+	end
+	
+	if ( db.actor:object(knifesm[3]) ~= nil ) then
+		knife_to_degrade = db.actor:object(knifesm[3])
+		knife_name = "animation_hit_"..db.actor:object(knifesm[3]):section()
+	end
+	
+	if ( db.actor:object(knifesm[4]) ~= nil ) then
+		knife_to_degrade = db.actor:object(knifesm[4])
+		knife_name = "animation_hit_"..db.actor:object(knifesm[4]):section()
+	end
+	
+	if ( db.actor:object(knifesm[5]) ~= nil ) then
+		knife_to_degrade = db.actor:object(knifesm[5])
+		knife_name = "animation_hit_"..db.actor:object(knifesm[5]):section()
+	end
+	
+		
+	if ( db.actor:object(knifesm[6]) ~= nil ) then
+		knife_to_degrade = db.actor:object(knifesm[6])
+		knife_name = "animation_hit_"..db.actor:object(knifesm[6]):section()
+	end
+	
+		
+	if ( db.actor:object(knifesm[7]) ~= nil ) then
+		knife_to_degrade = db.actor:object(knifesm[7])
+		knife_name = "animation_hit_"..db.actor:object(knifesm[7]):section()
+	end
+	
+		
+	if ( db.actor:object(knifesm[8]) ~= nil ) then
+		knife_to_degrade = db.actor:object(knifesm[8])
+		knife_name = "animation_hit_"..db.actor:object(knifesm[8]):section()
+	end
+
+	if ( knife_name == nil ) then
+		return
+	end
+
+	cond = knife_to_degrade:condition()
+	if cond > 0.02 then
+		knife_to_degrade:set_condition(cond - 0.0025)
+	else
+		knife_to_degrade:set_condition(0.01)
+	end
+
+	-- end test
+	
+	local anm = db.actor:item_in_slot(anm_slot)
+	if (anm) then 
+		alife():release(alife_object(anm:id()))
+		return
+	end
+	
+	anm_state = 1
+	last_slot = db.actor:active_slot() or 0
+	
+	local wpn = db.actor:item_in_slot(db.actor:active_slot())
+	if (wpn) then wpn:switch_state(3) end
+	
+    alife():create(knife_name,db.actor:position(),db.actor:level_vertex_id(),db.actor:game_vertex_id(),db.actor:id())
+	knife_name = nil
+	
+	--db.actor:hide_weapon()
+end
+
+local anm_time = 450
+local anm_start = 0
+
+function hit_animation()
+	local wpn = db.actor:item_in_slot(last_slot)
+	
+	if (anm_state == 1) then
+		--db.actor:restore_weapon()
+		db.actor:activate_slot(14)
+		if (wpn) then wpn:switch_state(3) end
+		anm_start = time_global()
+		anm_state = 2
+	elseif (anm_state == 2) and (db.actor:active_slot() == anm_slot) and (time_global() > anm_start) then
+		anm_start = time_global()
+		anm_state = 3
+		local anm = db.actor:item_in_slot(anm_slot)
+		if (anm) then 
+			--level.add_cam_effector('shoot\\s3_e1_1.anm', 8063, false,'')
+			anm:switch_state(5)
+		end
+	elseif (anm_state == 3) and (time_global() > anm_start+anm_time) then
+		local anm = db.actor:item_in_slot(anm_slot)
+		if (anm) then alife():release(alife_object(anm:id())) end
+		anm_state = 4
+	elseif (anm_state == 4) and (time_global() > anm_start+anm_time+20) then
+		db.actor:activate_slot(last_slot)
+		anm_state = 5
+	elseif (anm_state == 5) and (time_global() > anm_start+anm_time+400) then
+		anm_state = 0
+	elseif (anm_state ~= 0) and (db.actor:active_slot() ~= anm_slot) and (time_global() > anm_start+anm_time+400) then
+		anm_state = 0
+	end
+end

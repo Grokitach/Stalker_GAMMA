@@ -1,0 +1,249 @@
+;[[
+
+; Tronex
+; 2019/8/5
+; Dynamic NPC loadouts
+; 
+; Last modified by SD 2024/11/26
+;------------------------------
+
+; How it works
+; When an npc spawn in the Zone, a loadout will be decided and spawned on him based on many factors:
+; 1. Script will check [loadouts_per_squad] first to see if NPC's squad section name has a defined loadout
+; 2. if not found, then it will [loadouts_per_name] to see if NPC's section name has a defined loadout
+; 3. if not found, then it will [loadouts_per_visual] to see if NPC's model has a defined loadout
+; 4. if not found, then it will check NPC's rank and community loadout [loadout_"community"_"rank"]
+; 5. if not found, then it will check NPC's community loadout only [loadout_"community"]
+; 6. if not found, then it will check the default loadout [loadout_default]
+; 7. if not found, make me a favor and uninstall the mod
+
+; Each loadout can have up to 3 slots (primery, secondary, extra). They are optional
+; Script will pick a random item from each defined slot (based on item weight)
+; Example
+
+; 		[bandit_novice]
+; 		primery		=	primery_something
+; 		secondary 	=   secondary_something
+; 		extra		=   extra_something
+		
+; 		[primery_something]
+; 		weapon:attachment_flag:ammo_type:weight:scope_chance:gl_chance:sil_chance
+
+; - weapon					- default: /  	- [string] 						- section name of the weapon
+; - attachment_flag 		- default: 0  	- [0 - (number of flags)] 		- ( 0 - no attachment, Scope +1 to flag, GL add +2 to flag, Silencer add + 4 to flag). (if it's set to "r", it will pick random attachement)
+; - ammo_type 				- default: 0  	- [0 - (number of ammo - 1)] 	- (if it's set to "r", it will pick random ammo type)
+; - weight					- default: 10 	- [0 - 100]						- weight of entry, any number should be able to work over 0, but it will spend more time creating duplicate entries (if it's set to "d", it will use default value)
+; - scope_chance			- default: 15 	- [0 - 100]						- chance for scope to spawn on npc (if it's set to "d", it will use default value)
+; - gl_chance				- default: 100 	- [0 - 100]						- chance for grenade launcher to spawn on npc (if it's set to "d", it will use default value)
+; - sil_chance				- default: 100 	- [0 - 100]						- chance for silencer to spawn on npc (if it's set to "d", it will use default value)
+
+; NOTES
+; -------
+; only use extra slot for non-weapon items
+; You can add as much sections for loadouts and their slots to be used as models custom loadouts
+
+; keep in mind that scopes are separated from attachement define. scope chance is controlled by progression difficulty settings
+;--]]
+
+;---------------------------------
+[settings]
+enable					= true					;-- enable feature
+default_weight			= 10					;-- default weight of entry [0-100], used as default value for weight 
+default_scope_chance	= 20,15,10,10				;-- default scope chance [0-100] on npc, used as default value for scope_chance, from easier to harder progression difficulty
+default_gl_chance		= 15,15,15,15		;-- default grenade launcher chance [0-100] on npc, used as default value for gl_chance, from easier to harder progression difficulty
+default_sil_chance		= 25,25,25,25		;-- default silencer chance [0-100] on npc, used as default value for sil_chance, from easier to harder progression difficulty
+
+;---------------------------------
+;-- Default loadout / safety measure
+[default]
+primary		= primery_default
+secondary 	= secondary_default
+;extra		= extra_default
+
+[primery_default]
+wpn_ak74u:0:r
+
+[secondary_default]
+wpn_pm:0:r
+
+[extra_default]
+grenade_rgd5:0:1:2
+
+;---------------------------------
+
+;-- Loadouts per community/ranks
+#include "npc_loadouts_stalker.ltx"
+#include "npc_loadouts_csky.ltx"
+#include "npc_loadouts_bandit.ltx"
+#include "npc_loadouts_army.ltx"
+#include "npc_loadouts_dolg.ltx"
+#include "npc_loadouts_freedom.ltx"
+#include "npc_loadouts_ecolog.ltx"
+#include "npc_loadouts_killer.ltx"
+#include "npc_loadouts_monolith.ltx"
+#include "npc_loadouts_zombied.ltx"
+#include "npc_loadouts_renegade.ltx"
+#include "npc_loadouts_greh.ltx"
+#include "npc_loadouts_isg.ltx"
+
+;-- Loadouts per squad section name
+#include "npc_loadouts__squad.ltx"
+
+;-- Loadouts per npc section name
+#include "npc_loadouts__name.ltx"
+
+;-- Loadouts per model name
+#include "npc_loadouts__visual.ltx"
+
+;---------------------------------
+;-- Characters to ignore from the system
+
+[skip_npcs]
+	agr_smart_terrain_1_6_army_mechanic_stalker            = army
+	agr_smart_terrain_1_6_army_trader_stalker              = army
+	agr_smart_terrain_1_6_army_medic_stalker               = army
+	agr_1_6_medic_army_mlr                                 = army
+	agr_1_6_barman_army_mlr                                = army
+	agr_smart_terrain_1_6_near_2_military_colonel_kovalski = army
+	esc_3_16_military_trader                               = army
+	army_south_mechan_mlr                                  = army
+	army_degtyarev_jup                                     = army
+	army_degtyarev                                         = army
+		
+	zat_b7_bandit_boss_sultan                              = bandit
+	val_smart_terrain_7_3_bandit_mechanic_stalker          = bandit
+	val_smart_terrain_7_4_bandit_trader_stalker            = bandit
+	bandit_main_base_medic_mlr                             = bandit
+	guid_dv_mal_mlr                                        = bandit
+	jup_cont_trader_bandit                                 = bandit
+	jup_cont_mech_bandit                                   = bandit
+	trucks_cemetery_bandit_trader                          = bandit
+	trucks_cemetery_bandit_mechanic                        = bandit
+		
+	mar_base_stalker_barmen                                = csky
+	mar_base_stalker_tech                                  = csky
+	mar_smart_terrain_base_doctor                          = csky
+	mar_smart_terrain_base_stalker_leader_marsh            = csky
+	mar_base_owl_stalker_trader                            = csky
+	guid_marsh_mlr                                         = csky
+		
+	bar_dolg_leader                                        = dolg
+	bar_dolg_general_petrenko_stalker                      = dolg
+	bar_visitors_stalker_mechanic                          = dolg
+	bar_dolg_medic                                         = dolg
+		
+	yan_ecolog_kruglov                                     = ecolog
+	yan_stalker_sakharov                                   = ecolog
+	yan_povar_army_mlr                                     = ecolog
+	mechanic_army_yan_mlr                                  = ecolog
+	jup_b6_scientist_tech                                  = ecolog
+	jup_b6_scientist_nuclear_physicist                     = ecolog
+	jup_b6_scientist_biochemist                            = ecolog
+		
+	mil_smart_terrain_7_10_freedom_trader_stalker          = freedom
+	mil_smart_terrain_7_7_freedom_mechanic_stalker         = freedom
+	mil_smart_terrain_7_7_freedom_leader_stalker           = freedom
+	mil_freedom_medic                                      = freedom
+	mil_freedom_guid                                       = freedom
+	mil_freedom_barman_mlr                                 = freedom
+	jup_a6_freedom_leader                                  = freedom
+	jup_a6_freedom_trader_ashot                            = freedom
+	jup_a6_stalker_barmen                                  = freedom
+	jup_b19_freedom_yar                                    = freedom
+		
+	cit_killers_merc_trader_stalker                        = killer
+	cit_killers_merc_mechanic_stalker                      = killer
+	cit_killers_merc_barman_mlr                            = killer
+	ds_killer_guide_main_base                              = killer
+	cit_killers_merc_medic_stalker                         = killer
+	merc_pri_grifon_mlr                                    = killer
+	merc_pri_a18_mech_mlr                                  = killer
+	pri_special_trader_mlr                                 = killer
+	zat_stancia_trader_merc                                = killer
+	zat_stancia_mech_merc                                  = killer
+		
+	pri_monolith_monolith_trader_stalker                   = monolith
+	pri_monolith_monolith_mechanic_stalker                 = monolith
+	lider_monolith_haron                                   = monolith
+	monolith_eidolon                                       = monolith
+	mechanic_monolith_kbo                                  = monolith
+	trader_monolith_kbo                                    = monolith
+	mechanic_monolith_jup_depo                             = monolith
+	trader_monolith_jup_depo                               = monolith
+		
+	jup_b220_trapper                                       = stalker
+	bar_visitors_barman_stalker_trader                     = stalker
+	esc_2_12_stalker_fanat                                 = stalker
+	esc_2_12_stalker_nimble                                = stalker
+	esc_2_12_stalker_wolf                                  = stalker
+	esc_smart_terrain_5_7_loner_mechanic_stalker           = stalker
+	m_lesnik                                               = stalker
+	m_trader                                               = stalker
+	mar_smart_terrain_doc_doctor                           = stalker
+	zat_a2_stalker_barmen                                  = stalker
+	zat_a2_stalker_mechanic                                = stalker
+	zat_b106_stalker_gonta                                 = stalker
+	zat_b22_stalker_medic                                  = stalker
+	zat_b30_owl_stalker_trader                             = stalker
+	hunter_gar_trader                                      = stalker
+	esc_main_base_trader_mlr                               = stalker
+	devushka                                               = stalker
+	bar_informator_mlr                                     = stalker
+	guid_bar_stalker_navigator                             = stalker
+	stalker_gatekeeper                                     = stalker
+	stalker_rogue                                          = stalker
+	stalker_rogue_ms                                       = stalker
+	stalker_rogue_oa                                       = stalker
+	stalker_stitch_ms                                      = stalker
+	stalker_stitch_oa                                      = stalker
+	stalker_stitch                                         = stalker
+	lost_stalker_strelok                                   = stalker
+	stalker_strelok_oa                                     = stalker
+	stalker_strelok_hb                                     = stalker
+	pri_a16_mech_mlr                                       = stalker
+	guid_pri_a15_mlr                                       = stalker
+	trader_pri_a15_mlr                                     = stalker
+	guid_jup_stalker_garik                                 = stalker
+	zat_tech_mlr                                           = stalker
+		
+	kat_greh_sabaoth                                       = greh
+	red_greh_trader                                        = greh
+	red_greh_tech                                          = greh
+	
+	ds_domik_isg_leader                                    = isg
+	jup_depo_isg_leader                                    = isg
+	jup_depo_isg_tech                                      = isg
+	
+	bar_arena_stalker_1    = true
+	bar_arena_stalker_2    = true
+	bar_arena_stalker_3_1  = true
+	bar_arena_stalker_3_2  = true
+	bar_arena_stalker_4_1  = true
+	bar_arena_stalker_4_2  = true
+	bar_arena_stalker_4_3  = true
+	bar_arena_stalker_4_4  = true
+	bar_arena_stalker_4_5  = true
+	bar_arena_stalker_5_1  = true
+	bar_arena_stalker_5_2  = true
+	bar_arena_stalker_6_1  = true
+	bar_arena_stalker_6_2  = true
+	bar_arena_stalker_6_3  = true
+	bar_arena_stalker_6_4  = true
+	bar_arena_stalker_6_5  = true
+	bar_arena_stalker_6_6  = true
+	bar_arena_stalker_7    = true
+	bar_arena_stalker_8_1  = true
+	bar_arena_stalker_8_2  = true
+	bar_arena_stalker_8_3  = true
+	bar_arena_stalker_8_4  = true
+
+;---------------------------------
+;-- scopes to ignore from the scopes system in loadouts globally
+;-- format <scope> = true
+[scope_blacklist]
+	;1p29 = true
+
+;-- scopes to additionally ignore from the scopes system in loadouts by weapon
+;-- format <section> = <scope>, <scope>...
+[weapon_scope_blacklist]
+	;wpn_aek = kobra

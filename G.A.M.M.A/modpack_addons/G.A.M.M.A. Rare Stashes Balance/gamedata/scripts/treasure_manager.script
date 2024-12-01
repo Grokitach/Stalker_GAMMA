@@ -104,8 +104,8 @@ local tools_map_tiers = {
     ["l07_military"] = {3, 3, 3, 4, 4},
     ["l08_yantar"] = {2, 2, 3 ,3, 3, 3, 3, 3, 4, 4, 4},
     ["l10_limansk"] = {3, 3, 3, 4, 4, 4, 4, 5},
-    ["l10_red_forest"] = {4, 4, 4, 4, 4, 4, 4, 5},
-    ["l10_radar"] = {3, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5},
+    ["l10_red_forest"] = {3, 4, 4, 4, 4, 4, 4, 4, 4, 5},
+    ["l10_radar"] = {3, 4, 4, 4, 4, 4, 4, 4, 4},
     ["zaton"] = {3, 3, 4, 4, 5},
     ["jupiter"] = {3, 3, 4, 4, 5},
     ["pripyat"] = {3, 4, 4, 4, 5, 5, 5, 5},
@@ -676,6 +676,9 @@ function set_random_stash(no_spot, hint, bonus_items, id, dbg)
 				[4] = "itm_basickit",
 				}
 			tool_type = tool_table[math.random(#tool_table)]
+			if tool_type == "itm_basickit" and not has_alife_info("actor_find_basic_kit") then
+				db.actor:give_info_portion("actor_find_basic_kit")
+			end
 			content[#content + 1] = tool_type
 		end
 		
@@ -694,15 +697,55 @@ function set_random_stash(no_spot, hint, bonus_items, id, dbg)
 				[11] = "itm_advancedkit",
 				}
 			tool_type = tool_table[math.random(#tool_table)]
-			content[#content + 1] = tool_type
+			if tool_type == "itm_basickit" and not has_alife_info("actor_find_basic_kit") then
+				db.actor:give_info_portion("actor_find_basic_kit")
+				content[#content + 1] = tool_type
+			elseif tool_type == "itm_advancedkit" and has_alife_info("actor_find_basic_kit") then
+				db.actor:give_info_portion("actor_find_advanced_kit")
+				content[#content + 1] = tool_type
+			elseif tool_type == "itm_advancedkit" and not has_alife_info("actor_find_basic_kit") then
+				db.actor:give_info_portion("actor_find_basic_kit")
+				tool_type = "itm_basickit"
+				content[#content + 1] = tool_type
+			elseif tool_type == "itm_advancedkit" and has_alife_info("actor_find_advanced_kit") then
+				content[#content + 1] = tool_type
+			else
+				content[#content + 1] = tool_type
+			end
 		end
 		
 		if tools_lvl_tier == 4 then
-			content[#content + 1] = "itm_advancedkit"
+			tool_type = "itm_advancedkit"
+			
+			if tool_type == "itm_advancedkit" and has_alife_info("actor_find_basic_kit") then
+				db.actor:give_info_portion("actor_find_advanced_kit")
+				content[#content + 1] = tool_type
+			elseif tool_type == "itm_advancedkit" and not has_alife_info("actor_find_basic_kit") then
+				db.actor:give_info_portion("actor_find_basic_kit")
+				tool_type = "itm_basickit"
+				content[#content + 1] = tool_type
+			end
 		end
 		
 		if tools_lvl_tier == 5 then
-			content[#content + 1] = "itm_expertkit"
+			tool_type = "itm_expertkit"
+			
+			if tool_type == "itm_expertkit" and not has_alife_info("actor_find_basic_kit") then
+				db.actor:give_info_portion("actor_find_basic_kit")
+				tool_type = "itm_basickit"
+				content[#content + 1] = tool_type
+			elseif tool_type == "itm_expertkit" and has_alife_info("actor_find_basic_kit") and not has_alife_info("actor_find_advanced_kit") then
+				db.actor:give_info_portion("actor_find_advanced_kit")
+				tool_type = "itm_advancedkit"
+				content[#content + 1] = tool_type
+			elseif tool_type == "itm_expertkit" and has_alife_info("actor_find_basic_kit") and has_alife_info("actor_find_advanced_kit") then
+				db.actor:give_info_portion("actor_find_expert_kit")
+				tool_type = "itm_expertkit"
+				content[#content + 1] = tool_type
+			elseif tool_type == "itm_expertkit" and has_alife_info("actor_find_expert_kit") then
+				tool_type = "itm_expertkit"
+				content[#content + 1] = tool_type
+			end
 		end
 	end
 	
