@@ -1,0 +1,179 @@
+get_config = grok_artefacts_bip_mcm.get_config
+
+local detectors = {
+	["detector_simple"] = 1,
+	["detector_advanced"] = 2,
+	["detector_grizzly"] = 3,
+	["detector_elite"] = 3,	
+	["detector_scientific"] = 3,	
+}
+
+-- add junk artefacts as well
+local af_by_tiers = {
+	["af_black"] = 1,
+	["af_dragon_eye"] = 1,
+	["af_ball"] = 1,
+	["af_fonar"] = 1,
+	["af_tapeworm"] = 1,
+	["af_moh"] = 1,
+	["af_serofim"] = 1,
+	["af_elektron"] = 1,
+	["af_kogot"] = 1,
+	["af_generator"] = 1,
+	["af_black_angel"] = 1,
+	["af_grapes"] = 1,
+	["af_skull_miser"] = 1,
+	["af_star_phantom"] = 1,
+	["af_medallion"] = 1,
+	["af_peas"] = 1,
+	["af_kislushka"] = 1,
+	["af_zhelch"] = 1,
+	["af_sandstone"] = 1,
+	["af_fountain"] = 1,
+	["af_spaika"] = 1,
+	["af_signet"] = 1,	
+	["af_repei"] = 1,
+	["af_bat"] = 1,
+	["af_sun"] = 1,	
+	["af_ear"] = 1,
+	["af_chelust"] = 1,
+	["af_atom"] = 1,	
+	["af_lighthouse"] = 1,
+	["af_cell"] = 1,
+	["af_cocoon"] = 1,	
+	["af_pin"] = 1,	
+	["af_medusa"] = 1,	
+	["af_vyvert"] = 2,	
+	["af_empty"] = 2,	
+	["af_full_empty"] = 3,	
+	["af_dummy_glassbeads"] = 1,	
+	["af_cristall"] = 2,	
+	["af_lobster_eyes"] = 2,	
+	["af_fireball"] = 3,	
+	["af_fire"] = 3,	
+	["af_night_star"] = 1,	
+	["af_gravi"] = 2,	
+	["af_gold_fish"] = 3,	
+	["af_mincer_meat"] = 1,	
+	["af_dummy_battery"] = 1,	
+	["af_electra_sparkler"] = 1,	
+	["af_ring"] = 2,	
+	["af_electra_moonlight"] = 2,	
+	["af_sponge"] = 2,	
+	["af_electra_flash"] = 3,	
+	["af_ice"] = 3,	
+	["af_blood"] = 1,	
+	["af_cristall_flower"] = 2,	
+	["af_bracelet"] = 2,	
+	["af_baloon"] = 3,	
+	["af_soul"] = 1,	
+	["af_fuzz_kolobok"] = 2,	
+	["af_eye"] = 2,	
+	["af_glass"] = 3,	
+	["af_dummy_dummy"] = 2,	
+	["af_black_spray"] = 3,	
+	["af_compass"] = 3,	
+	["af_oasis_heart"] = 3,	
+	["af_monolith"] = 3,	
+	["af_fire_loop"] = 3,		
+}
+
+function actor_on_first_update()	
+	actor_status.add_indicator("Artefact"       	   	, { index= 16 	,typ= "state"	,functor= {"grok_artefacts_bip","get_artefact",true}	                    ,icon= "ui\\alticons\\ArtefactIndicator.dds"           ,background= "ui\\alticons\\bg1.dds"	,anim_icon= true	,anim_bk= false  })
+end
+
+local af_detection_dist = 500
+local delay = 921
+local trigger = 0
+function actor_on_update()
+	local obj_det = db.actor:active_detector()
+	
+	enabled = get_config("enabled")
+
+	if not enabled then return end
+	
+    tg = time_global()
+    
+    if trigger == 0 then
+        grok_delay = tg + delay
+        trigger = 1
+    end
+    
+    if (trigger == 1 and tg > grok_delay) then
+        trigger = 0
+		available_det_tier = 0
+
+-- Detector works passively at half the distance
+		local det = db.actor:active_detector()
+		
+		if not det then
+			det = db.actor:item_in_slot(9)
+		end
+		
+		if det then
+			local sec = det:section()
+			if sec and detectors[sec] then
+				available_det_tier = detectors[sec]
+			end
+		end
+
+-- Disabled, if enabled then detectors work from backpack, but this method is heavy with large inventories
+--		db.actor:iterate_inventory(function(npc, item)
+--			local sec = item:section()
+--			if sec and detectors[sec] then
+--				if available_det_tier and available_det_tier < detectors[sec] then
+--					available_det_tier = detectors[sec]
+--					printf(available_det_tier)
+--				end
+--			end
+--		end, actor)
+		
+		local play_sound = false
+--		local af_detected = false
+		
+		if zz_item_artefact.dist_t then
+			for af,dist in pairs(zz_item_artefact.dist_t) do		
+				if dist and dist >= 0.1 then
+					if af and af_detection_dist and available_det_tier and af_by_tiers[af] then				
+						if (af_by_tiers[af] <= available_det_tier) and (dist < af_detection_dist) then
+							af_detected = 1
+							play_sound = false
+						end
+					end
+				end
+			end
+		end
+		
+		if play_sound then
+			snd = sound_object('detectors\\art_beep1')
+			snd:play(db.actor, 0, sound_object.s2d)
+		end
+	end
+end
+
+function get_artefact(visual)
+	if af_detected == 1 then 
+		artefact = 1
+	else
+		artefact = 0
+	end
+	
+	if (not visual) then
+		return artefact
+	end
+	
+	-- for indicator
+	if artefact and artefact >= 1 then
+		artefact = 0
+		af_detected = 0
+		return 1
+	end
+	
+	af_detected = 0
+	return 0
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_update",actor_on_update)
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
+end

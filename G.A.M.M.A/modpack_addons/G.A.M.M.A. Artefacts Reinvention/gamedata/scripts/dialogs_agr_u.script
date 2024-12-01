@@ -1,0 +1,188 @@
+
+-----------------------------------------------------------------------------------
+-- Bandit squad leader in Agroprom underground
+-----------------------------------------------------------------------------------
+
+-- Task functors
+local agr_u_boss_name
+task_functor.agr_u_bandit_boss_task_1_functor = function(task_id,field,p,tsk)
+	if (field == "target") then
+		if (tsk.stage ~= 2) then
+			return tsk.task_giver_id
+		end
+		local smrt = SIMBOARD.smarts_by_names["val_smart_terrain_7_4"]
+		return smrt and smrt.id
+
+	elseif (field == "descr") then
+		return tsk.stage and game.translate_string("agr_u_bandit_boss_task_1_desc_" .. tsk.stage) or ""
+	end
+end
+
+-- Task Status functors
+task_status_functor.agr_u_bandit_boss_task_1_stages = function(tsk,task_id)
+	if not (db.actor) then
+		return
+	end
+	
+	tsk.stage = 0 -- Actor accepted task
+	
+	if has_alife_info("agr_u_bandit_boss_escort") then
+		
+	
+	elseif has_alife_info("agr_u_bandit_boss_got_docs") then
+		local smrt = SIMBOARD.smarts_by_names["val_smart_terrain_7_4"]
+		if smrt and (db.actor:position():distance_to_sqr(smrt.position) <= smrt.arrive_dist^2) then
+			tsk.stage = 3 -- Actor reached smart
+		else
+			tsk.stage = 2 -- Actor gave the docs
+		end
+	elseif actor_has_agr_u_docs() then
+		tsk.stage = 1 -- Actor got the docs
+	end
+end
+
+-- Info portion -- db.actor:give_info_portion("") -- db.actor:disable_info_portion("") -- has_alife_info("")
+function give_info_agr_u_bandit_boss_start(a,b)
+	return db.actor:give_info_portion("agr_u_bandit_boss_start")
+end
+function give_info_agr_u_bandit_boss_ask(a,b)
+	return db.actor:give_info_portion("agr_u_bandit_boss_ask")
+end
+function give_info_agr_u_bandit_boss_got_docs(a,b)
+	return db.actor:give_info_portion("agr_u_bandit_boss_got_docs")
+end
+function give_info_agr_u_bandit_boss_task_completed_alt(a,b)
+	return db.actor:give_info_portion("agr_u_bandit_boss_task_completed_alt")
+end
+function give_info_agr_u_bandit_boss_task_completed(a,b)
+	return db.actor:give_info_portion("agr_u_bandit_boss_task_completed")
+end
+function give_info_agr_u_bandit_boss_refused(a,b)
+	return db.actor:give_info_portion("agr_u_bandit_boss_refused")
+end
+
+-- documents
+local docs_id
+function actor_has_agr_u_docs(a,b)
+	return db.actor:object("main_story_1_quest_case") and true or false
+end
+function actor_dont_has_agr_u_docs(a,b)
+	return (not actor_has_agr_u_docs(a,b))
+end
+function item_exist_agr_u_docs(a,b)
+	local se_obj = get_story_se_item("main_story_1_quest_case")
+	if se_obj then
+		return simulation_objects.is_on_the_same_level(alife():actor(), se_obj)
+	end
+	return false
+end
+function take_agr_u_docs(a,b)
+	local npc = dialogs.who_is_npc(a, b)
+	itms_manager.relocate_item_from_actor(db.actor, npc, "main_story_1_quest_case", 1)
+end
+function release_agr_u_docs(a,b)
+	local se_obj = get_story_se_item("main_story_1_quest_case")
+	if se_obj then
+		alife_release(se_obj)
+	end
+end
+
+-- squads
+function spawn_bloodsucker_agr_u(a,b)
+	xr_effects.create_squad(nil,nil,{"agr_u_bloodsucker_1_squad","agr_u_bloodsucker_2"})
+end
+function set_speaker_as_companion(a,b)
+	local npc = dialogs.who_is_npc(a,b)
+	local squad = get_object_squad(npc)
+	axr_companions.add_special_squad(squad)
+end
+function dimiss_agr_u_bandit_boss(a,b)
+	local squad = get_story_squad("agr_u_bandits_boss_squad")
+	axr_companions.dismiss_special_squad(squad)
+end
+function remove_agr_u_bandit_boss(a,b)
+	local squad = get_story_squad("agr_u_bandits_boss_squad")
+	axr_companions.release_special_squad(squad)
+end
+function remove_agr_u_bandit_squad(a,b)
+	xr_effects.remove_squad(a,b,{"agr_u_bandits_squad"})
+end
+function agr_u_bandit_boss_arrived_to_smart(a,b)
+	local tm = task_manager.get_task_manager()
+	local tsk = tm.task_info["agr_u_bandit_boss_task_1"]
+	return tsk and (tsk.stage == 3) or false
+end
+function shoot_the_bitch(a,b)
+	for i=1, #db.OnlineStalkers do
+		local st = db.storage[db.OnlineStalkers[i]]
+		local npc = st and st.object
+		if npc and (npc:id() ~= 0) and IsStalker(npc,npc:clsid()) and npc:alive() and (npc:character_community() == "bandit") then
+			npc:force_set_goodwill(-5000, db.actor)
+		end
+	end
+	xr_effects.fail_task_dec_goodwill(a,b,{"500","bandit"})
+end
+
+-- others
+function give_agr_u_bandit_boss_task_1(a,b)
+	local npc = dialogs.who_is_npc(a, b)
+	local tm = task_manager.get_task_manager()
+	local tsk = tm.task_info["agr_u_bandit_boss_task_1"]
+	if npc and (not tsk) then
+		tm:give_task("agr_u_bandit_boss_task_1", npc and npc:id())
+		if (not npc:object("af_blood_af")) then
+			alife_create_item("af_blood_af", npc) -- spawn on Reefer once you accept the quest
+		end
+	end
+end
+function send_news_agr_u_bandit_boss_on_going(a,b)
+	local npc_1 = dialogs.who_is_npc(a, b)
+	if (not npc_1) then return end
+	
+	local id_main = npc_1:id()
+	local npc_2
+	for i=1, #db.OnlineStalkers do
+		if (db.OnlineStalkers[i] ~= id_main) then
+			local st = db.storage[db.OnlineStalkers[i]]
+			local npc = st and st.object
+			if npc and IsStalker(npc,npc:clsid()) and npc:alive() and (npc:character_community() == "bandit") then
+				npc_2 = npc
+				break
+			end
+		end
+	end
+	if (not npc_2) then return end
+	
+	local msg = game.translate_string("st_agr_u_bandit_boss_news_on_going")
+	local name = npc_1:character_name()
+	local comm = dynamic_news_helper.GetCommunityDescription(npc_1,6)
+	local se = strformat("%s, %s",name,comm)
+	dynamic_news_helper.send_tip(msg, se, 5, 10, npc_1:character_icon(), nil, "npc")
+	
+	msg = game.translate_string("st_agr_u_bandit_boss_news_on_going_reply")
+	name = npc_2:character_name()
+	comm = dynamic_news_helper.GetCommunityDescription(npc_2,6)
+	se = strformat("%s, %s",name,comm)
+	dynamic_news_helper.send_tip(msg, se, 9, 10, npc_2:character_icon(), "pda_beep_1", "npc")
+end
+function item_showcase_agr_u_docs(a,b)
+	news_manager.relocate_item(db.actor, "docs", "main_story_1_quest_case", 1)
+end
+
+-- Rewards
+function give_af_blood_af_iam(a,b)
+	local npc = dialogs.who_is_npc(a, b)
+	itms_manager.relocate_item_to_actor(db.actor, npc, "af_blood_af", 1)
+end
+function give_money_reward(a,b)
+	xr_effects.reward_random_money(a,b,{"8000","10000"})
+end
+function increase_goodwill_bandit_50(a,b)
+	xr_effects.complete_task_inc_goodwill(a,b,{"50","bandit"})
+end
+function set_friendship_agr_u_bandit_boss(a,b)
+	local npc = dialogs.who_is_npc(a,b)
+	if npc then
+		npc:set_relation(game_object.friend,db.actor)
+	end
+end

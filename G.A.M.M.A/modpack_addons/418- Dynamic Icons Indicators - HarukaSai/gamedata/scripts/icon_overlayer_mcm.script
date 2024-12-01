@@ -1,0 +1,649 @@
+local options = {
+    debug = false
+}
+
+local mcm_id = "dii"
+
+local clr_list = {
+	["def"]         = GetARGB(255, 255, 255, 255),
+	["red"]         = GetARGB(255, 255, 50, 50),
+	["green"]       = GetARGB(255, 100, 255, 150),
+	["blue"]        = GetARGB(255, 100, 150, 255),
+	["black"]       = GetARGB(255, 0, 0, 0),
+	
+	["drag"]        = GetARGB(150, 255, 255, 255),
+	["hide"]        = GetARGB(70, 255, 255, 255),
+	["shadow"]      = GetARGB(200, 20, 20, 20),
+	["hide_shadow"] = GetARGB(70, 20, 20, 20),
+	
+	["p1"]          = GetARGB(255, 170, 170, 170),
+	["n1"]          = GetARGB(255, 200, 50, 50),
+	["p2"]          = GetARGB(255, 51, 255, 102),
+	["n2"]          = GetARGB(255, 204, 0, 51),
+	
+	["info_def"]    = GetARGB(200, 255, 255, 255),
+	["info_p"]      = GetARGB(255, 56, 209, 115),
+	["info_n"]      = GetARGB(255, 238, 28, 36),
+	["info_p_txt"]  = GetARGB(200, 100, 255, 100),
+	["info_n_txt"]  = GetARGB(200, 255, 100, 100),
+}
+
+anchors = {
+    x = {
+        right = function(axis, margin, w)
+            return (axis.w - w) - margin
+        end,
+        left = function(axis, margin, w)
+            return margin
+        end,
+        center = function(axis, margin, w)
+            return ((axis.w * 0.5) - (w  * 0.5)) + margin
+        end,
+    },
+    y = {
+        top = function(axis, margin, h)
+            return margin
+        end,
+        bottom = function(axis, margin, h)
+            return (axis.h - h) - margin
+        end,
+        center = function(axis, margin, h)
+            return ((axis.h * 0.5) - (h  * 0.5)) - margin
+        end,
+    }
+}
+
+local string_format = string.format
+local string_find   = string.find
+
+function sort_by_index(t,a,b)
+	return t[a].index < t[b].index
+end
+
+function get_config(path, config, def)
+    if not ui_mcm then
+        return def
+    end
+
+    return ui_mcm.get(string_format(path, config))
+end
+
+function print_table(text, node, ...)
+    if (options.debug) then
+        text = string_format(text, ...)
+        printf("Icon Overlayer: | %s | \n" .. utils_data.print_table(node, text, true), time_global(), ...)
+    end
+end
+
+function print_dbg(text , ...)
+	if (options.debug) then
+		printf("Icon Overlayer: | %s | " .. text, time_global(), ...)
+	end
+end
+
+properties = {}
+layers = {}
+groups = {}
+
+local op = { id = mcm_id, gr = {} }
+main_settings_path = string_format("%s/%s_main_settings", mcm_id, mcm_id) .. "/%s"
+
+op.gr[1] = { id = mcm_id .. "_main_settings", sh = true, gr = {
+    { id = "title", type= "slide", link= "ui_dii_mcm_banner", text= "", --[[size= {512,50},]]spacing = 20 },
+    { id = "scale", hint = string_format("%s_scale", mcm_id), type = "track", val = 2, step = 0.1, def = 1.1, max = 2, min = 0.5}
+}}
+
+function parse_properties()
+    local property_kinds_ini = ini_file_ex("custom_icon_layers\\properties\\kinds\\base_kinds.ltx")
+    local properties_ini = ini_file_ex("custom_icon_layers\\properties\\properties\\base_properties.ltx")
+    local kinds = property_kinds_ini:get_sections()
+
+    for i = 1, #kinds do
+        repeat
+            local kind = kinds[i]
+            if string_find(kind, "_base") then
+                do break end
+            end
+            properties[kind] = {}
+            local functor = property_kinds_ini:r_string_ex(kind, "functor")
+            if functor then
+                properties[kind].functor = str_explode(functor, ",")
+                properties[kind].props = {}
+                properties[kind].default_settings = {
+                    ["show"] = property_kinds_ini:r_bool_ex(kind, "show") or true,
+                    ["anchor_x"] = property_kinds_ini:r_string_ex(kind, "anchor_x") or "right",
+                    ["anchor_y"] = property_kinds_ini:r_string_ex(kind, "anchor_y") or "bottom",
+                    ["offset_x"] = property_kinds_ini:r_float_ex(kind, "offset_x") or 0,
+                    ["offset_y"] = property_kinds_ini:r_float_ex(kind, "offset_y") or 0,
+                    ["spacing_x"] = property_kinds_ini:r_float_ex(kind, "spacing_x") or 4,
+                    ["spacing_y"] = property_kinds_ini:r_float_ex(kind, "spacing_y") or 4,
+                    ["limit"] = property_kinds_ini:r_bool_ex(kind, "limit") or false,
+                    ["amount"] = property_kinds_ini:r_float_ex(kind, "amount") or 3
+                }
+            else
+                print_dbg("! No functor defined for the kind [%s]", kind)
+            end
+        until true
+    end
+
+    local properties_secs = properties_ini:get_sections()
+
+    -- if we don't specify index for the property, we instead add it in the end
+    local add_last = {}
+
+    for i = 1, #properties_secs do
+        repeat
+            local property = properties_secs[i]
+            if string_find(property, "_base") then
+                do break end -- continue
+            end
+            
+            local prop = properties_ini:r_string_ex(property, "property")
+
+            if (not prop) then
+                print_dbg("! No property defined for [%s]", property)
+                do break end -- continue
+            end
+
+            local kind = properties_ini:r_string_ex(property, "kind")
+            if (not kind) or (not properties[kind]) then
+                print_dbg("! Invalid kind defined for [%s]", property)
+                do break end -- continue
+            end
+
+            local unify = properties_ini:r_string_ex(property, "unify")
+            local value_functor = properties_ini:r_string_ex(property, "value_functor")
+
+            local index = properties_ini:r_float_ex(property, "index")
+            
+            local data = {
+                ["index"] = index,
+                ["icon"] = properties_ini:r_string_ex(property, "icon"),
+                ["section"] = properties_ini:r_string_ex(property, "section"),
+                ["invert"] = properties_ini:r_bool_ex(property, "invert"),
+                ["unify"] = unify and str_explode(unify, ","),
+                ["value_functor"] = value_functor and str_explode(value_functor, ",")
+            }
+
+            if index then
+                properties[kind].props[prop] = data
+            else
+                if not add_last[kind] then
+                    add_last[kind] = {}
+                end
+                
+                add_last[kind][prop] = {["data"] = data, ["index"] = size_table(add_last[kind]) + 1}
+            end
+        until true
+    end
+
+    -- add indexless properties
+    for kind, props in pairs(add_last) do
+        for prop, gr in spairs(props, sort_by_index) do
+            gr.data.index = size_table(properties[kind].props) + 1
+            properties[kind].props[prop] = gr.data
+        end
+    end
+
+    -- build options
+    op.gr[2] = { id = mcm_id .. "_properties", sh = true, gr = {
+        { id = "title", type= "slide", link= "ui_dii_mcm_banner", text= "", --[[size= {512,50},]]spacing = 20 }
+    }}
+    
+    for kind, props in spairs(properties) do
+        local defaults = properties[kind].default_settings
+        table.insert(op.gr[2].gr, { id = "desc" .. kind, type = "desc", text = string_format("ui_mcm_desc_%s_prop_%s", mcm_id, kind)})
+        table.insert(op.gr[2].gr, { id = "show_" .. kind, hint = string_format("%s_show", mcm_id), val = 1, type = "check", def = true })
+        table.insert(op.gr[2].gr, { id = "anchor_x_" .. kind, hint = string_format("%s_anchor_x", mcm_id),  type = "list", val = 0, def = defaults.anchor_x,
+            content = { 
+                {"right", string_format("%s_right", mcm_id)},
+                {"left", string_format("%s_left", mcm_id)},
+            }
+        })
+        table.insert(op.gr[2].gr, { id = "anchor_y_" .. kind, hint = string_format("%s_anchor_y", mcm_id), type = "list", val = 0, def = defaults.anchor_y, 
+            content = { 
+                {"top", string_format("%s_top", mcm_id)},
+                {"bottom", string_format("%s_bottom", mcm_id)},
+            }
+        })
+        table.insert(op.gr[2].gr, { id = "offset_x_" .. kind, hint = string_format("%s_offset_x", mcm_id), type = "track", val = 2, step = 1,def = defaults.offset_x, max = 25, min = 0})
+        table.insert(op.gr[2].gr, { id = "offset_y_" .. kind, hint = string_format("%s_offset_y", mcm_id), type = "track", val = 2, step = 1, def = defaults.offset_y, max = 25, min = 0})
+        table.insert(op.gr[2].gr, { id = "spacing_x_" .. kind, hint = string_format("%s_spacing_x", mcm_id), type = "track", val = 2, step = 1, def = defaults.spacing_x, max = 10, min = 0})
+        table.insert(op.gr[2].gr, { id = "spacing_y_" .. kind, hint = string_format("%s_spacing_y", mcm_id), type = "track", val = 2, step = 1,def = defaults.spacing_y, max = 10, min = 0})
+        table.insert(op.gr[2].gr, { id = "limit_" .. kind, hint = string_format("%s_limit", mcm_id), val = 1, type = "check", def = defaults.limit })
+        table.insert(op.gr[2].gr, { id = "amount_" .. kind, hint = string_format("%s_amount", mcm_id), type = "track", val = 2, step = 1, def = defaults.amount, max = size_table(props.props), min = 0 })
+        table.insert(op.gr[2].gr, { id = "divider", type = "line" })
+    end
+    op.gr[2].gr[#op.gr[2].gr] = nil
+end
+
+parse_properties()
+
+property_path = string_format("%s/%s", mcm_id, op.gr[2].id) .. "/%s_"
+
+function get_settings_for_prop(kind)
+    local path = property_path .. kind
+    local settings = properties[kind].default_settings
+    if not ui_mcm then return settings end
+    
+    for k, v in pairs(settings) do
+        settings[k] = get_config(path, k)
+    end
+
+    print_table("Got settings for kind %s", settings, kind)
+
+    -- for some weird reason these options can get saved as false
+    if (not anchors.x[settings.anchor_x]) or (not anchors.y[settings.anchor_y]) then
+        settings.anchor_x = "right"
+        settings.anchor_y = "bottom"
+        print_dbg("Options got corrupted, falling back to defaults")
+    end
+
+    return settings
+end
+
+function parse_groups()
+    local groups_ini = ini_file_ex("custom_icon_layers\\groups\\base_groups.ltx")
+    local layers_ini = ini_file_ex("custom_icon_layers\\layers\\base_layers.ltx")
+
+    local group_secs = groups_ini:get_sections()
+
+    for i = 1, #group_secs do
+        repeat
+            local group = group_secs[i]
+            if string_find(group, "_base") then
+                do break end
+            end
+
+            local items = utils_data.collect_section(groups_ini.ini, group)
+            for i = 1 , #items do
+                local item = items[i]
+                if not groups[item] then
+                    groups[item] = {}
+                end
+                groups[item][#groups[item] + 1] = group
+            end
+        until true
+    end
+
+    local layer_secs = layers_ini:get_sections()
+
+    if is_empty(layer_secs) then return end
+
+    op.gr[3] = { id = mcm_id .. "_custom_layers", gr = {} }
+    local tabs = {}
+
+    for i = 1, #layer_secs do
+        repeat
+            local layer = layer_secs[i]
+            if string_find(layer, "_base") then
+                do break end -- continue
+            end
+
+            local group = layers_ini:r_string_ex(layer, "group")
+            if not group then
+                print_dbg("! No group specified for the layer: [%s]", layer)
+                do break end -- continue
+            end
+
+            local settings_group = layers_ini:r_string_ex(layer, "settings_group") or group
+            -- create single item groups automatically
+            if not groups_ini:section_exist(group) then
+                local item = group
+                if not groups[item] then
+                    groups[item] = {}
+                end
+                group = string_format("%s_%s", group, layer)
+                print_dbg("- Created group %s", group)
+                groups[item][#groups[item] + 1] = group
+            end
+
+            if not layers[group] then
+                layers[group] = {}
+            end
+
+            local anchor_str = layers_ini:r_string_ex(layer, "anchor")
+            anchor_str = anchor_str and str_explode(anchor_str, "_") or {}
+            local anchor = {
+                x = anchors.x[anchor_str[1]] and anchor_str[1] or "center",
+                y = anchor_str[2] or (anchors.y[anchor_str[1]] and anchor_str[1]) or "center",
+            }
+
+            local str = str_explode(settings_group, "/")
+            local tab = str[2] and mcm_id .. "_custom_layers_" .. str[1] or mcm_id .. "_custom_layers_main"
+
+            if not tabs[tab] then
+                table.insert(op.gr[3].gr, { id =  tab, sh = true, gr = {
+                    { id = "title", type= "slide", link= "ui_dii_mcm_banner", text= "", --[[size= {512,50},]]spacing = 20 }
+                }})
+                tabs[tab] = {idx = #op.gr[3].gr, settings = {}}
+            end
+
+            local setting = str[2] or str[1]
+
+            layers[group][layer] = {
+                ["texture"]  = layers_ini:r_string_ex(layer, "texture") or "ui_buffdebuff_icon_scope",
+                ["anchor"]   = anchor,
+                ["margin_horz"] = layers_ini:r_float_ex(layer, "margin_horz") or 1,
+                ["margin_vert"] = layers_ini:r_float_ex(layer, "margin_vert") or 1,
+                ["settings_path"] = string_format("%s/%s/%s", mcm_id, op.gr[3].id, tab) .. "/%s_" .. setting
+            }
+
+            print_table("- Created layer: %s", layers[group][layer], layer)
+
+            if tabs[tab].settings[setting] then
+                do break end
+            end
+
+            tabs[tab].settings[setting] = true
+
+            table.insert(op.gr[3].gr[tabs[tab].idx].gr, { id = "show_" .. setting, hint = string_format("%s_%s_show", mcm_id, setting), val = 1, type = "check", def = true })
+        until true
+    end
+end
+
+parse_groups()
+
+function on_mcm_load()
+    return op
+end
+
+local rect_cache = {}
+local item_props_cache = {}
+
+function get_texture_rect(texture, cell, xml)
+    if rect_cache[texture] then
+        return rect_cache[texture]
+    end
+    local rect_layer = xml:InitStatic(cell.path .. ":" .. cell.cx .. ":pic", cell.ico)
+    rect_layer:InitTexture(texture)
+    rect_cache[texture] = rect_layer:GetTextureRect()
+    return rect_cache[texture]
+end
+
+function get_stats_value(sec, gr, stat)
+	local sect = gr.section and SYS_GetParam(0, sec, gr.section) or sec
+	local value = gr.value_functor and get_stats_func_value(sec, unpack(gr.value_functor)) or SYS_GetParam(2, sect, stat, 0)
+	return value or 0
+end
+
+function get_stats_func_value(sec, file, func, ...)
+    if file and func and _G[file] and _G[file][func] then
+        return _G[file][func](sec, ...)
+    end
+end
+
+function collect_properties(sec, props)
+    if item_props_cache[sec] then
+        return item_props_cache[sec]
+    end
+
+    local result = {}
+    local unify = {}
+    for stat, gr in spairs(props, sort_by_index) do
+        -- collect all the stats that are meant to combine other stats
+        if gr.unify then
+            unify[#unify + 1] = {
+                ["stat"] = stat, 
+                ["stats"] = gr.unify,
+            }
+        else
+            local val = get_stats_value(sec, gr, stat)
+            val = gr.invert and -val or val
+            if val > 0 then
+                result[#result + 1] = stat
+            end
+        end
+    end
+
+    for i = 1, #unify do
+        local temp = {}
+        copy_table(temp, result)
+        temp = invert_table(temp)
+
+        local collected = {}
+        local stats = unify[i].stats
+        for j = 1, #stats do
+            if temp[stats[j]] then
+                collected[#collected + 1] = temp[stats[j]]
+            end
+        end
+
+        if #stats == #collected then
+            for j = 1, #collected do
+                table.remove(result, (collected[j] - (j - 1)))
+            end
+            result[#result + 1] = unify[i].stat
+        end
+    end
+
+    for i = 1, #result do
+        result[i] = props[result[i]].icon
+    end
+
+    item_props_cache[sec] = result
+
+    return item_props_cache[sec]
+end
+
+function get_prop_layers(sec, cell, xml, t, settings)
+    local axis = utils_xml.get_item_axis(sec)
+    local prop_layers = {}
+    local row_width = 0
+    local row_index = 0
+    local icon_index = 0
+    local scale = get_config(main_settings_path, "scale", 1.1)
+    for i = 1, (settings.limit and clamp(#t, 0, settings.amount) or #t) do
+        local icon = t[i]
+        local rect = get_texture_rect(icon, cell, xml)
+        icon_index = icon_index + 1
+        local h = (rect.y2 - rect.y1) * scale
+        local w = (rect.x2 - rect.x1) * scale
+        local x_offset = icon_index > 1 and (settings.spacing_x) or 0
+        row_width = row_width + (w + x_offset)
+        if row_width > axis.w and i > 1 then
+            row_index = row_index + 1
+            row_width = w
+            icon_index = 1
+        end
+        local y_offset = row_index * (settings.spacing_y)
+        print_table("- Getting settings layer: %s", settings, sec)
+        local x = anchors.x[settings.anchor_x](axis, (row_width - w), w)
+        local y = anchors.y[settings.anchor_y](axis, y_offset + (h * row_index), h)
+        prop_layers[i] = {
+            ["texture"] = icon,
+            ["x"] = x - settings.offset_x,
+            ["y"] = y - settings.offset_y,
+            ["w"] = w,
+            ["h"] = h
+        }
+    end
+    return prop_layers
+end
+
+layer_functors = {}
+
+layer_functors.custom_layers = function(sec, cell, xml)
+    local layer_info = groups[sec]
+    if not layer_info then return {} end
+    local axis = utils_xml.get_item_axis(sec)
+    local custom_layers = {}
+    local scale = get_config(main_settings_path, "scale", 1.1)
+    
+    for i = 1, #layer_info do
+        local group = layers[layer_info[i]]
+
+        for layer, data in pairs(group) do
+            repeat
+                if not get_config(data.settings_path, "show", true) then
+                    do break end -- continue
+                end
+
+                local rect = get_texture_rect(data.texture, cell, xml)
+                local h = (rect.y2 - rect.y1) * scale
+                local w = (rect.x2 - rect.x1) * scale
+
+                local layer = {
+                    ["x"] = anchors.x[data.anchor.x](axis, data.margin_horz, w),
+                    ["y"] = anchors.y[data.anchor.y](axis, data.margin_vert, h),
+                    ["h"] = h,
+                    ["w"] = w,
+                    ["texture"] = data.texture
+                }
+
+                custom_layers[#custom_layers + 1] = layer
+            until true
+        end
+    end
+
+    return custom_layers
+end
+    
+layer_functors.prop_layers = function(sec, cell, xml)
+    local props = nil
+    local kind = nil
+
+    for k, gr in pairs(properties) do
+        if get_stats_func_value(sec, unpack(gr.functor)) then
+            props = gr.props
+            kind = k
+            break
+        end
+    end
+
+    if not props then return {} end
+    local settings = get_settings_for_prop(kind)
+    if not settings.show then return {} end
+    local item_props = collect_properties(sec, props)
+    if is_empty(item_props) then return {} end
+    local prop_layers = get_prop_layers(sec, cell, xml, item_props, settings)
+
+    return prop_layers
+end
+
+function add_texture_layer(self, ele, base, tbl)
+    local ratio = utils_xml.screen_ratio()
+    local grid_size = self.grid_size
+    local x = tbl.x or 0
+    local y = tbl.y or 0
+    local w = tbl.w
+    local h = tbl.h
+    local scale = (grid_size / 50)
+    local scale_pos = scale
+
+    local rot =  ele:GetHeading() > 0
+    local x_s = x * ratio * scale_pos
+    local y_s = y * scale_pos
+    local w_s = w * ratio * scale
+    local h_s = h * scale
+    local w_off = (w_s/2)
+    local h_off = (h_s/2)
+    
+    if rot then
+        -- despite rotation, movement for x and y stays normal! 
+        -- Move start pos to match the one for rotated base icon
+        local w_b, h_b = base:GetWidth(), base:GetHeight()
+        local x_st = (w_b/2) - (h_b/2)
+        local y_st = h_b + x_st
+        
+        -- On 90 rotation, x and y are inverted, y axis goes negative simulate normal x movement
+        x_s = x_st + (y * ratio * scale_pos)
+        y_s = y_st - (x * scale_pos) 
+        w_s = w * scale
+        h_s = h * scale
+        w_off = (h_s - h_s * ratio/2)
+        h_off = -w_s/2
+    end
+    
+    ele:InitTexture( tbl.texture )
+    ele:SetStretchTexture(true)
+    ele:SetWndPos(vector2():set( x_s + w_off , y_s + h_off ))
+    ele:SetWndSize(vector2():set( w_s , h_s ))
+    ele:Show(true)
+end
+
+function get_all_layers(sec, cell, xml)
+    local prop_layers = {}
+
+    for name, functor in pairs(layer_functors) do
+        local layers = functor(sec, cell, xml)
+        if not is_empty(layers) then
+            for i = 1, #layers do
+                prop_layers[#prop_layers + 1] = layers[i]
+            end
+        end
+    end
+
+    return prop_layers
+end
+
+_Add_Layers = utils_ui.UICellItem.Add_Layers
+
+utils_ui.UICellItem.Add_Layers = function(self, xml, obj, sec, clsid)
+    if self.property_layer then
+        for i = 1, #self.property_layer do
+            self.property_layer[i]:Show(false)
+        end
+    end
+
+    xml = xml or self:GetXML()
+    local prop_layers = get_all_layers(sec, self, xml)
+
+    if not is_empty(prop_layers) then
+        if not self.property_layer then
+            self.property_layer = {}
+        end
+
+        for i = 1, #prop_layers do
+            if (not self.property_layer[i]) then
+
+                self.property_layer[i] = xml:InitStatic(self.path .. ":" .. self.cx .. ":pic", self.ico)
+            end
+
+            add_texture_layer(self, self.property_layer[i], self.ico, prop_layers[i])
+        end
+    end
+
+    _Add_Layers(self, xml, obj, sec, clsid)
+end
+
+_Colorize = utils_ui.UICellItem.Colorize
+
+utils_ui.UICellItem.Colorize = function(self, clr_id)
+    _Colorize(self, clr_id)
+
+    local clr = clr_list[clr_id]
+    if self.property_layer then
+		for i=1,#self.property_layer do
+			self.property_layer[i]:SetTextureColor(clr)
+		end
+	end
+end
+
+-- Functors
+
+local upgr_props = {}
+
+function get_upgrade_val(sec, prop)
+    if upgr_props[prop] and upgr_props[prop][sec] then
+        return 1
+    end
+    upgr_props[prop] = {}
+    local tool = utils_item.get_upgrade_prop_tool(prop)
+    for i = 1, 3 do
+        upgr_props[prop][tool:gsub("%^d", i)] = true
+    end
+    return upgr_props[prop][sec] and 1 or 0
+end
+
+function is_artefact(sec)
+    return IsItem("artefact", sec) and (SYS_GetParam(0, sec, "kind", "na") ~= "i_attach") -- attachments have the dumb upgrade icon
+end
+
+function is_consumable(sec)
+    return IsItem("consumable", sec) and ((IsItem("meal", sec) or 0) <= 1) -- cooked meals have their layers by default
+end
+
+function is_upgrade_kit(sec)
+    return (SYS_GetParam(0, sec, "kind", "na") == "i_upgrade")
+end

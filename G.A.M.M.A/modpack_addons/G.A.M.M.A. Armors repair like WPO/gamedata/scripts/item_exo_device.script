@@ -85,11 +85,19 @@ end
 -- helpers
 -- check if obj is exo outfit
 function is_exo(obj)
+	exo = false
     local section = obj and obj:section() or false
     if section then
-        return SYS_GetParam(0, section, "repair_type") == "outfit_exo"
+		if SYS_GetParam(0, section, "repair_type") == "outfit_exo" then
+			exo = true
+		end
+		
+		if string.find(section, "proto") then
+			exo = true
+		end
     end
-    return false
+
+    return exo
 end
 
 -- check if actor is wearing exo
@@ -289,13 +297,13 @@ end
 
 
 -- player slowing management
-local slow_coef = 0.1
+local slow_coef = 0.05
 local is_player_slowed = false
 local function slow_player()
     if not is_player_slowed then
         print_dbg("slowing player")
         is_player_slowed = true
-        speed.add_speed("exo_speed", slow_coef, false, true)
+        speed.add_speed("exo_speed_998585", slow_coef, false, true)
 	end
 end
 
@@ -303,7 +311,7 @@ local function reset_speed()
     if is_player_slowed then
         print_dbg("restoring speed")
         is_player_slowed = false
-        speed.add_speed("exo_speed", 1, false, true)
+        speed.add_speed("exo_speed_998585", 1, false, true)
     end
 end
 
@@ -316,13 +324,12 @@ function actor_on_update()
     -- update power
     if is_wearing_exo() then
         manage_drain()
+		if exo_charged() then reset_speed() else slow_player() end
     end
 
     -- update speed
 	if (not is_wearing_exo()) then
         reset_speed()
-	else
-		if exo_charged() then reset_speed() else slow_player() end
 	end
 end
 
@@ -333,7 +340,9 @@ function exo_charged()
         local id = exosuit:id()
         local data = get_data(id)
         if not data then data = init_data(id) end
-        return data.power > 0
+		if data.power > 1 then
+			return true	
+		end
     end
     return false
 end

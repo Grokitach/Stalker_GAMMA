@@ -1,0 +1,801 @@
+
+--[[
+Icon Override
+11DEC2021
+This work is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License
+Author: RavenAscendant
+Provide a location to specifiy alternitive item icons that should be less prone to conflicts
+
+covers icons(icons_texture, inv_grid_x,inv_grid_y,inv_grid_width,inv_grid_height), 
+icon layers (1icon_layer,1icon_layer_scale, 1icon_layer_x, 1icon_layer_y ), 
+and upgrade icons (upgr_icon_path, upgr_icon_width, upgr_icon_height).
+
+This script does not make an MCM menu. It leerages MCM to load early enough to modify the New Game screens.
+--]]
+
+
+local ratio = utils_xml.screen_ratio()
+icon_override = ini_file_ex("icon_override\\icon_override.ltx")
+
+function print_dbg( text , ...)
+	if false then
+		printf( "RAX: | %s |  "..text ,time_global(), ...)
+	end
+end
+local clr_icon_1 = GetARGB(255, 255, 255, 255)
+local clr_icon_2 = GetARGB(70, 255, 255, 255)
+local ico_size, rw, rh, _le = 0.7,1,1,50
+local ico_width
+
+local clr_list = {
+	["def"]         = GetARGB(255, 255, 255, 255),
+	["red"]         = GetARGB(255, 255, 50, 50),
+	["green"]       = GetARGB(255, 100, 255, 150),
+	["blue"]        = GetARGB(255, 100, 150, 255),
+	["black"]       = GetARGB(255, 0, 0, 0),
+	
+	["drag"]        = GetARGB(150, 255, 255, 255),
+	["hide"]        = GetARGB(70, 255, 255, 255),
+	["shadow"]      = GetARGB(200, 20, 20, 20),
+	["hide_shadow"] = GetARGB(70, 20, 20, 20),
+	
+	["p1"]          = GetARGB(255, 170, 170, 170),
+	["n1"]          = GetARGB(255, 200, 50, 50),
+	["p2"]          = GetARGB(255, 51, 255, 102),
+	["n2"]          = GetARGB(255, 204, 0, 51),
+	
+	["info_def"]    = GetARGB(200, 255, 255, 255),
+	["info_p"]      = GetARGB(255, 56, 209, 115),
+	["info_n"]      = GetARGB(255, 238, 28, 36),
+	["info_p_txt"]  = GetARGB(200, 100, 255, 100),
+	["info_n_txt"]  = GetARGB(200, 255, 100, 100),
+}
+
+local clr_list_hl = {
+	["def"]         = GetARGB(25, 255, 255, 255),
+	["green"]       = GetARGB(30, 100, 255, 150),
+	["blue"]        = GetARGB(40, 100, 200, 255),
+}
+
+
+function utils_xml.get_icons_texture(section)
+
+	return section and (icon_override:section_exist(section) and icon_override:r_string_ex(section,"icons_texture") or ini_sys:r_string_ex(section,"icons_texture")) or "ui\\ui_icon_equipment"
+end
+
+
+function utils_xml.get_item_axis(section, grid_size, unpacked)
+
+-- Rule: get item axis out of info from its section
+-- Input: section of the target item (string)
+-- Output: table of item's axis (x1, y1, x2, y2, width, height)
+	grid_size = grid_size or 50
+	--print_dbg("axis %s %s %s %s %s", section, icon_override:section_exist(section) and icon_override:r_float_ex(section,"inv_grid_x") ,icon_override:section_exist(section) and icon_override:r_float_ex(section,"inv_grid_y") ,icon_override:section_exist(section) and icon_override:r_float_ex(section,"inv_grid_width") , icon_override:section_exist(section) and icon_override:r_float_ex(section,"inv_grid_height"))
+	local inv_grid_x = icon_override:section_exist(section) and icon_override:r_float_ex(section,"inv_grid_x") or ini_sys:r_float_ex(section,"inv_grid_x") or 0
+	local inv_grid_y = icon_override:section_exist(section) and icon_override:r_float_ex(section,"inv_grid_y") or ini_sys:r_float_ex(section,"inv_grid_y") or 0
+	local inv_grid_width = icon_override:section_exist(section) and icon_override:r_float_ex(section,"inv_grid_width") or ini_sys:r_float_ex(section,"inv_grid_width") or 0
+	local inv_grid_height = icon_override:section_exist(section) and icon_override:r_float_ex(section,"inv_grid_height") or ini_sys:r_float_ex(section,"inv_grid_height") or 0
+	
+	local x1 = inv_grid_x * grid_size
+	local y1 = inv_grid_y * grid_size
+	local w = inv_grid_width * grid_size
+	local h = inv_grid_height * grid_size
+	local x2 = x1 + w
+	local y2 = y1 + h
+	
+	if unpacked then
+		return x1, y1, x2, y2
+	end
+	return { x1=x1, y1=y1, x2=x2, y2=y2, w=w, h=h }
+end
+
+local upgr_chk = {
+	["weapon"] = {
+		{ x = 1724 , y = 802 , w = 167 , h = 159 }
+	},
+	["outfit"] = {
+		{ x = 716 , y = 824 , w = 198 , h = 129 },
+		{ x = 814 , y = 579 , w = 159 , h = 137 },
+		{ x = 90 , y = 818 , w = 185 , h = 140 }
+	},
+}
+
+function utils_xml.set_upgr_icon(obj, sec, XML_box, XML_temp)
+	ico_width = ico_width or utils_xml.screen_ratio()
+	local upgr_x = icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"upgr_icon_x") or ini_sys:r_float_ex(sec,"upgr_icon_x")
+	local upgr_y = icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"upgr_icon_y") or ini_sys:r_float_ex(sec,"upgr_icon_y")
+	local upgr_w = icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"upgr_icon_width") or ini_sys:r_float_ex(sec,"upgr_icon_width")
+	local upgr_h = icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"upgr_icon_height") or ini_sys:r_float_ex(sec,"upgr_icon_height")
+	if not (upgr_x and upgr_y and upgr_w and upgr_h) then
+		utils_xml.set_icon(sec, nil, XML_temp, XML_box)
+		return
+	end
+	
+	-- Get upgrade dds
+	local overide_path = icon_override:section_exist(sec) and icon_override:r_string_ex(sec,"upgr_icon_path")
+	local upgr_path = ini_sys:r_string_ex(sec,"upgr_icon_path")
+	upgr_path = overide_path or upgr_path or IsWeapon(obj) and "ui\\ui_actor_weapons" or "ui\\ui_actor_armor"
+	
+	-- Decide if it should use normal icon instead
+	local use_ico = false
+	local t = {}
+	if not overide_path then
+		if IsWeapon(obj) then
+			for i=1,#upgr_chk["weapon"] do
+				t = upgr_chk["weapon"][i]
+				if (t.x == upgr_x) and (t.y == upgr_y) and (t.w == upgr_w) and (t.h == upgr_h) then
+					use_ico = true
+					break
+				end
+			end
+		elseif IsOutfit(obj) then
+			for i=1,#upgr_chk["outfit"] do
+				t = upgr_chk["outfit"][i]
+				if (t.x == upgr_x) and (t.y == upgr_y) and (t.w == upgr_w) and (t.h == upgr_h) then
+					use_ico = true
+					break
+				end
+			end
+		end
+	end
+	if use_ico then
+		utils_xml.set_icon(sec, nil, XML_temp, XML_box)
+		return
+	end
+	
+	
+	local ico = {}
+	ico.x1 = upgr_x
+	ico.y1 = upgr_y
+	ico.x2 = upgr_x + upgr_w
+	ico.y2 = upgr_y + upgr_h
+	ico.w = upgr_w
+	ico.h = upgr_h
+	
+	
+	XML_box:InitTexture(upgr_path)
+	XML_box:SetTextureRect(Frect():set(ico.x1, ico.y1, ico.x2, ico.y2))
+	XML_box:SetStretchTexture(true)
+	XML_box:Show(true)
+	
+	local pos = XML_temp:GetWndPos()
+	local _w = XML_temp:GetWidth()
+	local _h = XML_temp:GetHeight()
+	
+	local ratio = ico.w/ico.h
+	local h, w
+	ico.w = ico.w * ico_size * ico_width
+	ico.h = ico.h * ico_size
+	
+	for i=1,2 do
+		local w_t, h_t = 0, 0
+		local resize = false
+		if (ico.w > _w) then -- if icon width is bigger than frame width
+			w_t = ico.w - _w
+			resize = true	
+		end 
+		if (ico.h > _h) then -- if icon height is bigger than frame height
+			h_t = ico.h - _h 
+			resize = true	
+		end 
+		
+		if resize then -- resize is required
+			if (w_t >= h_t) then -- if icon width is the big number (or square), use it as a base for resizing
+				w = _w
+				h = w / ratio
+			elseif (w_t < h_t) then -- if icon width is the big number, use it as a base for resizing
+				h = _h
+				w = h * ratio
+			end
+		else -- no resize
+			w = ico.w
+			h = ico.h
+		end
+	end
+	
+	local offset_x = (_w - w)/2
+	local offset_y = (_h - h)/2
+	XML_box:SetWndSize(vector2():set(w , h))
+	XML_box:SetWndPos(vector2():set(pos.x + offset_x , pos.y + offset_y))
+end
+
+
+
+--utils_ui.get_item_axis = utils_xml.get_item_axis
+local sync_element          = utils_xml.sync_element
+function utils_ui.UICellItem:Set(obj, area)
+	local ratio = utils_xml.screen_ratio()
+	local xml = self:GetXML()
+	local path = self.path
+	local is_obj = (self.showcase == 0)
+	local grid_size = self.grid_size
+	
+	local sec = is_obj and obj:section() or obj
+	local clsid = is_obj and obj:clsid()
+
+	local x = icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"inv_grid_x") or SYS_GetParam(2,sec, "inv_grid_x")
+	local y = icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"inv_grid_y") or SYS_GetParam(2,sec, "inv_grid_y")
+	local w = icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"inv_grid_width") or SYS_GetParam(2,sec, "inv_grid_width")
+	local h = icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"inv_grid_height") or SYS_GetParam(2,sec, "inv_grid_height")
+	
+	if not x or not y or not w or not h then
+		return false
+	end
+	
+	x = x * grid_size
+	y = y * grid_size
+	w = w * grid_size
+	h = h * grid_size
+	
+	self.ID = is_obj and obj:id() or nil
+	self.section = sec
+	self.area = area
+	--self.X = x
+	--self.Y = y
+	self.W = w
+	self.H = h
+
+	-- Trade mode
+	--if self:Check_TradeMode(obj, sec) then
+		--return false
+	--end
+	
+	-- Cell pos
+	if area and (not self.manual) then
+		local area_x = ((area.x * grid_size) - grid_size) * ratio
+		local area_y = (area.y * grid_size) - grid_size
+		local area_xl = self.grid_line * area.x
+		local area_yl = self.grid_line * area.y
+		
+		self.cell:SetWndPos(vector2():set( area_x + area_xl , area_y + area_yl ))
+		self.cell:SetWndSize(vector2():set(w * ratio , h))
+		sync_element(self.hl, self.cell)
+		self:Print(nil, "Set for [%s]  in (%s,%s,%s,%s)", sec, area_x, area_y, w, h)
+		
+	-- Cell pos (free cell)
+	elseif self.st then 
+		local st_x = ((self.st:GetWidth() /2) - ((w * ratio) /2))
+		local st_y = ((self.st:GetHeight() /2) - (h /2))
+		self.cell:SetWndPos(vector2():set( st_x , st_y ))
+		self.cell:SetWndSize(vector2():set(w * ratio , h))
+		sync_element(self.hl, self.cell)
+		self:Print(nil, "Set for [%s]  in free cell", sec)
+	end
+	
+	-- Icon
+	self:Add_Icon(sec, w, h)
+	self:Add_Shadow(sec, w, h)
+	
+	-- Icon layers
+	self:Add_Layers(xml, obj, sec, clsid)
+	
+	-- Update cell
+	local is_updated = self:Update(is_obj and obj)
+	if (not is_updated) then
+		self:Print(nil, "Updating failed for [%s] | Reset cell", sec)
+		self:Reset()
+		return false
+	end
+	
+	self.cell:Show(true)
+	return true
+end
+
+function utils_ui.UICellItem:Create_Layer(ele, base, sec_m, sec_l, str_x, str_y, str_scale)
+	local ratio = utils_xml.screen_ratio()
+	local grid_size = self.grid_size
+	local x = str_x and (icon_override:section_exist(sec_m) and icon_override:r_float_ex(sec_m,str_x) or SYS_GetParam(2,sec_m, str_x)) or 0 
+	local y = str_y and (icon_override:section_exist(sec_m) and icon_override:r_float_ex(sec_m,str_y) or SYS_GetParam(2,sec_m, str_y)) or 0
+	local w = (icon_override:section_exist(sec_l) and icon_override:r_float_ex(sec_l,"inv_grid_width") or SYS_GetParam(2,sec_l, "inv_grid_width",1)) * grid_size
+	local h = (icon_override:section_exist(sec_l) and icon_override:r_float_ex(sec_l,"inv_grid_height") or SYS_GetParam(2,sec_l, "inv_grid_height",1)) * grid_size
+	local scale = str_scale and (icon_override:section_exist(sec_m) and icon_override:r_float_ex(sec_m,str_scale) or SYS_GetParam(2,sec_m, str_scale)) or 1
+	local scale_pos = scale * (grid_size/50)
+
+	local rot =  ele:GetHeading() > 0
+	local x_s = x * ratio * scale_pos
+	local y_s = y * scale_pos
+	local w_s = w * ratio * scale
+	local h_s = h * scale
+	local w_off = (w_s/2)
+	local h_off = (h_s/2)
+	
+	if rot then
+		-- despite rotation, movement for x and y stays normal! 
+		-- Move start pos to match the one for rotated base icon
+		local w_b, h_b = base:GetWidth(), base:GetHeight()
+		local x_st = (w_b/2) - (h_b/2)
+		local y_st = h_b + x_st
+		
+		-- On 90 rotation, x and y are inverted, y axis goes negative simulate normal x movement
+		x_s = x_st + (y * ratio * scale_pos)
+		y_s = y_st - (x * scale_pos) 
+		w_s = w * scale
+		h_s = h * scale
+		w_off = (h_s - h_s *ratio/2)
+		h_off = -w_s/2
+	end
+
+	ele:InitTexture( utils_xml.get_icons_texture(sec_l) )
+	ele:SetTextureRect(Frect():set( utils_xml.get_item_axis(sec_l, nil, true) ))
+	ele:SetStretchTexture(true)
+	ele:SetWndPos(vector2():set( x_s + w_off , y_s + h_off ))
+	ele:SetWndSize(vector2():set( w_s , h_s ))
+	ele:Show(true)
+end
+
+function utils_ui.UICellItem:Add_Layers(xml, obj, sec, clsid)
+	local ratio = utils_xml.screen_ratio()
+	-- Hide all layers
+	if self.layer then
+		for i=1,#self.layer do
+			self.layer[i]:Show(false)
+		end
+	end
+	
+	-- Add all possible layers
+	local ii = 0
+	while (icon_override:section_exist(sec) and icon_override:r_string_ex(sec,(ii+1).."icon_layer") or SYS_GetParam(0, sec, (ii+1).."icon_layer") ~= nil) do
+		ii = ii + 1
+		
+		if (not self.layer) then
+			self.layer = {}
+		end
+		if (not self.layer[ii]) then
+			if (not xml) then 
+				xml = self:GetXML()
+			end
+			self.layer[ii] = xml:InitStatic(self.path .. ":" .. self.cx .. ":pic", self.ico)
+		end
+		
+		local icon_layer = icon_override:section_exist(sec) and icon_override:r_string_ex(sec,ii.."icon_layer") or SYS_GetParam(0, sec, ii.."icon_layer")
+		self:Create_Layer(self.layer[ii], self.ico, sec, icon_layer, ii.."icon_layer_x", ii.."icon_layer_y", ii.."icon_layer_scale")
+		
+		self:Print(nil, "Show layer (%s) [%s]", ii, icon_layer)
+	end
+end
+local clr_icon_1 = GetARGB(255, 255, 255, 255)
+local clr_icon_2 = GetARGB(70, 255, 255, 255)
+local ico_size, rw, rh, _le = 0.7,1,1,50
+local ico_width
+
+
+function utils_xml.set_icon(sec, hidden, XML_temp, XML_box, XML_box_small)
+	ico_width = ico_width or ico_width or utils_xml.screen_ratio()
+	
+	if not (XML_temp and XML_box) then
+		callstack()
+		printe("!ERROR utils_xml.set_icon | XML_box or XML_temp doesn't exist")
+		return
+	end
+	
+	if not (sec and ini_sys:section_exist(sec)) then
+		XML_box:Show(false)
+		
+		callstack()
+		printe("!ERROR utils_xml.set_icon | section [%s] doesn't exist in system ini", sec)
+		return
+	end
+	
+	-- Icon
+	local ico = utils_xml.get_item_axis(sec)
+	XML_box:InitTexture( utils_xml.get_icons_texture(sec) )
+	XML_box:SetTextureRect(Frect():set(ico.x1, ico.y1, ico.x2, ico.y2))
+	XML_box:SetTextureColor( hidden and clr_icon_2 or clr_icon_1 )
+	XML_box:SetStretchTexture(true)
+	XML_box:Show(true)
+	
+	local pos = XML_temp:GetWndPos()
+	local _w = XML_temp:GetWidth()
+	local _h = XML_temp:GetHeight()
+	
+	
+	local h, w
+	ico.w = ico.w * ico_size * ico_width
+	ico.h = ico.h * ico_size
+	local ratio = ico.w/ico.h
+	for i=1,2 do
+		local w_t, h_t = 0, 0
+		local resize = false
+		if (ico.w > _w) then -- if icon width is bigger than frame width
+			w_t = ico.w - _w
+			resize = true	
+		end 
+		if (ico.h > _h) then -- if icon height is bigger than frame height
+			h_t = ico.h - _h 
+			resize = true	
+		end 
+		
+		if resize then -- resize is required
+			if (w_t >= h_t) then -- if icon width is the big number (or square), use it as a base for resizing
+				w = _w
+				h = w / ratio
+			elseif (w_t < h_t) then -- if icon width is the big number, use it as a base for resizing
+				h = _h
+				w = h * ratio
+			end
+		else -- no resize
+			w = ico.w
+			h = ico.h
+		end
+	end
+	
+	local offset_x = (_w - w)/2
+	local offset_y = (_h - h)/2
+	XML_box:SetWndSize(vector2():set(w , h))
+	XML_box:SetWndPos(vector2():set(pos.x + offset_x , pos.y + offset_y))
+	
+	local ico_layer = icon_override:section_exist(sec) and icon_override:r_string_ex(sec,"1icon_layer") or ini_sys:r_string_ex(sec,"1icon_layer")
+	if XML_box_small and ico_layer then
+		local ico_layer_x = icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"1icon_layer_x") or ini_sys:r_float_ex(sec,"1icon_layer_x")
+		local ico_layer_y = icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"1icon_layer_y") or ini_sys:r_float_ex(sec,"1icon_layer_y")
+		local ico_layer_scale = icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"1icon_layer_scale") or ini_sys:r_float_ex(sec,"1icon_layer_scale")
+		if (ico_layer_x == 0) and (ico_layer_y == 0) and (ico_layer_scale == 1) then
+			utils_xml.set_icon(ico_layer, hidden, XML_temp, XML_box_small)
+		end
+	end
+end
+
+function utils_ui.UICellContainer:On_Drag(idx, tg, set)
+
+	-- Hold icon should be declared after everything else, so it stays on top
+	-- Also it must be assigned on the base UI because we need x and y to start from absolute screen corner
+	if (not self.hold.ico) then
+		self.hold.ico = self.xml:InitStatic(self.path .. ":cell:pic", self.owner) 
+		self.hold.ico:Show(false)
+	end
+	
+	if (self.disable_drag) then
+		return
+	end
+	
+	-- Drag start / Drop
+	if set then
+		self:Print(nil, "Drag | hold_idx: %s - hold_tg: %s", idx, tg)
+		
+		-- Callback
+		if (not idx) and self.hold.idx and (self.hold.idx ~= self.hover.idx) then -- IF released mouse + drag item is captured + drag item is not hovered item
+			self:Callback( "On_CC_DragDrop", self.ID, self.hold.idx )
+		end
+		
+		-- Useful to prevent some actions for owner when there's a dragged item, by checking on (self.item_in_hold)
+		if self.owner.item_in_hold == self.ID then
+			self.owner.item_in_hold = false
+		end
+		if idx then
+			self.owner.item_in_hold = self.ID
+			
+			-- Hold the scroll and stop moving on dragging
+			self.scroll_pos = self.scroll:GetCurrentScrollPos()
+			
+			-- No point of holding empty cells
+			if (not self.cell[idx]:IsShown()) then
+				return
+			end
+		end
+		
+		self.hold.idx = idx
+		self.hold.tg = tg
+		self.hold.ico:Show(false)
+		return
+	end
+	
+	-- Drag
+	if self.hold.idx and tg - self.hold.tg > 100 then
+		
+		-- Set up drag item icon
+		if (not self.hold.ico:IsShown()) then
+			self:Print(nil, "Drag | set up icon")
+			local sec = self.cell[self.hold.idx].section
+			
+			if sec then
+				self.hold.w = (icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"inv_grid_width") or SYS_GetParam(2,sec, "inv_grid_width") )* self.grid_size * ratio
+				self.hold.h = (icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"inv_grid_height") or SYS_GetParam(2,sec, "inv_grid_height")) * self.grid_size
+				
+				self.hold.ico:InitTexture( utils_xml.get_icons_texture(sec) )
+				self.hold.ico:SetTextureRect(Frect():set( utils_xml.get_item_axis(sec, nil, true) ))
+				self.hold.ico:SetTextureColor( clr_list["drag"] )
+				self.hold.ico:SetStretchTexture(true)
+				self.hold.ico:SetWndSize(vector2():set(self.hold.w , self.hold.h))
+				self.hold.ico:Show(true)
+			end
+		end
+		
+		-- Sync with cursor pos
+		local pos = GetCursorPosition()
+		self.hold.ico:SetWndPos( pos )
+	end
+end
+
+
+
+
+local has_upgrades          = utils_item.has_upgrades
+local sync_element          = utils_xml.sync_element
+local sync_cursor           = utils_xml.sync_cursor
+local get_item_axis         = utils_xml.get_item_axis
+local get_item_trade_status = utils_item.get_item_trade_status
+local get_item_cost         = utils_item.get_item_cost
+local lerp_color			= utils_xml.lerp_color
+
+-- Item order
+local item_order = {}
+function set_item_order()
+	local n = ini_sys:line_count("item_kind_order")
+	for i=0,n-1 do
+		local result, kind, order = ini_sys:r_line_ex("item_kind_order",i,"","")
+		if kind and order then
+			item_order[kind] = tonumber(order) or 30
+		end
+	end
+	item_order["na"] = size_table(item_order) + 1
+end
+set_item_order()
+
+local ab_w, ab_h, ab_k = {}, {}, {}
+local a_sec, a_w, a_h, a_k
+local b_sec, b_w, b_h, b_k
+function sort_info(asec, bsec)
+	-- A
+	a_sec = asec
+	axis = utils_xml.get_item_axis(a_sec,1)
+	if (not ab_w[a_sec]) then ab_w[a_sec] = axis.w end
+	if (not ab_h[a_sec]) then ab_h[a_sec] = axis.h end
+	if (not ab_k[a_sec]) then
+		ab_k[a_sec] = SYS_GetParam(0,a_sec,"kind","na")
+		if (not item_order[ab_k[a_sec]]) then
+			ab_k[a_sec] = "na"
+		end
+	end
+	a_w = ab_w[a_sec]
+	a_h = ab_h[a_sec]
+	a_k = item_order[ab_k[a_sec]]
+	
+	-- B
+	b_sec = bsec
+	axis = utils_xml.get_item_axis(b_sec,1)
+	if (not ab_w[b_sec]) then ab_w[b_sec] = axis.w end
+	if (not ab_h[b_sec]) then ab_h[b_sec] = axis.h end
+	if (not ab_k[b_sec]) then
+		ab_k[b_sec] = SYS_GetParam(0,b_sec,"kind","na")
+		if (not item_order[ab_k[b_sec]]) then
+			ab_k[b_sec] = "na"
+		end
+	end
+	b_w = ab_w[b_sec]
+	b_h = ab_h[b_sec]
+	b_k = item_order[ab_k[b_sec]]
+end
+
+
+function sort_by_size(t,a,b)
+	if (type(t[a]) == "string") then
+		sort_info(t[a], t[b])
+	else
+		sort_info(t[a]:section(), t[b]:section())
+	end
+	
+	-- Comparison
+	--printf("%s - %s", a_sec, b_sec)
+	if (a_w == b_w) then
+		if (a_h == b_h) then
+			if (a_sec == b_sec) then
+				if (type(t[a]) == "string") then
+					return false --true
+				end
+				return t[a]:id() > t[b]:id()
+			end
+			return a_sec < b_sec -- alphaptic order
+		end
+		return a_h > b_h
+	end
+	return a_w > b_w
+end
+
+function sort_by_kind(t,a,b)
+	if (type(t[a]) == "string") then
+		sort_info(t[a], t[b])
+	else
+		sort_info(t[a]:section(), t[b]:section())
+	end
+	
+	if a_k == b_k then
+		return sort_by_size(t,a,b)
+	end
+	return a_k < b_k
+end
+
+function sort_by_index(t,a,b)
+	return t[a].index < t[b].index
+end
+
+function sort_by_sizekind(t,a,b)
+	if (type(t[a]) == "string") then
+		sort_info(t[a], t[b])
+	else
+		sort_info(t[a]:section(), t[b]:section())
+	end
+	
+	-- Comparison
+	--printf("%s - %s", a_sec, b_sec)
+	
+	--\\ bigger width wins
+	if (a_w == b_w) then
+		--\\ bigger height wins
+		if (a_h == b_h) then
+			--\\ important kind wins
+			if a_k == b_k then
+				--\\ alphaptic order wins
+				if (a_sec == b_sec) then
+					--\\ better condition wins
+					if (type(t[a]) == "string") then
+						return false --true
+					end
+					return t[a]:condition() > t[b]:condition()
+				end
+				return a_sec < b_sec
+			end
+			return a_k < b_k
+		end
+		return a_h > b_h
+	end
+	return a_w > b_w
+end
+
+function sort_by_props(t,a,b)
+	-- Only for objects with same sections
+	local sec = t[a]:section()
+	
+	-- For ammo, bigger ammo counts wins
+	if IsItem("ammo",sec) and (not IsItem("grenade_ammo",sec)) then
+		return t[a]:ammo_get_count() > t[b]:ammo_get_count()
+		
+	-- Upgraded items wins
+	elseif utils_item.has_upgrades(t[a]) and (not utils_item.has_upgrades(t[b])) then
+		return true
+	end
+	
+	-- Better condition wins
+	return t[a]:condition() > t[b]:condition()
+end
+
+utils_ui.sort_by_props = sort_by_props
+utils_ui.sort_by_sizekind = sort_by_sizekind
+utils_ui.sort_by_index = sort_by_index
+utils_ui.sort_by_kind = sort_by_kind
+utils_ui.sort_by_size = sort_by_size
+utils_ui.sort_info = sort_info
+
+
+
+
+
+function utils_ui.UICellContainer:FindFreeCell(obj, sec)
+	if (not sec) then
+		if (not obj) then
+			return false
+		end
+		sec = obj and obj:section()
+	end
+	
+	local w =  (icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"inv_grid_width") or SYS_GetParam(2,sec, "inv_grid_width", 1) )
+	local h =  (icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"inv_grid_height") or SYS_GetParam(2,sec, "inv_grid_height", 1))
+
+	-- Avoid icons that don't fit
+	if w > self.cols then
+		return false
+	end
+	-- Sorting by kind: when sorting a new kind, always start from last row taken by previous kind
+	if self.sort_method == "kind" then
+		self.rKind.current = item_order[ab_k[sec] ]
+		if (self.rKind.last ~= self.rKind.current) then
+			
+			local cnt = self.line_cnt + 1
+			if (not self.line[cnt]) then
+				self.line[cnt] = self.xml:InitStatic(self.path .. ":line", self.st)
+			end
+			
+			local y = (self.row_end) * (self.grid_size + self.grid_line)
+			self.line[cnt]:SetWndPos( vector2():set(0,y - 2.5) )
+			self.line[cnt]:SetWndSize( vector2():set(self.prof:GetWidth(),6) )
+			self.line[cnt]:Show(true)
+			self.line_cnt = cnt
+			
+			
+			self.rKind.last = self.rKind.current
+			self.rKind.row = self.row_end + 1
+		end
+	end
+
+	
+	local row_s = self.rKind.row
+	local rows = #self.grid
+	local cols = self.cols + 1 - w
+	self:Print(nil, "FindFreeCell for [%s] (rows: %s, cols: %s, W: %s, H: %s)", sec, rows,cols,w,h)
+	for r=row_s, rows do
+		for c=1,cols do
+			if self:IsFreeRoom(r,c,w,h) then
+				return self:TakeRoom(r,c,w,h)
+			end
+		end
+	end
+	
+	self:Grow()
+	
+	return self:FindFreeCell(obj, sec)
+end
+
+
+function item_artefact.UIBelt:Refresh()
+	local cnt = 0
+	
+	self:Clear()
+	
+	if not main_hud_shown() then
+		return
+	end
+	
+	db.actor:iterate_belt( function(owner, obj)
+		local sec = obj:section()
+		cnt = cnt + 1
+		self.slot[cnt].ico:InitTexture( utils_xml.get_icons_texture(sec) )
+		self.slot[cnt].ico:SetTextureRect(Frect():set( utils_xml.get_item_axis(sec, nil, true) ))
+		self.slot[cnt].ico:Show(true)
+		
+		-- Set up indicator icon if found
+		local ico_layer = icon_override:section_exist(sec) and icon_override:r_string_ex(sec,"1icon_layer") or ini_sys:r_string_ex(sec,"1icon_layer")
+		if ico_layer then
+			local ico_layer_x = icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"1icon_layer_x") or ini_sys:r_float_ex(sec,"1icon_layer_x")
+			local ico_layer_y = icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"1icon_layer_y") or ini_sys:r_float_ex(sec,"1icon_layer_y")
+			local ico_layer_scale = icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"1icon_layer_scale") or ini_sys:r_float_ex(sec,"1icon_layer_scale")
+
+			local pos = self.slot[cnt].ico:GetWndPos()
+			local w = self.slot[cnt].ico:GetWidth()
+			local h = self.slot[cnt].ico:GetHeight()
+			local ratio = w/50
+			--print_dbg("UIBelt: icon [%s](%s) | x = %s / y = %s / w = %s / h = %s", sec, cnt, pos.x , pos.y , w , h )
+			
+			local x_i = pos.x + math.ceil(ico_layer_x * ico_layer_scale * ratio)
+			local y_i = pos.y + math.ceil(ico_layer_y * ico_layer_scale * ratio)
+			local w_i = math.ceil(w * ico_layer_scale)
+			local h_i = math.ceil(h * ico_layer_scale)
+			self.slot[cnt].layer:InitTexture( utils_xml.get_icons_texture(ico_layer) )
+			self.slot[cnt].layer:SetWndPos(vector2():set( x_i , y_i ))
+			self.slot[cnt].layer:SetWndSize(vector2():set( w_i , h_i ))
+			--print_dbg("UIBelt: indicator [%s](%s) | scale: %s / x = %s / y = %s / w = %s / h = %s", sec, cnt, ico_layer_scale, x_i , y_i , w_i , h_i )
+			
+			self.slot[cnt].layer:SetTextureRect(Frect():set( utils_xml.get_item_axis(ico_layer, nil, true) ))
+			self.slot[cnt].layer:Show(true)
+		end
+	end)
+
+	self.dialog:Show(cnt > 0)
+end
+
+function ui_inventory.UIInventory:RMode_InitItemIcon(obj)
+	self:Print(nil, "RMode_InitItemIcon | %s", obj and obj:name())
+	if (not obj) then
+		self.npc_up_item:Show(false)
+		return
+	end
+	
+	local sec = obj:section()
+	
+	
+	local x = icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"upgr_icon_x") or ini_sys:r_float_ex(sec,"upgr_icon_x")
+	local  y = icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"upgr_icon_y") or ini_sys:r_float_ex(sec,"upgr_icon_y")
+	local w = icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"upgr_icon_width") or ini_sys:r_float_ex(sec,"upgr_icon_width")
+	local h = icon_override:section_exist(sec) and icon_override:r_float_ex(sec,"upgr_icon_height") or ini_sys:r_float_ex(sec,"upgr_icon_height")
+	if not (x and y and w and h) then
+		self.npc_up_item:Show(false)
+		return
+	end
+	
+	-- Get upgrade dds
+	local path = icon_override:section_exist(sec) and icon_override:r_string_ex(sec,"upgr_icon_path") or SYS_GetParam(0,sec,"upgr_icon_path") or (IsWeapon(obj) and "ui\\ui_actor_weapons") or "ui\\ui_actor_armor"
+	
+	self.npc_up_item:InitTexture(path)
+	self.npc_up_item:SetTextureRect(Frect():set(x, y, x + w, y + h))
+	self.npc_up_item:SetWndSize(vector2():set( w * ratio , h ))
+	self.npc_up_item:SetStretchTexture(true)
+	self.npc_up_item:Show(true)
+end

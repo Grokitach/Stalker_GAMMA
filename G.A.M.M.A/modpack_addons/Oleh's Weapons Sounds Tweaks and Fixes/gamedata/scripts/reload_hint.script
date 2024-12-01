@@ -1,0 +1,70 @@
+--[[
+    Low ammo sounds script
+    Author: HarukaSai
+
+    Last edit: 13-08-2022
+]]
+
+--[[
+    Patched for vanilla ammo system and MCM settings
+    - oleh5230, 25.10.2024
+]]
+
+local enabled = false
+local enabled_cache = true
+local volume = 1
+
+function load_mcm_options()
+    if ui_mcm then
+        enabled = ui_mcm.get("grok_casings_sounds/enabled_reload_hint") or false
+        volume = ui_mcm.get("grok_casings_sounds/volume_reload_hint") or 1
+    end
+    -- if enabled_cache and not enabled then
+    --     UnregisterScriptCallback("actor_on_weapon_fired", actor_on_weapon_fired)
+    --     enabled_cache = false
+    -- elseif enabled then
+    --     RegisterScriptCallback("actor_on_weapon_fired", actor_on_weapon_fired)
+    --     enabled_cache = true
+    -- end
+end
+
+function actor_on_weapon_fired(obj)
+    if not enabled then return end
+
+    local wpn = obj:active_item()
+    local sec = wpn and wpn:section()
+    if not sec then return end
+    local wpn_id = wpn:id()
+    local mag_size = 1
+
+    if magazine_binder and magazine_binder.get_data then
+        local data = magazine_binder.get_data(wpn_id)
+        if data and data.section then
+            mag_size = SYS_GetParam(2, data.section, "max_mag_size", 1)
+        end
+    else
+        mag_size = SYS_GetParam(2, sec, "ammo_mag_size")
+    end
+    if mag_size == 1 then return end
+
+    local elapsed = wpn:get_ammo_in_magazine() - 1
+    if (elapsed) == 0 then
+        sound_to_play = sound_object("reload_hint\\OutofAmmo")
+        sound_to_play:play(obj, 0, sound_object.s2d)
+        sound_to_play.volume = volume
+        return
+    end
+
+    if elapsed / mag_size <= 0.2 then
+        sound_to_play = sound_object("reload_hint\\ReloadHint")
+        sound_to_play:play(obj, 0, sound_object.s2d)
+        sound_to_play.volume = volume
+        return
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_weapon_fired", actor_on_weapon_fired)
+    RegisterScriptCallback("on_option_change", load_mcm_options)
+    load_mcm_options()
+end

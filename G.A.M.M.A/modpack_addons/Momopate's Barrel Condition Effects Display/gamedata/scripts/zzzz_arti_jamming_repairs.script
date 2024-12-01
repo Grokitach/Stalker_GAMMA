@@ -569,10 +569,31 @@ function process_part(name, condition)
 	
 	condition = condition / 100
 	condition = ( 130 - ( 1.12 * condition ) ) * ( condition * 1.12 ) / 100
-	condition = tonumber(string.format("%.2f", condition * 100))
+	condition = tonumber(string.format("%.0f", condition * 100))
 	condition = math.min(condition, 100)
 	
 	return " " .. clr_w .. gc("st_dot") .. " " .. clr .. gc("st_damage_"..severity) .. " " .. gc("st_name_"..part_name) .. clr_w .. " (" .. condition .. "% DMG and AP)" .. "\\n"
+end
+
+function process_jam_chance(wpn)
+	if arti_jamming then
+		if arti_jamming.get_jam_chance then
+			if wpn then 
+				jam_prob = arti_jamming.get_jam_chance(wpn)
+
+				if jam_prob <= 5 then clr = clr_g
+				elseif jam_prob <= 10 then clr = clr_y
+				elseif jam_prob <= 20 then clr = clr_o
+				else clr = clr_r end
+				
+				jam_prob = tonumber(string.format("%.0f", jam_prob))
+				
+				return " " .. clr_w .. gc("st_dot") .. " " .. clr .. gc("st_jam") .. "" .. clr_w .. " " .. jam_prob .. "%" .. "\\n"
+			else
+				return "\\n"
+			end
+		end
+	end
 end
 
 original_build_desc_header = ui_item.build_desc_header
@@ -583,9 +604,15 @@ function ui_item.build_desc_header(obj, sec, str)
 	if obj and IsWeapon(obj) and not IsAmmo(obj) and arti_jamming.has_parts(obj) then
 		local parts = item_parts.get_parts_con(obj, nil, true)
 		local display_str = ""
+		
+		if obj then
+			display_str = display_str .. process_jam_chance(obj)
+		end
+		
 		for k,v in pairs(parts) do
 			display_str = display_str .. process_part(k, v)
 		end
+
 		if display_str ~= "" then
 			display_str =  " " .. clr_p .. gc("st_name_issues") .. "\\n" .. display_str
 			_str = _str .. display_str
