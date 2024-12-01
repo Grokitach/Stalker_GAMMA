@@ -1,0 +1,609 @@
+
+--[[
+	Made by Tronex
+	Last modification: 2020/3/13
+	
+	Cooking UI with recipes support
+--]]
+
+
+local _size = 2 -- number of Ingredients (not counting fuel)
+
+
+----------------------------------------------------------------------
+-- Callbacks
+----------------------------------------------------------------------
+local function actor_on_item_use(obj)
+	local sec = obj:section()
+	if IsItem("cook",sec) then
+		start(obj, sec)
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_item_use",actor_on_item_use)
+end
+
+
+----------------------------------------------------------------------
+GUI = nil -- instance, don't touch
+function start(obj, sec)
+	if (not obj) then
+		printf("!ERROR item_cooking | no game object passed!")
+		return
+	end
+	
+	if (not sec) then
+		sec = obj:section()
+	end
+	
+	local hud = get_hud()
+	if (hud) then
+		hide_hud_inventory()
+	end
+	
+	if (not GUI) then
+		GUI = UICook()
+	end
+	
+	if (GUI) and (not GUI:IsShown()) then
+		local can_show = GUI:Reset(obj, sec)
+		if can_show then
+			GUI:ShowDialog(true)
+			Register_UI("UICook","item_cooking")
+		end
+	end
+end
+
+
+----------------------------------------------------------------------
+-- UI
+----------------------------------------------------------------------
+class "UICook" (CUIScriptWnd)
+
+function UICook:__init() super()
+
+	-- Settings
+	self.ini = ini_file("items\\settings\\cook.ltx")
+	self.clr = {
+		["g"]  = utils_xml.get_color("d_green"),
+		["r"]  = utils_xml.get_color("d_red"),
+	}
+
+	-- Meals and others
+	self.meals = {}
+	self.fuel = {}
+	self.objs = {}
+	self.cooking_campfire_tier     = self.ini:r_float_ex("settings","campfire_cook_tier") or 1
+
+	self:Load_MealRecipes()
+	
+	self:InitControls()
+	self:InitCallBacks()
+end
+
+function UICook:__finalize()
+end
+
+function UICook:InitControls()
+	self:SetWndRect			(Frect():set(0,0,1024,768))
+	self:SetAutoDelete(true)
+	
+	self.xml				= CScriptXmlInit()
+	local xml = self.xml
+	xml:ParseFile			("ui_items_cook.xml")
+
+	self.dialog					= xml:InitStatic("cook", self)
+	xml:InitStatic("cook:background", self.dialog)
+	self.cap_menu 					= xml:InitTextWnd("cook:cap_tab" , self.dialog)
+
+	-- Meals
+	self.cap = xml:InitStatic("cook:cap_cook",self.dialog)
+	self.b_inv = xml:InitStatic("cook:back_inv" , self.dialog)
+	
+	self.CC = utils_ui.UICellContainer("inventory", self, nil, "cook:cont_inv", self.dialog)
+	self.CC.showcase      = true
+	self.CC.can_select	  = true
+	self.CC.disable_drag  = true
+	self.CC.disable_stack = true -- important, to sync indexes with meals table
+	self.CC:SetGridSpecs(35, 2)
+
+	self.item_info = utils_ui.UIInfoItem(self, 1000)
+	
+	--self.scroll_inv = xml:InitScrollView("cook:scrollbar_inv", self.dialog)
+
+	self.ci_cook         = utils_ui.UICellItem( {path="container" , xml=xml} , { path="cook:box_item" , base= self.dialog } )
+	self.ci_cook.showcase = 2
+	self.ci_cook.disable_bar = true
+	self.b_item = xml:InitStatic("cook:back_item" , self.dialog)
+	self.text_item = xml:InitTextWnd("cook:text_item" , self.dialog)
+	self.text_fuel_note = xml:InitTextWnd("cook:text_fuel_note" , self.dialog)
+	
+	-- Ingredients
+	self.ingre_b = {}
+	self.ingre_name = {}
+	self.ingre_num = {}
+	self.ingre_ico = {}
+	self.ingre_ico_temp = {}
+	for i=1,(_size + 1) do
+		self.ingre_b[i] = xml:InitStatic("cook:pic_item_" .. tostring(i) .. "_b" , self.dialog)
+		self.ingre_name[i] = xml:InitTextWnd("cook:text_item_" .. tostring(i) .. "_name" , self.dialog)
+		self.ingre_num[i] = xml:InitTextWnd("cook:text_item_" .. tostring(i) .. "_num" , self.dialog)
+		self.ingre_ico[i] = xml:InitStatic("cook:pic_item_" .. tostring(i) , self.dialog)
+		self.ingre_ico_temp[i] = xml:InitStatic("cook:pic_item_" .. tostring(i) , self.dialog)
+	end
+
+	self.box_campfire = xml:InitStatic("cook:box_campfire" , self.dialog)
+	
+	-- Main icon
+	self.box_item_main = xml:InitStatic("cook:pic_item_main" , self.dialog)
+	self.box_item_main_temp = xml:InitStatic("cook:pic_item_main" , self.dialog)
+	
+	-- Main Buttons
+	self.btn_cook = xml:Init3tButton("cook:btn_cook", self.dialog)
+	self:Register(self.btn_cook,"btn_cook")
+	
+	self.btn_cancel = xml:Init3tButton("cook:btn_back", self.dialog)
+	self:Register(self.btn_cancel,"btn_cancel")
+end
+
+function UICook:InitCallBacks()
+	self:AddCallback("btn_cook", ui_events.BUTTON_CLICKED, self.OnCook, self)
+	self:AddCallback("btn_cancel", ui_events.BUTTON_CLICKED, self.Close, self)
+end
+
+function UICook:Reset(obj,section)
+	-- printf('UICook:Reset(%s,%s)', obj and obj:name(), section)
+	self.section = section
+	self.obj = obj
+	
+	empty_table(self.objs)
+	
+	-- Cooking props
+	self.cooking_campfire          = ini_sys:r_bool_ex(section,"cooking_campfire") or false
+	self.cooking_limited		   = ini_sys:r_bool_ex(self.section,"cooking_limited") or false
+	self.cooking_fuel			   = parse_list(ini_sys,section,"cooking_fuel",true)
+	self.cooking_use_actor_effects = ini_sys:r_bool_ex(section,"cooking_use_actor_effects") or true
+	
+	local nearby_camp 			   = bind_campfire.get_nearby_campfire(1.5, true)
+	self.is_campfire    		   = self.cooking_campfire and nearby_camp and nearby_camp:is_on()
+	self.active_wep				   = db.actor:active_item() or false
+	
+	if (not self.cooking_campfire) and is_empty(self.cooking_fuel) then
+		self:Close()
+		return false
+	end
+	
+	-- Elements
+	self.text_item:SetText("")
+	self.ci_cook:Reset()
+	for i=1,(_size + 1) do
+		self.ingre_b[i]:Show(false)
+		self.ingre_name[i]:Show(false)
+		self.ingre_num[i]:Show(false)
+		self.ingre_ico[i]:Show(false)
+		self.ingre_ico_temp[i]:Show(false)
+	end
+	self.btn_cook:Enable(false)
+	
+	-- For campfire mode, show picture
+	self.box_campfire:Show( self.is_campfire )
+	
+	-- Set cooking kit name and icon
+	self.cap_menu:SetText(ui_item.get_sec_name(self.section))
+	utils_xml.set_upgr_icon(self.obj, self.section, self.box_item_main, self.box_item_main_temp)
+	
+	-- List usable fuel
+	local str = game.translate_string("st_ui_cook_fuel_usable") .. ": "
+	for sec,_ in pairs(self.cooking_fuel) do
+		str = str .. " " .. ui_item.get_sec_name(sec) .. ","
+	end
+	str = string.sub(str,1,-2)
+	self.text_fuel_note:SetText(str)
+	
+	-- Collect compatible objects
+	self:Load_ActorItems()
+	
+	-- Meal list
+	self:Load_MealList()
+	
+	-- Hide active item
+	actor_effects.toggle_active_slot(0)
+	
+	-- Play sound
+	utils_obj.play_sound("interface\\inv_cooking_open")
+	
+	return true
+end
+
+function UICook:Update()
+	CUIScriptWnd.Update(self)
+	
+	-- Warning messages timer 
+	if (self.msg_wnd_timer and time_global() > self.msg_wnd_timer) then 
+		self.msg_wnd_timer = nil
+		self.msg_wnd:Show(false)
+	end
+	 
+	if (self.ci_cook and self.ci_cook:IsCursorOverWindow()) then
+		local meal = self:GetSelectedMeal()
+		if (not meal) then
+			return
+		end
+		
+		local str = ""
+		local sec = meal.sec
+		if sec then
+			self.item_info:Update(nil, sec)
+			return
+		end
+		
+		self.item_info:Update()
+		return
+	end
+	
+	for i=1,(_size + 1) do
+		if (self.ingre_ico[i] and self.ingre_ico[i]:IsCursorOverWindow()) then
+			local meal = self:GetSelectedMeal()
+			if (not meal) then
+				return
+			end
+		
+			local sec
+			if (i == 1) then
+				sec = "tch_fuel_" .. meal.fuel_tier .. "_ico"
+			else
+				sec = meal[i-1] and meal[i-1].sec
+			end
+			if sec then
+				self.item_info:Update(nil, sec)
+				return
+			end
+			
+			self.item_info:Update()
+			return
+		end
+	end
+	
+	-- Updating item info box and item cell containers
+	local found_cell = self.CC:Update(self.item_info)
+	if (not found_cell) then
+		self.item_info:Update()
+	end
+end
+
+-- Utility
+function UICook:Load_MealList()
+	local inv, state = {},{}
+	for i=1,#self.meals do
+		inv[i] = self.meals[i].sec
+		state[i] = self:CheckAvail_main(self.meals[i])
+	end
+	
+	self.CC:Reinit(inv, state)
+	for i,ci in pairs(self.CC.cell) do
+		if ci:IsShown() and (not ci.flags.info) then
+			ci:Colorize("hide")
+		end
+	end
+end
+
+function UICook:Load_MealRecipes()
+
+	-- Collect fuels and their tier
+	local n = self.ini:line_count("fuel")
+	for i=0,n-1 do
+		result, id, value = self.ini:r_line_ex("fuel",i,"","")
+		if ini_sys:section_exist(id) and value then
+			self.fuel[id] = tonumber(value) or 1
+		end
+	end
+	
+	-- Collect meals and their recipes
+	n = self.ini:line_count("meal_list")
+	for i=0,n-1 do
+		result, id, value = self.ini:r_line_ex("meal_list",i,"","")
+		if id and value then
+			id = string.sub(id,3)
+			if ini_sys:section_exist(id) then
+				local t = str_explode(value,",")
+				local recipe = t[2] and (t[2] == "false" or ui_pda_encyclopedia_tab.is_unlocked_note(t[2])) or false
+				if recipe and ((#t == 4) or (#t == 6)) then
+					local ind = #self.meals + 1
+					self.meals[ind] = {}
+					self.meals[ind].sec = id
+					self.meals[ind].fuel_tier = tonumber(t[1]) or 1
+					if t[3] and t[4] then -- support item 1
+						if ini_sys:section_exist(tostring(t[3])) then
+							self.meals[ind][1] = { sec = tostring(t[3]), amt = tonumber(t[4])}
+						else
+							printdbg("! Cooking UI | meal section [%s] not found for [%s] recipe!", tostring(t[3]), id)
+						end
+					end
+					if t[5] and t[6] then -- support item 2
+						if ini_sys:section_exist(tostring(t[5])) then
+							self.meals[ind][2] = { sec = tostring(t[5]), amt = tonumber(t[6])}
+						else
+							printdbg("! Cooking UI | meal section [%s] not found for [%s] recipe!", tostring(t[5]), id)
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+function UICook:Load_ActorItems()
+	-- Collect needed sections
+	local needed = {}
+	for i=1,#self.meals do
+		for j=1,_size do
+			local sec = self.meals[i][j] and self.meals[i][j].sec
+			if sec and (not needed[sec]) then
+				needed[sec] = true
+			end
+		end
+	end
+	
+	-- Scan inventory and collect ids
+	db.actor:iterate_inventory( function(temp, obj)
+		local sec = obj:section()
+		if needed[sec] or self.fuel[sec] then
+			local id = obj:id()
+			if (not self.objs[sec]) then
+				self.objs[sec] = {}
+			end
+			self.objs[sec][id] = IsItem("multiuse",sec) and obj:get_remaining_uses() or 1
+		end
+	end )
+end
+
+function UICook:CheckAvail_main(meal)
+	if (not self:CheckAvailFuel(meal.fuel_tier)) then
+		return false
+	end
+	
+	for i=1,_size do
+		local sec = meal[i] and meal[i].sec
+		local amt = meal[i] and meal[i].amt
+		if sec and amt and (not self:CheckAvail(sec, amt)) then
+			return false
+		end
+	end
+	return true
+end
+
+function UICook:CheckAvail(sec, amt)
+	if (not self.objs[sec]) then
+		return false
+	end
+	
+	local cnt = 0
+	for id,uses in pairs(self.objs[sec]) do
+		cnt = cnt + uses
+	end
+	return (cnt >= amt)
+end
+
+function UICook:CheckAvailFuel(fuel_tier)
+	if self.is_campfire and (fuel_tier <= self.cooking_campfire_tier) then
+		return true
+	else
+		--[[
+		for sec,tier in pairs(self.fuel) do
+			if (fuel_tier <= tier) and self:CheckAvail(sec, 1) then
+				return true
+			end
+		end
+		--]]
+		for sec,_ in pairs(self.cooking_fuel) do
+			if self.fuel[sec] and (fuel_tier <= self.fuel[sec]) and self:CheckAvail(sec, 1) then
+				return true
+			end
+		end
+	end
+	
+	return false
+end
+
+function UICook:GetAvail(sec, amt)
+	if (not self.objs[sec]) then
+		return 0
+	end
+	
+	local cnt = 0
+	for id,uses in pairs(self.objs[sec]) do
+		cnt = cnt + uses
+	end
+	return cnt
+end
+
+function UICook:GetAvailFuel(fuel_tier, get_sec)
+	if self.is_campfire and (fuel_tier <= self.cooking_campfire_tier) then
+		return get_sec and false or "tch_fuel_1_ico"
+	else
+		--[[
+		for sec,tier in pairs(self.fuel) do
+			if (fuel_tier <= tier) then
+				if self:CheckAvail(sec, 1) then
+					return get_sec and sec or "tch_fuel_" .. tier .. "_ico"
+				end
+			end
+		end
+		-]]
+		for sec,_ in pairs(self.cooking_fuel) do
+			if self.fuel[sec] and (fuel_tier <= self.fuel[sec]) and self:CheckAvail(sec, 1) then
+				return get_sec and sec or "tch_fuel_" .. self.fuel[sec] .. "_ico"
+			end
+		end
+	end
+	return get_sec and false or "tch_fuel_" .. fuel_tier .. "_ico"
+end
+
+function UICook:GetSelectedMeal()
+	local idx = self.CC.selected
+	local ci = idx and self.CC.cell[idx]
+	local section = ci and ci.section
+	for ind,v in ipairs(self.meals) do
+		if v.sec == section then
+			return v
+		end
+	end
+end
+
+-- Callbacks
+function UICook:On_CC_Mouse1(cont, idx)
+	-- printf('UICook:On_CC_Mouse1(%s, %s)', cont, idx)
+	local ci = self.CC.cell[idx]
+	if (not ci) then
+		return
+	end
+	
+	-- Get meal props
+	local sec = ci.section
+	local meal = self:GetSelectedMeal()
+	if (not meal) then
+		return
+	end
+
+	-- Item box
+	local name = ui_item.get_sec_name(sec)
+	self.text_item:SetText(name)
+	self.ci_cook:Set(sec)
+	
+	-- Enable/Disable cook btn
+	-- local btn_state = ci.flags.state and true or false
+	local btn_state = ci.flags.info and true or false
+	
+	-- printf('ci -> %s (%s)', ci, type(ci))
+	-- printf('ci.flags -> %s (%s)', ci.flags, type(ci.flags))
+	-- printf('ci.flags.state -> %s (%s)', ci.flags.state, type(ci.flags.state))
+	-- printf('ci.flags.info -> %s (%s)', ci.flags.info, type(ci.flags.info))
+	-- for k,v in pairs(ci.flags) do
+		-- printf('%s -> %s', k, v)
+	-- end
+	
+	self.btn_cook:Enable(btn_state)
+	
+	-- Elements handeling
+	self.box_campfire:Show(false)
+	
+	for i=1,(_size + 1) do
+		local to_show = false
+		if (i == 1) then
+			local fuel_tier = meal.fuel_tier
+			local fuel_type = self:GetAvailFuel(fuel_tier)
+			local ingre_clr = self:CheckAvailFuel(fuel_tier) and self.clr["g"] or self.clr["r"]
+			
+			self.ingre_name[i]:SetText(ui_item.get_sec_name(fuel_type))
+			utils_xml.set_icon(fuel_type, ingre_clr == self.clr["r"], self.ingre_ico_temp[i], self.ingre_ico[i])
+			
+			to_show = true
+		elseif (meal[i-1]) then
+			local ingre_sec = meal[i-1].sec
+			local ingre_amt = meal[i-1].amt
+			local ingre_clr = self:CheckAvail(ingre_sec, ingre_amt) and self.clr["g"] or self.clr["r"]
+			
+			self.ingre_name[i]:SetText(ui_item.get_sec_name(ingre_sec))
+			self.ingre_num[i]:SetText(ingre_clr .. self:GetAvail(ingre_sec, ingre_amt) .. "/" .. ingre_amt)
+			utils_xml.set_icon(ingre_sec, ingre_clr == self.clr["r"], self.ingre_ico_temp[i], self.ingre_ico[i])
+			
+			to_show = true
+		end
+		self.ingre_b[i]:Show(to_show)
+		self.ingre_name[i]:Show(to_show)
+		self.ingre_num[i]:Show(to_show)
+		self.ingre_ico[i]:Show(to_show)
+		self.ingre_ico_temp[i]:Show(to_show)
+	end
+end
+
+function UICook:OnCook()
+	local meal = self:GetSelectedMeal()
+	if (not meal) then
+		return
+	end
+
+	-- Discharge cooking fuel if its not a campfire
+	if (not is_campfire) then
+		local sec_fuel = self:GetAvailFuel(meal.fuel_tier, true)
+		-- OnCook doesn't happen if player has no fuel items -> self.objs is always defiend and has one or more keys
+		local id_fuel = sec_fuel and random_key_table(self.objs[sec_fuel]) 
+		if id_fuel then
+			local obj_fuel = level.object_by_id(id_fuel)
+			if obj_fuel then
+				utils_item.discharge(obj_fuel)
+			end
+		end
+	end
+	
+	-- Discharge Ingredients
+	for i=1,_size do
+		if meal[i] then
+			local sec = meal[i].sec
+			local amt = meal[i].amt
+			local stop
+			for id,uses in pairs(self.objs[sec]) do
+				if stop then
+					break
+				end
+				
+				if ((amt - uses) >= 0) then
+					local se_obj = alife_object(id)
+					if se_obj then
+						if ((amt - uses) == 0) then
+							stop = true
+						end
+						amt = amt - uses
+						alife_release(se_obj)
+					end
+				else
+					stop = true
+					local obj = level.object_by_id(id)
+					if obj then
+						obj:set_remaining_uses(uses - amt)
+					end
+				end
+			end
+		end
+	end
+	
+	-- Give cooked meal
+	alife_create_item(meal.sec, db.actor)
+	
+	-- Discharge cooking tool
+	if self.cooking_limited then
+		utils_item.discharge(self.obj)
+	end
+	
+	-- Effect
+	if (self.cooking_use_actor_effects and actor_effects) then
+		actor_effects.play_item_fx(self.section.."_dummy")
+	end
+	
+	-- Hide dialog
+	self:Close()
+end
+
+function UICook:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (res == false) then
+		self.CC:OnKeyboard(dik, keyboard_action)
+	
+		local bind = dik_to_bind(dik)
+		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+			if dik == DIK_keys.DIK_ESCAPE then
+				self:Close()
+			end
+		end
+	end
+	return res
+end
+
+function UICook:Close()
+	utils_obj.play_sound("interface\\inv_close")
+	
+	self:HideDialog()
+	
+	Unregister_UI("UICook")
+end

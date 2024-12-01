@@ -50,9 +50,10 @@ ui_workshop.UIWorkshopCraft.Craft = function(self)
 	--printf("calling override Craft")
 	
 	-- Remove supportive items
-	lead_box_number = 0
-	total_cond = 0
-	counter = 0
+	local lead_box_number = 0
+	local total_cond = 0
+	local counter = 0
+	local randomize = 0
 	for i=1,#self.craft_item do
 		-- Release
 		if #self.craft_item[i] > 0 then
@@ -61,18 +62,19 @@ ui_workshop.UIWorkshopCraft.Craft = function(self)
 				if string.find(itm:section(),"_lead_box") then
 					lead_box_number = lead_box_number + 1
 				end
+				
 				local cond = itm:condition()
-				if cond then
+				local kind = SYS_GetParam(0, itm:section(), "kind") 
+				if cond and kind == "i_arty" then
 					total_cond = total_cond + cond
 					counter = counter + 1
+				end           
+				if cond and kind == "i_arty_junk" then
+					total_cond = 1
+					counter = 1
+					randomize = 1
 				end
-                                
-                                local kind = SYS_GetParam(0, itm:section(), "kind") 
-                                if kind == "i_arty_junk" then
-                                        total_cond = 1
-                                        counter = 1
-                                end
-				
+
 				alife_release_id(self.craft_item[i][j])
 			end
 		end
@@ -99,14 +101,13 @@ ui_workshop.UIWorkshopCraft.Craft = function(self)
 			kind = SYS_GetParam(0, self.craft_item_r[1], "kind")
 			if kind == "i_arty" or kind == "i_arty_cont" then
 				if counter > 0 and total_cond > 0 then
-					cond_to_set = total_cond / counter
+					local cond_to_set = total_cond / counter
 					if cond_to_set >= 0.99 then
 						cond_to_set = 0.989
 					end
 					
-					if total_cond == 1 and counter == 1 then
-						rand_cond = (math.random(12, 30) / 100)
-						cond_to_set = rand_cond
+					if randomize == 1 then
+						cond_to_set = ((math.random(zz_item_artefact.arti_min_eff, zz_item_artefact.arti_max_eff)) / 100)
 					end
 					
 					alife_create_item(self.craft_item_r[1], db.actor, {cond = cond_to_set})

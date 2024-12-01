@@ -1,0 +1,199 @@
+-- Workshop Logic
+function UseWorkshop(id)
+	local stash_id = GetStash(id)
+	CreateTimeEvent("hf_workshop", "get_stash_items_"..id, 0, GiveStashItemsToActor, id, stash_id)
+	CreateTimeEvent("hf_workshop","open_workshop_"..id,0.1,OpenWorkshop)
+end
+
+function CreateStash(id)
+	local obj = get_object_by_id(id)
+	-- position under map
+	local pos = vec_set(obj:position())
+	pos.y = pos.y - 50
+
+	-- create inventory_box_s
+	return alife_create("workshop_stash",pos,obj:level_vertex_id(),obj:game_vertex_id())
+end
+
+function GetStash(id)
+	local m_data = alife_storage_manager.get_state()
+	local se_inv_box = m_data.workshop_stashes and m_data.workshop_stashes[id] and alife_object(m_data.workshop_stashes[id])
+	local stash_id = nil
+
+	if not se_inv_box then
+		se_inv_box = CreateStash(id)
+	end
+
+	-- shouldn't be possible but very safe incase some sort of save corruption
+	if not (IsInvbox(nil,se_inv_box:clsid())) then
+		if m_data.workshop_stashes then
+			m_data.workshop_stashes[id] = nil
+		end
+		return 
+	end
+	
+	-- force strictly online (not sure this is needed)
+	alife():set_switch_online(se_inv_box.id,true)
+	alife():set_switch_offline(se_inv_box.id,false)
+	
+	-- Save container
+	if not (m_data.workshop_stashes) then
+		m_data.workshop_stashes = {}
+	end
+	m_data.workshop_stashes[id] = se_inv_box.id
+
+	stash_id = se_inv_box.id
+	
+	-- Object will come online next update so wait
+	-- CreateTimeEvent(id, "move_stash", 0, GiveStashItemsToActor, id, stash_id)
+	return stash_id
+end
+
+local function UseStash(id)
+	local box = id and level.object_by_id(id)
+	-- repeat timed event
+	if not box then return false end
+
+	hide_hud_inventory()
+	box:use(db.actor)
+	return true -- destroy timed event
+end 
+
+function GiveStashItemsToActor(workshop_id, stash_id)
+	local items = {}
+
+	if stash_id then
+		local stash_obj = get_object_by_id(stash_id)
+		if not stash_obj then return end
+		stash_obj:iterate_inventory_box( function(temp, obj)
+			table.insert(items, obj:id())
+			stash_obj:transfer_item(obj, db.actor)
+		end, stash_obj)
+	end
+
+	zzz_workshop_return_items.item_ids = items
+	zzz_workshop_return_items.stash_id = stash_id
+	return true
+end
+
+function OpenWorkshop()
+	workshop_ui_ref = ui_workshop.get_workshop_ui(nil, nil, {false,false,false,false,false}, false)
+	if (workshop_ui_ref) then
+		workshop_ui_ref:ShowDialog(true)
+	end
+	return true
+end
+
+-- UI
+
+local ratio = utils_xml.screen_ratio()
+GUI = nil -- instance, don't touch
+
+class "UIFurnitureWorkshop" (CUIScriptWnd)
+
+function UIFurnitureWorkshop:__init() super()
+	self:InitControls()
+	self:InitCallbacks()
+end
+
+function UIFurnitureWorkshop:__finalize()
+	GUI = nil
+end
+
+function UIFurnitureWorkshop:InitControls()
+	self:SetWndRect(Frect():set(0,0,1024,768))
+	self.wide = (device().width/device().height) > (1024/768 + 0.01)
+	
+	self:SetAutoDelete(true)
+
+	local xml = CScriptXmlInit()
+	-- xml:ParseFile("ui_sleep_dialog.xml")
+    xml:ParseFile("ui_furniture_workshop_dialog.xml")
+
+	self.back = xml:InitFrame("background", self)
+
+	self.icon = xml:InitStatic("icon", self.back)
+	self.icon:SetWndSize(vector2():set( self.icon:GetWidth(), self.icon:GetWidth() / ratio ))
+
+	self.btn_pickup = xml:Init3tButton("btn_pickup", self.back)
+	self:Register(self.btn_pickup, "btn_pickup")
+
+    self.btn_close = xml:Init3tButton("btn_close", self.back)
+	self:Register(self.btn_close, "btn_close")
+
+	self.btn_access_stash = xml:Init3tButton("btn_access_stash", self.back)
+	self:Register(self.btn_access_stash, "btn_access_stash")
+
+
+    self.btn_use_workshop = xml:Init3tButton("btn_use_workshop", self.back)
+	self:Register(self.btn_use_workshop, "btn_use_workshop")
+end
+
+function UIFurnitureWorkshop:UseWorkshop()
+	UseWorkshop(self.obj_id)
+	self:Close()
+end
+
+function UIFurnitureWorkshop:AccessStash()
+	local stash_id = GetStash(self.obj_id)
+	CreateTimeEvent("hf_workshop","open_stash_"..stash_id,0,UseStash,stash_id)
+	self:Close()
+end
+
+function UIFurnitureWorkshop:Pickup()
+	local obj = get_object_by_id(self.obj_id)
+	---@type bind_hf_base.hf_binder_wrapper
+	local wrapper = obj:binded_object().wrapper
+	wrapper:pickup()
+	self:Close()
+end
+
+function UIFurnitureWorkshop:InitCallbacks()
+	self:AddCallback("btn_access_stash", ui_events.BUTTON_CLICKED, self.AccessStash, self)
+	self:AddCallback("btn_pickup", ui_events.BUTTON_CLICKED, self.Pickup, self)
+	self:AddCallback("btn_use_workshop", ui_events.BUTTON_CLICKED, self.UseWorkshop, self)
+	self:AddCallback("btn_close", ui_events.BUTTON_CLICKED, self.Close, self)
+end
+
+function UIFurnitureWorkshop:TestAndShow(obj_id)
+    self.obj_id = obj_id
+	self:ShowDialog(true)
+	Register_UI("UIFurnitureWorkshop","ui_hf_workshop")
+end
+
+function UIFurnitureWorkshop:Update()
+	CUIScriptWnd.Update(self)
+end
+
+function UIFurnitureWorkshop:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (res == false) then
+		local bind = dik_to_bind(dik)
+		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+		
+			if dik == DIK_keys.DIK_ESCAPE then
+				self:Close()
+			end
+
+		end
+	end
+
+	return res
+end
+
+function UIFurnitureWorkshop:Close()
+	if (self:IsShown()) then
+		self:HideDialog()
+	end
+	
+	Unregister_UI("UIFurnitureWorkshop")
+end
+
+-------
+function start_dialog(obj_id)
+	if (GUI == nil) then
+		GUI = UIFurnitureWorkshop()
+	end
+	GUI:TestAndShow(obj_id)
+	--return GUI
+end

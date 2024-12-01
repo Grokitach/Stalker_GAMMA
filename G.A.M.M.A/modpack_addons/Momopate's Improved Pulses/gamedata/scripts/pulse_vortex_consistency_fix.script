@@ -1,0 +1,142 @@
+local psyhelm_blocks_pulses = 0		-- 1: Completely negate
+local psyhelm_blocks_vortex = 0		-- 2: Reduce damage radius by 33.3% or by 90% in the case of a psystorm
+									-- 0: Ignore the helm
+
+sm_power = surge_manager.CSurgeManager.hit_power
+surge_manager.CSurgeManager.hit_power = function(self, power, hit_type)
+	local hit_types = { "burn", "shock", "chemical_burn", "radiation", "telepatic" }
+	
+	if hit_types[hit_type + 1] ~= "radiation" then
+		-- printf("power: %s || type: %s", power, hit_types[hit_type + 1])
+		return power
+	else
+		-- As radiation damage and poisoning isn't fiddled with by the ADB, we just let the game do its thing. (Even though this never happens ingame, as is the case with fire and chem damage)
+		sm_power(self, power, hit_type)
+	end
+end
+
+bind_anomaly_field.pAno_p_hit_distance 	= 15
+bind_anomaly_field.pAno_e_hit_distance 	= 30
+local vortex_psy_radius					= 300
+local vortex_shock_radius				= 100
+
+baf_pulse = bind_anomaly_field.pulse_anomaly_hit
+bind_anomaly_field.pulse_anomaly_hit = function(particle_pos)
+	local baf = bind_anomaly_field
+	
+	baf.pAno_light.lanim_brightness = 0.2
+	baf.pAno_light.volumetric_distance = 1
+	baf.pAno_light.volumetric_intensity = 0.1
+	
+	if GetEvent("current_safe_cover") then
+		return true
+	end
+	
+	local hit_power = 0
+	local distance 	= distance_2d(db.actor:position(), particle_pos)
+	
+	if distance < baf.pAno_article_distance then
+		SendScriptCallback("actor_on_interaction", "anomalies", nil, "pulse")
+	end
+	
+	local go 		= true
+	if (dialogs_yantar.actor_has_psi_helmet() and psyhelm_blocks_pulses == 1) then
+		go 			= false
+	end
+	
+	if (distance < baf.pAno_p_hit_distance) and (go) and (not level_environment.is_actor_immune()) then
+		local p_dis = baf.pAno_p_hit_distance
+		if (psyhelm_blocks_pulses == 2 and dialogs_yantar.actor_has_psi_helmet()) then
+			p_dis 	= (p_dis / 3) * 2
+		end
+		
+		local h 	= hit()
+		h.type 		= hit.telepatic
+		h.power 	= surge_manager.SurgeManager:hit_power(math.cos(distance * math.pi / p_dis) + 1, h.type)	
+		h.impulse 	= 0
+		h.direction = VEC_Z
+		h.draftsman = db.actor
+		
+		db.actor:hit(h)
+	
+		level.remove_pp_effector(666)
+		level.add_pp_effector("psi_fade.ppe", 666, false)
+		level.set_pp_effector_factor(666, h.power)
+	end
+	
+	if (distance < baf.pAno_e_hit_distance) and (not level_environment.is_actor_immune()) then
+		local h 	= hit()
+		h.type 		= hit.shock
+		h.power 	= surge_manager.SurgeManager:hit_power(math.cos(distance * math.pi / baf.pAno_e_hit_distance) + 1, h.type)
+		h.impulse 	= 0
+		h.direction = VEC_Z
+		h.draftsman = db.actor
+		
+		db.actor:hit(h)
+		
+		level.remove_pp_effector(667)
+		level.add_pp_effector("electro_fade.ppe", 667, false)
+		level.set_pp_effector_factor(667, h.power)
+	end
+	
+	return true
+end
+
+psm_vortex_hit = psi_storm_manager.CPsiStormManager.vortex_actor_hit
+psi_storm_manager.CPsiStormManager.vortex_actor_hit = function(self, vortex)
+	local hit_power = 0
+	local distance 	= distance_2d(db.actor:position(), vortex.particle_pos)
+	local p_dis		= vortex_psy_radius
+	local s_dis		= vortex_shock_radius
+	
+	local go 		= true
+	if (dialogs_yantar.actor_has_psi_helmet() and psyhelm_blocks_vortex == 1) then
+		go 			= false
+	end
+	
+	if (distance < p_dis) and (go) and (not level_environment.is_actor_immune()) then
+		if (psyhelm_blocks_vortex == 2 and dialogs_yantar.actor_has_psi_helmet()) then
+			p_dis 	= p_dis / 10
+		end
+		
+		local h 	= hit()
+		h.type 		= hit.telepatic
+		h.power 	= surge_manager.SurgeManager:hit_power(math.cos(distance * math.pi / p_dis) + 1, h.type)	
+		h.impulse 	= 0
+		h.direction = VEC_Z
+		h.draftsman = db.actor
+		
+		db.actor:hit(h)
+
+		level.remove_pp_effector(666)
+		level.add_pp_effector("psi_fade.ppe", 666, false)
+		level.set_pp_effector_factor(666, h.power)
+	end
+	
+	if (distance < s_dis) then
+		local h 	= hit()
+		h.type 		= hit.shock
+		h.power 	= surge_manager.SurgeManager:hit_power(math.cos(distance * math.pi / s_dis) + 1, h.type)
+		h.impulse 	= 0
+		h.direction = VEC_Z
+		h.draftsman = db.actor
+		
+		db.actor:hit(h)
+		
+		level.remove_pp_effector(667)
+		level.add_pp_effector("electro_fade.ppe", 667, false)
+		level.set_pp_effector_factor(667, h.power)
+	end
+end
+
+psm_initialize = psi_storm_manager.CPsiStormManager.initialize
+psi_storm_manager.CPsiStormManager.initialize = function(self)
+	psm_initialize(self)
+	
+	-- Fix inconsistencies with GAMMA's shorter Psystorms making it so that VERY FEW vortexes spawned around by reducing the spawn interval by ~40%
+	self.vortex_period_min			= 3		-- Was 8
+	self.vortex_period_max			= 6		-- Was 16
+	
+	-- Make vortexes kill NPCs up to the distance you'd take a full 100 damage hit (Half of the damage radius).
+	self.max_distance_npc_hit		= vortex_shock_radius / 2
+end

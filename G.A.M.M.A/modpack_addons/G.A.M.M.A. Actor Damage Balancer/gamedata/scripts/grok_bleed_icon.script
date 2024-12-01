@@ -1,0 +1,53 @@
+function actor_on_first_update()	
+	actor_status.add_indicator("Bleed"       	   	, { index= 17 	,typ= "state"	,functor= {"grok_bleed_icon","get_bleed",true}	                    ,icon= "ui\\alticons\\Bleed.dds"           ,background= "ui\\alticons\\bg1.dds"	,anim_icon= true	,anim_bk= false  })
+end
+
+local trigger = 0
+local bleed_level = 0
+local bleeding = 0
+local delay = 1000
+function actor_on_update()
+    tg = time_global()
+    
+    if trigger == 0 then
+        grok_delay = tg + delay
+        trigger = 1
+    end
+    
+    if (trigger == 1 and tg > grok_delay) then
+        trigger = 0
+		
+		bleed_level  = db.actor.bleeding
+		-- actor_menu.set_msg( 1, strformat("Bleed level: %s",round_idp(bleed_level,6)) ,1 )
+	end
+end
+
+function get_bleed(visual)
+	if (not visual) then
+		return 0
+	end
+	
+	-- for indicator
+	if bleed_level and bleed_level >= 1.5 then
+		return 4
+	end	
+
+	if bleed_level and bleed_level >= 1.0 then
+		return 3
+	end	
+	
+	if bleed_level and bleed_level >= 0.5 then
+		return 2
+	end
+	
+	if bleed_level and bleed_level > 0 then
+		return 1
+	end
+	
+	return 0
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_update",actor_on_update)
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
+end

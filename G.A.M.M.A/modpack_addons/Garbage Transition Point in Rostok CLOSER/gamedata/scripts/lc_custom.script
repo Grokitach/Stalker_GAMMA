@@ -1,0 +1,73 @@
+
+function actor_on_first_update()
+	local lc_pool = {
+		["lc_bar_garbage"] = {
+			pos = vector():set(279,1,-63),
+			smart = "bar_zastava_dogs_lair",
+			spot = "level_changer_down",
+			hint = "esc_space_restrictor_to_garbage_descr",
+		},
+		["lc_garbage_bar"] = {
+			pos = vector():set(-30,5,245),
+			smart = "gar_smart_terrain_5_2",
+			spot = "level_changer_up",
+			hint = "space_restrictor_to_bar_desc",
+		}
+	}
+	
+	for sec,v in pairs(lc_pool) do
+		local se = get_story_se_item(sec)
+		if not (se) then
+			local pos = v.pos
+			local vid = level.vertex_id(pos)
+			local gid = SIMBOARD.smarts_by_names[v.smart].m_game_vertex_id
+			se = alife():create(sec,pos,vid,gid)
+		end
+		
+		if (se.position:distance_to_sqr(v.pos) > 0.1) then
+			local pos = v.pos
+			local vid = level.vertex_id(pos)
+			local gid = SIMBOARD.smarts_by_names[v.smart].m_game_vertex_id
+			TeleportObject(se.id,pos,vid,gid)
+		end
+		
+		if (level.map_has_object_spot(se.id,v.spot) == 0) then
+			level.map_add_object_spot_ser(se.id,v.spot,game.translate_string(v.hint))
+		end
+	end
+end
+
+function check_name(actor,obj,p)
+	return p and p[1] and obj and string.find(obj:name(),p[1]) and true
+end
+
+function teleport_actor(actor,obj)
+	local p = {
+		["lc_bar_garbage"] = {
+			pos = vector():set(7,1,225),
+			w_p = vector():set(260,0,-63),
+			smart = "gar_smart_terrain_5_2",
+		},
+		["lc_garbage_bar"] = {
+			pos = vector():set(260,0,-63),
+			w_p = vector():set(-30,5,245),
+			smart = "bar_zastava_dogs_lair",
+		},
+	}
+	
+	local sec = obj and obj:section()
+	local v = sec and p[sec]
+	
+	if (v and v.w_p and v.pos and v.smart) then
+		db.actor:set_actor_position(v.w_p)
+		
+		local pos = v.pos
+		local vid = level.vertex_id(pos)
+		local gid = SIMBOARD.smarts_by_names[v.smart].m_game_vertex_id
+		ChangeLevel(pos,vid,gid,VEC_ZERO,true)
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
+end

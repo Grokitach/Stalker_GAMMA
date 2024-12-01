@@ -1,0 +1,118 @@
+local ipairs = ipairs
+local pairs = pairs
+local SYS_GetParam = SYS_GetParam
+
+local random = math.random
+
+local string_find = string.find
+local string_gsub = string.gsub
+
+-- Load the defaults
+local function load_defaults()
+	local t = {}
+	local op = perk_based_artefacts_mcm.op
+	for i, v in ipairs(op.gr) do
+		if v.def ~= nil then
+			t[v.id] = v.def
+		end
+	end
+	return t
+end
+local settings = load_defaults()
+
+local function get_artefact_from_container(sec)
+	local sec = sec
+	if (string_find(sec, "(lead.-_box)",3)) then
+		sec = sec:gsub("_lead_box", "")		
+	elseif (string_find(sec, "(af.-_iam)",3)) then
+		sec = sec:gsub("_af_iam", "")
+	elseif (string_find(sec, "(af.-_aac)",3)) then
+		sec = sec:gsub("_af_aac", "")
+	elseif (string_find(sec, "(af.-_aam)",3)) then
+		sec = sec:gsub("_af_aam", "")
+	end
+	return sec
+end
+
+-- table of already looted boxes
+local boxes = {}
+
+function clean_artys(box)
+	local items = {}
+
+	local function clean()
+		box:iterate_inventory_box(function(npc, item)
+			local sec = item:section()
+			local id = item:id()
+			if SYS_GetParam(0, get_artefact_from_container(sec), "kind", "") == "i_arty_junk" then
+				items[id] = {
+					id = id,
+					section = sec,
+					item = item
+				}
+			end
+		end, box)
+
+		if ui_mcm then
+			settings.debug_mode = ui_mcm.get("perk_based_artefacts/debug_mode")
+			settings.treasure_chance = ui_mcm.get("perk_based_artefacts/treasure_chance")
+		end
+
+		for k, v in pairs(items) do
+			if random(100) > settings.treasure_chance then
+				if settings.debug_mode then
+					printf("Perk Based Artefacts, removing item %s, section %s", k, v.section)
+				end
+				alife_release_id(k)
+			end
+		end
+		return true
+	end
+
+	CreateTimeEvent("pba_less_artys", "pba_less_artys", 0, clean)
+end
+
+-- callback, when opening boxes
+-- ignore player stashes and fanat box
+function physic_object_on_use_callback(box)
+    local id = box:id()
+    local player_stashes = alife_storage_manager.get_state().player_created_stashes
+    local workshop_stashes = alife_storage_manager.get_state().workshop_stashes
+	local is_workshop_stash = false
+	if workshop_stashes then
+		for k, v in pairs(workshop_stashes) do
+			if v == id then
+				is_workshop_stash = true
+			end
+		end
+	end
+    if (id and boxes and boxes[id]) or (player_stashes and player_stashes[id]) or (box:name() == "secret_fanat") or (workshop_stashes and is_workshop_stash)then
+        return
+    end
+    if (IsInvbox(box)) then
+        clean_artys(box)
+        boxes[id] = true
+	end
+end
+
+-- callback, used to write box table to save
+function save_state(data)
+    data.pba_less_artys_boxes = boxes
+end
+
+-- callback, used to load box table from save
+function load_state(data)
+    boxes = data.pba_less_artys_boxes or {}
+end
+
+-- register callback for box opening
+function actor_on_first_update()
+    RegisterScriptCallback("physic_object_on_use_callback", physic_object_on_use_callback)
+end
+
+-- register callbacks for saving/loading
+function on_game_start()
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
+    RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+end
