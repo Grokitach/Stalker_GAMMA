@@ -17,6 +17,7 @@
         sds_zoom_enable [0; 1] // Enable correction of max. zoom with scope_factor, if this option is enabled then max. zoom will be such as prescribed in settings regardless of scope_factor value, if this option is disabled then max. zoom will be sum of value prescribed in settings and the increase that gives scope_factor.
         new_zoom_enable [0; 1] // Enable alternative zoom control. Minimal zoom is equal to either mechanical zoom or the one prescribed in section min_scope_zoom_factor. The step of zoom adjustment is more precise. 
         zoom_step_count [1.0, 10.0] // Adjust the step of zoom if new_zoom_enable is on
+        new_zoom_delta_algorithm [0; 1] // New zoom delta algorithm
 
         demo_record_return_ctrl_inputs // Launch (from console or scripts) `demo_record` but propagate ESC and TAB keypresses back to launcher entity (game or scripts) 
         demo_record_blocked_input 1 // Start demo_record without move or stop. The console and Esc key are available
@@ -36,6 +37,7 @@
 
         mouse_wheel_change_weapon // Enable changing weapons with mouse wheel
         mouse_wheel_invert_zoom // Invert mouse wheel
+        mouse_sens_vertical [0.1; 3] // Vertical mouse sensitivity factor. The number is a multiplicative factor to overall mouse sensitivity, default 1
 
         string_table_error_msg // Print xml translation errors
         monster_stuck_fix // Enables fix of stuck monsters at the fps cost
@@ -46,6 +48,10 @@
         render_short_tracers // Tracers will be capped to their minimum length instead of not rendering 
 		
 		viewport_near [0.0, 1.0] // Adjust the camera near value
+
+        print_bone_warnings // Print warnings when using bone_position and bone_direction functions and encounter invalid bones
+
+        poltergeist_spawn_corpse_on_death // Poltergeists spawn corpses on death
     }
 
     lua extensions {
@@ -178,6 +184,29 @@
 
         CUIStatic* map_get_object_spot_static(u16 id, LPCSTR spot_type)
         CUIStatic* map_get_object_minimap_spot_static(u16 id, LPCSTR spot_type)
+        table map_get_object_spots_by_id(u16 id) // Returns array of tables
+        // {
+            spot_type: string, icon ID from map_spots XML
+            text: string, text when spot is hovered
+        // }
+
+        add_bullet(Fvector pos, Fvector dir, float speed, float power, float impulse, u16 sender, ALife::EHitType hit_type, float max_dist, LPCSTR ammo_sect, float air_resistance)
+
+        add_bullet(table t)
+        // Supported parameters and example:
+        //    local t = {
+        //        pos = device().cam_pos,
+        //        dir = device().cam_dir,
+        //        speed = 10,
+        //        power = 1,
+        //        impulse = 1,
+        //        sender = AC_ID,
+        //        hit_type = 1,
+        //        max_dist = 100,
+        //        ammo_sect = "ammo_5.56x45_fmj",
+        //        air_resistance = 0.2,
+        //    }
+        //    level.add_bullet(t)
     }
 
     // obj:get_physics_shell()
@@ -331,6 +360,9 @@
 
         function set_bone_visible(u16 id, bool bVisibility, bool bRecursive, bool bHud)
         function set_bone_visible(string bone_name, bool bVisibility, bool bRecursive, bool bHud)
+
+        // Torch
+        function update_torch()
     }
 
     class CArtefact : CGameObject {
