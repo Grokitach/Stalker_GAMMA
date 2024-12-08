@@ -1,0 +1,593 @@
+-- Patches for _g.script
+
+_G.MODDED_EXES_VERSION = get_modded_exes_version()
+
+-- IMPORTS
+local string_find 	= string.find
+local string_format	= string.format
+local string_gsub	= string.gsub
+local string_rep	= string.rep
+
+local table_concat 	= table.concat
+local table_insert 	= table.insert
+local table_remove 	= table.remove
+
+local math_huge		= math.huge
+
+local tostring 		= tostring
+local tonumber 		= tonumber
+local unpack 		= unpack
+
+-- UTILS
+-- str_explode with limit on items to split
+-- n is the amount of times to split
+-- str_explode("1,2,3,4", ",", 1) = {"1", "2,3,4"}
+_G.str_explode_lim = function(str, sep, n, plain)
+	local n = n or math_huge
+	if not (str and sep) then
+		printe("!ERROR str_explode | missing parameter str = %s, sep = %s",str,sep)
+		callstack()
+	end
+	if not (sep ~= "" and string_find(str,sep,1,plain) and n > 0) then
+		return { str }
+	end
+	local t = {}
+	local rest = {}
+	local size = 0
+	for s in str:gsplit(sep,plain) do 
+		size = size + 1
+		if size > n then
+			rest[#rest + 1] = s
+		else
+			t[size] = trim(s)
+		end
+	end
+	if is_not_empty(rest) then
+		local rest_s = table_concat(rest, sep)
+		t[#t + 1] = rest_s
+	end
+	return t
+end
+
+-- Inserts character into string
+function string.insert(str1, str2, pos)
+    return str1:sub(1,pos)..str2..str1:sub(pos+1)
+end
+
+-- Reduces multiple consecutive spaces in string to one
+_G.one_space = function(s)
+	return string_gsub(s, "  *", " ")
+end
+
+-- Removes newline characters from string
+_G.one_line = function(s)
+    return s:gsub("[\n\r]", "")
+end
+
+-- Iterative print of tables with optional sorting for spairs, formatting is similar to PHP print_r
+_G.print_r = function(t, sort, sorting_func)
+	if not t then
+		return printf("nil")
+	end
+
+	local function vec_to_str(t)
+		if t.w then
+			return string_format("%s,%s,%s,%s", t.x, t.y, t.z, t.w)
+		elseif t.z then
+			return string_format("%s,%s,%s", t.x, t.y, t.z)
+		elseif t.y then
+			return string_format("%s,%s", t.x, t.y)
+		elseif t.x then
+			return string_format("%s", t.x)
+		end
+	end
+
+	if type(t) ~= "table" then
+		if type(t) == "userdata" then
+			local vec = vec_to_str(t)
+			if vec then
+				return printf("%s", vec)
+			end
+		end
+		return printf("%s", t)
+	end
+
+	if is_empty(t) then
+		return printf("{}")
+	end
+
+	local function sort_func(t, a, b)
+		if type(a) == "number" and type(b) == "number" then
+			return a < b
+		else
+			return tostring(a) < tostring(b)
+		end
+	end
+
+	sorting_func = sorting_func or sort_func
+
+	local iterator_func = sort and spairs or pairs
+
+    local print_r_cache={}
+    local stack = {}
+    local saved_pos = {}
+    local indent = ""
+    table_insert(stack, t)
+    while #stack > 0 do
+    	local t = table_remove(stack)
+    	if not saved_pos[t] then
+    		saved_pos[t] = {}
+    	end
+    	local new_table = false
+    	for k, v in iterator_func(t, sort_func) do
+    		local key = k
+    		if type(k) == "userdata" then
+    			key = vec_to_str(k) or "userdata"
+    		end
+    		if saved_pos[t][k] then
+    			-- Do nothing
+ 			elseif type(v) == "table" and print_r_cache[tostring(v)] then
+ 				printf(indent.."["..key.."] => ".."*"..tostring(v))
+            elseif type(v) == "table" then
+            	table_insert(stack, t)
+            	table_insert(stack, v)
+            	printf(indent.."["..key.."] => "..tostring(v).." {")
+            	indent = indent..string_rep(" ", 2)
+            	new_table = true
+            	print_r_cache[tostring(t)] = true
+            elseif type(v) == "userdata" then
+				printf(indent.."["..key.."] => "..(vec_to_str(v) or "userdata"))
+            else
+            	printf(indent.."["..key.."] => "..tostring(v))
+            end
+            saved_pos[t][k] = true
+            if new_table then
+                break
+            end
+		end
+		print_r_cache[tostring(t)] = true
+	    if not new_table then
+        	indent = indent:sub(1, -3)
+        	if #stack > 0 then
+        		printf(indent.."}")
+        	end
+    	    -- saved_pos[t] = nil
+    	end
+    end
+    printf(" ")
+end
+
+_G.try = function(func, ...)
+    local status, error_or_result = pcall(func, ...)
+    if not status then
+        printf(error_or_result)
+        return false, status, error_or_result
+    else
+        return error_or_result, status
+    end
+end
+
+-- Postpone on next n tick
+_G.nextTick = function(f, n)
+	n = math.floor(math.max(n or 1, 1))
+	AddUniqueCall(function()
+		if n == 1 then
+			return f()
+		else
+			n = n - 1
+			return false
+		end
+	end)
+end
+
+-- Throttle function to fire every tg_throttle milliseconds
+_G.throttle = function(func, tg_throttle)
+    local tg = 0
+    if not tg_throttle or tg_throttle == 0 then
+        return function(...)
+            local t = time_global()
+            if t ~= tg then
+                tg = t
+                return func(...)
+            end
+        end
+    else
+        return function(...)
+            local t = time_global()
+            if t < tg then return end
+            tg = t + tg_throttle
+            return func(...)
+        end
+    end
+end
+
+_G.print_tip = function(text, ...)
+    local text = tostring(text)
+    printf(text, ...)
+    if not db.actor then
+        return
+    end
+    
+    local ico = "ui_inGame2_Dengi_otdani"
+    local text_color = utils_xml.get_color("pda_white")
+    local arg_color = utils_xml.get_color("d_green")
+    local function colorize(s)
+        return arg_color .. s .. text_color
+    end
+    local i = 0
+    local t = {...}
+    if #t > 0 then
+        local function sr(a)
+            i = i + 1
+            if (type(t[i]) == 'userdata') then
+                if (t[i].x and t[i].y) then
+                    return colorize(vec_to_str(t[i]))
+                end
+                return colorize('userdata')
+            end
+            return colorize(tostring(t[i]))
+        end
+        text = string.gsub(game.translate_string(text), "%%s", sr)
+    else
+        text = game.translate_string(text)
+    end
+    text = text_color .. text
+    news_manager.send_tip(db.actor, text, nil, ico, 6000)
+end
+
+_G.table_walk = function(walk_table, callback)
+	for k, v in pairs(walk_table) do
+		if callback(v, k, walk_table) then
+			return
+		end
+		if type(v) == "table" then
+			table_walk(v, callback)
+		end
+	end
+end
+
+_G.table_merge = function(t1, ...)
+	local ts = {...}
+	for i, t in ipairs(ts) do
+		for k, v in pairs(t) do
+			t1[k] = v
+		end
+	end
+	return t1
+end
+
+_G.table_equals = function(actual, expected, cycleDetectTable)
+    local type_a, type_e = type(actual), type(expected)
+
+    if type_a ~= type_e then
+        return false -- different types won't match
+    end
+
+    if type_a ~= 'table' then
+        -- other types compare directly
+        return actual == expected
+    end
+
+    cycleDetectTable = cycleDetectTable or { actual={}, expected={} }
+    if cycleDetectTable.actual[ actual ] then
+        -- oh, we hit a cycle in actual
+        if cycleDetectTable.expected[ expected ] then
+            -- uh, we hit a cycle at the same time in expected
+            -- so the two tables have similar structure
+            return true
+        end
+
+        -- cycle was hit only in actual, the structure differs from expected
+        return false
+    end
+
+    if cycleDetectTable.expected[ expected ] then
+        -- no cycle in actual, but cycle in expected
+        -- the structure differ
+        return false
+    end
+
+    -- at this point, no table cycle detected, we are
+    -- seeing this table for the first time
+
+    -- mark the cycle detection
+    cycleDetectTable.actual[ actual ] = true
+    cycleDetectTable.expected[ expected ] = true
+
+
+    local actualKeysMatched = {}
+    for k, v in pairs(actual) do
+        actualKeysMatched[k] = true -- Keep track of matched keys
+        if not table_equals(v, expected[k], cycleDetectTable) then
+            -- table differs on this key
+            -- clear the cycle detection before returning
+            cycleDetectTable.actual[ actual ] = nil
+            cycleDetectTable.expected[ expected ] = nil
+            return false
+        end
+    end
+
+    for k, v in pairs(expected) do
+        if not actualKeysMatched[k] then
+            -- Found a key that we did not see in "actual" -> mismatch
+            -- clear the cycle detection before returning
+            cycleDetectTable.actual[ actual ] = nil
+            cycleDetectTable.expected[ expected ] = nil
+            return false
+        end
+        -- Otherwise actual[k] was already matched against v = expected[k].
+    end
+
+    -- all key match, we have a match !
+    cycleDetectTable.actual[ actual ] = nil
+    cycleDetectTable.expected[ expected ] = nil
+    return true
+end
+
+-- Additional params for callbacks
+-- Called on CHudItem Motion Mark
+_G.CHudItem__OnMotionMark = function(state, mark, obj, owner)
+	SendScriptCallback("actor_on_hud_animation_mark", state, mark, obj, owner)
+end
+
+_G.CHudItem__PlayHUDMotion = function(anm_table, obj, owner)
+	SendScriptCallback("actor_on_hud_animation_play", anm_table, obj, owner)
+	return anm_table
+end
+
+-- Disable caching of ini values to utilize engine functions and reduce memory footprint
+_G.USE_INI_MEMOIZE = false
+clear_ini_cache(ini_sys)
+if ini_cache then
+	empty_table(ini_cache)
+end
+
+_G.ini_file.r_string_ex = function(ini, s, k, def)
+	return ini:line_exist(s, k) and ini:r_string(s, k) or def
+end
+_G.ini_file.r_float_ex = function(ini, s, k, def)
+	if not ini:line_exist(s, k) then
+		return def
+	end
+	local v = ini:r_string(s, k)
+	if v == nil then
+		return def
+	end
+	return tonumber(v) or def
+end
+_G.ini_file.r_bool_ex = function(ini, s, k, def)
+	if not ini:line_exist(s, k) then
+		return def
+	end
+	local v = ini:r_string(s, k)
+	if v == nil then
+		return def
+	end
+	return v == "true" or v == "1" or v == "yes" or v == "on"
+end
+_G.ini_file.r_sec_ex = function(ini, s, k, def)
+	local result = ini_file.r_string_ex(ini, s, k, def)
+	if result and ini_sys:section_exist(result) then
+		return result
+	end
+	return nil
+end
+_G.ini_file.r_line_ex = function(ini, s, k)
+	return ini:r_line(s, k, "", "")
+end
+
+-- ini_file_ex disabled cache
+_G.ini_file_ex.r_value = function(self, s, k, typ, def)
+	if not self.cleaned_cache then
+		self.cleaned_cache = true
+		empty_table(self.cache)
+	end
+	if not self.ini:line_exist(s, k) then
+		return def
+	end
+	local v = self.ini:r_string(s, k)
+	if v == nil then
+		-- Original 1.5.2 behaviour of r_value with bool type and r_bool_ex
+		-- is to return false if section and line exist and value is nil
+		-- In future it should be replaced with returning def 
+		if typ == 1 then
+			return false
+		else
+			return def
+		end
+	end
+	if typ == 1 then
+		return v == "true" or v == "1" or v == "yes" or v == "on"
+	elseif typ == 2 then
+		return tonumber(v) or def
+	end
+	return v
+end
+
+_G.ini_file_ex.w_value = function(self, s, k, val, comment)
+	self.ini:w_string(s, k, val ~= nil and tostring(val) or "", comment ~= nil and tostring(comment) or "")
+end
+
+_G.ini_file_ex.line_exist = function(self, section, key)
+	return self.ini:line_exist(section, key)
+end
+
+_G.ini_file_ex.r_string_ex = function(self, s, k)
+	return self.ini:r_string_ex(s, k)
+end
+
+_G.ini_file_ex.r_bool_ex = function(self, s, k, def)
+	-- In future replace with self.ini:r_bool_ex(s, k, def)
+	return self:r_value(s, k, 1, def)
+end
+
+_G.ini_file_ex.r_float_ex = function(self, s, k)
+	return self.ini:r_float_ex(s, k)
+end
+
+-- SYS_GetParam disabled ini caching in benefit to use engine functions and reduce memory footprint
+empty_table(INISYS_CACHE)
+_G.INISYS_TYPES = {
+	-- string
+	[0] = function(typ, sec, param, def)
+		return ini_sys:r_string_ex(sec, param, def)
+	end,
+	-- bool
+	[1] = function(typ, sec, param, def)
+		return ini_sys:r_bool_ex(sec, param)
+	end,
+	-- float
+	[2] = function(typ, sec, param, def)
+		return ini_sys:r_float_ex(sec, param, def)
+	end,
+}
+_G.SYS_GetParam = function(typ, sec, param, def)
+	if not (typ and INISYS_TYPES[typ]) then
+		printf("!ERROR SYS_GetParam(%s, %s, %s, %s), incorrect type %s", typ, sec, param, def, typ)
+		callstack()
+		return
+	end
+
+	if not (sec and param) then
+		printf("!ERROR SYS_GetParam(%s, %s, %s, %s) | What's missing?", typ, sec, param, def)
+		callstack()
+		return
+	end
+
+	local result = INISYS_TYPES[typ](typ, sec, param, def)
+	return result
+end
+
+-- ini_file_ex replacement that is inherited from ini_file
+class "new_ini_file_ex" (ini_file)
+function new_ini_file_ex:__init(fname, advanced_mode)
+	super(fname)
+	self.fname = getFS():update_path('$game_config$', '')..fname
+	self.ini = self
+	if advanced_mode then
+		self:set_override_names(true)
+		self:set_readonly(false)
+		self:save_at_end(false)
+	end
+end
+
+function new_ini_file_ex:save()
+	self:save_as(self.fname)
+end
+
+function new_ini_file_ex:r_value(s, k, typ, def)
+	if not self:line_exist(s, k) then
+		return def
+	end
+	local v = self:r_string(s, k)
+	if v == nil then
+		-- Original 1.5.2 behaviour of r_value with bool type and r_bool_ex
+		-- is to return false if section and line exist and value is nil
+		-- In future it should be replaced with returning def
+		if typ == 1 then
+			return false
+		else
+			return def
+		end
+	end
+	if typ == 1 then
+		return v == "true" or v == "1" or v == "yes" or v == "on"
+	elseif typ == 2 then
+		return tonumber(v) or def
+	end
+	return v
+end
+
+function new_ini_file_ex:w_value(s, k, val, comment)
+	self:w_string(s, k, val ~= nil and tostring(val) or "", comment ~= nil and tostring(comment) or "")
+end
+
+-- In future delete this override
+function new_ini_file_ex:r_bool_ex(s, k, def)
+	return self:r_value(s, k, 1, def)
+end
+
+function new_ini_file_ex:collect_section(section)
+	local _t = {}
+
+	local n = self:section_exist(section) and self:line_count(section) or 0
+	for i = 0, n - 1 do
+		local res, id, val = self:r_line(section, i, "", "")
+		_t[id] = val
+	end
+
+	return _t
+end
+
+function new_ini_file_ex:get_sections(keytable)
+	local t = {}
+	local function itr(section)
+		if keytable then
+			t[section] = true
+		else
+			t[#t + 1] = section
+		end
+		return false
+	end
+	self:section_for_each(itr)
+	return t
+end
+
+function new_ini_file_ex:r_string_to_condlist(s, k, def)
+	local src = self:r_string_ex(s, k) or def
+	if src then
+		return xr_logic.parse_condlist(nil, s, k, src)
+	end
+end
+
+function new_ini_file_ex:r_list(s, k, def)
+	local src = self:r_string_ex(s, k) or def
+	if src then
+		return parse_names(src)
+	end
+end
+
+function new_ini_file_ex:r_mult(s, k, ...)
+	local src = self:r_string_ex(s, k) or def
+	if src then
+		return unpack(parse_names(src))
+	end
+	return ...
+end
+_G.ini_file_ex = new_ini_file_ex
+
+-- RavenAscendant: alife_clone_weapon fix
+_G.alife_clone_weapon = function(se_obj, section, parent_id)
+    if (not se_obj) then
+        callstack()
+        printe("!ERROR: alife_clone_weapon | no server object passed!")
+        return
+    end
+    
+    local se_obj_new = alife():clone_weapon(se_obj, section or se_obj:section_name(), se_obj.position, se_obj.m_level_vertex_id, se_obj.m_game_vertex_id, parent_id or se_obj.parent_id, false)
+    if (se_obj_new) then
+
+        -- Clone server object data
+        local m_data_se = alife_storage_manager.get_state().se_object
+        if m_data_se[se_obj.id] then
+            m_data_se[se_obj_new.id] = {}
+            copy_table(m_data_se[se_obj_new.id], m_data_se[se_obj.id])
+            m_data_se[se_obj_new.id].name = se_obj_new:name() -- alife_storage_manager uses name as validation incase se_unregister is missed. which can happen. 
+        end
+        
+        -- Clone parts states
+        if item_parts then
+            item_parts.copy_parts_con(se_obj.id, se_obj_new.id)
+            item_parts.clear_parts_con(se_obj.id)
+        end
+        
+        -- Release the old weapon.
+        alife_record(se_obj_new,true)
+        alife_release(se_obj)
+        
+        -- Register the new weapon.
+        se_obj_new = alife():register(se_obj_new) -- register deletes and respawns the object
+    end
+    
+    return se_obj_new
+end
