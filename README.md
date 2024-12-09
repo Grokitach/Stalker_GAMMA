@@ -37,7 +37,7 @@ The main motivation behind this project is to provide an easy to install, automa
 
 This modpack is 100% copyright free since it redistributes little to no copyrighted content developed by other modders. Indeed, G.A.M.M.A. downloads every add-on directly from moddb or github, and installs them automatically. You will thus directly support modders by installing G.A.M.M.A. On top of this, each addon original source (moddb or github page) is directly accessible from the Mod Organizer 2 instance by right-clicking addons > visit moddb.com.
 
-Many addons are developped exclusively for this project, including:
+Many addons are developed exclusively for this project, including:
 - A new UI.
 - A rebalanced survival experience focused on crafting, repairing and cooking.
 - A new economy where traders will only sell you supplies, and where good ammunition will only be available to trustful stalkers.
