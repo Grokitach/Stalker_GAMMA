@@ -48,11 +48,15 @@ function ui_taskboard_row:__init(parent, row) super(parent, row)
 	self.task_accept_btn = xml:Init3tButton("btn_accept_task", self)
 	self.task_next_btn = xml:Init3tButton("btn_next_task", self)
 
+	self.task_limit_reached_btn = xml:Init3tButton("btn_task_limit_reached", self)
+	self.task_limit_reached_btn:Show(false);
+	self.task_limit_reached_btn:TextControl():SetTextColor(utils_xml.get_color("red",true));
+
 	parent.rows[row] = self
 
 	parent:Register(self.task_accept_btn, "task_accept_btn_" .. row)
 	parent:AddCallback("task_accept_btn_" .. row, ui_events.BUTTON_CLICKED, accept_task_callback_factory(parent, row), self)
-	
+
 	parent:Register(self.task_next_btn, "task_next_btn_" .. row)
 	parent:AddCallback("task_next_btn_" .. row, ui_events.BUTTON_CLICKED, next_task_in_category_callback_factory(parent, row), self)
 end
@@ -118,7 +122,7 @@ function get_long_task_description(task_data)
 		(not is_mechanic_task and axr_task_manager.get_fetch_task_description( task_data.task_id )) or
 		axr_task_manager.get_task_job_description( task_data.task_id )
 	)
-	return string.format( base_desc, dialogs._FETCH_TEXT or "" )
+	return strformat( base_desc, dialogs._FETCH_TEXT or "" )
 end
 
 function accept_task_callback_factory(pda_tab, row_index)
@@ -202,10 +206,15 @@ function get_nearby_npcs()
 	local radius = config.scanning_range
 	local npc_list = {}
 	level.iterate_nearest(db.actor:position(), radius, function (obj)
-		if IsStalker(obj) and obj:alive() and obj:relation(db.actor) ~= game_object.enemy then
-			if not has_value(excluded_npc_sections, obj:section()) then
+		local is_alive_friendly_stalker = IsStalker(obj) and obj:alive() and obj:relation(db.actor) ~= game_object.enemy
+		local is_excluded_npc = has_value(excluded_npc_sections, obj:section())
+		local is_companion = obj:has_info("npcx_is_companion")
+
+		if
+			is_alive_friendly_stalker
+			and not is_excluded_npc
+			and (is_companion and config.companions_give_tasks or not is_companion) then
 				table.insert(npc_list, obj)
-			end
 		end
 	end)
 	
@@ -225,12 +234,25 @@ function get_nearby_npcs()
 	return npc_list
 end
 
+local actually_is_sim = {
+	"bar_visitors_garik_stalker_guard", 				-- Garik
+	"bar_visitors_zhorik_stalker_guard2", 				-- Zhorik
+	"bar_arena_guard",									-- Liolik
+	"bar_dolg_general_zoneguard_stalker",				-- "Get out of here stalker" guy
+	"mil_smart_terrain_7_7_freedom_bodyguard_stalker",	-- Lukash's bodyguards
+	"mil_smart_terrain_7_7_freedom_bodyguard2_stalker"	-- Lukash's bodyguards
+} 
+
 function trigger_generate_available_tasks(npc_list) 
 	for _,npc in pairs(npc_list) do 
 		-- Sim npcs are random roaming stalkers. Non sims are traders, mechanics, etc.
 		local is_sim = string.find(npc:section(), "sim_")
 		currently_processed_npc_id = npc:id()
-		axr_task_manager.generate_available_tasks(npc, is_sim)
+		if has_value(actually_is_sim, npc:section()) then
+			axr_task_manager.generate_available_tasks(npc, not is_sim)
+		else
+			axr_task_manager.generate_available_tasks(npc, is_sim)
+		end
 		currently_processed_npc_id = nil
 	end
 end
@@ -248,9 +270,7 @@ function get_prepared_task_data(npc_list)
 	for _,stalker in pairs(npc_list) do 
 		local stalker_task_list = axr_task_manager.available_tasks[stalker:id()] or {}
 		for _, task_id in pairs(stalker_task_list) do
-			local raw_task_effect = task_manager.task_ini:r_string_ex(task_id,"on_job_descr") or task_manager.task_ini:r_string_ex(task_id,"fetch_func")
-			local task_effect = string.gmatch(raw_task_effect or "", "=(.*)%(")() or "rest"
-			task_effect = normalize_task_effect(task_effect)
+			local task_effect, has_details = get_task_effect(task_id)
 			if not has_value(excluded_tasks, task_id) then
 				if not result[task_effect] then
 					result[task_effect] = {}
@@ -258,6 +278,7 @@ function get_prepared_task_data(npc_list)
 				table.insert(result[task_effect], {
 					npc_id = stalker:id(),
 					task_id = task_id,
+					has_details = has_details
 				})
 			end
 		end
@@ -265,12 +286,33 @@ function get_prepared_task_data(npc_list)
 	return result
 end
 
+function get_task_effect(task_id) -- (task_id: string) => task_effect: string, has_details: boolean
+	-- Support for mods that add more tasks and dispatch effects of their own and can't be categorized using the base Anomaly task types
+	local task_category_override = task_manager.task_ini:r_string_ex(task_id,"task_category_override")
+	if task_category_override then return task_category_override end
+
+
+	local raw_task_effect = task_manager.task_ini:r_string_ex(task_id,"on_job_descr") or task_manager.task_ini:r_string_ex(task_id,"fetch_func")
+	local task_effect = string.gmatch(raw_task_effect or "", "=(.*)%(")() or "rest"
+	task_effect = normalize_task_effect(task_effect)
+
+	-- If there's no category string defined for a given effect/category override, default to `rest` to avoid ugly strings
+	-- Also makes it easy for modders to just dump all their tasks into `Other tasks` category by simply not defining category override in ini 
+	local has_invalid_category = string.find(game.translate_string('st_pda_caption_' .. task_effect), '_')
+	if has_invalid_category then 
+		return "rest", not not raw_task_effect
+	else
+		return task_effect, not not raw_task_effect
+	end
+end
+
 function update_task_entry(pda_tab, i, task_details) 
 	if (not pda_tab.rows[i]) then
 		pda_tab.list:AddWindow(ui_taskboard_row(pda_tab, i))
 	end
+	local row = pda_tab.rows[i]
 
-	pda_tab.rows[i].task_category:SetText(game.translate_string('st_pda_caption_' .. current_board_state[i].task_effect))
+	row.task_category:SetText(game.translate_string('st_pda_caption_' .. current_board_state[i].task_effect))
 	
 	local stalker = level.object_by_id(task_details.npc_id)
 
@@ -279,23 +321,35 @@ function update_task_entry(pda_tab, i, task_details)
 	local stalker_name = stalker:character_name()
 	
 	stalker_icon = stalker_icon and stalker_icon ~= "" and stalker_icon or "ui\\ui_noise"
-	pda_tab.rows[i].icon_field:InitTexture(stalker_icon)
+	row.icon_field:InitTexture(stalker_icon)
 	
 	local stalker_info = stalker_name .. "\\n" ..
 	game.translate_string("ui_st_community") .. ": " .. game.translate_string(stalker_comm)
-	pda_tab.rows[i].stalker_info:SetText(stalker_info)
+	row.stalker_info:SetText(stalker_info)
 
 	local more_task_details = get_more_task_details(i) or {}
-	pda_tab.rows[i].task_icon_field:InitTexture(more_task_details.task_icon or "ui\\ui_noise")
+	row.task_icon_field:InitTexture(more_task_details.task_icon or "ui\\ui_noise")
 
 	local details = (more_task_details.task_title or "") .. 
 	"\\n" .. 
 	(string.gsub(more_task_details.task_details or "", "\\n ", "\\n"))
-	pda_tab.rows[i].task_details_field:SetText(details)
+	row.task_details_field:SetText(details)
 
 	local full_desc = task_details.task_description or ""
-	pda_tab.rows[i].task_full_description_field:SetText(full_desc)
-	pda_tab.rows[i].task_next_btn:Show(has_more_task_in_category(i))
+	row.task_full_description_field:SetText(full_desc)
+	row.task_next_btn:Show(has_more_task_in_category(i))
+	manage_accept_button(stalker, row)
+end
+
+function manage_accept_button(stalker, row)
+	local reached_limit = dialogs.has_tasks_by_npc(stalker)
+	if reached_limit then
+		row.task_limit_reached_btn:Show(true)
+		row.task_accept_btn:Show(false)
+	else
+		row.task_limit_reached_btn:Show(false)
+		row.task_accept_btn:Show(true)
+	end
 end
 
 function has_more_task_in_category(i) 
@@ -324,17 +378,18 @@ end
 -- task data with the details received through overridden actor method.
 function get_more_task_details(i)
 	local entry_info = current_board_state[i]
+	local task_data = prepared_tasks_data[entry_info.task_effect][entry_info.current_index]
 	if entry_info.current_index == 1 then
 		-- If no new task has been requested for a given category, index of details will be the same as the index of row (or at least I didn't observe any
 		-- deviations from that rule for now)
-		if(entry_info.task_effect ~= "rest") then
+		if(task_data.has_details) then
 			return z_taskboard_overrides.tasks_info[i - get_processed_tasks_with_no_info_count(i)]
 		elseif igi_generic_task then
 			return get_igi_task_details(entry_info.current_index)
 		else return end
 	else
 		-- If new task has been requested, the details will be appended at the end of the array, so we can easily read them
-		if(entry_info.task_effect ~= "rest") then
+		if(task_data.has_details) then
 			return z_taskboard_overrides.tasks_info[#z_taskboard_overrides.tasks_info]
 		elseif igi_generic_task then
 			return get_igi_task_details(entry_info.current_index)
@@ -345,7 +400,8 @@ end
 function get_processed_tasks_with_no_info_count(i) 
 	local count = 0
 	for index, entry_info in ipairs(current_board_state) do
-		if index < i and entry_info.task_effect == "rest" then
+		local task_data = prepared_tasks_data[entry_info.task_effect][entry_info.current_index]
+		if index < i and not task_data.has_details then
 			count = count + 1
 		end
 	end
@@ -377,6 +433,7 @@ normalizer = {
 	setup_supplies_fetch_task_lostzone_patch = "setup_fetch_task",
 	setup_generic_fetch_task = "setup_fetch_task",
 	drx_sl_create_quest_stash = "setup_bounty_task", -- The actor message in base vanilla files is sent to the wrong queue here
+	setup_dominance_task = "setup_assault_task", -- Same as above - this actually scraps the whole Dominance category and puts these tasks as assault tasks
 	multifetch_on_job_descr = "setup_fetch_task" -- Unnecessary thing, but there's only one task in this category
 }
 function normalize_task_effect(task_effect) 
