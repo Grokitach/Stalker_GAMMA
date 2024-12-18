@@ -167,6 +167,25 @@ xr_effects.fetch_reward_and_remove = function(actor, npc, p) --	Remove fetch ite
 			if (obj:section() == sec) then
 				local cnt = (max_use > 1) and obj:get_remaining_uses() or 1
 				local con = use_con and obj:condition() or 1
+				local item_type = obj:get_weapon_type()
+
+				-- item_type should be not 255 when this is a weapon
+				-- when it's a weapon, re-calculate the condition
+				-- based on the average of its parts
+				if item_type ~= 255 then
+					local parts = se_load_var(obj:id(), obj:name(), "parts")
+					local num_parts = 0
+					local total_parts_condition = 0
+
+					for k,v in pairs(parts) do
+						if string.find(k, "prt_w_") then
+							total_parts_condition = total_parts_condition + v
+							num_parts = num_parts + 1
+						end
+					end
+
+					con = (total_parts_condition / num_parts) / 100
+				end
 				
 				collected_itms[obj:id()] = cnt
 				total_cost = total_cost + (cost * cnt * (con * con) * mult)
