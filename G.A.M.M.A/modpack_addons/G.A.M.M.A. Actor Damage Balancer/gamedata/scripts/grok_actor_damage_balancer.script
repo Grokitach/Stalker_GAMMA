@@ -336,7 +336,7 @@ function get_protection(shit,bone_id,k_ap)
 	local armor_protection = 0
 	local armor_bone_value = 0
 	local outfit = actor:item_in_slot(7)
-		if (outfit) then
+	if (outfit) then
 		local cond = outfit:condition()
 		local c_outfit = outfit:cast_CustomOutfit()
 		if (c_outfit) then
@@ -348,13 +348,20 @@ function get_protection(shit,bone_id,k_ap)
 			armor_hit_frac = ini_sys:r_float_ex(outfit:section(), "hit_fraction_actor") or 1
 			armor_bone_value = math.ceil((1 - armor_hit_frac) * cond * 0.75 *100)/100 or 0
 		end
+		local armor_sec = outfit:section()
+		local armor_limit = ini_sys:r_float_ex(armor_sec, cap_stat) or 0
+		limiter = limiter + armor_limit
+		if limiter >= 0.95 then
+			limiter = 0.95
+		end
 	end
+
 
 	-- Helmet protection
 	local helmet_protection = 0
 	local helmet_bone_value = 0
    	local helmet = db.actor:item_in_slot(12)
-    	if (helmet) then
+    if (helmet) then
 		local cond = helmet:condition()
 		local c_helmet = helmet:cast_Helmet()
 		if (c_helmet) then
@@ -366,7 +373,14 @@ function get_protection(shit,bone_id,k_ap)
 			helmet_hit_frac = ini_sys:r_float_ex(helmet:section(), "hit_fraction_actor") or 1
 			helmet_bone_value = math.ceil((1 - helmet_hit_frac) * cond *100)/100 or 0
         end
+		local helm_sec = helmet:section()
+		local helm_limit = ini_sys:r_float_ex(helm_sec, cap_stat) or 0
+		limiter = limiter + helm_limit
+		if limiter >= 0.95 then
+			limiter = 0.95
+		end
 	end
+
 
 	-- Artefacts protection
 	local artefacts_protection = 0
@@ -407,7 +421,7 @@ function get_protection(shit,bone_id,k_ap)
 		artefacts_protection = artefacts_protection + prot
 		artefacts_ap_res = artefacts_ap_res + af_bone_value
 		limiter = limiter + af_limit
-		if limiter >= 1 then
+		if limiter >= 0.95 then
 			limiter = 0.95
 		end
 	end)
