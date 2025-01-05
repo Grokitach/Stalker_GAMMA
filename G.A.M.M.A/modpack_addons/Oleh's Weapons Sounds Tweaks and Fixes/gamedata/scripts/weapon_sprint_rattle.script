@@ -5,7 +5,13 @@
 -- Lower Weapon Sprint rattle (unlocalizing needed)
 
 local enabled = true
+local snd_value, snd_values, snd_path, snd_obj
+local cached_id
 local volume_base = 1
+local volume = 0.25
+local frequency = 1
+local delay = 0
+
 function load_mcm_options()
     if ui_mcm then
         enabled = ui_mcm.get("grok_casings_sounds/enabled_sprint_rattle") or false
@@ -13,27 +19,26 @@ function load_mcm_options()
     end
 end
 
-local cached_id, snd_obj
 function actor_on_hud_animation_play(anm_table, item)
     --printf("%s, %s", anm_table.anm_name, lower_weapon_sprint and lower_weapon_sprint.lower_weapon_sprint_status)
-    if not enabled and item then return end
-    cached_id = item:id()
     if snd_obj and snd_obj:playing() then snd_obj:stop() end
+    if not enabled or not item then return end
 
     if string.find(anm_table.anm_name, "idle_sprint") then
         section = item:section()
         if not section then return end
 
         -- check if weapon has a valid sound in config
-        local snd_value = ini_sys:r_string_ex(section, "snd_idle_sprint")
+        snd_value = ini_sys:r_string_ex(section, "snd_idle_sprint")
         if not snd_value then return end
+        cached_id = item:id()
 
-        local snd_values = str_explode(snd_value,",")
-        local snd_path = snd_values[1]
-        local volume = snd_values[2] or 0.25
-        local frequency = snd_values[3] or 1
+        snd_values = str_explode(snd_value,",")
+        snd_path = snd_values[1]
+        volume = snd_values[2] or 0.25
+        frequency = snd_values[3] or 1
         -- somehow passing delay as variable causes ctd
-        local delay = snd_values[4] or 0
+        delay = snd_values[4] or 0
 
         -- play sound
         snd_obj = sound_object(snd_path)
@@ -57,11 +62,24 @@ function stop_sound_playback()
     end
 end
 
+function actor_on_weapon_raise(item)
+    local active_item = db.actor:active_item()
+    if not active_item or active_item and active_item:id() ~= cached_id then
+        if snd_obj and snd_obj:playing() then
+            snd_obj:stop()
+        end
+    elseif item and item:id() and item:id() == cached_id and snd_obj and not snd_obj:playing() then
+        snd_obj:play(db.actor, 0, sound_object.s2d + sound_object.looped)
+    end
+end
+
 function on_game_start()
 	RegisterScriptCallback("actor_on_hud_animation_play", actor_on_hud_animation_play)
-    RegisterScriptCallback("actor_item_to_ruck", actor_on_item_moved)
     RegisterScriptCallback("actor_on_item_drop", actor_on_item_moved)
+    RegisterScriptCallback("actor_item_to_ruck", actor_on_item_moved)
     RegisterScriptCallback("actor_item_to_slot", actor_on_item_moved)
+    RegisterScriptCallback("actor_on_weapon_raise", actor_on_weapon_raise)
+    RegisterScriptCallback("actor_on_weapon_lower", stop_sound_playback)
     RegisterScriptCallback("actor_on_attach_vehicle", stop_sound_playback)
 	RegisterScriptCallback("actor_on_before_death", stop_sound_playback)
 	RegisterScriptCallback("actor_on_net_destroy", stop_sound_playback)
