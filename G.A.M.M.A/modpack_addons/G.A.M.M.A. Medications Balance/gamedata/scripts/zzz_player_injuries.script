@@ -801,6 +801,7 @@ local progress_health_rightleg_time=nil
 local progress_health_leftleg_time=nil
 
 local scuffed_fix = false	
+local xml = nil
 local function HUDUpdate()
 	if showtexthud>=1 then --text
 		local staticname="body_health_system_text"
@@ -1046,8 +1047,10 @@ local function HUDUpdate()
 		end
 		
 		::otherhudparts::
-		local xml = CScriptXmlInit()
-		xml:ParseFile("ui_body_health.xml")
+        if (xml == nil) then
+            xml = CScriptXmlInit()
+            xml:ParseFile("ui_body_health.xml")
+        end
 
 		local function ParamBar(barhandler,customstatic,barname,param,param_max,showbg)
 		
@@ -1479,21 +1482,8 @@ function dialogs.heal_actor_injury(first_speaker, second_speaker)
 	end
 end
 
-trigger = 0
-delay = 8
-
 function actor_on_update()
 	--actor_menu.set_msg("width:"..device().width.." height:"..device().height)
-	
-    tg = time_global()
-    
-    if trigger == 0 then
-        grok_delay = tg + delay
-        trigger = 1
-    end	
-	
-    if (trigger == 1 and tg > grok_delay) then
-        trigger = 0	
 		local newhealth=db.actor.health
 		local amount=myhealth-newhealth
 		if amount>0.0293 then
@@ -1587,7 +1577,6 @@ function actor_on_update()
 		----------------------------
 		HUDUpdate()
 		PartialDamage()
-	else return end
 end
 
 local function actor_on_before_death()
