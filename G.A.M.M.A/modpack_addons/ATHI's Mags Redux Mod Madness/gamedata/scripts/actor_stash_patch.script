@@ -1,0 +1,102 @@
+local keep_items
+
+-- conditions to be kept in inventory
+-- if returns true, keep the item
+local conditions = {
+    function(item) return SYS_GetParam(1, item:section(), "quest_item") end,
+    function(item) return keep_items[item:section()] end,
+    function(item) if IsAmmo(item) and item_backpack.is_ammo_for_wpn(item:section()) then return true end end,
+    function(item) if db.actor:is_on_belt(item) or item_backpack.is_in_slot(item) then return true end end,
+	function(item) if ini_sys:r_string_ex(item:section(),"kind") == "i_medical" then return true end end,	
+}
+
+function add_condition(f)
+    table.insert(conditions, f)
+end
+
+function eval(item)
+    for _, cond in pairs(conditions) do
+        if cond(item) then return false end
+    end
+
+    return true
+end
+
+function item_backpack.actor_on_item_use(obj)
+    if not obj or (obj:section() ~= "itm_actor_backpack") then return end
+    local backpack = db.actor:item_in_slot(13)
+    if not backpack then
+
+        actor_menu.set_msg(1, game.translate_string("st_stash_no_backpack_found"),4)
+        return
+    end
+    local actor = db.actor
+    local se_obj = alife_create("inv_backpack",actor:position(),actor:level_vertex_id(),actor:game_vertex_id())
+    if (se_obj) then
+        local txt = strformat(game.translate_string("st_itm_stash_of_character"), db.actor:character_name())
+        level.map_add_object_spot_ser(se_obj.id, "treasure_player", txt)
+        actor_menu.set_msg(1, game.translate_string("st_stash_created"),4)
+        
+        local m_data = alife_storage_manager.get_state()
+        if not (m_data.player_created_stashes) then 
+            m_data.player_created_stashes = {}
+        end
+        
+        m_data.player_created_stashes[se_obj.id] = backpack:section()
+        SendScriptCallback("actor_on_before_stash_create", backpack, se_obj)
+        local b_id = backpack:id()
+        alife_release(backpack)
+        
+        local function transfer_items(id)
+            local obj = level.object_by_id(id)
+            if (obj) then 
+                local function itr_inv(temp,item)
+                    if item:id() ~= b_id and eval(item) then
+                        db.actor:transfer_item(item,obj)
+                    end		
+                end
+
+                db.actor:iterate_inventory(itr_inv)
+                return true
+            end			
+            return false
+        end
+        CreateTimeEvent(0,"actor_backpack",0,transfer_items,se_obj.id)
+    end
+	
+end
+
+
+function item_backpack.UICreateStash:OnAccept()
+	local se_obj = alife_create("inv_backpack",db.actor:position(),db.actor:level_vertex_id(),db.actor:game_vertex_id())
+	if (se_obj) then
+		local txt = self.input:GetText()
+		txt = txt ~= "" and txt or strformat(game.translate_string("st_itm_stash_of_character"), db.actor:character_name())
+		level.map_add_object_spot_ser(se_obj.id, "treasure_player", txt)
+		actor_menu.set_msg(1, game.translate_string("st_stash_created"),4)
+		
+		local m_data = alife_storage_manager.get_state()
+		if not (m_data.player_created_stashes) then 
+			m_data.player_created_stashes = {}
+		end
+        SendScriptCallback("actor_on_before_stash_create", get_object_by_id(self.id), se_obj)
+
+		m_data.player_created_stashes[se_obj.id] = self.section
+
+		alife_release_id(self.id)
+		
+		local data = {
+			stash_id = se_obj.id,
+			stash_name = txt,
+			stash_section = self.section,
+		}
+		SendScriptCallback("actor_on_stash_create",data)
+	end
+	self:Close()
+end
+
+function on_game_start()
+    local ini_stash = ini_file("items\\settings\\backpack_stash.ltx")
+	keep_items = utils_data.collect_section(ini_stash,"actor_backpack_keep_items",true)
+    AddScriptCallback("actor_on_before_stash_create")
+end
