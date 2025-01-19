@@ -1,0 +1,23 @@
+-- hotkeys and stuff
+print_dbg					= magazines.print_dbg
+-- shift click to unload
+
+InventoryClick = ui_inventory.UIInventory.On_CC_Mouse1
+function ui_inventory.UIInventory:On_CC_Mouse1(bag, idx)
+    InventoryClick(self, bag, idx)
+    
+	local obj = self.CC[bag]:GetObj(idx)
+	if (not obj) then
+		self:Print(nil, "Callback On_CC_Mouse1 | no object recieved!", bag, idx)
+		return
+	end
+    if ((key_state(DIK_keys.DIK_RSHIFT) or 0) ~= 0 	or (key_state(DIK_keys.DIK_LSHIFT) or 0) ~= 0) and (bag == "actor_bag" or bag == "npc_bag")then
+        if magazine_binder.is_magazine(obj) then
+            magazines.func_unload_ammo(obj)
+			print_dbg("shift unload")
+        elseif magazine_binder.is_supported_weapon(obj) then
+            magazines.eject_magazine(obj)
+        end
+    end
+
+end
