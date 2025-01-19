@@ -8,6 +8,7 @@ is_supported_weapon 		= magazine_binder.is_supported_weapon
 get_magazine_caliber 		= magazine_binder.get_magazine_caliber
 is_compatible 				= magazine_binder.is_compatible
 is_magazine					= magazine_binder.is_magazine
+get_weapon_base_type		= magazine_binder.get_weapon_base_type
 is_carried_mag				= magazine_binder.is_carried_mag
 toggle_carried_mag			= magazine_binder.toggle_carried_mag
 room_in_pouch				= magazine_binder.room_in_pouch
@@ -318,18 +319,54 @@ local string_gsub   = string.gsub
 
 CloneWep = _G.alife_clone_weapon
 function _G.alife_clone_weapon(se_obj, section, parent_id)
+--print_dbg("clone weapon")
+	if not se_obj then return end
 	local old_id = se_obj.id
 	local old_data = get_data(old_id)
+	local old_sec = se_obj:section_name()
+	section = section or old_sec
+	parent_id = parent_id or se_obj.parent_id
+	local curr_base = get_weapon_base_type(se_obj)
+	local ammo =  utils_item.get_ammo(section, se_obj.id)[1]
+	--print_dbg("clone weapon1")
 	local new_wep = CloneWep(se_obj, section, parent_id)
-	if new_wep then
-		print_dbg("transferring data from %s to %s", old_id, new_wep.id)
-		set_data(new_wep.id, old_data)
+	--print_dbg("clone weapon2")
+	if new_wep and old_data and old_sec then
+		--print_dbg("clone weapon3")
+		print_dbg("clone weapon  %s:%s to %s:%s", old_sec, old_id, section, new_wep.id )
+		local same_gun = SYS_GetParam(0, old_sec, "parent_section", old_sec) == SYS_GetParam(0, section, "parent_section", section) --this covers the vanila use of this function for scopes. 
+		if not same_gun then
+			local caliber_upg =  curr_base ~= get_weapon_base_type(old_sec) -- detects caliber change upgrade, if old gun had one new gun will have same resulting in same caliber
+			local uppg_base_match = caliber_upg and curr_base == ini_file_ex("magazines\\weapons\\importer.ltx"):r_value(section, ammo,0,"") --if there is a caliber upgrade checks that the new guns base type for that ammo is the same
+			local same_base = uppg_base_match or curr_base == get_weapon_base_type(section) -- Upgrade kits creating guns with the same base type w/o upgrades
+			same_gun = same_base
+		end
+		
+		if same_gun then
+			print_dbg("transferring data from %s to %s", old_id, new_wep.id)
+			set_data(new_wep.id, old_data)
+		else
+			print_dbg("clone weapon base type miss match spawn mag in inventory: %s", old_data.section )
+			set_data(new_wep.id, {
+				section = "no_mag",
+				loaded = {},
+				is_weapon = true,
+			}) -- new gun gets set to empty
+			local parent = alife_object(parent_id)
+			local se_mag = parent and alife_create_item(old_data.section, parent)
+			if se_mag then
+				old_data.is_weapon = false
+				set_mag_data(se_mag.id, old_data)
+			else
+				print_dbg("Could not create magazine %s", old_data.section)
+			end
+		end
 	end
-	set_data(old_id, nil)
+	--set_data(old_id, nil) --let the callback handel this on release. 
 	return new_wep
 end
-AttachScope = item_weapon.attach_scope
-function item_weapon.attach_scope(item, weapon)
+
+function attach_scope_or(item, weapon)
 	-- Return if the addon or weapon aren't valid.
 	if not (item and weapon) then 
 		return 
@@ -337,8 +374,8 @@ function item_weapon.attach_scope(item, weapon)
 	if magazines.action_in_progress() then return end
 	AttachScope(item, weapon)
 end
-DetachScope = item_weapon.detach_scope
-function item_weapon.detach_scope(weapon)
+
+function detach_scope_or(weapon)
 	-- Return if the weapon is not valid.
 	if not (weapon) then
 		return
@@ -397,44 +434,37 @@ end
 
 
 local mag_to_ammo = {
-	["mag_colt1911_default"] = "ammo_11.43x23_fmj",
-	["mag_oc_9x18_default"] = "ammo_9x18_fmj",
+	["mag_pm_9x18_default"] = "ammo_9x18_pmm",
+	["mag_mp5_9x19_default"] = "ammo_9x19_pbp",
 	["mag_ak_5.45x39_default"] = "ammo_5.45x39_ap",
-	["mag_sr2m_9x21_veresk"] = "ammo_9x21_sp10",
-	["mag_vss_9x39_default"] = "ammo_9x39_ap",
-	["mag_nato_5.56x45_default"] = "ammo_5.56x45_ap"
+	["mag_ots_9x39_default"] = "ammo_9x39_ap",
+	["mag_g36_5.56x45_default"] = "ammo_5.56x45_ap"
 }
 
 local bar_fights = {
 	["bar_arena_fight_1"] = {
-		"mag_colt1911_default",
-		"mag_colt1911_default"
+		"mag_pm_9x18_default",
+		"mag_pm_9x18_default"
 	},
 	["bar_arena_fight_2"] = {
-		"mag_oc_9x18_default",
-		"mag_oc_9x18_default",
+		"mag_mp5_9x19_default"
 	},
 	["bar_arena_fight_4"] = {
-		"mag_ak_5.45x39_default",
-		"mag_ak_5.45x39_default",
-		"mag_ak_5.45x39_default",
+		"mag_ak_5.45x39_default"
 	},
 	["bar_arena_fight_5"] = {
-		"mag_sr2m_9x21_veresk",
-		"mag_sr2m_9x21_veresk",
-		"mag_sr2m_9x21_veresk",
+		"mag_ak_5.45x39_default",
+		"mag_ak_5.45x39_default"
 	},
 	["bar_arena_fight_6"] = {
-		"mag_vss_9x39_default",
-		"mag_vss_9x39_default",
-		"mag_vss_9x39_default",
-		"mag_vss_9x39_default"
+		"mag_ots_9x39_default",
+		"mag_ots_9x39_default",
+		"mag_ots_9x39_default",
+		"ammo_vog-25"
 	},
 	["bar_arena_fight_8"] = {
-		"mag_nato_5.56x45_default",
-		"mag_nato_5.56x45_default",
-		"mag_nato_5.56x45_default",
-		"mag_nato_5.56x45_default",
+		"mag_g36_5.56x45_default",
+		"mag_g36_5.56x45_default"
 	},
 }
 -- MP for bar fights
@@ -499,7 +529,7 @@ function item_weapon.start_ammo_wheel()
 	
 		hide_hud_inventory()
 		
-		if (not GUI) then
+		if (not item_weapon.GUI) then
 			item_weapon.GUI = UIWheelAmmoWuut()
 		end
 	
@@ -728,7 +758,7 @@ function UIWheelAmmoWuut:SwitchNextAmmo()
 					print_dbg("Mag swap - chambered round is %s", first_round)
 				end
 				magazines.action_start_reload()
-				create_time_event("mag_redux", "delay_weapon"..wpn:id(), 0.1, magazines.delay_load_weapon, wpn, magazine, pre_table, first_round)
+				create_time_event("mag_redux", "delay_weapon"..wpn:id(), 0.1, magazines.delay_load_weapon, wpn:id(), magazine, pre_table, first_round)
 
 			else
 				wpn:unload_magazine(true)
@@ -765,7 +795,7 @@ function UIWheelAmmoWuut:OnAmmo(n)
 				wpn:switch_state(7)
 				disable_info("sleep_active")
 				magazines.action_start_reload()
-				create_time_event("mag_redux", "delay_weapon"..wpn:id(), 0.1, magazines.delay_load_weapon, wpn, magazine, pre_table, first_round)
+				create_time_event("mag_redux", "delay_weapon"..wpn:id(), 0.1, magazines.delay_load_weapon, wpn:id(), magazine, pre_table, first_round)
 			else
 			
 				wpn:unload_magazine(true)
@@ -828,6 +858,11 @@ function on_key_release(key)
 end
 
 function on_game_start()
+	--delayed monkey patch because of ishy
+	DetachScope = item_weapon.detach_scope
+	item_weapon.detach_scope = detach_scope_or
+	AttachScope = item_weapon.attach_scope
+	item_weapon.attach_scope = attach_scope_or
 	RegisterScriptCallback("on_key_press", on_key_press)
 	RegisterScriptCallback("on_key_release", on_key_release)
 	actor_stash_patch.add_condition(mag_stash)
