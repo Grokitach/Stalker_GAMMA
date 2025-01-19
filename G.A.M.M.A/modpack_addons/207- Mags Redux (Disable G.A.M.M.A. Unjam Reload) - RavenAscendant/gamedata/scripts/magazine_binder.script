@@ -355,14 +355,31 @@ function is_supported_weapon(val)
 	if (not (obj and is_valid_by_sec)) or obj:weapon_in_grenade_mode() then return is_valid_by_sec end
 	local is_valid = is_valid_by_sec and get_weapon_base_type(id) and true or false
 	--print_dbg("is_valid:%s and obj: %s", is_valid, obj and true)
+
 	-- if it's a valid weapon, bind it to the mag binder
-	if  is_valid then
-		local binder = obj:binded_object()
-		if not binder then 
-			print_dbg("Valid weapon %s has no binder, binding to mag binder", obj:section())
-			bind(obj) 
+	-- HarukaSai: we don't need a binder just for first update, instead we can create data here
+	if is_valid then
+		local mag_data = get_data(id)
+
+		if not mag_data then
+			print_dbg("Valid weapon %s has no data, creating default data", obj:section())
+
+			local default_mag = weapon_default_magazine(section)
+			mag_data = create_mag_data(id, default_mag, true) 
+			-- also need to do some things to convert existing ammo
+			local ammo_max = SYS_GetParam(2, default_mag, "max_mag_size")
+			local ammo_type = obj:get_ammo_type()
+			local ammo_map = utils_item.get_ammo(section, id) or SYS_GetParam(2, section, "ammo_mag_size") or 999
+			print_dbg("Weapon %s uses mags, assigning default mag %s with %s rounds, type is %s", section, default_mag, ammo_max, ammo_map[ammo_type+1])
+			
+			for i=1,ammo_max do
+				stack.push(mag_data.loaded, ammo_map[ammo_type+1])
+			end
+
+			set_data(id, mag_data)
 		end
 	end
+	
 	return is_valid
 end
 
@@ -572,19 +589,6 @@ function magazine_binder:update(delta)
 		-- associate mag data to empty magazine object
 		if not mag_data and is_magazine(obj) then
 			mag_data = create_mag_data(id, sec, false)
-		-- associate mag data to weapon, assigning default mag
-		elseif not mag_data and is_supported_weapon(obj) then
-			local default_mag = weapon_default_magazine(sec)
-			mag_data = create_mag_data(id, default_mag, true) 
-			-- also need to do some things to convert existing ammo
-			local ammo_max = SYS_GetParam(2, default_mag, "max_mag_size")
-			local ammo_type = obj:get_ammo_type()
-			local ammo_map = utils_item.get_ammo(section, id) or SYS_GetParam(2, section, "ammo_mag_size") or 999
-			print_dbg("Weapon %s uses mags, assigning default mag %s with %s rounds, type is %s", section, default_mag, ammo_max, ammo_map[ammo_type+1])
-			for i=1,ammo_max do
-				stack.push(mag_data.loaded, ammo_map[ammo_type+1])
-			end
-			set_data(id, mag_data)
 		end
 	end
 
