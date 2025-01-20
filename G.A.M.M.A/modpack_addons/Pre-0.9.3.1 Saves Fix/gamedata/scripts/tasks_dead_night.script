@@ -1,0 +1,99 @@
+-- Stage 0: Task has been set up - player needs to get to the Darkscape close to the coded position
+-- Stage 1: Player needs to kill all of the mutants (showing tag only on one of them at a time
+-- to make it harder to cheese through looking at the map)
+-- Stage 2: Player can receive reward from the quest giver
+local state = {}
+local nta_utils = new_tasks_addon_tasks_utils
+
+function save_state(mdata)
+	mdata.dead_night_task_data = state
+end
+
+function load_state(mdata)
+	if mdata.dead_night_task_data then
+		state = mdata.dead_night_task_data
+	end
+end
+
+task_status_functor.dead_night_task_status_functor = function(tsk,task_id)
+	if not (db.actor and tsk) then return end
+	local stage = tsk.stage
+
+	if (stage == 0) then
+        if
+            is_darkscape()
+            and db.actor:position():distance_to(vector():set(-226.5967,4.5275,-317.1637)) < 15
+            and nta_utils.is_dark_night()
+        then
+            spawn()
+            level.add_pp_effector ("fade_in.ppe", 200, false)
+            tsk.stage = 1
+        end
+    end
+
+    if (stage == 1) then
+        if not is_darkscape() then return 'fail' end
+
+        if all_dead() then
+            tsk.stage = 2
+        end
+    end
+end
+
+function spawn()
+    for _, spawn_config in pairs(dead_night_configs.spawn_configs) do
+        table.insert(state, nta_utils.spawn_helper(spawn_config, spawn_config.section_func()))
+    end
+end
+
+function all_dead()
+    local some_lives = false
+
+    for _, id in pairs(state) do
+        local obj = alife():object(id)
+
+        if obj then
+            if obj:alive() then
+                some_lives = true
+            end
+        end
+    end
+
+    return not some_lives
+end
+
+function is_darkscape()
+    return level.name() == "k01_darkscape"
+end
+
+task_functor.dead_night_task_target_functor = function(task_id,field,p,tsk)
+	if not (db.actor and tsk) then return nil end
+	local stage = tsk.stage
+    if (stage == 1 and is_darkscape()) then -- Darkscape check needed to avoid crash on task fail cleanup
+        local sim = alife()
+        for _, id in ipairs(state) do
+            local obj = sim:object(id)
+            if obj and obj:alive() then return id end
+        end
+    end
+    if (stage == 2) then
+        return tsk.task_giver_id
+    end
+end
+
+xr_effects.dead_night_cleanup = function()
+    local sim = alife()
+
+	for _, id in pairs(state) do
+		if sim:object(id) then
+			safe_release_manager.release({id = id})
+		end
+	end
+
+    state = {}
+end
+
+function on_game_start()
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+end

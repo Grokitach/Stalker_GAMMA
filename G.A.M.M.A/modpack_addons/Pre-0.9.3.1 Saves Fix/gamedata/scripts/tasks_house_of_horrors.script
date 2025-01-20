@@ -1,0 +1,153 @@
+local nta_utils = new_tasks_addon_tasks_utils
+local configs = house_of_horrors_configs
+local outpost_smart_terrain = "mar_smart_terrain_5_12"
+
+local state = {
+    zombie_id = nil,
+    hanged_man_id = nil,
+    board_id = nil
+}
+function save_state(mdata)
+	mdata.house_of_horrors_task_data = state
+end
+
+function load_state(mdata)
+	if mdata.house_of_horrors_task_data then
+		state = mdata.house_of_horrors_task_data
+	end
+end
+
+task_status_functor.house_of_horrors_task_status_functor = function(tsk,task_id)
+	if not (db.actor and tsk) then return end
+	local stage = tsk.stage
+
+	if stage == 0 then
+        if
+            is_swamp()
+            and db.actor:position():distance_to(configs.house_location.vector) < 25
+            and nta_utils.is_dark_night()
+        then
+            play_whispers()
+            spawn_hanged_man()
+            tsk.stage = 1
+        end
+    end
+
+    if stage == 1 then
+        -- Revert to prev stage if the night is over or player left swamps
+        if not is_swamp() or not nta_utils.is_dark_night() then
+            safe_release_manager.release({ id = state.hanged_man_id })
+            tsk.stage = 0
+            return
+        end
+        if db.actor:position():distance_to(configs.hanged_man_location.vector) < 3 then
+            explode_hanged_man()
+            play_screams()
+            spawn_board()
+            spawn_zombie()
+            spawn_dog()
+            tsk.stage = 2
+        end
+    end
+
+    if stage == 2 then
+        local se_zombie = alife_object(state.zombie_id)
+        if not se_zombie then
+            tsk.stage = 3
+        end
+    end
+end
+
+function spawn_hanged_man()
+    state.hanged_man_id = nta_utils.spawn_helper(configs.hanged_man_location)
+end
+
+function explode_hanged_man()
+    local particles = particles_object("anomaly2\\body_tear_00")
+    local se_obj = alife_object(state.hanged_man_id)
+    particles:play_at_pos(se_obj.position)
+    local tearing_sound = xr_sound.get_safe_sound_object("anomaly\\anomaly_body_tear_1")
+    tearing_sound:play(level.object_by_id(state.hanged_man_id), 0, sound_object.s2d)
+    safe_release_manager.release({ id = state.hanged_man_id })
+end
+
+function spawn_board()
+    state.board_id = nta_utils.spawn_helper(configs.board_location)
+end
+
+function spawn_dog()
+    nta_utils.spawn_helper(configs.dog_location)
+end
+
+function spawn_zombie()
+    state.zombie_id = nta_utils.spawn_helper(configs.zombie_location)
+end
+
+function destroy_zombie()
+    local particles = particles_object("monsters\\polter_death_00")
+    local se_obj = alife_object(state.zombie_id)
+    particles:play_at_pos(se_obj.position)
+    local snd = xr_sound.get_safe_sound_object("monsters\\poltergeist\\death_1")
+    snd:play(level.object_by_id(state.zombie_id), 0, sound_object.s2d)
+    nta_utils.hide_through_teleport(state.zombie_id)
+end
+
+function destroy_board()
+    local particles = particles_object("monsters\\polter_death_00")
+    local se_obj = alife_object(state.board_id)
+    particles:play_at_pos(se_obj.position)
+    safe_release_manager.release({ id = state.board_id })
+end
+
+function play_whispers()
+    local snd = xr_sound.get_safe_sound_object("new_tasks_addon\\controller_presence_l_1")
+    snd:play(db.actor, 0, sound_object.s2d)
+end
+
+function play_screams()
+    local snd = xr_sound.get_safe_sound_object("new_tasks_addon\\voc_harold_scream_2d")
+    snd:play(db.actor, 0, sound_object.s2d)
+end
+
+function is_swamp()
+    return level.name() == "k00_marsh"
+end
+
+
+
+task_functor.house_of_horrors_task_target_functor = function(task_id,field,p,tsk)
+	if not (db.actor and tsk) then return nil end
+	local stage = tsk.stage
+
+    if stage == 0 or stage == 1 then
+        return SIMBOARD:get_smart_by_name(outpost_smart_terrain).id
+    end
+    if stage == 2 then
+        return state.zombie_id
+    end
+    if stage == 3 then
+        return tsk.task_giver_id
+    end
+end
+
+xr_effects.house_of_horrors_cleanup = function()
+    state = {
+        zombie_id = nil,
+        hanged_man_id = nil,
+        board_id = nil
+    }
+end
+
+function monster_on_death_callback(monster)
+    if state.zombie_id and monster:id() == state.zombie_id then
+        destroy_zombie()
+        destroy_board()
+        state.zombie_id = nil
+    end
+end
+
+function on_game_start()
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+    RegisterScriptCallback("monster_on_death_callback", monster_on_death_callback)
+end
