@@ -1,0 +1,255 @@
+-- Optimized time events, using sorted arrays to peek only closest event to come
+-- Designed to fully reimplement existing timed events with all its quirks
+-- Unlike vanilla time events, fires on actor_on_update and doesn't require any checks
+-- Written by demonized
+
+local ev_queue = {}
+local computed_ev_queue = {}
+
+local math_floor = math.floor
+local math_huge = math.huge
+
+local table_insert = table.insert
+local table_remove = table.remove
+
+local has_alife_info = has_alife_info
+local time_global = time_global
+
+local pairs = pairs
+local unpack = unpack
+
+local tg = 0
+
+local function print_table(table, subs)
+	
+	local sub
+	if subs ~= nil then
+		sub = subs
+	else
+		sub = ""
+	end
+	for k,v in pairs(table) do
+		if type(v) == "table" then
+			print_table(v, sub.."["..k.."]----->")
+		elseif type(v) == "function" then
+			printf(sub.."%s = function",k)
+		elseif type(v) == "userdata" then
+			if (v.x) then
+				printf(sub.."%s = %s",k,utils_data.vector_to_string(v))
+			else
+				printf(sub.."%s = userdata", k)
+			end
+		elseif type(v) == "boolean" then
+					if v == true then
+							if(type(k)~="userdata") then
+									printf(sub.."%s = true",k)
+							else
+									printf(sub.."userdata = true")
+							end
+					else
+							if(type(k)~="userdata") then
+									printf(sub.."%s = false", k)
+							else
+									printf(sub.."userdata = false")
+							end
+					end
+		else
+			if v ~= nil then
+				printf(sub.."%s = %s", k,v)
+			else
+				printf(sub.."%s = nil", k,v)
+			end
+		end
+	end
+	
+end
+
+local function queue_timer_compare(a, b)
+	return a.timer < b.timer
+end
+
+-- http://lua-users.org/wiki/BinaryInsert
+local function binary_insert(t, value, fcomp)
+	-- Initialise compare function
+	local fcomp = fcomp or function(a, b) return a < b end
+
+	-- print_table(value)
+
+	--  Initialise numbers
+	local iStart, iEnd, iMid, iState = 1, #t, 1, 0
+
+	if iEnd == 0 then
+		t[1] = value
+		-- printf("adding in beginning table empty")
+		return 1
+	end
+
+	if fcomp(value, t[1]) then
+		-- printf("adding in beginning %s of %s", 1, iEnd)
+		table_insert(t, 1, value)
+		return 1
+	end
+
+	if not fcomp(value, t[iEnd]) then
+		-- printf("adding in end %s of %s", iEnd + 1, iEnd)
+		local pos = iEnd + 1
+		t[pos] = value
+		return pos
+	end
+
+	-- Get insert position
+	while iStart <= iEnd do
+
+		-- calculate middle
+		iMid = math_floor((iStart + iEnd) / 2)
+
+		-- compare
+		if fcomp(value, t[iMid]) then
+			iEnd, iState = iMid - 1, 0
+		else
+			iStart, iState = iMid + 1, 1
+		end
+	end
+
+	local pos = iMid + iState
+	-- printf("adding in middle %s of %s", pos, iEnd)
+	table_insert(t, pos, value)
+	return pos
+end
+
+local function refresh_ev_queue()
+	empty_table(computed_ev_queue)
+	-- tg = time_global()
+
+	local t = computed_ev_queue
+	for ev_id,actions in pairs(ev_queue) do
+		for act_id,act in pairs(actions) do
+			if (act_id ~= "__size") then
+				local d = {
+					ev_id = ev_id,
+					act_id = act_id,
+					timer = act.timer,
+					f = act.f,
+					p = act.p
+				}
+				binary_insert(t, d, queue_timer_compare)
+			end
+		end
+	end
+end
+
+local function find_ev_queue(ev_id, act_id)
+	for i = 1, #computed_ev_queue do
+		local t = computed_ev_queue[i]
+		if t.ev_id == ev_id and t.act_id == act_id then
+			return i
+		end
+	end
+end
+
+local function remove_ev_queue(ev_id, act_id)
+	local pos = find_ev_queue(ev_id, act_id)
+	if pos then return table_remove(computed_ev_queue, pos) end
+end
+
+function CreateTimeEvent(ev_id,act_id,timer,f,...)
+	if not (ev_queue[ev_id]) then
+		ev_queue[ev_id] = {}
+		ev_queue[ev_id].__size = 0
+	end
+
+	if not (ev_queue[ev_id][act_id]) then
+		local new_timer = time_global() + timer*1000
+		ev_queue[ev_id][act_id] = {}
+		ev_queue[ev_id][act_id].timer = new_timer
+		ev_queue[ev_id][act_id].f = f
+		ev_queue[ev_id][act_id].p = {...}
+		ev_queue[ev_id].__size = ev_queue[ev_id].__size + 1
+
+		local d = {
+			ev_id = ev_id,
+			act_id = act_id,
+			timer = new_timer,
+			f = f,
+			p = {...}
+		}
+		binary_insert(computed_ev_queue, d, queue_timer_compare)
+	end
+end
+
+function RemoveTimeEvent(ev_id,act_id)
+	if (ev_queue[ev_id] and ev_queue[ev_id][act_id]) then
+		ev_queue[ev_id][act_id] = nil
+		ev_queue[ev_id].__size = ev_queue[ev_id].__size - 1
+		remove_ev_queue(ev_id, act_id)
+	end
+end
+
+function ResetTimeEvent(ev_id,act_id,timer)
+	if (ev_queue[ev_id] and ev_queue[ev_id][act_id]) then
+		local new_timer = time_global() + timer*1000
+		ev_queue[ev_id][act_id].timer = new_timer
+		
+		local el = remove_ev_queue(ev_id, act_id)
+		el.timer = new_timer
+		binary_insert(computed_ev_queue, el, queue_timer_compare)
+	end
+end
+
+local tg_past = 0
+local to_remove = {}
+function ProcessEventQueue(force)
+	tg = time_global()
+	-- if tg > tg_past then
+	-- 	printf("tg %s", tg)
+	-- 	printf("computed")
+	-- 	print_table(computed_ev_queue)
+	-- 	tg_past = tg + 100
+	-- end
+
+	local force_refresh
+	for i = 1, #computed_ev_queue do
+		local t = computed_ev_queue[i] or (function()
+			force_refresh = true
+			return { timer = math_huge }
+		end)() -- Failsafe if event does not exist, refresh queue and postpone to next tick
+		
+		if tg < t.timer then
+			break
+		end
+
+		if t.f(unpack(t.p)) == true then
+			local t1 = ev_queue[t.ev_id]
+			t1[t.act_id] = nil
+			t1.__size = t1.__size - 1
+			if t1.__size == 0 then
+				ev_queue[t.ev_id] = nil
+			end
+			to_remove[#to_remove + 1] = {
+				ev_id = t.ev_id,
+				act_id = t.act_id
+			}
+		end
+	end
+
+	if force_refresh then
+		refresh_ev_queue()
+		empty_table(to_remove)
+	elseif to_remove[1] then
+		for i = 1, #to_remove do
+			local t = to_remove[i]
+			remove_ev_queue(t.ev_id, t.act_id)
+		end
+		empty_table(to_remove)
+	end
+	
+	return false
+end
+
+local function process_queue()
+	ProcessEventQueue()
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_update", process_queue)
+end
