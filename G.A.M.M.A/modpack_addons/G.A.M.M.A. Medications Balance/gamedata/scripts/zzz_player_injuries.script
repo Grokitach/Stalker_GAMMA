@@ -801,6 +801,7 @@ local progress_health_rightleg_time=nil
 local progress_health_leftleg_time=nil
 
 local scuffed_fix = false	
+local xml = nil
 local function HUDUpdate()
 	if showtexthud>=1 then --text
 		local staticname="body_health_system_text"
@@ -1046,8 +1047,10 @@ local function HUDUpdate()
 		end
 		
 		::otherhudparts::
-		local xml = CScriptXmlInit()
-		xml:ParseFile("ui_body_health.xml")
+        if (xml == nil) then
+            xml = CScriptXmlInit()
+            xml:ParseFile("ui_body_health.xml")
+        end
 
 		local function ParamBar(barhandler,customstatic,barname,param,param_max,showbg)
 		
@@ -1481,100 +1484,99 @@ end
 
 function actor_on_update()
 	--actor_menu.set_msg("width:"..device().width.." height:"..device().height)
-	
-	local newhealth=db.actor.health
-	local amount=myhealth-newhealth
-	if amount>0.0293 then
-		recieved_damage(amount)
-		--printf("! %s",amount
-		-- trace_this("Amount"..amount.."\n")
-	end
-
-	
-	myhealth=db.actor.health
-	for k,v in pairs(health) do
-		if v>maxhp[k] then health[k]=maxhp[k] end
-		if v<=0 then health[k]=0 end
-		if health[k]<timedhp[k] then timedhp[k]=health[k] end
-	end
-	for k,v in pairs(preview.health) do
-		if v>maxhp[k] then preview.health[k]=maxhp[k] end
-		if v<=0 then preview.health[k]=0 end
-		if preview.health[k]<preview.bonus[k] then preview.bonus[k]=health[k] end
-	end
-	if time_global()-medkits.lastregen>medkits.timedhealth then
-		medkits.lastregen=time_global()
-		for k,v in pairs(timedhp) do
-			if v>0 then 
-				timedhp[k]=timedhp[k]-1
-				health[k]=health[k]-1
-			end
-			if v<0 then
-				timedhp[k]=0
-			end
+		local newhealth=db.actor.health
+		local amount=myhealth-newhealth
+		if amount>0.0293 then
+			recieved_damage(amount)
+			--printf("! %s",amount
+			-- trace_this("Amount"..amount.."\n")
 		end
-		SaveHealthStatus()
-	end
-	if regen>0 and init then
+
 		
-		if time_global()-timeregen>regen then
-			if health.head~=maxhp.head 				then health.head=health.head+1 end
-			if health.torso~=maxhp.torso 			then health.torso=health.torso+1 end
-			if health.rightarm~=maxhp.rightarm 		then health.rightarm=health.rightarm+1 end
-			if health.leftarm~=maxhp.leftarm 		then health.leftarm=health.leftarm+1 end
-			if health.rightleg~=maxhp.rightleg		then health.rightleg=health.rightleg+1 end
-			if health.leftleg~=maxhp.leftleg 		then health.leftleg=health.leftleg+1 end
+		myhealth=db.actor.health
+		for k,v in pairs(health) do
+			if v>maxhp[k] then health[k]=maxhp[k] end
+			if v<=0 then health[k]=0 end
+			if health[k]<timedhp[k] then timedhp[k]=health[k] end
+		end
+		for k,v in pairs(preview.health) do
+			if v>maxhp[k] then preview.health[k]=maxhp[k] end
+			if v<=0 then preview.health[k]=0 end
+			if preview.health[k]<preview.bonus[k] then preview.bonus[k]=health[k] end
+		end
+		if time_global()-medkits.lastregen>medkits.timedhealth then
+			medkits.lastregen=time_global()
+			for k,v in pairs(timedhp) do
+				if v>0 then 
+					timedhp[k]=timedhp[k]-1
+					health[k]=health[k]-1
+				end
+				if v<0 then
+					timedhp[k]=0
+				end
+			end
 			SaveHealthStatus()
-			timeregen=time_global()
 		end
-	end
-	if not init then
-	
-		display_width=device().width
-		display_height=device().height
-		local currentratio=display_width/display_height
+		if regen>0 and init then
+			
+			if time_global()-timeregen>regen then
+				if health.head~=maxhp.head 				then health.head=health.head+1 end
+				if health.torso~=maxhp.torso 			then health.torso=health.torso+1 end
+				if health.rightarm~=maxhp.rightarm 		then health.rightarm=health.rightarm+1 end
+				if health.leftarm~=maxhp.leftarm 		then health.leftarm=health.leftarm+1 end
+				if health.rightleg~=maxhp.rightleg		then health.rightleg=health.rightleg+1 end
+				if health.leftleg~=maxhp.leftleg 		then health.leftleg=health.leftleg+1 end
+				SaveHealthStatus()
+				timeregen=time_global()
+			end
+		end
+		if not init then
 		
-		local closest=999
-		local closestkey=999
-		for k,v in pairs(display.types) do
-			local d=math.abs(currentratio-v)
-			if d<closest then closest=d closestkey=k end
+			display_width=device().width
+			display_height=device().height
+			local currentratio=display_width/display_height
+			
+			local closest=999
+			local closestkey=999
+			for k,v in pairs(display.types) do
+				local d=math.abs(currentratio-v)
+				if d<closest then closest=d closestkey=k end
+			end
+			display_ratio=closestkey
+			--actor_menu.set_msg(display_ratio,1)
+			
+			LoadHealthStatus()
+			init=true
 		end
-		display_ratio=closestkey
-		--actor_menu.set_msg(display_ratio,1)
 		
-		LoadHealthStatus()
-		init=true
-	end
-	
-	-- trace_this("Entre\n")
-	if not (zzz_player_injuries_mcm.get_config("TEXT_BASED_PATCH")) then
-		local hidehudonce=false
-		if hide_default_hud and not hidehudonce then
-			local maingameui = ActorMenu.get_maingame()
-			maingameui.m_ui_hud_states.m_ui_health_bar_show = false
-			maingameui.m_ui_hud_states.m_ui_stamina_bar_show = false
-			-- maingameui.m_ui_hud_states.m_ui_psy_bar_show = false
-			hidehudonce=true
+		-- trace_this("Entre\n")
+		if not (zzz_player_injuries_mcm.get_config("TEXT_BASED_PATCH")) then
+			local hidehudonce=false
+			if hide_default_hud and not hidehudonce then
+				local maingameui = ActorMenu.get_maingame()
+				maingameui.m_ui_hud_states.m_ui_health_bar_show = false
+				maingameui.m_ui_hud_states.m_ui_stamina_bar_show = false
+				-- maingameui.m_ui_hud_states.m_ui_psy_bar_show = false
+				hidehudonce=true
+			end
 		end
-	end
 
-	local speedvector=db.actor:get_movement_speed()
-	local movementspeed=(speedvector.x*speedvector.x)+(speedvector.y*speedvector.y)+(speedvector.z*speedvector.z)
+		local speedvector=db.actor:get_movement_speed()
+		local movementspeed=(speedvector.x*speedvector.x)+(speedvector.y*speedvector.y)+(speedvector.z*speedvector.z)
 
-	-- xcvb ---
-	limp_speed_slow()
-	torso_penalty()
-	bhs_concussion()
-	local curr_time = game.get_game_time()
-	if (prev_time == nil) then prev_time = curr_time end
-	if (curr_time:diffSec(prev_time) > 3) then
-		prev_time = curr_time
-		legs_limp()
-	end
-	----------------------------
-	HUDUpdate()
-	PartialDamage()
+		-- xcvb ---
+		limp_speed_slow()
+		torso_penalty()
+		bhs_concussion()
+		local curr_time = game.get_game_time()
+		if (prev_time == nil) then prev_time = curr_time end
+		if (curr_time:diffSec(prev_time) > 3) then
+			prev_time = curr_time
+			legs_limp()
+		end
+		----------------------------
+		HUDUpdate()
+		PartialDamage()
 end
 
 local function actor_on_before_death()
