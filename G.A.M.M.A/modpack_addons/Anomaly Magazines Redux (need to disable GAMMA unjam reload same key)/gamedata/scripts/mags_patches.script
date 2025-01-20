@@ -1,0 +1,869 @@
+
+
+gc						 	= game.translate_string
+get_data 					= magazine_binder.get_data
+set_data 					= magazine_binder.set_data
+dump_data					= magazine_binder.dump_data
+is_supported_weapon 		= magazine_binder.is_supported_weapon
+get_magazine_caliber 		= magazine_binder.get_magazine_caliber
+is_compatible 				= magazine_binder.is_compatible
+is_magazine					= magazine_binder.is_magazine
+get_weapon_base_type		= magazine_binder.get_weapon_base_type
+is_carried_mag				= magazine_binder.is_carried_mag
+toggle_carried_mag			= magazine_binder.toggle_carried_mag
+room_in_pouch				= magazine_binder.room_in_pouch
+eject						= magazines.eject_magazine
+get_total_carried			= magazine_binder.get_total_carried
+get_loadout_size			= magazine_binder.get_loadout_size
+weapon_default_magazine		= magazine_binder.weapon_default_magazine
+get_mag_loaded              = magazine_binder.get_mag_loaded
+print_dbg					= magazines.print_dbg
+has_loadout_slots			= magazine_binder.has_loadout_slots
+get_loadout_slots			= magazine_binder.get_loadout_slots
+create_mag_data             = magazine_binder.create_mag_data
+validate_mag				= magazine_binder.validate_mag
+validate_wep             	= magazine_binder.validate_wep
+create_time_event			= magazines.create_time_event
+get_sec_chambered			= magazines.get_sec_chambered
+get_config					= magazines_mcm.get_config
+
+
+
+
+function stack_rule(obj)	
+	local sec = obj:section()
+	local mag_data = get_data(obj:id())
+	--print_dbg("stack rule sec:%s id:%s loaded%s config%s", sec, obj:id(), (mag_data and #mag_data.loaded == 0), magazines_mcm.get_config("empty_mags_stack"))
+	return  (( not is_carried_mag(obj:id())) and ((mag_data and #mag_data.loaded == 0) and   magazines_mcm.get_config("empty_mags_stack")) )
+end
+
+rax_stacking_control.register(is_magazine, stack_rule)
+
+mousebase = utils_ui.UICellContainer.On_Mouse1
+local d_flag = false
+
+function utils_ui.UICellContainer:On_Mouse1(idx)
+    mousebase(self, idx)
+
+    if d_flag then
+		create_time_event("mag_redux", "delay_toggle", 0, 
+		function(id)
+			if is_magazine(id) and toggle_carried_mag(id) ~= nil then
+				magazines.inventory_refresh()
+			end
+			return true
+		end, self.cell[idx].ID)
+    end
+end
+
+function ui_inventory.UIInventory:Cond_Unload(obj, bag)
+	obj = self:CheckItem(obj,"Cond_Unload")
+	
+	local sec = obj:section()
+	local mag_data = get_mag_loaded(obj:id())
+	if IsWeapon(obj) and (obj:weapon_in_grenade_mode() or not mag_data) and (not IsItem("fake_ammo_wpn",sec)) then
+		return obj:get_ammo_in_magazine() > 0
+	end
+	return false
+end
+
+-- raven's merge
+-- utility functions related to magazines that shouldn't clutter main mags script
+-- MP for ejecting mags on upgrade/replacement
+
+local basePS = itms_manager.play_item_sound --stop pickup item sound from playing when we spawn items during actions.
+
+function itms_manager.play_item_sound(...)
+    if not magazines.action_in_progress() then
+        basePS(...)
+    end
+end
+
+
+
+DisassemblyWeapon = item_parts.disassembly_weapon
+function item_parts.disassembly_weapon(obj, obj_d) 
+	print_dbg("Interdict disassembly")
+	if obj:weapon_in_grenade_mode() then obj:switch_state(10) end
+	if get_mag_loaded(obj:id()) then
+		print_dbg("Found magazine, ejecting")
+		local mag = eject(obj)
+	end
+	create_time_event("mag_redux", "delay_dis", 0.1, wrap_disassembly, obj, obj_d)
+end
+
+function wrap_disassembly(obj, obj_d)
+	DisassemblyWeapon(obj, obj_d)
+	return true
+end
+
+WorkshopUpgrade = ui_workshop.UIWorkshopUpgrade.Upgrade
+function ui_workshop.UIWorkshopUpgrade:Upgrade()
+	local obj = self.CC:GetCell_Selected(true)
+	if (not obj) then
+		return
+	end
+	
+	-- For weapons, unload mag and clear ammo cache in case of ammo type upgrades
+	if IsWeapon(obj) and (not IsItem("fake_ammo_wpn",obj:section())) then
+		if obj:weapon_in_grenade_mode() then obj:switch_state(10) end
+		if get_mag_loaded(obj:id()) then
+			local mag = eject(obj)
+		end
+	end
+	create_time_event("mag_redux", "delay_upgr", 0.1, wrap_upgrade, self)
+end
+
+function wrap_upgrade(self_obj)
+	WorkshopUpgrade(self_obj)
+	return true
+end
+
+WorkshopRepair = ui_workshop.UIWorkshopRepair.Repair
+function ui_workshop.UIWorkshopRepair:Repair()
+	
+	local obj = self.CC["inventory"]:GetCell_Selected(true)
+	if (not obj) then
+		return
+	end
+	if IsWeapon(obj) and (not IsItem("fake_ammo_wpn",obj:section())) then
+		if obj:weapon_in_grenade_mode() then obj:switch_state(10) end
+		if get_mag_loaded(obj:id()) then
+			local mag = eject(obj)
+		end
+	end
+	create_time_event("mag_redux", "delay_rep", 0.1, wrap_repair, self)
+end
+
+function wrap_repair(self_obj)
+	WorkshopRepair(self_obj)
+	return true
+end
+
+CanRepair = inventory_upgrades.can_repair_item
+function inventory_upgrades.can_repair_item( sec, cond, mechanic )
+    if string.find(sec, "mag_") then return false
+    else return CanRepair(sec, cond, mechanic) end
+end
+
+TechUpgrade = ui_inventory.UIInventory.RMode_UpgradeYes
+function ui_inventory.UIInventory:RMode_UpgradeYes()
+	
+	local obj = self.upgr.id and level.object_by_id(self.upgr.id)
+	if (not obj) then
+		return
+	end
+	if IsWeapon(obj) and (not IsItem("fake_ammo_wpn",obj:section())) then
+		--artifax fix
+		if get_mag_loaded(obj:id()) then
+			local mag = eject(obj)
+		end
+	end
+	TechUpgrade(self)
+end
+
+UnloadAll = item_weapon.unload_all_weapons
+function item_weapon.unload_all_weapons()
+	db.actor:iterate_ruck( function(temp,obj)	
+		if IsWeapon(obj) and (not IsItem("fake_ammo_wpn",obj:section())) then
+			if is_supported_weapon(obj) then
+				eject(obj)
+			else
+				obj:force_unload_magazine(true)
+			end
+		end
+	end)
+end
+
+--Patching ui_item.script
+--first duplicate some short hand so i can just copy paste
+local string_find         = string.find
+local math_ceil           = math.ceil
+local math_floor          = math.floor
+local gc                  = game.translate_string
+local clr_g  = utils_xml.get_color("d_green")
+local clr_y  = utils_xml.get_color("yellow")
+local clr_o  = utils_xml.get_color("d_orange")
+local clr_r  = utils_xml.get_color("d_red")
+
+local clr_b  = utils_xml.get_color("d_cyan")
+local clr_b1 = utils_xml.get_color("pda_blue")
+local clr_b2 = utils_xml.get_color("d_blue")
+local clr_p  = utils_xml.get_color("d_purple")
+
+local clr_w  = utils_xml.get_color("pda_white")
+
+local clr_1  = utils_xml.get_color("ui_gray_2")
+local clr_2  = utils_xml.get_color("ui_gray_1")
+
+-- mag in, mag out
+original_build_desc_header = ui_item.build_desc_header
+function ui_item.build_desc_header(obj, sec, str)
+	local _str = ""
+	local _str2 = original_build_desc_header(obj, sec, str)
+
+	if obj and magazines and IsWeapon(obj) and not IsAmmo(obj) and is_supported_weapon(obj) then
+		validate_wep(obj:id(), obj:section())
+		local mag_data = get_mag_loaded(obj:id())
+		if mag_data then
+			_str = _str .. " " .. clr_g .. gc("st_dot") .. " ".. gc("st_mag_loaded") .. " " .. clr_2 .. ui_item.get_sec_name(mag_data.section) .. "\\n"
+		else
+			_str = _str .. " " .. clr_r .. gc("st_dot") .. " " .. gc("st_mag_loaded_none") .. "\\n"
+		end
+	end
+	_str = _str .. _str2
+	
+	if obj and magazines and has_loadout_slots(obj)  then
+		local current_id = db.actor:item_in_slot(7) and db.actor:item_in_slot(7):id() or 0
+		local outfit_slots = get_loadout_slots(obj,true)
+		if obj:id() == current_id then
+			local total_slots = get_loadout_size()			
+			local carried = get_total_carried()
+			for k,v in pairs(carried) do
+				local total = total_slots[k]
+				if total > 0 then
+					local color_ratio = 100 * tonumber(v)/tonumber(total)
+					print_dbg("Color ratio is %s", color_ratio)
+					_str = _str .. clr_p .. gc("st_dot")  .. " ".. clr_1 .. gc("st_mag_"..k) .. " " .. utils_xml.get_color_con(color_ratio) .. v .. "/" .. total ..(total > outfit_slots[k] and string.format(gc("st_mag_bonus"),outfit_slots[k],total - outfit_slots[k] ) or "") .. "\\n"
+				end
+			end
+			_str = _str .. '\\n'
+		else
+			for k,slots in pairs(outfit_slots) do
+					_str = _str .. clr_p .. gc("st_dot")  .. " ".. clr_1 .. gc("st_mag_"..k)..slots.. "\\n"
+			end
+			_str = _str .. '\\n'
+
+			
+		end
+	end
+
+	return _str
+end
+
+-- util function for full, compresses mag data into rounds n type
+function collect_mag_data(mag_data, tostr)
+	local display = {}
+	local last_round
+	local count = 0
+	for i=1,#mag_data.loaded do
+		if not last_round then last_round = mag_data.loaded[i] end
+		if last_round ~= mag_data.loaded[i] then
+			if tostr then
+				display[#display + 1] = ui_item.get_sec_name(last_round) .. ": " .. count
+				last_round = mag_data.loaded[i]
+			else
+				display[last_round] = count
+			end
+			count = 1
+		else
+			count = count + 1
+		end
+	end
+	if last_round then
+		if tostr then
+			display[#display + 1] = ui_item.get_sec_name(last_round) .. ": " .. count
+		else
+			display[last_round] = count
+		end
+	end
+	return display
+end
+
+-- mag data
+original_build_desc_footer = ui_item.build_desc_footer
+function ui_item.build_desc_footer(obj, sec, str)
+	local _str = ""
+	local _str2 = original_build_desc_footer(obj, sec, str)
+	if obj and magazines and is_magazine(obj) then
+		validate_mag(obj:id(), obj:section())
+		local mag_data = get_mag_loaded(obj:id())
+		local level = get_config("mag_tooltip")
+		print_dbg("Tooltip level %s", level)
+		_str = _str .. "\\n \\n".. gc('st_mag_size') .. " " .. gc('st_mag_size_'..(SYS_GetParam(0, sec, "mag_size") or "small")) 
+	
+		local mag_capacity = SYS_GetParam(2, sec, "max_mag_size")	
+		local clr = utils_xml.get_color_con(math_floor(100 * #mag_data.loaded/mag_capacity))
+
+		if level < 1 then
+			_str = _str .. "\\n \\n" .. gc('st_mag_capacity') .. " " .. mag_capacity .. clr_2 .. " \\n"
+		else
+			_str = _str .. "\\n \\n" .. gc('st_mag_ammo_loaded_count') .. " " .. clr .. #mag_data.loaded   .. " / " .. mag_capacity .. clr_2 .. " \\n"
+		end
+		if #mag_data.loaded > 0 then
+			if level < 2 then
+				_str = _str .. "" .. gc('st_mag_ammo_top_round') .. " " .. clr_g .. ui_item.get_sec_short_name(stack.peek(mag_data.loaded))  .. " \\n"	
+			else
+				collected = collect_mag_data(mag_data, true)
+				for i=1,#collected do
+					_str = _str  .. "\\n " .. gc("st_dot").." ".. collected[#collected - i + 1]
+				end
+			end
+		end
+	end
+	_str = _str2 .. _str .. " \\n"
+	
+	return _str
+end
+
+
+--patching item_weapon.script includes a full reimplementation of the ammowheel, could use inheritance, but i don't think this method will cause many problems.
+
+
+local string_find   = string.find
+local string_gsub   = string.gsub
+
+-------------------------------
+-- SCOPES
+-------------------------------
+
+CloneWep = _G.alife_clone_weapon
+function _G.alife_clone_weapon(se_obj, section, parent_id)
+--print_dbg("clone weapon")
+	if not se_obj then return end
+	local old_id = se_obj.id
+	local old_data = get_data(old_id)
+	local old_sec = se_obj:section_name()
+	section = section or old_sec
+	parent_id = parent_id or se_obj.parent_id
+	local curr_base = get_weapon_base_type(se_obj)
+	local ammo =  utils_item.get_ammo(section, se_obj.id)[1]
+	--print_dbg("clone weapon1")
+	local new_wep = CloneWep(se_obj, section, parent_id)
+	--print_dbg("clone weapon2")
+	if new_wep and old_data and old_sec then
+		--print_dbg("clone weapon3")
+		print_dbg("clone weapon  %s:%s to %s:%s", old_sec, old_id, section, new_wep.id )
+		local same_gun = SYS_GetParam(0, old_sec, "parent_section", old_sec) == SYS_GetParam(0, section, "parent_section", section) --this covers the vanila use of this function for scopes. 
+		if not same_gun then
+			local caliber_upg =  curr_base ~= get_weapon_base_type(old_sec) -- detects caliber change upgrade, if old gun had one new gun will have same resulting in same caliber
+			local uppg_base_match = caliber_upg and curr_base == ini_file_ex("magazines\\weapons\\importer.ltx"):r_value(section, ammo,0,"") --if there is a caliber upgrade checks that the new guns base type for that ammo is the same
+			local same_base = uppg_base_match or curr_base == get_weapon_base_type(section) -- Upgrade kits creating guns with the same base type w/o upgrades
+			same_gun = same_base
+		end
+		
+		if same_gun then
+			print_dbg("transferring data from %s to %s", old_id, new_wep.id)
+			set_data(new_wep.id, old_data)
+		else
+			print_dbg("clone weapon base type miss match spawn mag in inventory: %s", old_data.section )
+			set_data(new_wep.id, {
+				section = "no_mag",
+				loaded = {},
+				is_weapon = true,
+			}) -- new gun gets set to empty
+			local parent = alife_object(parent_id)
+			local se_mag = parent and alife_create_item(old_data.section, parent)
+			if se_mag then
+				old_data.is_weapon = false
+				set_mag_data(se_mag.id, old_data)
+			else
+				print_dbg("Could not create magazine %s", old_data.section)
+			end
+		end
+	end
+	--set_data(old_id, nil) --let the callback handel this on release. 
+	return new_wep
+end
+
+function attach_scope_or(item, weapon)
+	-- Return if the addon or weapon aren't valid.
+	if not (item and weapon) then 
+		return 
+	end 
+	if magazines.action_in_progress() then return end
+	AttachScope(item, weapon)
+end
+
+function detach_scope_or(weapon)
+	-- Return if the weapon is not valid.
+	if not (weapon) then
+		return
+	end
+	
+	if magazines.action_in_progress() then return end
+	DetachScope(weapon)
+end
+
+function default_mags()
+	local ids = {}
+	local function itr_inv(npc, item)
+		if is_supported_weapon(item) then
+			local default_mag = weapon_default_magazine(item)
+			print_dbg("Enjoy your complimentary %s!", default_mag)
+			id_1 = alife_create_item(default_mag, db.actor)
+			id_2 = alife_create_item(default_mag, db.actor)
+			ids[id_1] = default_mag
+			ids[id_2] = default_mag
+		end
+	end
+	db.actor:iterate_inventory(itr_inv)
+	return ids
+end
+
+NewGameEquipment = itms_manager.new_game_equippment
+function itms_manager.new_game_equippment()
+	default_mags()
+	return NewGameEquipment()
+end
+
+AzazelDeath = gamemode_azazel.actor_on_before_death
+function gamemode_azazel.actor_on_before_death(whoID,flags)
+	AzazelDeath(whoID, flags)
+	if not flags.ret_value then
+		create_time_event("mag_redux", "azazel_mags", 0.1, function()
+			local ids = default_mags()
+			-- for k,v in pairs(ids) do
+			-- 	local mag_data = get_data(k) or create_mag_data(k, v)
+			-- 	local max_size = SYS_GetParam(2, v, "max_mag_size")
+			-- 	local to_fill = math.random(max_size/3, max_size)
+			-- 	local ammo_table = get_magazine_caliber(v)
+			-- 	for i=1,to_fill do
+					
+			-- 	end
+			-- 	set_data(k, mag_data)
+			-- end
+			return true
+		end)
+	end
+end
+-- for quick release
+function mag_stash(item)
+	if is_carried_mag(item:id()) then return true end
+end
+
+
+local mag_to_ammo = {
+	["mag_pm_9x18_default"] = "ammo_9x18_pmm",
+	["mag_mp5_9x19_default"] = "ammo_9x19_pbp",
+	["mag_ak_5.45x39_default"] = "ammo_5.45x39_ap",
+	["mag_ots_9x39_default"] = "ammo_9x39_ap",
+	["mag_g36_5.56x45_default"] = "ammo_5.56x45_ap"
+}
+
+local bar_fights = {
+	["bar_arena_fight_1"] = {
+		"mag_pm_9x18_default",
+		"mag_pm_9x18_default"
+	},
+	["bar_arena_fight_2"] = {
+		"mag_mp5_9x19_default"
+	},
+	["bar_arena_fight_4"] = {
+		"mag_ak_5.45x39_default"
+	},
+	["bar_arena_fight_5"] = {
+		"mag_ak_5.45x39_default",
+		"mag_ak_5.45x39_default"
+	},
+	["bar_arena_fight_6"] = {
+		"mag_ots_9x39_default",
+		"mag_ots_9x39_default",
+		"mag_ots_9x39_default",
+		"ammo_vog-25"
+	},
+	["bar_arena_fight_8"] = {
+		"mag_g36_5.56x45_default",
+		"mag_g36_5.56x45_default"
+	},
+}
+-- MP for bar fights
+BarTele = xr_effects.bar_arena_teleport
+function xr_effects.bar_arena_teleport(actor, npc)
+	BarTele(actor, npc)
+	-- equip outfit
+	create_time_event("Mag_redux", "equip_outfit", 0, equip_outfit)
+	-- create mags and equip
+	for info, stuff in pairs(bar_fights) do
+		if has_alife_info(info) then
+			for k, mag in pairs(bar_fights[info]) do
+				local se = alife_create(mag,
+				db.actor:position(),
+				db.actor:level_vertex_id(),
+				db.actor:game_vertex_id(),
+				AC_ID)
+				if is_magazine(mag) then
+					create_time_event("Mag_redux", "fill_mag"..se.id, 0, fill_mag, se.id, mag, SYS_GetParam(2, mag, "max_mag_size"), mag_to_ammo[mag])
+				end
+				se_save_var( se.id, se:name(), "unpatched", true )
+			end	
+			break
+		end
+	end
+end
+
+function equip_outfit()
+	db.actor:iterate_inventory(function(_, item)
+		if IsOutfit(item) then	
+			db.actor:move_to_slot(item, 7)
+		end
+	end)
+	return true
+end
+
+function fill_mag(id, sec, amount, ammo_type)
+	local mag_data = get_mag_loaded(id)
+	if not mag_data then
+		print_dbg("mag_data not initialized yet for %s, creating now")
+		mag_data = create_mag_data(id, sec)
+	end
+	for i=1,amount do
+		stack.push(mag_data.loaded, ammo_type)
+	end
+	toggle_carried_mag(id)
+	set_data(id, mag_data)
+	return true
+end
+-------------------------------------------------------------------
+--GUI = nil -- instance, don't touch --Raven using the GUI in item_weapon.script so that in case someone is acessing it directly it will be in the right place.
+local aw_cooldown = 0
+local ui_delay       = 0 -- small hack to prevent instant keybind action (between switching to next ammo type, and start the wheel again)
+local ui_delay_const = 200 -- [ms]
+
+local cache_ammo     = {}
+local nums_dik       = {}
+
+function item_weapon.start_ammo_wheel()
+	local wpn = db.actor:active_item()
+	if wpn and IsWeapon(wpn) and (not IsItem("fake_ammo_wpn",wpn:section())) then
+	
+		hide_hud_inventory()
+		
+		if (not item_weapon.GUI) then
+			item_weapon.GUI = UIWheelAmmoWuut()
+		end
+	
+		if (item_weapon.GUI) and (not item_weapon.GUI:IsShown()) then
+			item_weapon.GUI:ShowDialog(true)
+			item_weapon.GUI:Reset(wpn)
+			
+			aw_cooldown = time_global()
+			
+			Register_UI("UIWheelAmmoWuut","wuut_ammo_wheel")-- need to check this. 
+		end
+	end
+end
+
+class "UIWheelAmmoWuut" (CUIScriptWnd)
+
+function UIWheelAmmoWuut:__init() super()
+	self.object    = nil
+	self.id        = nil
+	self.section   = nil
+	self.ammo_type = nil
+	self.ammo_list = {}
+	
+	self.ammo_max = 12
+	self.show_verybad = (not _NO_DAMAGED_AMMO) 
+	self.ammo_inv = {}
+	self.avail     = {}
+	self.key = {}
+	
+	for i=1,9 do
+		nums_dik[ DIK_keys["DIK_" .. i] ] = i
+		nums_dik[ DIK_keys["DIK_NUMPAD" .. i] ] = i
+	end
+	
+	self:InitControls()
+	self:InitCallBacks()
+end
+
+function UIWheelAmmoWuut:__finalize()
+end
+
+function UIWheelAmmoWuut:InitControls()
+	self:SetWndRect			(Frect():set(0,0,1024,768))
+	self:SetAutoDelete(true)
+	self:AllowMovement(true)
+	
+	self.xml				= CScriptXmlInit()
+	local xml = self.xml
+	xml:ParseFile			("ui_wheel_ammo.xml")
+
+	self.dialog	= xml:InitStatic("wheel", self)
+	self.background = xml:InitStatic("wheel:background", self.dialog)
+	self.extended = xml:InitStatic("wheel:extended", self.dialog)
+	
+	local box_type = self.show_verybad and ":all" or ":alt"
+	self.box_r = xml:InitStatic("wheel:result", self.dialog)
+	self.box_icon_tmp_r = xml:InitStatic("ammo:icon", self.box_r)
+	
+	self.box = {}
+	self.box_icon = {}
+	self.box_icon_r = {}
+	self.box_icon_tmp = {}
+	self.box_num = {}
+	self.box_txt = {}
+	self.box_txt_r = {}
+	self.box_btn = {}
+	self.box_hl_1 = {}
+	self.box_hl_2 = {}
+	for i=1,self.ammo_max do
+		self.box[i]          = xml:InitStatic("wheel" .. box_type .. ":box_" .. i, self.dialog)
+		self.box_hl_1[i]     = xml:InitStatic("ammo:highlight", self.box[i])
+		self.box_hl_2[i]     = xml:InitStatic("ammo:highlight", self.box[i])
+		self.box_icon[i]     = xml:InitStatic("ammo:icon", self.box[i])
+		self.box_icon_tmp[i] = xml:InitStatic("ammo:icon", self.box[i])
+		self.box_num[i]      = xml:InitTextWnd("ammo:num", self.box[i])
+		self.box_txt[i]      = xml:InitTextWnd("ammo:text", self.box[i])
+		self.box_btn[i]      = xml:Init3tButton("ammo:btn", self.box[i])
+		self:Register(self.box_btn[i],"btn_" .. i)
+
+		self.box_icon_r[i]   = xml:InitStatic("ammo:icon", self.box_r)
+		self.box_txt_r[i]    = xml:InitTextWnd("ammo:text_r", self.box_r)
+	end
+end
+
+function UIWheelAmmoWuut:InitCallBacks()
+	for i=1,self.ammo_max do
+		local _wrapper = function(handler) -- we need wrapper in order to pass ctrl to method
+			self:OnAmmo(i)
+		end
+		self:AddCallback("btn_" .. i, ui_events.BUTTON_CLICKED, _wrapper, self)
+	end
+end
+
+function UIWheelAmmoWuut:Update()
+	CUIScriptWnd.Update(self)
+	
+	for i=1,self.ammo_max do
+		if self.box_btn[i] then
+			if self.box_btn[i]:IsCursorOverWindow() then
+				self.box_icon_r[i]:Show(true)
+				self.box_txt_r[i]:Show(true)
+			else
+				self.box_icon_r[i]:Show(false)
+				self.box_txt_r[i]:Show(false)
+			end
+		end
+	end
+end
+
+function UIWheelAmmoWuut:Reset(obj)
+	self.object    = obj
+	self.id        = obj:id()
+	self.section   = obj:section()
+	self.ammo_type = obj:get_ammo_type()
+
+	-- Collect weapon's ammo list
+	if (not cache_ammo[self.id]) then
+		cache_ammo[self.id] = utils_item.get_ammo(self.section, self.id)
+		
+		-- Cut anything with more than 12 ammo types
+		if (#cache_ammo[self.id] > self.ammo_max) then
+			for i=self.ammo_max, #cache_ammo[self.id] do
+				cache_ammo[self.id][i] = nil
+			end
+		end
+	end
+	self.ammo_list = cache_ammo[self.id]
+
+	-- Collect all ammo in inventory
+	empty_table(self.ammo_inv)
+	--
+
+	if(magazines and obj and is_supported_weapon(obj)) then 
+		self.ammo_inv = magazines.count_magazines(obj)
+		
+	else
+		local function itr(temp, itm)
+			local section = itm:section()
+			if IsItem("ammo",section) or IsItem("grenade_ammo",section) then
+				self.ammo_inv[section] = (self.ammo_inv[section] or 0) + itm:ammo_get_count()
+			end
+		end
+		db.actor:iterate_inventory(itr, nil)
+		
+	end
+	
+	-- Reset XML elements
+	self.extended:Show(#self.ammo_list > 9)
+	--self.box_r:Show(false)
+	
+	local cnt = 0
+	empty_table(self.key)
+	for i=1,self.ammo_max do
+		local section = self.ammo_list[i]
+		local found_verybad = section and string.find(section,"verybad") and true or false
+		if section and ( self.show_verybad or ( (not self.show_verybad) and (not found_verybad) ) ) then
+			
+			-- Show box and highlighted ammo
+			local is_curr_ammo = (self.ammo_type == (i - 1))
+			self.box[i]:Show(true)
+			self.box_hl_1[i]:Show(is_curr_ammo)
+			self.box_hl_2[i]:Show(is_curr_ammo)
+			
+			self.avail[i] = self.ammo_inv[section] and (self.ammo_inv[section] > 0) and true or false
+			utils_xml.set_icon(section, (not self.avail[i]), self.box_icon[i], self.box_icon_tmp[i])
+			utils_xml.set_icon(section, nil, self.box_icon_tmp_r, self.box_icon_r[i])
+			
+			cnt = cnt + 1
+			self.key[cnt] = i
+			if self.avail[i] and i <= 9 then
+				self.box_num[i]:SetText(cnt)
+			else
+				self.box_num[i]:SetText("")
+			end
+			
+			-- Show ammo count
+			self.box_txt[i]:SetText("x" .. (self.avail[i] and self.ammo_inv[section] or 0))
+			self.box_txt_r[i]:SetText( ui_item.get_sec_name(section) )
+		else
+			self.avail[i] = false
+			self.box[i]:Show(false)
+		end
+	end
+end
+
+function UIWheelAmmoWuut:SwitchNextAmmo()
+	local wpn = db.actor:active_item()
+	if wpn and (wpn:section() == self.section) then
+		
+		local new_type
+		local ammo_type = wpn:get_ammo_type()
+		
+		-- Search for available next ammo types
+		for i=(ammo_type + 2),self.ammo_max do -- +2 because we need next type (+1 is the current type in ammo table)
+			if self.avail[i] then
+				new_type = i
+				break
+			end
+		end
+		
+		-- Search for available earlier ammo types
+		if (not new_type) then
+			for i=1,ammo_type do
+				if self.avail[i] then
+					new_type = i
+					break
+				end
+			end
+		end
+		
+		if new_type then
+			if(magazines  and is_supported_weapon(wpn)) then
+				local ammo_map = utils_item.get_ammo(nil, wpn:id())
+				local magazine = magazines.find_magazine(wpn, ammo_map[new_type])
+				if magazines.get_mag_data(wpn:id()) ~= nil then
+					print_dbg("Weapon already has magazine, ejecting first")
+					eject(wpn)
+				end
+				local pre_table = magazines.count_ammo(wpn)
+				wpn:switch_state(7)
+				disable_info("sleep_active")
+				local first_round = nil
+				print_dbg("Mag swap - loaded ammo is %s", wpn:get_ammo_in_magazine())
+				if magazines_mcm.get_config("retain_round") and wpn:get_ammo_in_magazine() > 0 then
+					first_round = get_sec_chambered(wpn)
+					print_dbg("Mag swap - chambered round is %s", first_round)
+				end
+				magazines.action_start_reload()
+				create_time_event("mag_redux", "delay_weapon"..wpn:id(), 0.1, magazines.delay_load_weapon, wpn:id(), magazine, pre_table, first_round)
+
+			else
+				wpn:unload_magazine(true)
+				wpn:set_ammo_type(new_type - 1) -- ammo type starts from 0
+				db.actor:reload_weapon()
+			end
+		end
+	end
+	self:Close()
+end
+
+function UIWheelAmmoWuut:OnAmmo(n)
+	local wpn = db.actor:active_item()
+	if wpn and (wpn:section() == self.section) and self.avail[n] then
+		local ammo_type = wpn:get_ammo_type()
+		if (ammo_type ~= n - 1) then
+
+			if(magazines and wpn and is_supported_weapon(wpn)) then 
+				local ammo_map = utils_item.get_ammo(nil, wpn:id())
+				local magazine = magazines.find_magazine(wpn, ammo_map[n])
+				if magazines.get_mag_data(wpn:id()) ~= nil then
+					print_dbg("Weapon already has magazine, ejecting first")
+					eject(wpn)
+				end
+				local pre_table = magazines.count_ammo(wpn)
+				
+				print_dbg("Mag swap - loaded ammo is %s", wpn:get_ammo_in_magazine())
+				local first_round = nil
+				if magazines_mcm.get_config("retain_round") and wpn:get_ammo_in_magazine() > 0 then
+					first_round = get_sec_chambered(wpn)
+					print_dbg("Mag swap - chambered round is %s", first_round)
+				end
+				
+				wpn:switch_state(7)
+				disable_info("sleep_active")
+				magazines.action_start_reload()
+				create_time_event("mag_redux", "delay_weapon"..wpn:id(), 0.1, magazines.delay_load_weapon, wpn:id(), magazine, pre_table, first_round)
+			else
+			
+				wpn:unload_magazine(true)
+				wpn:set_ammo_type(n - 1) -- ammo type starts from 0
+				db.actor:reload_weapon()
+			end
+			
+		end
+		
+	end
+
+	self:Close()
+end
+
+function UIWheelAmmoWuut:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (res == false) then
+		if keyboard_action == ui_events.WINDOW_KEY_RELEASED then
+			if (time_global() < aw_cooldown + 100) then
+				return
+			end
+			
+			local bind = dik_to_bind(dik)
+			local num = nums_dik[dik]
+			if (bind == key_bindings.kWPN_NEXT) then
+				ui_delay = time_global() + ui_delay_const
+				self:SwitchNextAmmo()
+			elseif num and self.key[num] then
+				
+					self:OnAmmo( self.key[num] )
+				
+				
+			elseif (bind == key_bindings.kQUIT or bind == key_bindings.kUSE) then
+				self:Close()
+			end
+		end
+	end
+	return res
+end
+
+function UIWheelAmmoWuut:Close()
+	if self:IsShown() then
+		self:HideDialog()
+		self:Show(false)
+		
+		Unregister_UI("UIWheelAmmoWuut")
+	end
+end
+
+function on_key_press(key)
+	if (key == DIK_keys.DIK_LMENU) then
+		d_flag = true
+	end
+end
+
+function on_key_release(key)
+	if (key == DIK_keys.DIK_LMENU) then
+		d_flag = false
+	end
+end
+
+function on_game_start()
+	--delayed monkey patch because of ishy
+	DetachScope = item_weapon.detach_scope
+	item_weapon.detach_scope = detach_scope_or
+	AttachScope = item_weapon.attach_scope
+	item_weapon.attach_scope = attach_scope_or
+	RegisterScriptCallback("on_key_press", on_key_press)
+	RegisterScriptCallback("on_key_release", on_key_release)
+	actor_stash_patch.add_condition(mag_stash)
+end
