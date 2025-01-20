@@ -7,7 +7,7 @@ This substantial, yet not major, patch contains a lot of fixes and QoLs as well 
 On top of the changes below, what's coming next is converting all hideout items to craft only to clean up the traders inventories (and promote hideout crafting instead of dragging stuff from the traders to your hideout).
 
 ## Engine version
-Demonized's engine update v2025.1.17
+Demonized's engine update v2025.1.19
 
 ## Add-ons
 - Updated 3DSS to 2.25
