@@ -1,0 +1,68 @@
+--[[
+Persitant Highlights for anomaly inventory. Used by SortingPlus and other mods by RavenAscendant.
+24FEB2021
+Updated 19Jun21 improved compatablity. 
+This work is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License
+Author: RavenAscendant
+--]]
+
+function pr(txt, ...)
+    --  printf("RAXPH: "..txt, ...)
+end
+
+local persistent_highlights = {}
+
+
+--functor should return an ARGB for the highlight color. recomend low alpha values. name is mostly for aplhabetical priority. will not conflict. there is no unregister, just retun nil if you don't want to use. 
+function register(name, functor)
+    if not name then return end -- need all three params and field really needs to be a string
+
+    if not persistent_highlights[name] then
+        persistent_highlights[name] = {}
+    end
+
+    table.insert(persistent_highlights[name], functor)
+end
+
+function utils_ui.UICellItem:GetPersistantHighlight()
+    local clr = nil
+
+    for key, name in pairs(persistent_highlights) do
+        for _, functor in pairs(name) do
+            clr = functor and functor(self) or clr
+            pr(key .. ":" .. tostring(clr) .. ":" .. tostring(self.section))
+        end
+    end
+
+    return clr
+end
+
+local base_highlight = utils_ui.UICellItem.Highlight
+
+function utils_ui.UICellItem:Highlight(state, clr_id, main_clr)
+    if state and (not self:IsShown()) and (not self.manual) then return end
+    persistant_highlight = self:GetPersistantHighlight()
+
+    if (not state) and persistant_highlight then
+        color = main_clr and change_alpha(persistant_highlight, 255) or persistant_highlight -- if main_clr set the alpha to max for reasons.
+        self.hl:Show(persistant_highlight or state) -- show if we have a persistant highlight or state is true, else hide.
+        self.hl:SetTextureColor(color)
+    else
+        base_highlight(self, state, clr_id, main_clr)
+    end
+end
+
+clr_cache = {}
+
+function change_alpha(clr, a)
+    if not clr and a ~= nil then return end
+
+    if not clr_cache[clr .. "_" .. a] then
+        b = bit.band(clr, 255)
+        g = bit.band(bit.rshift(clr, 8), 255)
+        r = bit.band(bit.rshift(clr, 16), 255)
+        clr_cache[clr .. "_" .. a] = GetARGB(a, r, g, b)
+    end
+
+    return clr_cache[clr .. "_" .. a]
+end

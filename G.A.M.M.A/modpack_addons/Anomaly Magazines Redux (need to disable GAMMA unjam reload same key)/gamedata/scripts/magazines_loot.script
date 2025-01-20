@@ -1,0 +1,236 @@
+----------------------------------------------------------------
+-- Deal with loot injection in stalkers and traders
+----------------------------------------------------------------
+gc						 	= game.translate_string
+get_data 					= magazine_binder.get_data
+set_data 					= magazine_binder.set_data
+get_mag_loaded 				= magazine_binder.get_mag_loaded
+prep_weapon 				= magazines.prep_weapon
+is_supported_weapon 		= magazine_binder.is_supported_weapon
+get_magazine_caliber 		= magazine_binder.get_magazine_caliber
+is_magazine					= magazine_binder.is_magazine
+weapon_default_magazine		= magazine_binder.weapon_default_magazine
+weapon_improved_magazine	= magazine_binder.weapon_improved_magazine
+create_mag_data             = magazine_binder.create_mag_data
+print_dbg                   = magazines.print_dbg
+get_weapon_base_type		= magazine_binder.get_weapon_base_type
+get_mags_for_basetype		= magazine_binder.get_mags_for_basetype
+valid_mag_data              = magazine_binder.valid_mag_data
+get_config                  = magazines_mcm.get_config
+validate_mag                = magazine_binder.validate_mag
+validate_wep                = magazine_binder.validate_wep
+
+local math_random           = math.random
+local math_floor            = math.floor
+local string_format         = string.format
+local print_table           = utils_data.print_table
+local ini_loadouts = ini_file("items\\settings\\npc_mag_loadouts.ltx")
+
+local mag_timer_global = nil
+local tm = {}
+-- trader management
+
+TraderAuto = trader_autoinject.update
+function trader_autoinject.update(npc)
+    TraderAuto(npc)
+    CreateTimeEvent("restock_mags" .. npc:id(), "restock_mags" .. npc:id(), 0.01, function() 
+        stock_mags(npc) 
+        return true 
+    end)
+end
+
+-- function to resupply mags based on what weapons are in stock
+-- formula is: 3 mags for 1st weapon, and 1 extra for each subsequent
+function stock_mags(npc)
+    local id = npc:id()
+    if trader_autoinject.get_trader_type(npc) ~= trader_autoinject.SUPPLIER then return end
+    print_dbg("Restocking mags for %s", npc:name())
+    local to_spawn = {}
+    -- collect num. of mags to spawn
+    local function itr_inv(temp, item)
+        local sec = item:section()
+        if not IsAmmo(item) and IsWeapon(item) and is_supported_weapon(item) then
+            local default_mag = weapon_default_magazine(item)
+            local default_capacity = SYS_GetParam(2, default_mag, "max_mag_size")
+            local default_load_delay = SYS_GetParam(2, default_mag, "load_delay")
+            local mags = get_mags_for_basetype(get_weapon_base_type(item))
+            if mags then
+                print_dbg("Mags [%s]", sec)
+                for _, mag in pairs(mags) do
+                    local load_delay = SYS_GetParam(2, mag, "load_delay")
+                    local capacity = SYS_GetParam(2, mag, "max_mag_size")
+    
+                    if mag ~= default_mag and (capacity > default_capacity or load_delay < default_load_delay) then
+                        print_dbg("Mag %s is improved", mag)
+                        to_spawn[mag] = to_spawn[mag] and to_spawn[mag] + math_random(0, 1) or math_random(1, 2)
+                    else
+                        print_dbg("Mag %s is normal", mag)
+                        to_spawn[mag] = to_spawn[mag] and to_spawn[mag] + 1 or 3
+                    end
+                end
+            else
+                print_dbg("Weapon has broken basetype [%s]", sec)
+            end
+        end
+    end
+    npc:iterate_inventory(itr_inv, npc)
+    
+    -- spawn them empty
+    trader_autoinject.spawn_items(npc, to_spawn, true)
+end
+
+
+-- death management
+local function get_mag_prop(rank, prop)
+    rank = rank or "novice"
+    return ini_loadouts:r_float_ex(rank.."_mag_loadout", prop)
+end
+
+-- called on each created magazine, autofill with the appropriate crap
+function random_pop_mag(mag_id, mag_sec, ammo_table, rank)
+    local quality = get_config("deathquality") or 1
+    local amount = math_random(0, get_mag_prop(rank, "mag_fill_max"))
+    amount = clamp(amount * (get_config("deathammo") or 1), 0, 100)/100
+    local mag_data = get_mag_loaded(mag_id) or create_mag_data(mag_id, mag_sec)
+    empty_table(mag_data.loaded)
+    local to_fill = math_floor(amount * SYS_GetParam(2, mag_sec, "max_mag_size"))
+	-- also pick the appropriate ammo
+	local good_chance = get_mag_prop(rank, "mag_good_chance") * quality
+    -- add validation for existence of a single ammo type (e.g. 9x21 sp10)
+    -- This should really be refactored to categorize bad ammo in the ammo table instead of relying on the index
+    local ammo_to_pick = math_random(#ammo_table)
+    if #ammo_table > 1 then
+        ammo_to_pick = 3*math_floor(math_random(#ammo_table - 1) / 3) + 1 + (math_random(100) < good_chance and 0 or 1)
+    else
+        to_fill = math_floor(to_fill/2)
+    end
+    local ammo_to_use = determine_ammo(ammo_table[ammo_to_pick], mag_sec, rank)
+    print_dbg("Filling mag %s to %s with %s (num %s)", mag_sec, to_fill, ammo_to_use, ammo_to_pick)
+	for i=1,to_fill do
+		stack.push(mag_data.loaded, ammo_to_use)
+	end
+	set_data(mag_id, mag_data)
+    return true
+end
+
+function determine_ammo(ammo_to_pick, mag_sec, rank)
+    return ammo_to_pick
+end
+
+function npc_on_death(npc, who)
+    local rank = ranks.get_obj_rank_name(npc)
+    local found_primary = false
+    local found_secondary = false
+    function itr_inv(temp, item)
+        local sec = item:section()
+		if IsWeapon(nil,item:clsid()) and not npc:marked_dropped(item) and is_supported_weapon(item) then
+            -- spawn mags for one primary, one secondary
+            local is_sidearm = IsPistol(item)
+            if (found_primary and not is_sidearm) or (found_secondary and is_sidearm) then return end
+
+            -- reduce ammo in loaded weapon
+            local id = item:id()
+            local mag_data = get_data(id)
+            
+            local mags_to_spawn = math_random(0, get_mag_prop(rank, "max_mags"))
+            local mag_sec = weapon_default_magazine(sec)
+            local improved_mag_sec = weapon_improved_magazine(sec)
+            local mag_good_chance = get_mag_prop(rank, "mag_good_chance")
+            local ammo_table = get_magazine_caliber(mag_sec)
+            local quality = get_config("deathquality") or 1
+
+            print_dbg("Spawning %s mags for %s", mags_to_spawn, sec)
+            for i=1,mags_to_spawn do
+                local to_create = math_floor(quality * math_random(100)) <= mag_good_chance and improved_mag_sec or mag_sec
+
+                print_dbg("Creating magazine %s", to_create)
+                local new_mag = alife_create_item(to_create, npc)
+                if new_mag then
+                    random_pop_mag(new_mag.id, to_create, ammo_table, rank)
+                end
+            end
+            if is_sidearm then
+                found_secondary = true
+            else
+                found_primary = true
+            end
+        end
+    end
+    npc:iterate_inventory(itr_inv, npc)
+end
+
+SetWepCondition = death_manager.set_weapon_drop_condition
+function death_manager.set_weapon_drop_condition(npc, itm)
+
+    SetWepCondition(npc, itm)
+    
+    local death_dropped = se_load_var(npc:id(), npc:name(), "death_dropped")
+	if (death_dropped) then
+		return
+	end
+
+    local id = itm:id()
+    if not is_supported_weapon(itm) then
+        set_data(id, nil)
+        return
+    end
+
+	if (is_supported_weapon(itm) and not npc:marked_dropped(itm)) then
+        local id = itm:id()
+        local sec = itm:section()
+        local mag_sec = weapon_default_magazine(sec)
+        local ammo_table = get_magazine_caliber(mag_sec)
+        local rank = ranks.get_obj_rank_name(npc)
+        print_dbg("Resetting mag data for weapon %s (%s)", id, itm:section())
+        itm:unload_magazine()
+        random_pop_mag(id, mag_sec, ammo_table, rank)
+        prep_weapon(itm, false)
+    end
+end
+
+
+-- 1.5.2 feature - determine mag cost based on contents
+function on_get_item_cost(kind, obj, profile, calculated_cost, ret)
+    local id = obj:id()
+    local sec = obj:section()
+    local mag_data = get_mag_loaded(id)
+    local calculated_cost = ret.new_cost or calculated_cost -- in case someone adjusted the price of the weapon
+    if mag_data == nil then return end
+    -- we have mag data - but it can potentially be corrupt. perform validation if needed
+    -- print_dbg("Item %s has mag data", sec)
+    if is_magazine(obj) then 
+        validate_mag(id, sec)
+        local cost_base = obj:cost()
+        -- non stalkers, reduce mag cost
+        if profile.mode == 1 then
+            cost_base = cost_base * 0.1
+        end
+        local info = mags_patches.collect_mag_data(mag_data)
+        for k,v in pairs(info) do
+            local cost_frac = math_floor(SYS_GetParam(2, k, "cost") / SYS_GetParam(2, k, "box_size")) * v
+            -- print_dbg("Mag %s, cost %s, add cost %s from %s of %s", sec, cost_base, cost_frac, v, k)
+            cost_base = cost_base + cost_frac
+        end
+        ret.new_cost = cost_base * profile.discount
+        print_dbg("Final cost of %s is %s, discount %s", sec, ret.new_cost, profile.discount)
+    elseif is_supported_weapon(obj) and mag_data then 
+        validate_wep(id, sec)
+        local mag_cost = SYS_GetParam(2, mag_data.section, "cost") * profile.discount
+        if profile.mode == 1 then
+            mag_cost = mag_cost * 0.1
+        end
+        -- print_dbg("Weapon %s, adding mag %s cost %s", sec, mag_data.section, mag_cost)
+        ret.new_cost = calculated_cost + mag_cost
+    else 
+        printf("!!! FRAUD DETECTED !!! Item %s should not have mag data!", sec)
+        set_data(id, nil)
+    end
+end
+
+
+function on_game_start()
+    if utils_item.on_get_item_cost then
+        RegisterScriptCallback("on_get_item_cost", on_get_item_cost)
+    end
+	RegisterScriptCallback("npc_on_death_callback", npc_on_death)
+end
