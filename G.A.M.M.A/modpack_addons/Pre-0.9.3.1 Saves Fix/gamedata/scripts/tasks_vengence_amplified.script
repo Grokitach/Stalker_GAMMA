@@ -1,0 +1,58 @@
+local state = {
+    succeeded = false,
+}
+
+function save_state(mdata)
+	mdata.vengence_amplified_task_data = state
+end
+
+function load_state(mdata)
+	if mdata.vengence_amplified_task_data then
+		state = mdata.vengence_amplified_task_data
+	end
+end
+
+task_status_functor.vengence_amplified_status_functor = function(tsk,task_id)
+	if not (db.actor and tsk) then return end
+	local stage = tsk.stage
+
+	if (stage == 0) then
+        if state.succeeded then
+            tsk.stage = 1
+        end
+    end
+end
+
+task_functor.vengence_amplified_target_functor = function(task_id,field,p,tsk)
+    if not (db.actor and tsk) then return end
+	local stage = tsk.stage
+
+    if (stage == 1) then
+        return tsk.task_giver_id
+    end
+end
+
+xr_effects.vengence_amplified_cleanup = function()
+    state = {
+        succeeded = false,
+    }
+end
+
+function is_chimera(monster)
+    return string.find(monster:section(), "chimera")
+end
+
+-- Chimeras are tougher than I thought and it takes like 20 strokes with an axe to kill the weak one, so the requirement
+-- of using only an axe or being damaged only by the player was dropped
+function monster_on_death(monster, killer)
+    if is_chimera(monster) and (killer and killer:id() == AC_ID) and new_tasks_addon_tasks_utils.is_axe() then
+        state.succeeded = true
+    end
+end
+
+function on_game_start()
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+
+    RegisterScriptCallback("monster_on_death_callback",monster_on_death)
+end

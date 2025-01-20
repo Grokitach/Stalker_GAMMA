@@ -1,0 +1,336 @@
+local nta_utils = new_tasks_addon_tasks_utils
+local iron_forest_smart = "zat_b100"
+local mirage_section = "mirage_stalker"
+-- Keep it as local var instead of state var so it can restart after the save reload
+local explosion_loop_started = false
+
+local state = {
+    mirages = {},
+    sidor_id = nil,
+    table_id = nil,
+    sidor_controllers = {},
+    burer_id = nil,
+    burer_killed = false,
+}
+
+function save_state(mdata)
+	mdata.mirage_task_data = state
+end
+
+function load_state(mdata)
+	if mdata.mirage_task_data then
+		state = mdata.mirage_task_data
+	end
+end
+
+task_status_functor.mirage_task_status_functor = function(tsk,task_id)
+	if not (db.actor and tsk) then return end
+	local stage = tsk.stage
+
+	if stage == 0 then
+        if
+            is_zaton()
+            and db.actor:position():distance_to(mirage_configs.first_spawn_activator) < mirage_configs.first_spawn_activation_distance
+        then
+            spawn_mirages(mirage_configs.first_spawn_spots)
+            tsk.stage = 1
+        end
+
+        if is_zaton() and db.actor:position():distance_to(mirage_configs.second_spawn_activator) < mirage_configs.second_spawn_activation_distance then
+            teleport()
+        end
+    end
+
+    if stage == 1 then
+        if db.actor:position():distance_to(mirage_configs.second_spawn_activator) < mirage_configs.second_spawn_activation_distance then
+            spawn_mirages(mirage_configs.second_spawn_spots)
+            tsk.stage = 2
+        end
+    end
+
+    if stage == 2 then
+        if db.actor:position():distance_to(mirage_configs.third_spawn_activator) < mirage_configs.third_spawn_activation_distance then
+            spawn_mirages(mirage_configs.third_spawn_spots)
+            tsk.stage = 3
+        end
+    end
+
+    if stage == 3 then
+        if db.actor:position():distance_to(mirage_configs.sidor_spawn_activator) < mirage_configs.sidor_spawn_activation_distance then
+            spawn_sidor(tsk)
+            tsk.stage = 4
+        end
+    end
+
+    if stage == 5 then
+        if cotnrollers_dead() then
+            spawn_burer()
+            tsk.stage = 6
+        end
+    end
+
+    if stage == 6 then
+        if not explosion_loop_started then
+            explosion_loop_started = true
+            start_explosions_loop()
+        end
+
+        if state.burer_killed then
+            tsk.stage = 7
+        end
+    end
+
+    if stage > 0 and stage < 4 then
+        update_mirages_visual()
+        give_mirages_weapon()
+    end
+
+    if stage > 0 and stage < 7 then
+        if db.actor:position():distance_to(mirage_configs.teleport_activator_center_point) > mirage_configs.teleport_activation_distance then
+            teleport()
+        end
+    end
+end
+
+function spawn_mirages(spots)
+    for _, spot in ipairs(spots) do
+        local se_id = nta_utils.spawn_helper(spot, mirage_section)
+        logic_enforcer.assign(se_id,'scripts\\mirage_beh.ltx','logic', 'beh@mirage')
+
+        local mirage_se = alife_object(se_id)
+        local actor_se = alife():actor()
+        mirage_se:set_rank(actor_se:rank())
+        mirage_se:set_character_name(actor_se:character_name())
+
+        state.mirages[se_id] = true
+    end
+end
+
+function spawn_sidor(tsk)
+    state.sidor_id = nta_utils.spawn_helper(mirage_configs.sidor_spawn_config)
+    state.table_id = nta_utils.spawn_helper(mirage_configs.med_table_spawn_config)
+
+    local teleport_snd = xr_sound.get_safe_sound_object("new_tasks_addon\\teleport_work_old")
+    teleport_snd:play(level.object_by_id(state.sidor_id), 0, sound_object.s2d)
+    local particles_appear = particles_object("anomaly2\\teleport_out_00")
+    particles_appear:play_at_pos(alife_object(state.sidor_id).position)
+
+    local speech_snd = xr_sound.get_safe_sound_object("characters_voice\\scenario\\trader\\trader_bye_6")
+    speech_snd:play(level.object_by_id(state.sidor_id), 1, sound_object.s2d)
+
+    CreateTimeEvent(0,"sidor_despawn", (speech_snd:length() / 1000) + 1.2, function ()
+        despawn_sidor()
+        spawn_sidor_controllers()
+        tsk.stage = 5
+        return true
+    end)
+end
+
+function despawn_sidor()
+    local teleport_snd = xr_sound.get_safe_sound_object("new_tasks_addon\\teleport_work_old")
+    teleport_snd:play(level.object_by_id(state.sidor_id), 0, sound_object.s2d)
+    local particles_disappear = particles_object("anomaly2\\teleport_tear")
+    particles_disappear:play_at_pos(alife_object(state.sidor_id).position)
+    safe_release_manager.release({ id = state.sidor_id })
+    safe_release_manager.release({ id = state.table_id })
+end
+
+function spawn_sidor_controllers()
+    state.sidor_controllers[nta_utils.spawn_helper(mirage_configs.sidor_controller_1_spawn_config)] = true
+    state.sidor_controllers[nta_utils.spawn_helper(mirage_configs.sidor_controller_2_spawn_config)] = true
+end
+
+function spawn_burer()
+    state.burer_id = nta_utils.spawn_helper(mirage_configs.burer_spawn_config)
+
+    local earthquake_snd = xr_sound.get_safe_sound_object("new_tasks_addon\\earthquake_old")
+    earthquake_snd:play(db.actor, 0, sound_object.s2d)
+    local brain_death_snd = xr_sound.get_safe_sound_object("new_tasks_addon\\x16_brain_death_old")
+    brain_death_snd:play(db.actor, 0, sound_object.s2d)
+
+    nta_utils.earthquake_screen_effect_strong(8)
+end
+
+function is_zaton()
+    return level.name() == "zaton"
+end
+
+task_functor.mirage_task_target_functor = function(task_id,field,p,tsk)
+	if not (db.actor and tsk) then return nil end
+	local stage = tsk.stage
+
+    if stage == 7 then
+        return tsk.task_giver_id
+    end
+    return SIMBOARD:get_smart_by_name(iron_forest_smart).id
+end
+
+xr_effects.mirage_cleanup = function()
+    state = {
+        mirages = {},
+        sidor_id = nil,
+        table_id = nil,
+        sidor_controllers = {},
+        burer_id = nil,
+        burer_killed = false
+    }
+end
+
+function teleport ()
+    nta_utils.teleport_visual()
+    db.actor:set_actor_position(SIMBOARD:get_smart_by_name(iron_forest_smart).position)
+end
+
+function destroy_mirage(id)
+    local particles = particles_object("monsters\\polter_death_00")
+    local se_obj = alife_object(id)
+    particles:play_at_pos(se_obj.position)
+    local snd = xr_sound.get_safe_sound_object("monsters\\poltergeist\\death_1")
+    snd:play(level.object_by_id(id), 0, sound_object.s2d)
+    nta_utils.hide_through_teleport(id)
+end
+
+function give_mirages_weapon()
+    local active_item = db.actor:active_item()
+    local sec
+    if not actor_holds_valid_item() then
+        sec = "wpn_pkp" -- Give mirage a Pecheneg if player has no active weapons or a melee weapon :)
+    else
+        sec = active_item:section()
+    end
+
+    for id, alive in pairs(state.mirages) do
+        local mirage = level.object_by_id(id)
+        -- Double check required - a mirage can have an entry in the table, but not be spawned yet at this moment (exists as se)
+        -- It might also happen that an id of already dead mirage is reused and another item will be targeted by selector instead,
+        -- hence the alive check required
+        if alive and mirage then
+            local mirage = level.object_by_id(id)
+            local has_weapon = false
+            local function iterate(_, item)
+                if item:section() == sec then
+                    has_weapon = true
+                end
+            end
+            mirage:iterate_inventory(iterate)
+
+            -- Don't give copies of the weapon to avoid rotating between copies on selection
+            if not has_weapon then
+                alife_create_item(sec, mirage)
+            end
+        end
+    end
+end
+
+function update_mirages_visual()
+    for id, alive in pairs(state.mirages) do
+        local mirage = level.object_by_id(id)
+        if alive and mirage then
+            mirage:set_visual_name(get_actor_visual())
+        end
+    end
+end
+
+function actor_holds_valid_item()
+    local item = db.actor:active_item()
+    return item and IsWeapon(item) and not nta_utils.is_melee(item)
+end
+
+function get_actor_visual()
+    return str_explode(db.actor:get_visual_name(), "%.")[1] -- Remove the '.ogf' for visuals armor stat mapping to work properly
+end
+
+function cotnrollers_dead()
+    for _, is_alive in pairs(state.sidor_controllers) do
+        if is_alive then return false end
+    end
+    return true
+end
+
+local loop_i = 1
+local explosion_position = nil
+local explosion_lvid = nil
+local explosion_gvid = nil
+local anomaly_particles = particles_object("anomaly2\\bold_idle")
+local anomaly_sound = xr_sound.get_safe_sound_object("anomaly\\gravi_rumble1")
+local explosion_planned = false
+function start_explosions_loop()
+    explosion_position = db.actor:position()
+    explosion_lvid = db.actor:level_vertex_id()
+    explosion_gvid = db.actor:game_vertex_id()
+    explosion_planned = true
+    CreateTimeEvent(0,"mirage_explosion_loop_" .. loop_i,6, function ()
+        loop_i = loop_i + 1
+        anomaly_particles:stop()
+        anomaly_sound:stop()
+        nta_utils.spawn_at_position(
+            "immediate_anomaly_explosion",
+            explosion_position,
+            explosion_lvid,
+            explosion_gvid,
+            false
+        )
+        explosion_planned = false
+        if not state.burer_killed then
+            start_explosions_loop()
+        end
+        return true
+    end)
+end
+
+function on_death_callback(npc)
+    local id = npc:id()
+    if state.mirages[id] then
+        destroy_mirage(id)
+        state.mirages[id] = false
+    end
+
+    if state.sidor_controllers[id] then
+        destroy_mirage(id)
+        state.sidor_controllers[id] = false
+    end
+
+    if id == state.burer_id then
+        state.burer_killed = true
+    end
+end
+
+function npc_on_choose_weapon(npc, curr_wpn, flags)
+    if state.mirages[npc:id()] then
+        local function iterate(_, item)
+            if not actor_holds_valid_item() then
+                if item:section() == "wpn_pkp" then
+                    flags.gun_id = item:id()
+                    return
+                end
+            end
+
+            if (actor_holds_valid_item() and item:section() == db.actor:active_item():section()) then
+                flags.gun_id = item:id()
+                return
+            end
+        end
+        npc:iterate_inventory(iterate)
+    end
+end
+
+function actor_on_update()
+    if explosion_planned then
+        if not anomaly_particles:playing() then
+            anomaly_particles:play_at_pos(explosion_position)
+        end
+
+        if not anomaly_sound:playing() then
+            anomaly_sound:play_at_pos(db.actor, explosion_position)
+        end
+    end
+end
+
+function on_game_start()
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+    RegisterScriptCallback("npc_on_death_callback", on_death_callback)
+    RegisterScriptCallback("monster_on_death_callback", on_death_callback)
+    RegisterScriptCallback("npc_on_choose_weapon", npc_on_choose_weapon)
+    RegisterScriptCallback("actor_on_update", actor_on_update)
+end

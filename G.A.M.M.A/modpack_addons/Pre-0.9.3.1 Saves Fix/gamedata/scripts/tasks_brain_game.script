@@ -1,0 +1,84 @@
+local state = {
+    monster_registry = {},
+    succeeded = false,
+}
+function save_state(mdata)
+	mdata.brain_game_task_data = state
+end
+
+function load_state(mdata)
+	if mdata.brain_game_task_data then
+		state = mdata.brain_game_task_data
+	end
+end
+
+task_status_functor.brain_game_status_functor = function(tsk,task_id)
+	if not (db.actor and tsk) then return end
+	local stage = tsk.stage
+
+	if (stage == 0) then
+        if state.succeeded then
+            tsk.stage = 1
+
+            CreateTimeEvent(0,"brain_game_success_report",3, function ()
+                dynamic_news_helper.send_tip(game.translate_string('brain_game_success_report'), db.actor:character_name(), nil,nil, db.actor:character_icon(), nil, 'npc')
+                return true
+            end)
+            CreateTimeEvent(0,"brain_game_success_response",8, function ()
+                dynamic_news_helper.send_tip(game.translate_string('brain_game_success_response'), game.translate_string("yan_st_sakharov_name"), nil,nil, 'ui_inGame2_sakharov', nil, 'npc')
+                return true
+            end)
+        end
+    end
+end
+
+task_functor.brain_game_target_functor = function(task_id,field,p,tsk)
+    if not (db.actor and tsk) then return end
+	local stage = tsk.stage
+
+    if (stage == 1) then
+        return tsk.task_giver_id
+    end
+end
+
+xr_effects.brain_game_cleanup = function()
+    state = {
+        monster_registry = {},
+        succeeded = false,
+    }
+end
+
+function clear_registry()
+    state.monster_registry = {}
+end
+
+function is_controller(monster)
+    return string.find(monster:section(), "controller")
+end
+
+function is_head(bone_id)
+    return bone_id == 31
+end
+
+function monster_on_before_hit(monster, shit, bone_id)
+    if is_controller(monster) then
+        if is_head(bone_id) then
+            state.monster_registry[monster:id()] = true
+        end
+    end
+end
+
+function monster_on_death(monster, killer)
+    if is_controller(monster) and not state.monster_registry[monster:id()] and (killer and killer:id() == AC_ID) then
+        state.succeeded = true
+    end
+end
+
+function on_game_start()
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+
+    RegisterScriptCallback("on_before_level_changing",clear_registry)
+    RegisterScriptCallback("monster_on_before_hit",monster_on_before_hit)
+    RegisterScriptCallback("monster_on_death_callback",monster_on_death)
+end
