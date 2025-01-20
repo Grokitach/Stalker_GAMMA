@@ -1,0 +1,191 @@
+--[[
+Dynamic Icon Layers for anomaly inventory. Used by SortingPlus and other mods by RavenAscendant.
+4JUL2021 
+This work is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License
+Author: RavenAscendant
+--]]
+
+function pr(txt, ...)
+    --  printf("RAXPH: "..txt, ...)
+end
+
+
+local iconor = aaa_rax_icon_override_mcm and true or false
+local icon_override = iconor and aaa_rax_icon_override_mcm.icon_override
+local ratio = utils_xml.screen_ratio()
+local icon_layers = {}
+
+--functor will be passed cell, obj and section
+--functor should return table with the same info as an item section icon layer. {icon_layer = "tch_upgr_ico", icon_layer_x = 0, icon_layer_y = 1, icon_layer_scale = 0.75}
+--functor can alternitivly return texture name/file, cords and dimesions {texture = "xxy.dds", x = 0, y = 0, w = 10, h = 10}
+function register(name, functor)
+    if not name then return end -- need all three params and field really needs to be a string
+
+    if not icon_layers[name] then
+        icon_layers[name] = {}
+    end
+
+    table.insert(icon_layers[name], functor)
+end
+
+function refresh(mode) --safer way to refresh inventory, mode == 1  refreshes sorting.
+	local inventory = GetActorMenu()
+	inventory:UnHighlight_All()
+	if mode == 1 then
+		local sort = nil
+		for i=1,#inventory.sort_btn do
+			if inventory.sort_btn[i]:GetCheck() then
+				sort = i
+			end
+		end
+		inventory:On_Sort(sort or 1,false)
+	else
+		inventory:UpdateItems()
+	end
+end
+
+
+--add layers to what gets updated
+local base_update = utils_ui.UICellItem.Update
+
+function utils_ui.UICellItem:Update(obj)
+	obj = obj or (self.ID and level.object_by_id(self.ID))
+	if (self.showcase == 0) and (not obj) then
+		self:ResetToChild()
+		return false
+	end
+	
+	local sec = self.section
+	local xml = self:GetXML()
+	
+	if obj then
+		local clsid = obj:clsid()
+		self:Add_Layers(xml, obj, sec, clsid)
+	end
+
+	return base_update(self, obj)
+end
+
+
+local base_layers = utils_ui.UICellItem.Add_Layers
+
+function utils_ui.UICellItem:Add_Layers(xml, obj, sec, clsid)
+	base_layers(self, xml, obj, sec, clsid)
+
+	local ii = 1
+	while ((iconor and icon_override:section_exist(sec) and icon_override:r_string_ex(sec,(ii).."icon_layer")) or SYS_GetParam(0, sec, (ii).."icon_layer") ~= nil) do --get ii up to next avail layer.
+		ii = ii + 1
+	end
+	if (not self.layer) then
+		self.layer = {}
+	end
+	for key, name in pairs(icon_layers) do
+        for _, functor in pairs(name) do
+			if (not self.layer[ii]) then
+				if (not xml) then 
+					xml = self:GetXML()
+				end
+				self.layer[ii] = xml:InitStatic(self.path .. ":" .. self.cx .. ":pic", self.ico)
+			end
+
+            local tbl = functor and functor(self, obj, sec)
+            if tbl then
+				if tbl.icon_layer then
+					add_icon_layer(self, self.layer[ii], self.ico, sec, tbl)
+					ii = ii + 1
+				end
+				if tbl.texture then
+					add_texture_layer(self,self.layer[ii], self.ico, sec, tbl)
+					ii = ii + 1
+				end
+			end
+        end
+    end
+end
+
+
+function add_icon_layer(self,ele, base, sec_m, tbl)
+	local sec_l = tbl.icon_layer
+	local grid_size = self.grid_size
+	local x = tbl.icon_layer_x or 0
+	local y = tbl.icon_layer_y or 0
+	local axis = utils_xml.get_item_axis(sec_l, grid_size)
+	local w = axis.w
+	local h = axis.h
+	local scale = tbl.icon_layer_scale or 1
+	local scale_pos = scale * (grid_size/50)
+
+	local rot =  ele:GetHeading() > 0
+	local x_s = x * ratio * scale_pos
+	local y_s = y * scale_pos
+	local w_s = w * ratio * scale
+	local h_s = h * scale
+	local w_off = (w_s/2)
+	local h_off = (h_s/2)
+	
+	if rot then
+		-- despite rotation, movement for x and y stays normal! 
+		-- Move start pos to match the one for rotated base icon
+		local w_b, h_b = base:GetWidth(), base:GetHeight()
+		local x_st = (w_b/2) - (h_b/2)
+		local y_st = h_b + x_st
+		
+		-- On 90 rotation, x and y are inverted, y axis goes negative simulate normal x movement
+		x_s = x_st + (y * ratio * scale_pos)
+		y_s = y_st - (x * scale_pos) 
+		w_s = w * scale
+		h_s = h * scale
+		w_off = (h_s - h_s *ratio/2)
+		h_off = -w_s/2
+	end
+
+	ele:InitTexture( utils_xml.get_icons_texture(sec_l) )
+	ele:SetTextureRect(Frect():set( utils_xml.get_item_axis(sec_l, nil, true) ))
+	ele:SetStretchTexture(true)
+	ele:SetWndPos(vector2():set( x_s + w_off , y_s + h_off ))
+	ele:SetWndSize(vector2():set( w_s , h_s ))
+	ele:Show(true)
+
+	
+	
+end
+
+function add_texture_layer(self,ele, base, sec_m, tbl)
+	local grid_size = self.grid_size
+	local x = tbl.x or 0
+	local y = tbl.y or 0
+	local w = tbl.w
+	local h = tbl.h
+	local scale = 1
+	local scale_pos = scale * (grid_size/50)
+
+	local rot =  ele:GetHeading() > 0
+	local x_s = x * ratio * scale_pos
+	local y_s = y * scale_pos
+	local w_s = w * ratio * scale
+	local h_s = h * scale
+	local w_off = (w_s/2)
+	local h_off = (h_s/2)
+	
+	if rot then
+		-- despite rotation, movement for x and y stays normal! 
+		-- Move start pos to match the one for rotated base icon
+		local w_b, h_b = base:GetWidth(), base:GetHeight()
+		local x_st = (w_b/2) - (h_b/2)
+		local y_st = h_b + x_st
+		
+		-- On 90 rotation, x and y are inverted, y axis goes negative simulate normal x movement
+		x_s = x_st + (y * ratio * scale_pos)
+		y_s = y_st - (x * scale_pos) 
+		w_s = w * scale
+		h_s = h * scale
+		w_off = (h_s - h_s *ratio/2)
+		h_off = -w_s/2
+	end
+	
+	ele:InitTexture( tbl.texture )
+	ele:SetStretchTexture(true)
+	ele:SetWndPos(vector2():set( x_s + w_off , y_s + h_off ))
+	ele:SetWndSize(vector2():set( w_s , h_s ))
+	ele:Show(true)
+end

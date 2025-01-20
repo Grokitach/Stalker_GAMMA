@@ -1,0 +1,741 @@
+
+
+
+
+-- each datum consists of the following:
+-- .loaded = this is a stack of rounds loaded in the magazine, each round is int, depending on what kind of round it is
+-- .section = for magazines in weapons, this tracks the type of magazine that is loaded
+local mags_storage = {}
+-- this storage is for vested mags in specific
+local carried_mags = {}
+
+-- reverse lookups for magazine properties
+local mags_by_basetype = {}
+local mags_by_retool_group = {}
+local basetypes_by_ammo_type ={}
+
+local loadout_slots = 	{
+						small = 2,
+						medium = 0,
+						large = 0,
+						}
+
+
+
+function print_dbg(...) magazines.print_dbg(...) end
+function print_err(...) magazines.print_err(...) end
+
+
+
+
+
+local function parent_section(sec)
+	return SYS_GetParam(0, sec, "parent_section", sec) or sec
+end
+
+function dump_data(data)
+	if not data or type(data) ~= "table" then
+		print_dbg("Mag data unavailable: %s (%s)", data, type(data))
+	else
+		local s = ""
+		for k,v in pairs(data.loaded) do
+			s = s .. v .. " "
+		end
+		print_dbg("Mag section: %s. Rounds loaded: %s. Rounds: %s", data.section, #data.loaded, s)
+	end
+end
+
+local look_up_table 	= ini_file_ex("magazines\\lookups.ltx")
+local weapons_lookup 	= ini_file_ex("magazines\\weapons\\importer.ltx")
+local loadout_lookup 	= ini_file_ex("magazines\\outfitloadouts\\importer.ltx")
+
+-------------------------------
+-- SECTION acess functions --
+-------------------------------
+function get_carried_mags(tbl)
+	--return carried_mags			--efficency v acess control hud won't call this very often so went with acess control
+	
+	copy_table(tbl, carried_mags )
+end
+
+function get_data(id)
+	tbl = {}
+	if mags_storage[id] then
+		copy_table(tbl, mags_storage[id] )
+		return tbl
+	end
+	return mags_storage[id] --could be nil or false want to return either.
+end
+
+function set_data(id, data)
+	mags_storage[id] = data
+	if carried_mags[id] then
+		carried_mags[id] = data
+	end
+end
+
+function create_mag_data(id, sec, is_weapon)
+    local mag_data = {}
+    mag_data.loaded = {}
+    mag_data.section = sec
+	mag_data.is_weapon = is_weapon or false
+    set_data(id, mag_data)
+    return mag_data
+end
+
+-- loops through mag data and check/validate entries
+function clean_data()
+    for id, data in pairs(mags_storage) do
+        local se = alife_object(id)
+        local is_mag = se and SYS_GetParam(1, se:section_name(), "is_mag")
+        local is_wpn = se and is_supported_weapon(parent_section(se:section_name()))
+        if not (is_mag or is_wpn) then
+            set_data(id, nil)
+        elseif data == false then
+            set_data(id, {
+                section = "no_mag",
+                loaded = {},
+                is_weapon = true,
+            })
+        elseif is_wpn then
+			print_dbg("Checking wpn %s", se:section_name())
+			validate_wep(id, wpn_sec)
+        else
+            validate_mag(id, se:section_name())
+        end
+    end
+end
+
+function get_mag_property(id,key)
+	--print_dbg("wtf:".. tostring((mags_storage[id] and mags_storage[id][key] or "no dice")))
+	return mags_storage[id] and mags_storage[id][key]
+end
+
+function get_size(id, mag_data)
+	mag_data = mag_data or get_data(id)
+	return SYS_GetParam(0, mag_data.section, "mag_size") or "small"
+end
+
+function get_total_carried(exact)
+	local carried = {
+		["small"] = 0,
+		["medium"] = 0,
+		["large"] = 0
+	}
+	for id, mag in pairs(carried_mags) do
+		local size = get_size(id)
+		carried[size] = carried[size] + 1
+	end
+	
+
+	if not exact then --shift exess up to next size
+		if carried.small > loadout_slots.small then
+			carried.medium = carried.medium + carried.small - loadout_slots.small
+			carried.small = loadout_slots.small
+		end
+		if carried.medium > loadout_slots.medium then
+			carried.large = carried.large + carried.medium - loadout_slots.medium
+			carried.medium = loadout_slots.medium
+		end
+		
+	end
+	
+	return carried
+end
+
+function get_loadout_size()
+	local copy = {}
+	copy_table(copy, loadout_slots)
+	return copy
+end
+
+function get_mags_for_basetype(basetype)	
+	return mags_by_basetype[basetype] and dup_table(  mags_by_basetype[basetype])
+
+end
+
+function get_basetypes_by_ammo_type(sec)
+		--print_dbg("#basetypes_by_ammo_type:%s basetypes_by_ammo_type[%s]:%s",#basetypes_by_ammo_type,sec,basetypes_by_ammo_type[sec] and #basetypes_by_ammo_type[sec])
+
+	return basetypes_by_ammo_type[sec] and dup_table(  basetypes_by_ammo_type[sec])
+end
+
+function get_mags_by_ammo_type(sec)
+	local t = {}
+	local basetypes = get_basetypes_by_ammo_type(sec) or {}
+	for _,v in ipairs(basetypes) do
+		local mags = get_mags_for_basetype(v) or {}
+		for __,v2 in ipairs(mags) do
+			table.insert(t, v2)
+		end
+	end
+	return t
+end
+
+-------------------------------
+-- SECTION utility functions --
+-------------------------------
+
+
+local function type_correction(val)
+    if not val then return end
+--    print_dbg(type(val))
+    local id, section, obj, se_obj 
+    if type(val) == "string" then
+        section = val
+    elseif type(val) == "number" then
+        id = val
+        obj = level.object_by_id(id)
+        se_obj = alife_object(id)
+        if obj  then
+			section = obj:section()
+		elseif se_obj then
+			section = se_obj:section_name()
+		else
+			print_dbg("WTF is:%s any way?", id)
+		end
+    elseif type(val.id) == "number" then
+        id = val.id
+        se_obj = val
+        obj = level.object_by_id(id)
+        section = val:section_name()
+    elseif type(val.id) == "function" then
+        id = val:id()
+        obj = val
+        se_obj = alife_object(id)
+        section = val:section()
+    end
+    return id, section, obj, se_obj
+end
+
+function is_carried_mag(id)
+
+	return carried_mags[id] and true or false
+end
+
+function toggle_carried_mag(id)
+--	print_dbg("tcm1")
+	if carried_mags[id] then
+		carried_mags[id] = nil
+		return false
+			--print_dbg("tcm2")
+	elseif room_in_pouch(id) then
+		carried_mags[id] = mags_storage[id]
+		return true
+			--print_dbg("tcm3"..tostring(carried_mags[id] and carried_mags[id].section))
+	end
+end
+
+function update_loadout_slots()
+	local outfit = db.actor:item_in_slot(7)
+	local small,medium,large =  0,0,0
+	if outfit then
+		small,medium,large = get_loadout_slots(outfit)
+		
+		--print_dbg("Outfit:%s||S:%s|M:%s|L:%s",outfit:section(), small,medium,large)
+	else
+		small,medium,large = get_loadout_slots("o_none")
+		
+		--print_dbg("Outfit:%s||S:%s|M:%s|L:%s","o_none", small,medium,large)
+	end
+	
+	local s,m,l =  0,0,0
+	local backpack = db.actor:item_in_slot(13)
+	s,m,l = get_loadout_slots(backpack)
+	
+	--print_dbg("backpack:%s||S:%s|M:%s|L:%s",backpack and backpack:section(), s,m,l)
+	
+	small = small + s
+	medium = medium + m
+	large = large + l 
+	
+	--print_dbg("Outfit+backpack||S:%s|M:%s|L:%s", small,medium,large)
+	
+	local ss,mm,ll = 0,0,0
+	db.actor:iterate_belt( function(owner, obj)
+		s,m,l = get_loadout_slots(obj)
+		
+		--print_dbg("belt:%s||S:%s|M:%s|L:%s",obj and obj:section(), s,m,l)
+		
+		ss = ss + s
+		mm = mm + m
+		ll = ll + l
+	end)
+	
+	--print_dbg("Belt total||S:%s|M:%s|L:%s", ss,mm,ll)
+	
+	small = small + ss
+	medium = medium + mm
+	large = large + ll 
+	
+	--print_dbg("total slots||S:%s|M:%s|L:%s", small,medium,large)
+	
+	loadout_slots.small = small 
+	loadout_slots.medium = medium 
+	loadout_slots.large = large 
+end
+
+function validate_loadout()
+    update_loadout_slots()
+	local carried = get_total_carried()
+	local excess = carried.large - loadout_slots.large
+	if excess < 1 then -- if they shift arround and don't over fill large all good
+		--print_dbg("validate_loadout s:%s m:%s l:%s excess:%s", carried.small, carried.medium, carried.large, excess)
+		return
+	end
+    local found = {small = 0, medium = 0, large = 0}
+    for id, mag in pairs(carried_mags) do --shed exess favoring shifted mags.
+		local size = get_size(id)
+		if size then
+            found[size] = found[size] + 1
+            if found[size] > loadout_slots[size] then
+                carried_mags[id] = nil
+				excess = excess - 1
+				if excess == 0 then break end
+            end
+        end
+    end
+	magazines.inventory_refresh()
+end
+
+function room_in_pouch(id)
+    local s = mags_storage[id] and get_size(id) or false
+	if not s then return false end
+    for i, mag in pairs(carried_mags) do -- safety purge of escaped mags
+        local itm = level.object_by_id(i)
+        if  not (itm and utils_item.in_actor_inv(itm)) then
+            carried_mags[i] = nil
+        end
+    end 
+    carried = get_total_carried()
+    return carried.large < loadout_slots.large or ((s == "medium" or s == "small") and (carried.medium < loadout_slots.medium)) or (s == "small" and (carried.small < loadout_slots.small))
+end
+
+function build_mag_revers_lookups()
+	local base_types = {}
+	local function itr(section)
+		if not is_magazine(section) or section == "tch_mag_base" or SYS_GetParam(1, section, "old_mag", false) then return end
+		local basetype 		= SYS_GetParam(0, section, "base_type") or nil
+		local retool_group 	= SYS_GetParam(0, section, "retool_group") or nil
+		local caliber = get_magazine_caliber(section)
+		if basetype then
+			if not mags_by_basetype[basetype] then
+				mags_by_basetype[basetype] = {}
+			end
+			mags_by_basetype[basetype][#mags_by_basetype[basetype]+1] = section
+		end
+		if retool_group then
+			if not mags_by_retool_group[retool_group] then
+				mags_by_retool_group[retool_group] = {}
+			end
+			mags_by_retool_group[retool_group][#mags_by_retool_group[retool_group]+1] = section
+		end
+		if caliber and basetype and not base_types[basetype] then
+			base_types[basetype] = true
+			for i = 1, #caliber do 
+				if not basetypes_by_ammo_type[caliber[i]] then
+					basetypes_by_ammo_type[caliber[i]] = {}
+				end
+				basetypes_by_ammo_type[caliber[i]][#basetypes_by_ammo_type[caliber[i]]+1] = basetype
+			end
+		end
+		
+		
+	end
+	ini_sys:section_for_each(itr)
+end
+
+
+-- these functions work equally well given an object id, item section, gameobject or server object.
+function is_supported_weapon(val)
+	if not val then return end
+	local id, section, obj, se_obj = type_correction(val)
+	local is_valid_by_sec = weapons_lookup:section_exist(parent_section(section))
+	--print_dbg("is_valid_by_sec:%s and obj: %s", is_valid_by_sec, obj and true)
+	if (not (obj and is_valid_by_sec)) or obj:weapon_in_grenade_mode() then return is_valid_by_sec end
+	local is_valid = is_valid_by_sec and get_weapon_base_type(id) and true or false
+	--print_dbg("is_valid:%s and obj: %s", is_valid, obj and true)
+
+	-- if it's a valid weapon, bind it to the mag binder
+	-- HarukaSai: we don't need a binder just for first update, instead we can create data here
+	if is_valid then
+		local mag_data = get_data(id)
+
+		if not mag_data then
+			print_dbg("Valid weapon %s has no data, creating default data", obj:section())
+
+			local default_mag = weapon_default_magazine(section)
+			mag_data = create_mag_data(id, default_mag, true) 
+			-- also need to do some things to convert existing ammo
+			local ammo_max = SYS_GetParam(2, default_mag, "max_mag_size")
+			local ammo_type = obj:get_ammo_type()
+			local ammo_map = utils_item.get_ammo(section, id) or SYS_GetParam(2, section, "ammo_mag_size") or 999
+			print_dbg("Weapon %s uses mags, assigning default mag %s with %s rounds, type is %s", section, default_mag, ammo_max, ammo_map[ammo_type+1])
+			
+			for i=1,ammo_max do
+				stack.push(mag_data.loaded, ammo_map[ammo_type+1])
+			end
+
+			set_data(id, mag_data)
+		end
+	end
+	
+	return is_valid
+end
+
+function is_open_bolt_weapon(val)
+	if not val then return end
+	local id, section, obj, se_obj = type_correction(val)
+	
+	return look_up_table:r_value(parent_section(section), "open_bolt")
+end
+
+function has_loadout_slots(val)
+	if not val then return end
+	local  id, section, obj, se_obj = type_correction(val)
+	local in_list = loadout_lookup:section_exist(parent_section(section))
+	--print_dbg("has_loadout_slots %s|%s:%s|%s", section,parent_section(section), in_list, IsItem("outfit", section, obj) )
+	return IsItem("outfit", section, obj) or in_list
+end
+
+
+function get_retool_section(val)
+	if not val then return end
+	local id, section, obj, se_obj = type_correction(val)
+	local retool_group 	= SYS_GetParam(0, section, "retool_group") or nil
+	local retool_section = nil
+	if retool_group and mags_by_retool_group[retool_group] and #mags_by_retool_group[retool_group] > 1 then --want to return nil of mag has no retool group or is only memeber
+		for i,v in ipairs(mags_by_retool_group[retool_group]) do
+			print_dbg("retool section: %s|%s", section, v)
+			if v == section then
+				if i < #mags_by_retool_group[retool_group] then
+					retool_section = mags_by_retool_group[retool_group][i+1]
+				else
+					retool_section = mags_by_retool_group[retool_group][1]
+				end
+				break
+			end
+		end
+	end
+	return retool_section
+
+end
+
+function get_loadout_slots(val, combine, force_outfit)
+	if not val then return 0,0,0 end
+	local id, section, obj, se_obj = type_correction(val)
+
+	local s,m,l = 0,0,0
+	if look_up_table:section_exist(section) then
+		s = look_up_table:r_value(section, "mag_limit_small", 2) or s
+		m = look_up_table:r_value(section, "mag_limit_medium", 2) or m
+		l = look_up_table:r_value(section, "mag_limit_large", 2) or l
+	elseif IsOutfit(obj) or force_outfit then
+		local kind = SYS_GetParam(0, section, "kind")
+		if look_up_table:section_exist(kind) then
+			s = look_up_table:r_value(kind, "mag_limit_small", 2) or s
+			m = look_up_table:r_value(kind, "mag_limit_medium", 2) or m
+			l = look_up_table:r_value(kind, "mag_limit_large", 2) or l
+		else
+			print_dbg("Outfit defaulted: sec:%s kind:%s",section ,kind )
+			s = look_up_table:r_value("o_none", "mag_limit_small", 2) or s
+			m = look_up_table:r_value("o_none", "mag_limit_medium", 2) or m
+			l = look_up_table:r_value("o_none", "mag_limit_large", 2) or l
+		end
+	end
+	if combine then
+		return {small = s,medium = m, large = l}
+	else
+		return s, m, l
+	end
+end
+
+function is_magazine(val)
+	if not val then return false end
+	local id, section, obj, se_obj = type_correction(val)
+	return SYS_GetParam(1, section, "is_mag")
+end
+
+function get_magazine_base_type(val)
+
+	if not val then return end
+	local id, section, obj, se_obj = type_correction(val)
+
+	return SYS_GetParam(0, section, "base_type")  or nil
+end
+
+function get_magazine_caliber(val)
+	return str_explode(look_up_table:r_value(get_magazine_base_type(val) or print_dbg("Missing basetype for: %s",val), "caliber") or print_dbg("Invalid basetyper for: %s",val), ",")
+end
+
+-- check if this weapon takes a magazine, and return the base type. false if it does not
+
+function get_weapon_base_type(val)
+	if not val then return end
+	local id, section, obj, se_obj = type_correction(val)
+	id = obj and id or nil --utils_item.get_ammo will not work if given an id of an offline object. nil id if no gameobject exists
+	local ammo =  utils_item.get_ammo(section, id)[1]
+	local parent = parent_section(section)
+	print_dbg("for weapon %s, using ammo %s, bt is %s", parent, ammo, is_supported_weapon(section) and look_up_table:r_value(parent, ammo))
+	return is_supported_weapon(section) and look_up_table:r_value(parent, ammo) -- base_type is in the ltx based on the first entry in the weapons ammo list.
+end
+
+function weapon_default_magazine(val)
+	if not val then return end
+	local id, section, obj, se_obj = type_correction(val)
+	
+	return look_up_table:r_value(parent_section(section), "default_mag")
+end 
+
+function weapon_improved_magazine(val)
+	if not val then return end
+	local id, section, obj, se_obj = type_correction(val)
+	
+	return look_up_table:r_value(parent_section(section), "improved_mag")
+    
+end
+-- check if mag is compatible w. weapon
+function is_compatible(weapon, magazine) --both called functions do type correction, added argument order corection
+	if not is_magazine(magazine) then
+		local t = magazine
+		magazine = weapon
+		weapon = t
+	end
+    local weapon_base = get_weapon_base_type(weapon)
+    local magazine_base = get_magazine_base_type(magazine)
+	print_dbg("wpn base type is %s, mag base type is %s", weapon_base, magazine_base)
+    return weapon_base == magazine_base
+end
+
+function valid_mag_data(mag_data)
+	return (mag_data and mag_data.section ~= "no_mag") and mag_data or nil
+end
+
+-- get mag data with validation for fake mag items
+function get_mag_loaded(id)
+	return valid_mag_data(get_data(id))
+end
+
+function validate_wep(id, sec)
+	local wpn_obj = level.object_by_id(id)
+	local mag_data = get_mag_loaded(id)
+	if not mag_data then return end
+	if wpn_obj and wpn_obj:weapon_in_grenade_mode() then return end
+	
+	local w_bt = get_weapon_base_type(id)
+	local m_bt = get_magazine_base_type(mag_data.section)
+	if w_bt ~= m_bt then
+		print_err("(CLEANUP) Incompatible magazine %s (bt %s) found on gun %s (typ %s, bt %s). Granting default magazine.", mag_data.section, m_bt, id, sec, w_bt)
+		mag_data.section = weapon_default_magazine(wpn_obj)
+		empty_table(mag_data.loaded)
+		set_data(id, mag_data)
+	end
+end
+
+function validate_mag(id, sec)
+	local mag_data = get_mag_loaded(id)
+	if not mag_data then return end
+
+	if sec ~= mag_data.section then
+		print_err("(CLEANUP) Mag section mismatch! Saved type is %s, actual %s for id %s", mag_data.section, sec, id)
+		mag_data.section = sec
+	end
+	-- check for ammo that shouldn't belong in the magazine, and replace with generic ammo
+	local ammo_map = invert_table(get_magazine_caliber(mag_data.section))
+	-- remove excess rounds
+	local ammo_cap = SYS_GetParam(2, mag_data.section, "max_mag_size")
+	while #mag_data.loaded > ammo_cap do
+		print_err("(CLEANUP) Loaded magazine %s (%s) has capacity %s, current %s rounds loaded", mag_data.section, id, ammo_cap, #mag_data.loaded)
+		stack.pop(mag_data.loaded)
+	end
+	local ammo_replace = random_key_table(ammo_map)
+	for k,v in pairs(mag_data.loaded) do
+		if not ammo_map[v] then 
+			print_err("(CLEANUP) Invalid round %s loaded in mag %s, id %s, replacing", v, mag_data.section, id)
+			mag_data.loaded[k] = ammo_replace
+		end
+	end
+	set_data(id, mag_data)
+end
+
+-- class
+function bind(obj)
+    obj:bind_object(magazine_binder(obj))
+end
+
+class "magazine_binder" (object_binder)
+
+function magazine_binder:__init(obj) super(obj)
+	self.first_update = nil
+end
+
+-- global flag used to cap condition at 100 for trade
+local freeze = false
+-- only update every half second
+local update_tick = 500
+
+function magazine_binder:update(delta)
+	object_binder.update(self, delta)
+	local tg = time_global()
+	
+	local obj = self.object
+	local id = obj:id()
+	local sec = obj:section()
+    local mag_data = get_data(id)
+
+	if not self.first_update then
+		self.first_update = true
+		self.last_update = tg + update_tick
+		-- associate mag data to empty magazine object
+		if not mag_data and is_magazine(obj) then
+			mag_data = create_mag_data(id, sec, false)
+		end
+	end
+
+	if tg < self.last_update then return end
+	self.last_update = tg + update_tick
+
+	-- update mag weight and cond
+	if is_magazine(obj) then
+		if freeze then 
+			obj:set_condition(0.999) 
+		else
+			local mag_weight = SYS_GetParam(2, sec, "inv_weight")
+			local capacity = SYS_GetParam(2, sec, "max_mag_size")
+			-- for simplicity we take the weight of each bullet to be the same
+			local cond = 0
+			if mag_data and #mag_data.loaded > 0 then
+				local ammoType = get_magazine_caliber(sec)[1]
+				local box_size = SYS_GetParam(2, ammoType, "box_size") or 1
+				local box_weight = SYS_GetParam(2, ammoType, "inv_weight") or 0
+				local cartridge_weight = box_weight / box_size
+				cond = #mag_data.loaded / capacity
+				mag_weight = mag_weight + (#mag_data.loaded * cartridge_weight)
+			end
+			set_data(id, mag_data)
+			obj:set_weight(mag_weight)
+			obj:set_condition(cond)
+		end
+
+	end
+end
+
+function magazine_binder:reload(section)
+    object_binder.reload(self, section)
+end
+
+function magazine_binder:reinit()
+    object_binder.reinit(self)
+end
+
+function magazine_binder:net_spawn(se_abstract)
+    if not(object_binder.net_spawn(self, se_abstract)) then
+        return false
+    end
+    return true
+end
+
+function magazine_binder:net_destroy()
+	object_binder.net_destroy(self)
+end
+
+function magazine_binder:save(stpk)
+end
+
+function magazine_binder:load(stpk)
+end
+-- end class
+
+
+-------------------------------
+-- SECTION inventory highlight --
+-------------------------------
+
+-- this gets called _ALOT_ so putting it here where table can be read
+
+local bags = {actor_bag = true,actor_trade_bag= true} --player inv in normal/looting and in the merchant UI.
+ready_color = GetARGB(100, 255, 159, 82)
+function check_ready(cell)
+        if bags[cell.container.ID] then
+			return carried_mags[cell.ID] and ready_color --cell.ID and cell.sec are the object id and section
+		end
+end
+
+function icon_check_ready(cell)
+	if bags[cell.container.ID] and carried_mags[cell.ID] then
+		return {texture = "ui_mags_loadout", x = 1, y = 1, w = 15, h = 15}
+	end
+end
+
+
+
+
+-------------------------------
+-- SECTION  callbacks --
+-------------------------------
+local function save_state(mdata) 
+	mdata.mags_storage = mags_storage
+	mdata.carried_mags = carried_mags
+end
+
+function load_state(mdata) 
+	mags_storage = mdata.mags_storage or {}
+	carried_mags = mdata.carried_mags or {}
+end
+
+-- attempt to keep mstorage clean
+local function on_register(se_obj, typ)
+	local id = se_obj.id
+	local sec = se_obj:section_name()
+	if mags_storage[id] and not (is_magazine(sec) or is_supported_weapon(sec)) then
+		mags_storage[id] = nil
+	end
+end
+
+local function se_item_on_unregister(se_obj, typ)
+	local id = se_obj.id
+	mags_storage[id] = nil
+	carried_mags[id] = nil
+end
+
+local past_first_update = false
+function actor_on_first_update()
+	CreateTimeEvent("mag_binder","firstupdatedelay",1,function()
+		past_first_update = true
+		validate_loadout()
+		clean_data()
+		return true
+		end)
+end
+
+function actor_item_to_slot(obj)
+	if past_first_update and has_loadout_slots(obj) then
+		validate_loadout()
+	end
+end
+
+function on_trade_opened()
+	freeze = true
+end
+
+function on_trade_closed()
+	freeze = false
+end
+
+
+function on_game_start()
+	build_mag_revers_lookups()
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+	rax_persistent_highlight.register("ready_mag", check_ready) --used like a callback register
+	rax_icon_layers.register("ready_mag", icon_check_ready) --used like a callback register
+	RegisterScriptCallback("actor_item_to_slot",actor_item_to_slot)
+	RegisterScriptCallback("actor_item_to_ruck",actor_item_to_slot)
+	RegisterScriptCallback("actor_item_to_belt",actor_item_to_slot)
+	RegisterScriptCallback("actor_on_item_drop",actor_item_to_slot)
+	RegisterScriptCallback("server_entity_on_unregister",se_item_on_unregister)
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("ActorMenu_on_trade_started",on_trade_opened)
+	RegisterScriptCallback("ActorMenu_on_trade_closed",on_trade_closed)
+end
+
