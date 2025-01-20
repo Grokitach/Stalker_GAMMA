@@ -1,0 +1,422 @@
+
+--[[
+
+	RavenAscendant
+	07May2021
+	Ready Magazine HUD for Anomaly Magazine rewrite.
+--]]
+
+local get_mag_property			= magazine_binder.get_mag_property
+local get_size					= magazine_binder.get_size
+local is_carried_mag				= magazine_binder.is_carried_mag
+local print_dbg					= function (...) return false and magazine_binder.print_dbg(...) end
+local get_magazine_base_type					= magazine_binder.get_magazine_base_type
+local gc						 	= game.translate_string
+
+-- Update rate
+local tg_update_step = 1000 --[ms]
+
+local scale = 1
+local ammo_scale = 1
+local group_by_ammo = true
+local grp_by_bt = true
+local show_bgrd
+
+----------------------------------
+--	HUD (Indicators)
+----------------------------------
+
+HUD = nil
+
+-------
+function on_screen_resolution_changed()
+	deactivate_hud()
+	activate_hud()
+end
+
+
+function activate_hud()
+	RegisterScriptCallback("actor_on_net_destroy",actor_on_net_destroy)
+	RegisterScriptCallback("on_console_execute",on_console_execute)
+	RegisterScriptCallback("GUI_on_show",update_hud)
+	RegisterScriptCallback("GUI_on_hide",update_hud)
+	
+	if HUD == nil then
+		HUD = UIMagHUD()
+		get_hud():AddDialogToRender(HUD)
+	end
+	HUD:Update(true)
+end
+
+function deactivate_hud()
+	if HUD ~= nil then
+		get_hud():RemoveDialogToRender(HUD)
+		HUD = nil
+	end
+	
+	UnregisterScriptCallback("actor_on_net_destroy",actor_on_net_destroy)
+	UnregisterScriptCallback("on_console_execute",on_console_execute)
+	UnregisterScriptCallback("GUI_on_show",update_hud)
+	UnregisterScriptCallback("GUI_on_hide",update_hud)
+end
+
+function update_hud()
+	if HUD ~= nil then
+		HUD:Update(true)
+	end
+end
+
+function actor_on_net_destroy()
+	if HUD ~= nil then
+		get_hud():RemoveDialogToRender(HUD)
+		HUD = nil
+	end
+end
+
+function on_console_execute(name)
+	if name == "hud_draw" and HUD then
+		HUD:Update(true)
+	end
+end
+
+local function adjust_vert(ele, bottom)
+	local new_y
+	local pos = ele:GetWndPos()
+	if bottom then
+		new_y = 768 - ((768 - pos.y)*scale)
+	else
+		new_y = pos.y * scale
+	end
+	pos.y = new_y
+	ele:SetWndPos( pos)
+end
+
+-------
+class "UIMagHUD" (CUIScriptWnd)
+
+function UIMagHUD:__init() super()
+	
+	self.mirrored = true
+	self.bottom = true
+	
+	self.ratio  = utils_xml.screen_ratio()
+	self._tmr   = time_global()
+	self.offset = 0
+	self.w = 1
+
+	self.mags = {}
+	self.mags.small = {}
+	self.mags.medium = {}
+	self.mags.large = {}
+
+	
+	self:InitControls()
+	self:Update(true)
+end
+
+function UIMagHUD:__finalize()
+end
+local xml
+function UIMagHUD:InitControls()
+	xml  = CScriptXmlInit()
+	xml:ParseFile("mag_hud.xml")
+	
+	self.dialog = xml:InitStatic("pouch", self)
+	adjust_vert(self.dialog, self.bottom)
+	self.pouch = {}
+	self.pouch.small = xml:InitStatic("pouch:small", self.dialog)
+	adjust_vert(self.pouch.small)
+	self.pouch.small:Show(true)
+	self.pouch.medium = xml:InitStatic("pouch:medium", self.dialog)
+	adjust_vert(self.pouch.medium)
+	self.pouch.medium:Show(true)
+	self.pouch.large = xml:InitStatic("pouch:large", self.dialog)
+	adjust_vert(self.pouch.large)
+	self.pouch.large:Show(true)
+	self.dialog:Show(true)
+	self.bkg = {}
+	self.bkg.small = xml:InitStatic("mag", self.pouch.small)
+	local bkg_t = "ui_mags_bkg" .. magazines_mcm.get_config("bgrd")
+	self.bkg.small:InitTexture( bkg_t )
+	self.bkg.medium = xml:InitStatic("mag", self.pouch.medium)
+	self.bkg.medium:InitTexture( bkg_t )
+	self.bkg.large = xml:InitStatic("mag", self.pouch.large)
+	self.bkg.large:InitTexture( bkg_t )
+
+end
+
+function UIMagHUD:Clear()
+	self.dialog:Show(false)
+	self.bkg.small:Show(false)
+	self.bkg.medium:Show(false)
+	self.bkg.large:Show(false)
+	for a, b in pairs(self.mags) do
+			for k, ele in pairs(b) do
+				ele:Show(false)
+			end
+		
+	end
+
+end
+
+function UIMagHUD:Update(force) --Update(true) can be called from weapon reload script to force an immediate update. Will also be called when inventory closes. otherwise a periodic update od once a second happens. that is probably exsesive as long as update is happening on run reload.
+	CUIScriptWnd.Update(self)
+	
+	
+	local tg = time_global()
+	if force then
+		self._tmr = tg - 1
+	end
+	if self._tmr >= tg then
+		return
+	else
+		self._tmr = tg + tg_update_step
+	end
+
+	-- Clear all
+	self:Clear()
+	
+	-- Hide HUD when it's occupied by a GUI class
+	if not (main_hud_shown() or force) then
+		return
+	end
+
+	local mags = {small = {}, medium = {}, large = {}}
+	function itr(item)
+		id = item:id()
+		if is_carried_mag(id) then
+			local section = get_mag_property(id, "section")
+			local base_type = get_magazine_base_type(id)
+			local size = get_size(id)
+			local loaded = get_mag_property(id, "loaded")
+			local round = stack.peek(loaded)
+			local grp = grp_by_bt and base_type or section
+			--print_dbg("itr bt %s , sec %s , grp %s",base_type, section, grp)
+			local ammo = group_by_ammo and round or "none"
+			mags[size][grp] = mags[size][grp] or {}
+			mags[size][grp][ammo] = mags[size][grp][ammo] or {}
+			mags[size][grp][ammo][#mags[size][grp][ammo]+1] = section
+			--magazine_binder.dbg:log_table(mags[size][grp][ammo],"mags[size][grp][ammo]")
+		end
+	end
+	db.actor:inventory_for_each(itr)
+	
+	for size, mag_cell_list in pairs(self.mags) do
+		for i, mag_cell in ipairs(mag_cell_list) do
+			mags[size][mag_cell.grp] = mags[size][mag_cell.grp] or {}
+			--if mags[size][mag_cell.grp][mag_cell.ammo_sec] then
+				mag_cell:Update( mags[size][mag_cell.grp][mag_cell.ammo_sec] or {})
+			--end
+			mags[size][mag_cell.grp][mag_cell.ammo_sec] = nil
+	
+		end
+		for grp, ammo_list in pairs(mags[size]) do
+			for ammo_sec, list in pairs(ammo_list) do
+				mag_cell_list[#mag_cell_list+1] = UIMagCell(self.pouch[size],grp, list, size, group_by_ammo and ammo_sec or nil)
+			end
+		end
+		local start_x = 1
+		local cell_h = 10
+		local bkg = false
+		for _, mag_cell in ipairs(mag_cell_list) do
+			start_x = mag_cell:SetPos(start_x, self.mirrored)
+			cell_h = mag_cell.cell:GetHeight()
+			bkg = true
+		end
+		if bkg then
+			if self.mirrored then
+				self.bkg[size]:SetWndSize( vector2():set(-1*start_x+5, cell_h))
+				self.bkg[size]:SetWndPos(vector2():set(start_x, 0))
+			else
+				self.bkg[size]:SetWndSize( vector2():set(start_x+5, cell_h))
+				self.bkg[size]:SetWndPos(vector2():set(0, 0))
+			end
+			self.bkg[size]:Show(magazines_mcm.get_config("show_bgrd"))
+		end
+	end
+	if not (main_hud_shown()) then
+		self:Clear()
+		return
+	end
+
+
+	self.dialog:Show(magazines_mcm.get_config("show_hud"))
+end
+
+class "UIMagCell" 
+
+function UIMagCell:__init(owner, grp, list, size, ammo_sec)
+	self.owner = owner
+	self.grp = grp
+	self.count = #list
+	self.list = list
+	self.size = size
+	self.icos = {}
+	self.ammo_sec = ammo_sec or "none"
+	self.text = ammo_sec and magazines_mcm.get_config("icon_text") and ui_item.get_sec_short_name(ammo_sec) or ""
+	self.ammo_icon = self.ammo_sec ~= "none"
+	self.axis = utils_xml.get_item_axis(list[1] or "tch_mag_base")
+	self.small_ico = self.axis.h == 1
+	self.ammo_axis = self.ammo_icon and utils_xml.get_item_axis(self.ammo_sec)
+	self:InitControls()
+end
+
+function UIMagCell:InitControls()
+	self.cell = xml:InitStatic("mag", self.owner)
+	self.cell:SetWndSize( vector2():set((self.axis.w) * scale, (self.small_ico and 1 or 2)*50*scale + 5*scale))
+	self.cell:TextControl():SetText(self.text)
+
+	self.bkg =  xml:InitStatic("mag", self.cell)
+	self.bkg:InitTexture( "ui_mags_bkg" )
+	--self.bkg:InitTexture( "ui\\ui_ingame2_common.dds" )
+	--self.bkg:SetTextureRect(Frect():set( 0, 285, 68, 324 ))
+	self.icos[1] = xml:InitStatic("mag", self.cell)
+	print_dbg("before icos setup")
+	self.icos[1]:SetWndSize( vector2():set((self.axis.w ) * scale,(self.axis.h ) * scale ))
+	self.icos[1]:InitTexture( utils_xml.get_icons_texture(self.list[1] or "tch_mag_base") )
+	self.icos[1]:SetTextureRect(Frect():set( utils_xml.get_item_axis(self.list[1] or "tch_mag_base", nil, true) ))
+	print_dbg("after icos setup")
+
+	self.ammo = xml:InitStatic("mini_ico", self.cell)
+	self.ammo:Show(self.ammo_icon and magazines_mcm.get_config("ammo_icon"))
+	if self.ammo_icon then
+		self.ammo:InitTexture( utils_xml.get_icons_texture(self.ammo_sec) )
+		self.ammo:SetTextureRect(Frect():set( utils_xml.get_item_axis(self.ammo_sec, nil, true) ))
+		self.ammo:SetWndSize( vector2():set((self.ammo_axis.w/2 )*ammo_scale,(self.ammo_axis.h/2 )*ammo_scale ))
+	end
+	adjust_vert(self.ammo)
+	scale_ui(self.cell)
+	scale_ui(self.bkg)
+	scale_ui(self.ammo)
+	scale_ui(self.icos[1])
+	self:Update(list)
+end
+
+function UIMagCell:Update(list)
+	self.list = list or {}
+	print_dbg("Update sec %s, c %s",count, self.grp)
+	self.count = #self.list
+	count = self.count
+	for i=1, count do
+		if not self.icos[i] then self.icos[i] = xml:InitStatic("mag", self.icos[i-1] ) end
+		local axis = utils_xml.get_item_axis(self.list[i])
+		self.icos[i]:SetWndSize( vector2():set((axis.w ) * scale, (axis.h ) * scale))
+		self.icos[i]:InitTexture( utils_xml.get_icons_texture(self.list[i]) )
+		self.icos[i]:SetTextureRect(Frect():set( utils_xml.get_item_axis(self.list[i], nil, true) ))
+		scale_ui(self.icos[i])
+		self.icos[i]:Show(true)
+	end
+	for i= count+1, #self.icos do
+		self.icos[i]:Show(false)
+	end
+	local width = self.icos[1]:GetWidth()
+	local offset = (width / 2)
+	local margin = width
+	if self.size == "small" then
+		offset = width/4
+		margin = width/2
+	elseif self.size == "medium" then
+		offset =(width / 3)
+	end
+	
+	print_dbg("before cell width")
+	self.cell:SetWndSize( vector2():set((count*offset)+margin , (self.small_ico and 1 or 2)*50*scale + 5*scale))
+	print_dbg("before cell pos width:%s", width)
+	self.icos[1]:SetWndPos(  vector2():set(self.cell:GetWidth()/2 - (count*offset+width/2)/2  , 0))
+	self.icos[1]:Show(count>0)
+	print_dbg("icos 1 count:%s show%s cell show %s",self.count,self.icos[1]:IsShown(), self.cell:IsShown() )
+	for i = 2, count do
+		self.icos[i]:SetWndPos(vector2():set(offset, 0))
+		self.icos[i]:Show(true)
+	end
+	self.bkg:SetWndSize( vector2():set(self.cell:GetWidth(), self.cell:GetHeight()))
+	self.bkg:Show(false)	
+	--self.ammo:SetWndSize(
+	
+end
+
+function UIMagCell:SetPos(x, mirrored)
+	if self.count == 0 then
+		self:Show(false)
+		print_dbg("count:%s hideing",self.count)
+
+		return x
+	end
+	local x_cord = x - (mirrored and self.cell:GetWidth() or 0)
+	self.cell:SetWndPos(vector2():set(x_cord, 0))
+	self:Show(true)
+	print_dbg("set pos count:%s show%s cell show %s x_cord %s owner show:%s",self.count,self.icos[1]:IsShown(), self.cell:IsShown(),x_cord,self.owner:IsShown() )
+	return x_cord + (mirrored and 0 or self.cell:GetWidth()) 
+	
+end
+
+function UIMagCell:Show(show)
+	self.cell:Show(show)	
+end
+
+
+----------------------------------
+--	Callbacks
+----------------------------------
+local function on_option_change(mcm)
+	--if not mcm then return end
+	scale = magazines_mcm.get_config("scale")
+	ammo_scale = magazines_mcm.get_config("ammo_scale")
+	group_by_ammo = magazines_mcm.get_config("group_by_ammo")
+	grp_by_bt = magazines_mcm.get_config("grp_by_bt")
+	printf("sacle %s", scale)
+	deactivate_hud()
+	activate_hud()
+	
+end
+
+
+local function actor_on_first_update()
+	scale = magazines_mcm.get_config("scale")
+	ammo_scale = magazines_mcm.get_config("ammo_scale")
+	group_by_ammo = magazines_mcm.get_config("scale")
+	grp_by_bt = magazines_mcm.get_config("ammo_scale")
+
+	deactivate_hud()
+	activate_hud()
+end
+
+local function actor_on_update()
+	
+	HUD:Update()
+	
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
+	RegisterScriptCallback("actor_on_update",actor_on_update)
+	RegisterScriptCallback("on_screen_resolution_changed",on_screen_resolution_changed)
+    RegisterScriptCallback("on_option_change",on_option_change)
+end
+
+
+
+
+function scale_ui(ele, adjust_x, anchor, anchor_point, parent_width)
+	p_width = parent_width or 1024
+	p_center = p_width/2
+	width = ele:GetWidth()
+	pos = ele:GetWndPos()
+	anchorpos = {}
+	anchorpos.left = pos.x
+	anchorpos.right = anchorpos.left + width
+	anchorpos.center = anchorpos.left + width/2
+	ratio = (device().height / device().width) / (768 / 1024)
+	xadjust = anchorpos.left
+	if adjust_x then
+		if anchor_point == "right" then
+			xadjust = p_width - (p_width - (anchor and anchorpos[anchor] or anchorpos.left))*ratio
+		elseif anchor_point == "center" then
+			xadjust = p_center - (p_center - (anchor and anchorpos[anchor] or anchorpos.left))*ratio
+		else
+			xadjust = ratio * (anchor and anchorpos[anchor] or anchorpos.left)
+		end
+	end
+	ele:SetWndSize(vector2():set(ele:GetWidth() * ratio, ele:GetHeight()))
+	ele:SetWndPos( vector2():set(xadjust , pos.y ) )
+end
