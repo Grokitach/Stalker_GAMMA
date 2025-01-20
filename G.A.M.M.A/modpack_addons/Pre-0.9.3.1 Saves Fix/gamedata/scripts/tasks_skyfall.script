@@ -1,0 +1,238 @@
+local nta_utils = new_tasks_addon_tasks_utils
+local landing_pad_location = {
+    vector = vector():set(-177.2140,5.0825,-179.6182),
+    lvid = 45538,
+    gvid = 1037
+}
+local heli_trigger_radius = 151
+local static_heli_trigger_radius = 61
+
+local barrels = {{
+    vector = vector():set(-175.3620,5.3156,-182.4881),
+    lvid = 46530,
+    gvid = 1037
+}, {
+    vector = vector():set(-175.6865,5.3178,-183.3549),
+    lvid = 46528,
+    gvid = 1037
+}, {
+    vector = vector():set(-174.7610,5.3181,-183.0771),
+    lvid = 47024,
+    gvid = 1037
+}}
+
+-- Stage 0: Task started - player goes to agroprom
+-- Stage 1: Player approached military undercover
+-- Stage 2: Player was not undercover and dynamic heli spawned
+-- Stage 3: Heli destroyed - get back to Lukash
+local state = {
+    dynamic_heli_id = nil,
+    static_heli_id = nil,
+    barrels_ids = nil,
+}
+function save_state(mdata)
+	mdata.skyfall_task_data = state
+end
+
+function load_state(mdata)
+	if mdata.skyfall_task_data then
+		state = mdata.skyfall_task_data
+	end
+end
+
+task_status_functor.skyfall_task_status_functor = function(tsk,task_id)
+	if not (db.actor and tsk) then return end
+	local stage = tsk.stage
+
+    if not level_changing() and not is_agroprom() and (stage == 1 or stage == 2) then 
+        return "fail"
+    end
+
+	if (stage == 0) then
+        if
+            is_agroprom()
+            and db.actor:position():distance_to(landing_pad_location.vector) < heli_trigger_radius
+        then
+            if not is_enemies_with_military() then
+                spawn_static_heli()
+                spawn_barrels()
+                dynamic_news_helper.send_tip(game.translate_string('skyfall_stealth_message'), game.translate_string("mil_freedom_leader_name"), nil,nil, 'ui_inGame2_lukash', nil, 'npc')
+                tsk.stage = 1
+            else
+                spawn_dynamic_heli()
+                dynamic_news_helper.send_tip(game.translate_string('skyfall_confrontation_message'), game.translate_string("army"), nil,nil, 'ui_icon_news_trx_army', nil, 'npc')
+                tsk.stage = 2
+            end
+        end
+    end
+
+    if (stage == 1) then
+        -- Heli destroyed as static - go to Lukash now
+        if not state.static_heli_id then
+            tsk.stage = 3
+        end
+
+        -- GG triggered the stealth stage but became enemies with military and is somewhere between the base entrance and base heli trigger radius
+        -- Despawn static heli and send dynamic one
+        if
+            state.static_heli_id
+            and is_enemies_with_military()
+            and db.actor:position():distance_to(landing_pad_location.vector) > static_heli_trigger_radius
+            and db.actor:position():distance_to(landing_pad_location.vector) < heli_trigger_radius
+        then
+            despawn_static_heli_and_barrels()
+            spawn_dynamic_heli()
+            dynamic_news_helper.send_tip(game.translate_string('skyfall_blow_cover_run_message'), game.translate_string("army"), nil,nil, 'ui_icon_news_trx_army', nil, 'npc')
+            tsk.stage = 2
+        end
+    end
+
+    if (stage == 2) then
+        -- right now heli attacks with rocket every 30 seconds - might change it to "rage mode" later where he doesn't use rocket till he starts burning and then blasts them like crazy
+        -- and add some message like "You wanna play rough, punk? I'm in for it!"
+        local heli = get_dynamic_heli()
+        if heli then
+            local heliObj = heli:get_helicopter()
+            if heliObj:GetfHealth() <= 0 then
+                heliObj:Die()
+                heliObj:Explode() -- explode immediately to make sure that it does not stay alive under the map
+                tsk.stage = 3
+            else
+                set_player_enemy()
+            end
+        end
+    end
+end
+
+task_functor.skyfall_task_target_functor = function(task_id,field,p,tsk)
+    if tsk.stage == 0 then
+        return SIMBOARD:get_smart_by_name("agr_smart_terrain_1_6").id
+    end
+
+    if tsk.stage == 1 then
+        return state.static_heli_id
+    end
+
+    if tsk.stage == 2 then
+        return state.dynamic_heli_id
+    end
+
+    if tsk.stage == 3 then
+        return tsk.task_giver_id
+    end
+end
+
+xr_effects.skyfall_cleanup = function()
+    if state.dynamic_heli_id then safe_release_manager.release({id = state.dynamic_heli_id}) end
+    if state.static_heli_id then safe_release_manager.release({id = state.static_heli_id}) end
+    if state.barrels_ids then
+        for _, id in pairs(state.barrels_ids) do
+            safe_release_manager.release({id = id})
+        end
+    end
+    state = {
+        dynamic_heli_id = nil,
+        static_heli_id = nil,
+        barrels_ids = nil,
+    }
+end
+
+xr_effects.skyfall_fail_message = function ()
+    dynamic_news_helper.send_tip(game.translate_string('skyfall_run_fail_message'), game.translate_string("mil_freedom_leader_name"), nil,nil, 'ui_inGame2_lukash', nil, 'npc')
+end
+
+function spawn_static_heli()
+    state.static_heli_id = nta_utils.spawn_helper(landing_pad_location, "new_tasks_addon_heli_strong_static")
+end
+
+function static_heli_binder(obj)
+    obj:bind_object(bind_physic_object.generic_physics_binder(obj))
+end
+
+function despawn_static_heli_and_barrels()
+    safe_release_manager.release({id = state.static_heli_id})
+    state.static_heli_id = nil
+    for _, id in pairs(state.barrels_ids) do
+        safe_release_manager.release({id = id})
+    end
+end
+
+function blow_static_heli()
+    despawn_static_heli_and_barrels()
+    nta_utils.spawn_helper(landing_pad_location, "immediate_explosion_heli")
+end
+
+function spawn_barrels()
+    local t = {}
+    for _, b in pairs(barrels) do
+        table.insert(t, nta_utils.spawn_helper(b, "fake_explosive_barrel"))
+    end
+    state.barrels_ids = t
+end
+
+function blow_cover()
+    gameplay_disguise.set_comm(gameplay_disguise.get_default_comm())
+    dynamic_news_helper.send_tip(game.translate_string('skyfall_cover_blow_message'), game.translate_string("army"), nil,nil, 'ui_icon_news_trx_army', nil, 'npc')
+    -- Make actor enemy to Military at this point - no matter the faction
+    db.actor:set_community_goodwill("army", -3000)
+end
+
+function spawn_dynamic_heli()
+    state.dynamic_heli_id = nta_utils.spawn_helicopter(
+        true,
+        landing_pad_location.vector,
+        landing_pad_location.lvid,
+        landing_pad_location.gvid
+    )
+end
+
+function is_agroprom()
+    return level.name() == "l03_agroprom"
+end
+
+-- Take goodwill into account as well
+function is_enemies_with_military()
+    local actor_comm = db.actor:character_community()
+    return (relation_registry.community_relation(actor_comm, "army") + relation_registry.community_goodwill("army", AC_ID)) <= game_relations.ENEMIES
+end
+
+function get_dynamic_heli()
+    return level.object_by_id(state.dynamic_heli_id)
+end
+
+function set_player_enemy()
+    local heli = get_dynamic_heli()
+    local bound = heli:binded_object()
+    bound.st.combat:set_enemy(db.actor)
+end
+
+function on_game_start()
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+    RegisterScriptCallback("physic_object_on_hit_callback",physic_object_on_hit_callback)
+end
+
+local hit_count = 0
+function physic_object_on_hit_callback(obj,damage,direction,who,bone_id)
+    if not state.static_heli_id or obj:id() ~= state.static_heli_id then return end
+    if who:section() == "actor" then
+        -- Count hits within 0.1 second. If it hits at least 15 times, then it's most probably an explosion
+        -- No way to check the hit type directly :)
+        CreateTimeEvent(0, "counting_hits", 0.1, function ()
+            if hit_count > 15 then
+                blow_static_heli()
+            end
+            if not is_enemies_with_military() then
+                blow_cover()
+            end
+            hit_count = 0
+            return true
+        end)
+
+        hit_count = hit_count + 1
+    end
+    if who:section() == "rpg_new_blow" or who:section() == "ied_new_blow" then
+        -- Always blow heli when hit by timed explosive
+        blow_static_heli()
+    end
+end

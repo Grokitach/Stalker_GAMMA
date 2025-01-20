@@ -1,0 +1,807 @@
+local nta_utils = new_tasks_addon_tasks_utils
+local configs = a_the_living_fire_configs
+
+local state = {
+    prometheus_id = nil,
+    garbage_mutant_id = nil,
+    anomaly_ids = {},
+    mutant_ids = {},
+    corpse_ids = {},
+    corpse_moved = {},
+    x18_military_ids = {},
+    x18_military_relation_set = {},
+    greh_ids = {},
+    endgame_killed_greh = {}
+}
+function save_state(mdata)
+	mdata.the_living_fire_task_data = state
+end
+
+function load_state(mdata)
+	if mdata.the_living_fire_task_data then
+		state = mdata.the_living_fire_task_data
+	end
+end
+
+local prometheus_icon = 'ui_inGame2_no_data'
+local prometheus_name = 'the_living_fire_mysterious_stalker_name'
+local prometheus_real_name = 'the_living_fire_prometheus_name'
+local sakharov_icon = 'ui_inGame2_sakharov'
+local sakharov_name = 'yan_st_sakharov_name'
+local snitch_icon = 'ui_inGame2_bandit_4'
+local snitch_name = 'bar_informator_mlr_name'
+local outskirts_anomalies_spawned = false
+
+task_status_functor.the_living_fire_task_status_functor = function(tsk,task_id)
+	if not (db.actor and tsk) then return end
+	local stage = tsk.stage
+
+	if stage == 0 then
+        if db.actor:has_info('baraholka_trader_the_living_fire_1_passed') then
+            tsk.stage = 1
+        end
+    end
+
+    if stage == 1 then
+        if
+            nta_utils.actor_on_level(nta_utils.levels.garbage)
+            and nta_utils.actor_in_range(configs.garbage_prometheus_location.vector, configs.garbage_prometheus_spawn_activation_distance) 
+            and nta_utils.is_dark_night()
+        then
+            spawn_garbage_prometheus()
+            spawn_garbage_anomalies()
+            spawn_garbage_trash()
+            db.actor:give_info_portion("the_living_fire_prometheus_garbage_spawned")
+            delayed_message('the_living_fire_garbage_actor_msg_1', 1.5, nta_utils.actor_icon(), nta_utils.actor_name())
+            tsk.stage = 2
+        end
+    end
+
+    if stage == 2 then
+        if
+            nta_utils.actor_on_level(nta_utils.levels.garbage)
+            and nta_utils.actor_in_range(configs.garbage_prometheus_location.vector, configs.garbage_mutant_spawn_activation_distance) 
+        then
+            spawn_garbage_mutant()
+            delayed_message('the_living_fire_garbage_prometheus_msg_1', 1, prometheus_icon, prometheus_name)
+            garbage_delayed_kill_mutant()
+            tsk.stage = 3
+        end
+    end
+
+    if stage == 3 then
+        if db.actor:has_info('the_living_fire_garbage_mutant_killed') then
+            delayed_message('the_living_fire_garbage_actor_msg_2', 3.5, nta_utils.actor_icon(), nta_utils.actor_name())
+            delayed_message('the_living_fire_garbage_prometheus_msg_2', 4.5, prometheus_icon, prometheus_name)
+            tsk.stage = 4
+        end
+    end
+
+    if stage == 4 then
+        CreateTimeEvent(0,"the_living_fire_garbage_prometheus_disappear", 8, function ()
+            safe_release_manager.release({id = state.prometheus_id})
+            local explosion_spawn_config = nta_utils.shallow_copy(configs.garbage_prometheus_location)
+            explosion_spawn_config.section = 'immediate_fiery_explosion'
+            nta_utils.spawn_helper(explosion_spawn_config)
+            CreateTimeEvent(0,"the_living_fire_garbage_anomalies_disappear", 0.5, function ()
+                despawn_anomalies()
+                return true
+            end)
+
+            delayed_message('the_living_fire_garbage_actor_msg_3', 10, nta_utils.actor_icon(), nta_utils.actor_name())
+            db.actor:give_info_portion('the_living_fire_prometheus_garbage_disappeared')
+            tsk.stage = 5
+            return true
+        end)
+    end
+
+    if stage == 5 then
+        if db.actor:has_info('baraholka_trader_the_living_fire_2_passed') then
+            tsk.stage = 6
+        end
+    end
+
+    if stage == 6 then
+        if db.actor:has_info('bar_informator_mlr_the_living_fire_2_passed') then
+            tsk.stage = 7
+        end
+    end
+
+    if stage == 7 then
+        if db.actor:has_info('yan_stalker_sakharov_the_living_fire_1_passed') then
+            tsk.stage = 8
+        end
+    end
+
+    if stage == 8 then
+        if nta_utils.actor_on_level(nta_utils.levels.swamp) and nta_utils.actor_in_range(
+            get_story_object('mar_smart_terrain_11_3_anomaly_spot'):position(),
+            configs.swamp_spawn_activation_distance
+        ) then
+            spawn_explosions(configs.swamp_explosion_locations)
+            delayed_message('the_living_fire_swamp_actor_msg_1', 3, nta_utils.actor_icon(), nta_utils.actor_name(), 6)
+            delayed_message('the_living_fire_swamp_sakharov_msg_1', 7, sakharov_icon, sakharov_name, 12)
+            spawn_mutants(configs.swamp_mutant_locations)
+            tsk.stage = 9
+        end
+    end
+
+    if stage == 9 then
+        if not first_alive_mutant_id() then
+            delayed_message('the_living_fire_swamp_sakharov_msg_2', 2, sakharov_icon, sakharov_name, 12)
+            db.actor:give_info_portion('the_living_fire_swamp_mutants_killed')
+            state.mutant_ids = {}
+            tsk.stage = 10
+        end
+    end
+
+    if stage == 10 then
+        if db.actor:has_info('yan_stalker_sakharov_the_living_fire_2_passed') then
+            delayed_message('the_living_fire_yantar_snitch_msg_1', 5, snitch_icon, snitch_name, 8)
+            delayed_message('the_living_fire_yantar_actor_msg_1', 10, nta_utils.actor_icon(), nta_utils.actor_name(), 8)
+            tsk.stage = 11
+        end
+    end
+
+    if stage == 11 then
+        if db.actor:has_info('bar_informator_mlr_the_living_fire_3_passed') then
+            state.prometheus_id = nta_utils.spawn_helper(configs.x18_prometheus_location)
+            alife_object(state.prometheus_id):set_character_name(game.translate_string(prometheus_name))
+            spawn_corpses(configs.dark_valley_corpses_locations)
+            tsk.stage = 12
+        end
+    end
+
+    if stage == 12 then
+        move_corpses()
+        send_dark_valley_actor_msg()
+        send_x18_prometheus_msg()
+        adjust_prometheus_position(configs.x18_prometheus_location.vector, 0.3)
+        if db.actor:has_info('the_living_fire_prometheus_the_living_fire_1_passed') then
+            despawn_prometheus_mild()
+            tsk.stage = 13
+            CreateTimeEvent(0,"the_living_fire_x18_spawn_military", 1, function ()
+                spawn_x18_military()
+                -- Exception because it's not NPC
+                CreateTimeEvent(0,"the_living_fire_x18_send_military_message", 4, function () 
+                    dynamic_news_helper.send_tip(game.translate_string('the_living_fire_x18_military_msg_1'), game.translate_string("army"), nil,nil, 'ui_icon_news_trx_army', nil, 'npc')
+                    return true
+                end)
+                return true
+            end)
+        end
+    end
+
+    if stage == 13 then
+        set_x18_military_relation()
+        if db.actor:has_info('bar_informator_mlr_the_living_fire_4_passed') then
+            delayed_message('the_living_fire_bar_actor_msg_1', 5, nta_utils.actor_icon(), nta_utils.actor_name(), 10)
+            despawn_corpses()
+            tsk.stage = 14
+        end
+    end
+
+    if stage == 14 then
+        if db.actor:has_info('esc_2_12_stalker_trader_the_living_fire_1_passed') then
+            delayed_message('the_living_fire_escape_sakharov_msg_1', 5, sakharov_icon, sakharov_name, 10)
+            tsk.stage = 15
+        end
+    end
+
+    if stage == 15 then
+        if db.actor:has_info('yan_stalker_sakharov_the_living_fire_3_passed') then
+            delayed_message('the_living_fire_yantar_barman_msg_1', 5, 'ui_inGame2_barman', 'bar_barmen_name', 10)
+            state.prometheus_id = nta_utils.spawn_helper(configs.x16_prometheus_location)
+            spawn_greh(configs.x16_greh_locations, [[scripts\x16_tlf_greh_beh.ltx]])
+            spawn_corpses(configs.x16_corpse_locations)
+            tsk.stage = 16
+        end
+    end
+
+    if stage == 16 then
+        clear_x16_mutants()
+        move_corpses()
+        send_x16_prometheus_msg()
+        if db.actor:has_info('the_living_fire_prometheus_the_living_fire_2_passed') then
+            state.greh_ids = {}
+            despawn_prometheus_mild()
+            tsk.stage = 17
+        end
+    end
+
+    if stage == 17 then
+        if db.actor:has_info('yan_stalker_sakharov_the_living_fire_4_passed') then
+            despawn_corpses()
+            spawn_greh(configs.red_forest_greh_locations, [[scripts\red_forest_tlf_greh_beh.ltx]])
+            tsk.stage = 18
+        end
+    end
+
+    if stage == 18 then
+        if
+            nta_utils.actor_on_level(nta_utils.levels.red_forest)
+            and nta_utils.actor_in_range(configs.red_forest_mutants_trigger.vector, configs.red_forest_mutants_trigger_range)
+        then
+            spawn_explosions(configs.red_forest_explosion_locations)
+            spawn_mutants(configs.red_forest_mutant_locations)
+            earthquake_effect()
+            tsk.stage = 19
+        end
+    end
+
+    if stage == 19 then
+        if not first_alive_mutant_id() then
+            state.greh_ids = {}
+            spawn_isg()
+            delayed_message('the_living_fire_red_forest_actor_msg_1', 5, nta_utils.actor_icon(), nta_utils.actor_name(), 10)
+            delayed_message('the_living_fire_red_forest_sakharov_msg_1', 10, sakharov_icon, sakharov_name, 10)
+            tsk.stage = 20
+        end
+    end
+
+    if stage == 20 then
+        if
+            nta_utils.actor_on_level(nta_utils.levels.red_forest)
+            and nta_utils.actor_in_range(configs.red_forest_actor_msg_trigger.vector, configs.red_forest_actor_msg_trigger_range)
+        then
+            delayed_message('the_living_fire_red_forest_actor_msg_2', 2, nta_utils.actor_icon(), nta_utils.actor_name(), 10)
+            db.actor:give_info_portion('the_living_fire_red_forest_actor_msg_2_sent')
+            tsk.stage = 21
+        end
+    end
+
+    if stage == 21 then
+        if db.actor:has_info('bar_informator_mlr_the_living_fire_5_passed') then
+            state.anomaly_ids = {}
+            spawn_greh(configs.outskirts_greh_locations, [[scripts\outskirts_tlf_greh_beh.ltx]])
+            state.prometheus_id = nta_utils.spawn_helper(configs.outskirts_prometheus_location)
+            delayed_message('the_living_fire_bar_actor_msg_2', 4, nta_utils.actor_icon(), nta_utils.actor_name(), 10)
+            delayed_message('the_living_fire_bar_sakharov_msg_1', 10, sakharov_icon, sakharov_name, 10)
+            tsk.stage = 22
+        end
+    end
+
+    if stage >= 22 and stage <=25 then
+        adjust_prometheus_position(configs.outskirts_prometheus_location.vector, 1.5)
+    end
+
+    if stage == 22 then
+        if
+            nta_utils.actor_on_level(nta_utils.levels.outskirts)
+            and nta_utils.actor_in_range(configs.outskirts_prometheus_location.vector, configs.outskirts_prometheus_msg_trigger_distance)
+            and not db.actor:has_info('the_living_fire_endgame_start')
+        then
+            db.actor:give_info_portion('the_living_fire_endgame_start')
+            delayed_message('the_living_fire_outskirts_actor_msg_1', 0, nta_utils.actor_icon(), nta_utils.actor_name(), 10)
+            delayed_message('the_living_fire_outskirts_prometheus_msg_1', 4, prometheus_icon, prometheus_real_name, 10)
+            CreateTimeEvent(0,"the_living_fire_start_endgame", 7, function () 
+                state.mutant_ids = {}
+                earthquake_effect()
+                spawn_outskirts_anomalies()
+                level.set_weather_fx("fx_blowout_day")
+                spawn_mutants(configs.outskirts_mutant_locations, true)
+                CreateTimeEvent(0,"the_living_fire_start_endgame_2", 1, function () 
+                    -- Give time for stuff to spawn
+                    tsk.stage = 23
+                    return true
+                end)
+                return true
+            end)
+        end
+    end
+
+    if stage == 23 then
+        if 
+            not first_alive_mutant_id() 
+            and not db.actor:has_info('the_living_fire_endgame_mid') 
+        then
+            db.actor:give_info_portion('the_living_fire_endgame_mid')
+            delayed_message('the_living_fire_outskirts_prometheus_msg_2', 0, prometheus_icon, prometheus_real_name, 10)
+            CreateTimeEvent(0,"the_living_fire_endgame_greh", 2, function () 
+                state.greh_ids = {}
+                spawn_greh(configs.outskirts_endgame_greh_locations, [[scripts\outskirts_tlf_endgame_greh_beh.ltx]])
+                CreateTimeEvent(0,"the_living_fire_endgame_greh_2", 1, function () 
+                    -- Give time for stuff to spawn
+                    tsk.stage = 24
+                    return true
+                end)
+                return true
+            end)
+        end
+    end
+
+    if stage == 24 then
+        if 
+            not first_alive_greh_id()
+            and not db.actor:has_info('the_living_fire_endgame_finale')
+        then
+            db.actor:give_info_portion('the_living_fire_endgame_finale')
+            delayed_message('the_living_fire_outskirts_sakharov_msg_1', 0, sakharov_icon, sakharov_name, 6)
+            delayed_message('the_living_fire_outskirts_actor_msg_2', 2, nta_utils.actor_icon(), nta_utils.actor_name(), 6)
+            delayed_message('the_living_fire_outskirts_prometheus_msg_3', 8, prometheus_icon, prometheus_real_name, 4)
+            delayed_message('the_living_fire_outskirts_actor_msg_3', 8, nta_utils.actor_icon(), nta_utils.actor_name(), 6)
+            CreateTimeEvent(0,"the_living_fire_endgame_despawn_anomalies", 6, function () 
+                despawn_anomalies()
+                -- level.stop_weather_fx()
+                state.greh_ids = {}
+                tsk.stage = 25
+                return true
+            end)
+        end
+    end
+
+    if stage >=23 and stage <=24 then
+        -- Anomalies can be doubled without it
+        CreateTimeEvent(0,"the_living_fire_anomaly_spawn_wait", 1, function () 
+            if not outskirts_anomalies_spawned and not db.actor:has_info('the_living_fire_endgame_finale') then
+                state.anomaly_ids = {}
+                -- Anomalies despawn on reloading the game
+                spawn_outskirts_anomalies()
+            end
+            return true
+        end)
+    end
+
+    if stage == 25 then
+        CreateTimeEvent(0,"the_living_fire_prometheus_kill_actor", 8, function () 
+            if not db.actor:has_info('the_living_fire_prometheus_killed_gg') then
+                prometheus_kill_actor()
+            end
+            return true
+        end)
+        if db.actor:has_info('the_living_fire_prometheus_killed_gg') then
+            delayed_message('the_living_fire_outskirts_actor_msg_4', 4, nta_utils.actor_icon(), nta_utils.actor_name(), 6)
+            delayed_message('the_living_fire_outskirts_sakharov_msg_2', 10, sakharov_icon, sakharov_name, 10)
+            tsk.stage = 26
+        end
+    end
+end
+
+function spawn_garbage_prometheus()
+    state.prometheus_id = nta_utils.spawn_helper(configs.garbage_prometheus_location)
+    alife_object(state.prometheus_id):set_character_name(game.translate_string(prometheus_name))
+end
+
+function spawn_garbage_anomalies()
+    table.insert(state.anomaly_ids, nta_utils.spawn_helper(configs.garbage_zhar_location))
+    for _, spawn_config in pairs(configs.garbage_zharka_locations) do
+        table.insert(state.anomaly_ids, nta_utils.spawn_helper(spawn_config))
+    end
+end
+
+-- Spawn a small cup in the middle of anomalies to keep them active
+function spawn_garbage_trash()
+    nta_utils.spawn_helper(configs.garbage_trash_location)
+end
+
+function spawn_garbage_mutant()
+    state.garbage_mutant_id = nta_utils.spawn_helper(configs.garbage_mutant_location)
+end
+
+function garbage_delayed_kill_mutant()
+    CreateTimeEvent(0,"the_living_fire_garbage_kill_mutant", 2, function ()
+        local sin_snd = xr_sound.get_safe_sound_object([[characters_voice\human\greh_1\fight\enemy_hit\enemy_hit_6]])
+        sin_snd:play(level.object_by_id(state.prometheus_id), 0, sound_object.s2d)
+
+        CreateTimeEvent(0,"the_living_fire_garbage_kill_mutant_2", 1.5, function ()
+            local spawn_config = nta_utils.obj_position_to_spawn_config_partial(level.object_by_id(state.garbage_mutant_id))
+            spawn_config.section = 'zone_zhar'
+            spawn_config.is_anomaly = true
+            -- spawn_config.vector.y = spawn_config.vector.y - 1
+            table.insert(state.anomaly_ids, nta_utils.spawn_helper(spawn_config))
+
+            local mutant_snd = xr_sound.get_safe_sound_object([[monsters\boar\boar_anomaly_0]])
+            mutant_snd:play(level.object_by_id(state.garbage_mutant_id), 0, sound_object.s2d)
+
+            local zhar_sound = xr_sound.get_safe_sound_object([[new_tasks_addon\zhar_blow]])
+            zhar_sound:play(level.object_by_id(state.garbage_mutant_id), 0, sound_object.s2d)
+
+            safe_release_manager.release({id = state.garbage_mutant_id})
+            db.actor:give_info_portion('the_living_fire_garbage_mutant_killed')
+            return true
+        end)
+        return true
+    end)
+end
+
+function despawn_anomalies()
+    for _, anomaly_id in pairs(state.anomaly_ids) do
+        safe_release_manager.release({id = anomaly_id})
+    end
+end
+
+function snitch_reward_1()
+    if not db.actor:has_info('bar_informator_mlr_the_living_fire_reward_1_given') then
+        db.actor:give_info_portion('bar_informator_mlr_the_living_fire_reward_1_given')
+        dialogs.relocate_money( db.actor, 5000, "in" )
+    end
+end
+
+function snitch_reward_2()
+    if not db.actor:has_info('bar_informator_mlr_the_living_fire_reward_2_given') then
+        db.actor:give_info_portion('bar_informator_mlr_the_living_fire_reward_2_given')
+        dialogs.relocate_money( db.actor, 10000, "in" )
+    end
+end
+
+function spawn_explosions(cfg)
+    for _, spawn_config in pairs(cfg) do
+        nta_utils.spawn_helper(spawn_config)
+    end
+end
+
+function spawn_mutants(cfg, endgame)
+    for _, spawn_config in pairs(cfg) do
+        local id = nta_utils.spawn_helper(spawn_config)
+        if endgame then 
+            logic_enforcer.assign(id, [[scripts\outskirts_tlf_endgame_mutant_beh.ltx]],'logic', 'beh@base')
+        end
+        table.insert(state.mutant_ids, id)
+    end
+end
+
+function first_alive_mutant_id()
+    for _, id in pairs(state.mutant_ids) do
+        local obj = level.object_by_id(id)
+        if obj and obj:alive() then
+            return id
+        end
+    end
+end
+
+function first_alive_greh_id()
+    for _, id in pairs(state.greh_ids) do
+        local obj = level.object_by_id(id)
+        if obj and obj:alive() then
+            return id
+        end
+    end
+end
+
+function spawn_corpses(cfg)
+    for _, spawn_config in pairs(cfg) do
+        table.insert(state.corpse_ids, nta_utils.spawn_helper(spawn_config))
+    end
+end
+
+function move_corpses()
+    for _, corpse_id in ipairs(state.corpse_ids) do
+        local obj = level.object_by_id(corpse_id)
+        if obj and not state.corpse_moved[corpse_id] then
+            -- Trigger some force on the object so it turns into ragdoll
+            obj:get_physics_shell():apply_force(0, 0, 1)
+            state.corpse_moved[corpse_id] = true
+        end
+    end
+end
+
+function despawn_corpses()
+    for _, id in ipairs(state.corpse_ids) do
+        safe_release_manager.release({id = id})
+    end
+    state.corpse_ids = {}
+    state.corpse_moved = {}
+end
+
+function send_dark_valley_actor_msg()
+    if
+        not db.actor:has_info('the_living_fire_dark_valley_actor_msg_sent') 
+        and nta_utils.actor_on_level(nta_utils.levels.dark_valley)
+        and nta_utils.actor_in_range(configs.dark_valley_actor_msg_trigger_location.vector, configs.dark_valley_actor_msg_trigger_distance)
+    then
+        db.actor:give_info_portion("the_living_fire_dark_valley_actor_msg_sent")
+        delayed_message('the_living_fire_dark_valley_actor_msg_1', 2, nta_utils.actor_icon(), nta_utils.actor_name(), 10)
+    end
+end
+
+function send_x18_prometheus_msg()
+    if
+        not db.actor:has_info('the_living_fire_x18_prometheus_msg_sent') 
+        and nta_utils.actor_on_level(nta_utils.levels.x18)
+        and nta_utils.actor_in_range(configs.x18_prometheus_location.vector, configs.x18_prometheus_msg_trigger_distance)
+    then
+        db.actor:give_info_portion("the_living_fire_x18_prometheus_msg_sent")
+        delayed_message('the_living_fire_x18_prometheus_msg_1', 0, prometheus_icon, prometheus_name, 10)
+    end
+end
+
+function send_x16_prometheus_msg()
+    if
+        not db.actor:has_info('the_living_fire_x16_prometheus_msg_sent') 
+        and nta_utils.actor_on_level(nta_utils.levels.x16)
+        and nta_utils.actor_in_range(configs.x16_prometheus_location.vector, configs.x16_prometheus_msg_trigger_distance)
+    then
+        db.actor:give_info_portion("the_living_fire_x16_prometheus_msg_sent")
+        delayed_message('the_living_fire_x16_prometheus_msg_1', 0, prometheus_icon, prometheus_real_name, 10)
+    end
+end
+
+function adjust_prometheus_position(vec, distance)
+    -- Prometheus is moved to the ground on reloading the game few times - correction needed
+    local obj = level.object_by_id(state.prometheus_id)
+    if obj then
+        if obj:position():distance_to(vec) > distance then
+			obj:set_movement_type(move.walk)
+            obj:set_npc_position(vec)
+			-- X-ray in its prime - sometimes when Prometheus spawns, the gravity is affecting him (problematic with Outskirts part)
+			-- Switching movement to walk and then back to stand fixes the issue and puts him back into "wait" state
+			CreateTimeEvent(0,"the_living_fire_prometheus_stop_moving", 0.2, function ()
+				obj:set_movement_type(move.stand)
+				return true
+			end)
+        end
+    end
+end
+
+function despawn_prometheus_mild()
+    local zhar_particle = particles_object([[anomaly2\heat_03]])
+    local pos = nta_utils.obj_position_to_spawn_config_partial(level.object_by_id(state.prometheus_id)).vector
+    -- pos.y = pos.y - 1.5
+    zhar_particle:play_at_pos(pos)
+    local zhar_sound = xr_sound.get_safe_sound_object([[new_tasks_addon\zhar_blow]])
+    zhar_sound:play(level.object_by_id(state.prometheus_id), 0, sound_object.s2d)
+    CreateTimeEvent(0,"the_living_fire_prometheus_zhar_sound_stop", 2, function ()
+        zhar_sound:stop()
+        return true
+    end)
+    safe_release_manager.release({id = state.prometheus_id})
+end
+
+function spawn_x18_military()
+    for i, spawn_config in ipairs(configs.x18_military_locations) do
+        local id = nta_utils.spawn_helper(spawn_config)
+        logic_enforcer.assign(id, [[scripts\x18_tlf_military_beh.ltx]],'logic', 'beh@pos_' .. i)
+        table.insert(state.x18_military_ids, id)
+    end
+end
+
+function set_x18_military_relation()
+    for _, id in ipairs(state.x18_military_ids) do
+        local obj = level.object_by_id(id)
+        if obj and not state.x18_military_relation_set[id] then
+            state.x18_military_relation_set[id] = true
+            obj:set_relation(-5000, db.actor)
+        end
+    end
+end
+
+function spawn_greh(cfg, script_file)
+    for i, spawn_config in ipairs(cfg) do
+        local id = nta_utils.spawn_helper(spawn_config)
+        logic_enforcer.assign(id, script_file,'logic', 'beh@pos_' .. i)
+        table.insert(state.greh_ids, id)
+    end
+end
+
+function clear_x16_mutants()
+    if nta_utils.actor_on_level(nta_utils.levels.x16) then
+        level.iterate_nearest(configs.x16_middle.vector, configs.x16_mutant_scanning_range, function (obj)
+            if IsMonster(obj) and obj:alive() then
+                safe_release_manager.release({id = obj:id()})
+            end
+        end)
+    end
+end
+
+function earthquake_effect()
+    local boom = xr_sound.get_safe_sound_object([[new_tasks_addon\blowout_boom_02_old]])
+    boom:play(db.actor, 0, sound_object.s2d)
+    local earthquake_snd = xr_sound.get_safe_sound_object("new_tasks_addon\\earthquake_old")
+    earthquake_snd:play(db.actor, 0, sound_object.s2d)
+    nta_utils.earthquake_screen_effect_strong(6)
+end
+
+function spawn_isg()
+    for i, spawn_config in ipairs(configs.red_forest_isg_locations) do
+        local id = nta_utils.spawn_helper(spawn_config)
+        logic_enforcer.assign(id, [[scripts\red_forest_tlf_isg_beh.ltx]],'logic', 'beh@pos_' .. i)
+    end
+end
+
+function spawn_outskirts_anomalies()
+    outskirts_anomalies_spawned = true
+    for i, coords in ipairs(configs.outskirts_anomaly_xz_data) do
+        -- Spawning 100 anomalies kills FPS - try with lowered number
+        if math.fmod(i,2) == 0 then
+            local anomaly_location = nta_utils.shallow_copy(configs.outskirts_prometheus_location)
+            anomaly_location.vector = vector():set(coords[1], 0, coords[2])
+            anomaly_location.section = 'zone_zhar_tlf'
+            anomaly_location.is_anomaly = true
+            table.insert(state.anomaly_ids, nta_utils.spawn_helper(anomaly_location))
+        end
+    end
+end
+
+xr_effects.tlf_on_outskirts_mutant_death = function()
+    if #state.mutant_ids < 12 then
+        local id = nta_utils.spawn_helper(configs.outskirts_mutant_locations[math.random(1,4)])
+        logic_enforcer.assign(id, [[scripts\outskirts_tlf_endgame_mutant_beh.ltx]],'logic', 'beh@base')
+        table.insert(state.mutant_ids, id)
+    end
+end
+
+function prometheus_kill_actor()
+    local sin_snd = xr_sound.get_safe_sound_object([[characters_voice\human\greh_1\fight\attack\attack_4]])
+    sin_snd:play(npc, 0, sound_object.s2d)
+
+    CreateTimeEvent(0,"the_living_fire_prometheus_revenge", 2, function ()
+        local spawn_config = nta_utils.obj_position_to_spawn_config_partial(db.actor)
+        spawn_config.section = 'zone_zhar'
+        spawn_config.is_anomaly = true
+        spawn_config.vector.y = spawn_config.vector.y - 1
+
+        nta_utils.spawn_helper(spawn_config)
+
+        local zhar_sound = xr_sound.get_safe_sound_object([[new_tasks_addon\zhar_blow]])
+        zhar_sound:play(db.actor, 0, sound_object.s2d)
+
+        CreateTimeEvent(0,"the_living_fire_prometheus_revenge_player_death", 0.2, function ()
+            db.actor:set_health_ex(0)
+            return true
+        end)
+        return true
+    end)
+end
+
+function tlf_complete()
+    task_manager.get_task_manager( ):set_task_completed('bar_informator_mlr_task_the_living_fire')
+    -- TODO: Remove when Grok exposes a table in his script
+    if grok_artefacts_random_condition then
+        CreateTimeEvent(0,"the_living_fire_gamma_temp_fix", 1, function ()
+            db.actor:iterate_inventory(function (_, item)
+                if item:section() == 'af_tlf_prometheus' then
+		            item:set_condition(0.98)
+                end
+            end, nil)
+            return true
+        end)
+    end
+end
+
+local delayed_message_index = 0
+function delayed_message(msg, delay, icon, name, keep_time)
+    local k_time = keep_time or 5
+    CreateTimeEvent(0,"the_living_fire_delayed_message_" .. delayed_message_index, delay, function ()
+        dynamic_news_helper.send_tip(msg, name, nil, k_time, icon, nil, 'npc')
+        return true
+    end)
+    delayed_message_index = delayed_message_index + 1
+end
+
+task_functor.the_living_fire_task_target_functor = function(task_id,field,p,tsk)
+	if not (db.actor and tsk) then return nil end
+
+    if tsk.stage == 0 then
+        return get_story_object_id('baraholka_trader')
+    end
+
+    if tsk.stage == 5 then
+        return get_story_object_id('baraholka_trader')
+    end
+
+    if tsk.stage == 6 then
+        return get_story_object_id('bar_informator_mlr')
+    end
+
+    if tsk.stage == 7 then
+        return get_story_object_id('yan_stalker_sakharov')
+    end
+
+    if tsk.stage == 8 then
+        return get_story_object_id('mar_smart_terrain_11_3_anomaly_spot')
+    end
+
+    if tsk.stage == 9 then
+        return first_alive_mutant_id()
+    end
+
+    if tsk.stage == 10 then
+        return get_story_object_id('yan_stalker_sakharov')
+    end
+
+    if tsk.stage == 11 then
+        return get_story_object_id('bar_informator_mlr')
+    end
+
+    if tsk.stage == 12 then
+        return get_story_object_id('the_living_fire_prometheus')
+    end
+
+    if tsk.stage == 13 then
+        return get_story_object_id('bar_informator_mlr')
+    end
+
+    if tsk.stage == 14 then
+        return get_story_object_id('esc_m_trader')
+    end
+
+    if tsk.stage == 15 then
+        return get_story_object_id('yan_stalker_sakharov')
+    end
+
+    if tsk.stage == 16 then
+        return get_story_object_id('the_living_fire_prometheus')
+    end
+
+    if tsk.stage == 17 then
+        return get_story_object_id('yan_stalker_sakharov')
+    end
+
+    if tsk.stage == 18 then
+        return get_story_object_id('red_smart_terrain_6_3_anomaly_spot')
+    end
+
+    if tsk.stage == 19 then
+        return first_alive_mutant_id()
+    end
+
+    if tsk.stage == 21 then
+        return get_story_object_id('bar_informator_mlr')
+    end
+
+    if tsk.stage == 22 then
+        return get_story_object_id('the_living_fire_prometheus')
+    end
+
+    if tsk.stage == 23 then
+        return first_alive_mutant_id()
+    end
+
+    if tsk.stage == 24 then
+        return first_alive_greh_id()
+    end
+
+    if tsk.stage == 25 then
+        return get_story_object_id('the_living_fire_prometheus')
+    end
+
+    if tsk.stage == 26 then
+        return get_story_object_id('yan_stalker_sakharov')
+    end
+    return
+end
+
+local hit_already = false
+function npc_on_before_hit(npc,shit,bone_id)
+    -- TODO: Add Prometheus to invulnerable npcs array in GBO once it's available
+    if npc:id() == get_story_object_id('the_living_fire_prometheus') then
+        shit.power = 0
+        npc:set_health_ex(1)
+        if shit.draftsman and shit.draftsman:id() == AC_ID and not hit_already then
+            if not db.actor:has_info('the_living_fire_endgame_finale') then
+                hit_already = true
+                prometheus_kill_actor()
+            else 
+                local wpn = level.object_by_id(shit.weapon_id)
+	            local sec = wpn:section()
+                if bone_id == 15 and (sec == 'wpn_gauss' or sec == 'wpn_gauss_quest') then
+                    safe_release_manager.release({id = state.prometheus_id})
+                    local explosion_spawn_config = nta_utils.shallow_copy(configs.outskirts_prometheus_location)
+                    explosion_spawn_config.vector.y = explosion_spawn_config.vector.y - 3
+                    explosion_spawn_config.vector.z = explosion_spawn_config.vector.z + 1
+                    explosion_spawn_config.vector.x = explosion_spawn_config.vector.x + 1
+
+                    explosion_spawn_config.section = 'immediate_fiery_explosion'
+                    for i=1,5 do nta_utils.spawn_helper(explosion_spawn_config) end
+                    db.actor:give_info_portion("the_living_fire_prometheus_killed_gg")
+                end
+            end
+        end
+    end
+end
+
+function npc_on_death_callback(npc)
+    if npc and nta_utils.has_value(state.greh_ids, npc:id()) then
+        local explosion_spawn_config = nta_utils.obj_position_to_spawn_config_partial(npc)
+        explosion_spawn_config.section = 'immediate_fiery_explosion'
+        nta_utils.spawn_helper(explosion_spawn_config)
+        nta_utils.hide_through_teleport(npc:id())
+    end
+end
+
+function on_game_start()
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+    RegisterScriptCallback("npc_on_before_hit",npc_on_before_hit)
+    RegisterScriptCallback("npc_on_death_callback",npc_on_death_callback)
+end

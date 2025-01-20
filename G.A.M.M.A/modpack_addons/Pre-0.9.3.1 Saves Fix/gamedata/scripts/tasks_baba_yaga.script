@@ -1,0 +1,125 @@
+local nta_utils = new_tasks_addon_tasks_utils
+local jelly_smart_terrain = "gar_smart_terrain_5_6"
+
+local state = {
+    art_id = nil,
+    was_teleported = false,
+    hag_id = nil,
+}
+function save_state(mdata)
+	mdata.baba_yaga_task_data = state
+end
+
+function load_state(mdata)
+	if mdata.baba_yaga_task_data then
+		state = mdata.baba_yaga_task_data
+	end
+end
+
+task_status_functor.baba_yaga_task_status_functor = function(tsk,task_id)
+	if not (db.actor and tsk) then return end
+	local stage = tsk.stage
+
+	if stage == 0 then
+        if
+            is_garbage()
+            and db.actor:position():distance_to(baba_yaga_configs.art_location.vector) < 25
+            and nta_utils.is_dark_night()
+        then
+            state.art_id = nta_utils.spawn_helper(
+                baba_yaga_configs.art_location,
+                baba_yaga_configs.art_sections[math.random(#baba_yaga_configs.art_sections)]
+            )
+            tsk.stage = 1
+        end
+    end
+
+    if stage == 1 then
+        -- If GG tries to leave, teleport him anyway :)
+        if db.actor:position():distance_to(baba_yaga_configs.art_location.vector) > 50 and not state.was_teleported then
+            state.was_teleported = true
+            teleport()
+            spawn()
+            tsk.stage = 2
+        end
+
+        if state.hag_id then
+            tsk.stage = 2
+        end
+    end
+
+    if stage == 2 then
+        if db.actor:position():distance_to(baba_yaga_configs.teleport_to_location.vector) > 35 then
+            teleport()
+        end
+        if not state.hag_id then
+            tsk.stage = 3
+        end
+    end
+end
+
+function spawn()
+    state.hag_id = nta_utils.spawn_helper(baba_yaga_configs.hag_spot)
+
+    for _, spawn_config in pairs(baba_yaga_configs.karlik_spots) do
+        nta_utils.spawn_helper(spawn_config, "m_karlik_e")
+    end
+end
+
+function is_garbage()
+    return level.name() == "l02_garbage"
+end
+
+task_functor.baba_yaga_task_target_functor = function(task_id,field,p,tsk)
+	if not (db.actor and tsk) then return nil end
+	local stage = tsk.stage
+
+    if stage == 0 then
+        return SIMBOARD:get_smart_by_name(jelly_smart_terrain).id
+    end
+    if stage == 1 then
+        return state.art_id
+    end
+    if stage == 2 then
+        return state.hag_id
+    end
+    if stage == 3 then
+        return tsk.task_giver_id
+    end
+end
+
+xr_effects.baba_yaga_cleanup = function()
+    state = {
+        art_id = nil,
+        was_teleported = false,
+        hag_id = nil
+    }
+end
+
+function teleport()
+    nta_utils.teleport_visual()
+    db.actor:set_actor_position(baba_yaga_configs.teleport_to_location.vector)
+end
+
+function actor_on_item_take(item)
+    if item:id() == state.art_id and not state.was_teleported then
+        state.was_teleported = true
+        teleport()
+        spawn()
+    end
+end
+
+function monster_on_death_callback(monster)
+    if state.hag_id and monster:id() == state.hag_id then
+        nta_utils.teleport_visual()
+        nta_utils.hide_through_teleport(state.hag_id)
+        state.hag_id = nil
+    end
+end
+
+function on_game_start()
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+    RegisterScriptCallback("actor_on_item_take", actor_on_item_take)
+    RegisterScriptCallback("monster_on_death_callback", monster_on_death_callback)
+end

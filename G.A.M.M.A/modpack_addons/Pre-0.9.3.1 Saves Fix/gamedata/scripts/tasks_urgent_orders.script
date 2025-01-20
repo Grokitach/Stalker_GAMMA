@@ -1,0 +1,156 @@
+local ti2ta = utils_data.CTime_to_table
+local ta2ti = utils_data.CTime_from_table
+local nta_utils = new_tasks_addon_tasks_utils
+
+local state = {}
+function save_state(mdata)
+	mdata.urgent_orders_task_data = state
+end
+
+function load_state(mdata)
+	if mdata.urgent_orders_task_data then
+		state = mdata.urgent_orders_task_data
+	end
+end
+
+function actor_on_first_update()
+    if
+        not xr_conditions.check_nta_replayability(nil, nil, { "urgent_orders" })
+        or not nta_utils.check_nta_auto_assignment("urgent_orders")
+    then
+        return
+    end
+
+    local last_time_assigned = state.last_time_assigned and ta2ti(state.last_time_assigned) or level.get_start_time()
+	local seconds = tonumber(game.get_game_time():diffSec(last_time_assigned))
+	local days = math.floor(((seconds/60)/60)/24)
+
+    local is_right_place_and_faction = is_bar() and is_from_duty() or is_agroprom() and is_from_army()
+    -- Fire every 5 days
+    if (days >= 5 and is_right_place_and_faction) then
+        CreateTimeEvent(0,"urgent_orders_delay",20, function ()
+            state.last_time_assigned = ti2ta(game.get_game_time())
+            state.squad_id = nil
+
+            local task_config = get_faction_configs()
+            task_manager.get_task_manager():give_task(task_config.task_section, get_story_object_id(task_config.giver_story_id))
+            dynamic_news_helper.send_tip(task_config.report_dialog, task_config.giver_name, nil, 15, task_config.giver_portrait, nil, 'npc')
+            return true
+        end)
+    end
+end
+
+local yantar_bunker = "yan_smart_terrain_6_4"
+local squad_pos = {
+    vector = vector():set(37.2095,-11.7333,-276.3480),
+    lvid = 82898,
+    gvid = 2281
+}
+task_status_functor.urgent_orders_status_functor = function(tsk,task_id)
+	if not (db.actor and tsk) then return end
+	local stage = tsk.stage
+
+    local last_time_assigned = ta2ti(state.last_time_assigned)
+	local seconds = tonumber(game.get_game_time():diffSec(last_time_assigned))
+	local hours = math.floor((seconds / 60) / 60)
+    local task_config = get_faction_configs()
+
+    -- Fail after 5 hours - might still be too much
+    if hours >= 5 then
+        dynamic_news_helper.send_tip(task_config.failure_dialog, task_config.giver_name, nil, 15, task_config.giver_portrait, nil, 'npc')
+        return "fail"
+    end
+
+    if (stage == 0) then
+        local se_smart = SIMBOARD:get_smart_by_name(yantar_bunker)
+        local smart = level.object_by_id(se_smart.id)
+        if
+            is_yantar()
+            and smart
+            and (db.actor:position():distance_to(smart:position()) < 60)
+        then
+            dynamic_news_helper.send_tip(task_config.sciencist_response_dialog, game.translate_string("yan_st_sakharov_name"), nil,nil, 'ui_inGame2_sakharov', nil, 'npc')
+            state.squad_id = nta_utils.spawn_companion_squad("urgent_orders_ecolog_sim_squad_novice", squad_pos.vector, squad_pos.lvid, squad_pos.gvid)
+            tsk.stage = 1
+        end
+    end
+
+	if (stage == 1) then
+        -- Companion squads seem to be immediately unregistered from the server on death
+        if not alife_object(state.squad_id) then
+            return "fail"
+        end
+    end
+end
+
+function is_bar()
+    return level.name() == "l05_bar"
+end
+
+function is_from_duty()
+    return get_actor_true_community() == "dolg"
+end
+
+function is_agroprom()
+    return level.name() == "l03_agroprom"
+end
+
+function is_from_army()
+    return get_actor_true_community() == "army"
+end
+
+function is_yantar()
+    return level.name() == "l08_yantar"
+end
+
+function get_faction_configs()
+    if is_from_duty() then
+        return {
+            giver_story_id = "bar_dolg_leader",
+            giver_portrait = "ui_inGame2_voronin",
+            giver_name = game.translate_string("bar_voronin_name"),
+            task_section = "bar_dolg_leader_task_urgent_orders",
+            report_dialog = game.translate_string("bar_dolg_leader_task_urgent_orders_report"),
+            sciencist_response_dialog = game.translate_string("bar_dolg_leader_task_urgent_orders_scientists_response"),
+            failure_dialog = game.translate_string("bar_dolg_leader_task_urgent_orders_fail"),
+        }
+    else
+        return {
+            giver_story_id = "agr_smart_terrain_1_6_near_2_military_colonel_kovalski",
+            giver_portrait = "ui_inGame2_Kuznetsov",
+            giver_name = game.translate_string("agr_kuznetsov_name"),
+            task_section = "agr_smart_terrain_1_6_near_2_military_colonel_kovalski_task_urgent_orders",
+            report_dialog = game.translate_string("agr_smart_terrain_1_6_near_2_military_colonel_kovalski_task_urgent_orders_report"),
+            sciencist_response_dialog = game.translate_string("agr_smart_terrain_1_6_near_2_military_colonel_kovalski_task_urgent_orders_scientists_response"),
+            failure_dialog = game.translate_string("agr_smart_terrain_1_6_near_2_military_colonel_kovalski_task_urgent_orders_fail"),
+        }
+    end
+end
+
+
+task_functor.urgent_orders_target_functor = function(task_id,field,p,tsk)
+    if not (db.actor and tsk) then return end
+	local stage = tsk.stage
+
+    if stage == 0 then
+        return SIMBOARD:get_smart_by_name(yantar_bunker).id
+    end
+
+    if stage == 1 then
+        return tsk.task_giver_id
+    end
+end
+
+xr_effects.urgent_orders_clear_eco_squad = function()
+    local squad = alife_object(state.squad_id)
+    if squad then
+        level.add_pp_effector ("fade_in.ppe", 200, false)
+        squad:remove_squad()
+    end
+end
+
+function on_game_start()
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+end
