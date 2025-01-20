@@ -1,0 +1,78 @@
+item_repair.UIRepair.InitInventory = function(self, n)
+	local inv = {}
+	local size_t = 0
+	
+	-- Compatible weapons list to repair
+	if n == 1 then
+		db.actor:iterate_inventory( function(owner, obj)
+			local sec = obj:section()
+			local main_section = ini_sys:r_string_ex(sec,"repair_type") or sec
+			if (self.repair_only and self.repair_only[main_section]) then
+				local con = math.ceil(obj:condition() * 100)
+				if (con and con >= (self.min_condition * 100) and con <= self.max_condition * 100) then
+					size_t = size_t + 1
+					inv[size_t] = obj
+				end
+			end
+		end)
+		
+		self.CC[1]:Reinit(inv)
+
+	-- Compatible part list to use
+	elseif n == 2 then
+		local obj_s = self.CC[1]:GetCell_Selected(true)
+		if (not obj_s) then
+			return
+		end
+		
+		local inf = {}
+		local ItemListSec_2 = {} -- to show only one, lowest condition, copy of bonus items
+
+    -- changes to original start here. In original we pick whichever item of a given type to serve as support material. In this version we search for lowest condition item in a stack.
+		db.actor:iterate_inventory( function(owner, obj)
+			local sec = obj:section()
+			if (obj) and (obj:id() ~= obj_s:id()) and (obj:id() ~= self.obj:id()) then
+				local part_bonus
+				if (self.parts_match and sec == obj_s:section()) then
+					part_bonus = obj:condition()
+					part_bonus = (game_achievements.has_achievement("mechanized_warfare")) and (part_bonus + 0.02) or part_bonus
+					part_bonus = clamp(math.floor(part_bonus*100)*self.parts_multi , 0 , 100)
+				elseif (self.parts_sections and self.parts_sections[sec]) then
+					part_bonus = ini_sys:r_float_ex(sec,"repair_part_bonus") or self.part_bonus
+					part_bonus = (game_achievements.has_achievement("mechanized_warfare")) and (part_bonus + 0.02) or part_bonus
+					part_bonus = clamp(math.floor(part_bonus*100)*self.parts_multi , 0 , 100)
+				end
+
+				if part_bonus then
+					if ItemListSec_2[sec] and ItemListSec_2[sec].condition > obj:condition() then
+						local index = ItemListSec_2[sec].index
+						inv[index] = obj
+						inf[index] = part_bonus
+						ItemListSec_2[sec].condition = obj:condition()
+					elseif not ItemListSec_2[sec] then
+						size_t = size_t + 1
+						inv[size_t] = obj
+						inf[size_t] = part_bonus
+						ItemListSec_2[sec] = {
+							index = size_t,
+							condition = obj:condition()
+						}
+					end
+				end
+			end
+		end)
+    -- changes to original end here
+		
+		self.CC[2]:Reinit(inv,inf)
+		
+		local clr_b = utils_xml.get_color("pda_blue",true)
+		local fnt = GetFontSmall()
+		for idx,ci in pairs(self.CC[2].cell) do
+			if ci:IsShown() then
+				local con100 = ci.flags.info
+				local con = ci.flags.info / 100
+				ci:Add_CustomText( ("+"..con100), nil, nil, clr_b, fnt)
+			end
+		end
+	end
+end

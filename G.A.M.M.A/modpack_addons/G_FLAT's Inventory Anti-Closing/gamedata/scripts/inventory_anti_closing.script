@@ -1,0 +1,99 @@
+-- impede the inventory from closing
+
+local kill_inventory_closing = false
+
+local og_hide_actor_menu = ui_inventory.hide_actor_menu
+function ui_inventory.hide_actor_menu()
+	if kill_inventory_closing then
+		return
+	else
+		return og_hide_actor_menu()
+	end
+end
+
+-- monkeypatches around functions that close the inventory
+
+if enhanced_animations then
+	local og_use_item = enhanced_animations.use_item
+	function enhanced_animations.use_item(obj)
+		kill_inventory_closing = true
+		og_use_item(obj)
+		kill_inventory_closing = false
+	end
+end
+
+if headgear_animations then
+	local og_prepare_for_animation = headgear_animations.prepare_for_animation
+	function headgear_animations.prepare_for_animation(m_section)
+		kill_inventory_closing = true
+		og_prepare_for_animation(m_section)
+		kill_inventory_closing = false
+	end
+end
+
+if outfit_animations then
+	local og_play_animation = outfit_animations.play_animation
+	function outfit_animations.play_animation(obj)
+		kill_inventory_closing = true
+		og_play_animation(obj)
+		kill_inventory_closing = false
+	end
+end
+
+if lam then
+	local og_hide_weapons = lam.hide_weapons
+	function lam.hide_weapons()
+		kill_inventory_closing = true
+		og_hide_weapons()
+		kill_inventory_closing = false
+	end
+end
+
+-- impede the player from doing anything inside the inventory while animations play
+
+local og_On_CC_Mouse1_DB = ui_inventory.UIInventory.On_CC_Mouse1_DB
+function ui_inventory.UIInventory.On_CC_Mouse1_DB(self, bag, idx)
+	if game.only_movekeys_allowed() then return end
+	og_On_CC_Mouse1_DB(self, bag, idx)
+end
+
+local og_InitProperties = ui_inventory.UIInventory.InitProperties
+function ui_inventory.UIInventory.InitProperties(self, obj, bag)
+	if game.only_movekeys_allowed() then return end
+	og_InitProperties(self, obj, bag)
+end
+
+local og_On_CC_DragDrop = ui_inventory.UIInventory.On_CC_DragDrop
+function ui_inventory.UIInventory.On_CC_DragDrop(self, bag_from, idx_from)
+	if game.only_movekeys_allowed() then return end
+	og_On_CC_DragDrop(self, bag_from, idx_from)
+end
+
+-- allow opening and closing the inventory while animations play, also allow switching sorting categories
+
+function on_before_key_press(dik, bind)
+	if game.only_movekeys_allowed() then
+		if GetActorMenu():IsShown() then
+			if (bind == key_bindings.kINVENTORY) or (bind == key_bindings.kUSE) then
+				hide_hud_inventory()
+			else
+				local self = ui_inventory.GUI
+				for i=1,10 do
+					if (dik == DIK_keys["DIK_" .. i]) or (dik == DIK_keys["DIK_NUMPAD" .. i]) or i == 10 and ((dik == DIK_keys["DIK_0"]) or (dik == DIK_keys["DIK_NUMPAD0"])) then
+						self:On_Sort(i,true)
+						self:On_Sort(i)
+						break
+					end
+				end
+			end
+		else
+			if (bind == key_bindings.kINVENTORY) then
+				ui_inventory.start("inventory")
+			end
+		end
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_before_key_press", on_before_key_press)
+end
