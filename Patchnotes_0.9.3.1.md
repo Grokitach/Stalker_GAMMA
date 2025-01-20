@@ -10,16 +10,17 @@ On top of the changes below, what's coming next is converting all hideout items 
 Demonized's engine update v2025.1.19
 
 ## Add-ons
-- Updated 3DSS to 2.25
-- Simpington's Cocaine Animation for GAMMA
+- Updated 3DSS to 2.25.
+- Simpington's Cocaine Animation for GAMMA. New animations for the usage of cocaine.
 - Rotting meat from Hideout Furniture Expansion : Raw = 4d decay, Cooked = 10d decay. A fridge stops the decay.
-- Razfarg's Scroll Fix
-- ATHI's Mags Redux Mod Madness
-- G_FLAT's Inventory Anti-Closing
-- Momopate's proper jam chance added
-- HOWA20 Makeover from ATHI & Phant0m
+- Razfarg's Scroll Fix. This should fix the "slow scrolling".
 - MagsRedux updated to 2024.04.16 and deathammo set to 0 by default.
-- SaloEater's Replace Shows Parts Health
+- ATHI's Mags Redux Mod Madness. It should fix all the issues and problems related to mags.
+- G_FLAT's Inventory Anti-Closing. Animations now play without closing the inventory (you can eat and still manage your inventory during that the animation time).
+- Momopate's proper jam chance added. Original jam probabily calculations where missing the base anomaly jam calculation (only WPO probability was accounted).
+- HOWA20 Makeover from ATHI & Phant0m. HOWA can now equip a variety of scopes.
+- SaloEater's Replace Shows Parts Health. Parts condition is now displayed on when replacing a part.
+- Replacement of GAMMA Free Zoom by Kute's Free Zoom rewrite. Hopefully it will fix some issues related to Free Zoom.
 
 ## Audio
 - Disable sound mute in X10 lab by oleh5230
@@ -114,3 +115,4 @@ Demonized's engine update v2025.1.19
 - Removed mutant part and hide repair bonus text display by bogdan318
 - Pseudogiant doesn't damage objects on stomp
 - Fixed 9mm AUG barrel by bogdan318
+- head_damage_20 section added
