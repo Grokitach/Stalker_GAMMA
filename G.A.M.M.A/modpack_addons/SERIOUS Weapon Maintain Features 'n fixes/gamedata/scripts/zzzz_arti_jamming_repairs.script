@@ -1,0 +1,1106 @@
+local ini_parts   = itms_manager.ini_parts
+local disassembly_chance
+local max_con_obj = 0.999
+local min_con_obj = 0.001
+local spare_parts = utils_data.collect_section(ini_parts,"weapons_spare_parts")
+local parts_info = {}
+gc = game.translate_string
+has_parts = arti_jamming.has_parts
+is_part = arti_jamming.is_part
+print_dbg = arti_jamming.print_dbg
+print_ws = ui_workshop.print_ws
+get_config = a_arti_jamming_mcm.get_config
+math_floor = math.floor
+current_id = arti_jamming.current_id
+reset_cgd = arti_jamming.reset_cgd
+SetTip = ui_workshop.SetTip
+serious_mcm_conf = serious_weapon_maintain_features_mcm.get_config
+
+
+-- local cleaning_table = {
+-- 	["gun_oil"] = 10,
+-- 	["gun_oil_ru_d"] = 15,
+-- 	["gun_oil_ru"] = 6,
+-- 	["solvent"] = 20,
+-- 	["cleaning_kit_u"] = 60,
+-- }
+
+-- shotgun style cleaning (disabled for now)
+-- function repair_weapon_toolkit(weapon, toolkit_section)
+-- 	if  has_parts(weapon) and cleaning_table[toolkit_section] then
+-- 		local parts = item_parts.get_parts_con(weapon, nil, true)
+-- 		local cond_remaining = cleaning_table[toolkit_section]
+-- 		local str = gc("st_news_cleaned")
+-- 		local parts_cleaned = false
+-- 		for k,v in pairs(parts) do
+-- 			if is_part(k) and v > 59 and v < 98 and cond_remaining > 0 then
+-- 				local to_restore = 99 - v
+-- 				if to_restore > cond_remaining then to_restore = cond_remaining end
+-- 				parts[k] = v + to_restore
+-- 				cond_remaining = cond_remaining - to_restore
+-- 				str = str .. "\\n - ".. ui_item.get_sec_name(k)
+-- 				parts_cleaned = true
+-- 			end
+-- 		end
+-- 		item_parts.set_parts_con(weapon:id(), parts)
+-- 		if weapon:id() == current_id() then
+-- 			reset_cgd()
+-- 		end
+-- 		if parts_cleaned then
+-- 			news_manager.send_tip(db.actor,str, nil, "swiss_knife", 6000)
+-- 		end
+-- 	end
+-- end
+
+-- what is good part, what is not
+local good_breakpoint = 60
+function weapon_eval_parts(wpn)
+    local sec = ini_sys:r_string_ex(wpn:section(),"parent_section") or wpn:section()
+    local parts = ini_parts:r_string_ex("con_parts_list", sec)
+	parts = str_explode(parts,",")
+	local base_chance = tonumber(get_config("newdropschance")) or 50
+	local adjusted = base_chance * wpn:condition()
+	local parts_data = {}
+	parts_data[sec] = math.ceil(wpn:condition() * 100)
+	for i=1,#parts do
+		local part = parts[i]
+		local final_chance = math.ceil(adjusted)-- * parts_info[part].weight)
+		print_dbg("Part %s has a %s chance to be good.", part, final_chance)
+		
+		if wpn:condition() > 0.9 then
+			print_dbg("Short circuiting")
+			parts_data[part] = math.random(90, 99)
+		elseif math.random(100) < final_chance then
+			parts_data[part] = math.random(good_breakpoint, 99)
+		else
+			parts_data[part] = math.random(1, good_breakpoint - 8)
+		end
+    end
+	se_save_var( wpn:id(), wpn:name(), "parts", parts_data )
+end
+
+-- monkey patching
+
+EvaluateParts = item_parts.evaluate_parts
+
+function item_parts.evaluate_parts(obj)
+    local sec = obj:section()
+	sec = ini_sys:r_string_ex(sec,"parent_section") or sec -- for weapons with scopes
+	local id = obj:id()
+	local m_con = math.ceil(obj:condition() * 100) -- default condition of the item
+	
+	local parts = ini_parts:r_string_ex("con_parts_list",sec)
+	if parts then
+		parts = str_explode(parts,",")
+		
+		local data = se_load_var(id, obj:name(), "parts")
+
+		-- Savegame compatibility. Recalculate with changed parts
+		if data and data[sec] then
+			for i=1,#parts do
+				if (not data[parts[i]]) then
+					empty_table(data)
+					break
+				end
+			end
+		end
+
+		-- premature terminate if data exists for weapons
+		if data and IsWeapon(obj) and not is_empty(parts)  then return
+        elseif has_parts(obj) and get_config("newdrops") then
+			print_dbg("Alternate evaluation.")
+            weapon_eval_parts(obj)
+        else
+            EvaluateParts(obj)
+		end
+    end
+end
+
+local temp_con = {}
+
+-- -- Prevent weapons with damaged/deformed parts from selling by temp setting condition to 0.
+-- local function on_trade_opened()
+-- 	local function check_parts(temp, wpn)
+-- 		-- print_dbg("Evaluating item %s", wpn:id())
+-- 		if has_parts(wpn) then
+-- 			local parts = item_parts.get_parts_con(wpn, nil, true)
+-- 			for k,v in pairs(parts) do
+-- 				local minpart = get_config("minpart") or 51
+-- 				if is_part(k) and v <= minpart then
+-- 					print_dbg("Weapon %s (%s) has low quality part. Blacklisting for sale.", wpn:section(), wpn:id())
+-- 					temp_con[wpn:id()] = wpn:condition()
+-- 					wpn:set_condition(0)
+-- 					break
+-- 				end
+-- 			end
+-- 		end
+-- 	end
+-- 	db.actor:iterate_inventory(check_parts,nil)
+	
+-- 	local wpn1 = db.actor:item_in_slot(1)
+-- 	if wpn1 and (not temp_con[wpn1:id()]) then
+-- 		check_parts(nil, wpn1)
+-- 	end
+	
+-- 	local wpn2 = db.actor:item_in_slot(2)
+-- 	if wpn2 and (not temp_con[wpn2:id()]) then
+-- 		check_parts(nil, wpn2)
+-- 	end
+	
+-- 	local wpn3 = db.actor:item_in_slot(3)
+-- 	if wpn3 and (not temp_con[wpn3:id()]) then
+-- 		check_parts(nil, wpn3)
+-- 	end
+-- end
+
+-- local function on_trade_closed()
+-- 	for k,v in pairs(temp_con) do
+-- 		local obj = level.object_by_id(k)
+-- 		if obj then
+-- 			local p = obj:parent()
+-- 			if (p and p:id() == AC_ID) then
+-- 				alife_process_item(obj:section(),k, {cond = v})
+-- 			end
+-- 		end
+-- 	end
+-- 	temp_con = empty_table(temp_con)
+-- end
+
+-- gotta do this whole ass thing to monkey patch 1 line
+
+-- original functions are local reeeee
+local function disassembly_weapon_spare_parts(sec, condition)
+	local single_handed = ini_sys:r_float_ex(sec,"single_handed") or 1
+	local weight = ini_sys:r_float_ex(sec,"inv_weight") or 2
+	local number,finale = 0,0
+	
+	number = math_floor(weight)
+	if (single_handed == 1) then number = 1 end
+	
+	for i=1,number do
+		if (math.random(100) < condition) then
+			finale = finale + 1
+		end
+	end
+	
+	return finale
+end
+
+local function timer_disassembly_weapon(npc_id, result_details, result_conditions, name)
+
+	-- Who is item owner? we must give them the parts
+	local npc = npc_id and get_object_by_id(npc_id)
+	if (not npc) then
+		printf("~ item_parts timer | no owner found")
+		return
+	end
+	
+	-- Send messages to the actor
+	if #result_details > 0 then
+		local parts_text = item_parts.create_disassemble_list(result_details)
+		actor_menu.set_item_news('success', 'weapon_ammo', "st_dis_text_7", name, game.translate_string('st_dis_text_9'), parts_text)
+	else
+		actor_menu.set_item_news('fail', 'weapon', "st_dis_text_2", name)
+	end
+	
+	-- Creating parts in inventory
+	for i=1,#result_details do
+		if result_conditions[i] and result_conditions[i] > 0 then
+			local se_result = alife_create(result_details[i], npc:position(), npc:level_vertex_id(), npc:game_vertex_id(), npc:id(), false)
+			local data_result = utils_stpk.get_item_data(se_result)
+			data_result.condition = clamp( (result_conditions[i]/100) , min_con_obj , max_con_obj )
+			utils_stpk.set_item_data(data_result,se_result)
+			alife():register(se_result)
+		else
+			alife_create_item(result_details[i], npc)
+		end
+	end
+	
+	return true
+end
+
+DisassemblyWeapon = item_parts.disassembly_weapon
+
+function item_parts.disassembly_weapon(obj, obj_d)
+	if has_parts(obj) then
+		custom_disassembly_weapon(obj, obj_d)
+	else
+		DisassemblyWeapon(obj, obj_d)
+	end
+end
+
+function custom_disassembly_weapon(obj, obj_d)
+
+	-- Defines
+	local id = obj:id()
+	local se_obj = alife_object(id)
+	local sec = obj:section()
+	local sec_p = ini_sys:r_string_ex(sec,"parent_section") or sec
+	local name = ui_item.get_sec_name(sec)
+	local con = obj:condition()
+	local parts = item_parts.get_parts_con(obj, nil, true)
+	local npc = obj:parent()
+	if (not npc) then
+		printf("~ item_parts | no owner found for [%s]", obj:name())
+		return
+	end
+	
+	local result_details = {}
+	local result_conditions = {}
+	local get_ammo = {}
+	local with_scope = nil
+	local delay = actor_effects.is_animations_on() and 3 or 0
+
+	-- Collect attachments
+	with_scope = utils_item.has_scope(sec)
+	if with_scope then
+		with_scope = string.format('_%s', utils_item.has_scope(sec))
+		table.insert(result_details, with_scope:sub(2))
+		sec = sec:gsub(with_scope, "")
+	end	
+	if (obj:weapon_scope_status() == 2) and (utils_item.addon_attached(obj,"sc")) then
+		local scope_section = utils_data.read_from_ini(nil,sec,"scopes_sect","string",nil)
+		local scope = utils_data.read_from_ini(nil,scope_section,"scope_name","string",nil)
+		table.insert(result_details, scope)
+	end
+	if (obj:weapon_silencer_status() == 2) and (utils_item.addon_attached(obj,"sl")) then
+		local sil = utils_data.read_from_ini(nil,sec,"silencer_name","string",nil)
+		table.insert(result_details, sil)
+	end	
+	if (obj:weapon_grenadelauncher_status() == 2) and (utils_item.addon_attached(obj,"gl")) then
+		local gl = utils_data.read_from_ini(nil,sec,"grenade_launcher_name","string",nil)
+		table.insert(result_details, gl)
+	end
+	
+	-- Unload mag and get ammo
+	obj:force_unload_magazine(true)
+	
+	-- Collect weapon parts
+	for k,v in pairs(parts) do
+		if (k ~= sec_p) and v > 0 and (math.random(100) <= (disassembly_chance + con*100)) then
+			local index = #result_details
+			result_details[index + 1] = k
+			result_conditions[index + 1] = IsItem("part",k) and utils_item.get_cond_static(v) or v
+		end
+	end
+	
+	-- Collect weapon spare parts
+	for i=1,#spare_parts do
+		local num = disassembly_weapon_spare_parts(sec, disassembly_chance/2)
+		if (num > 0) then
+			for j=1,num do
+				table.insert(result_details,spare_parts[i])
+			end
+		end
+	end
+	
+	-- Collect installed upgrades
+	local installed_upgrades = utils_item.get_upgrades_installed(obj)
+	local upgr_tools = {}
+	
+	for i=1,#installed_upgrades do
+		local tool = utils_item.get_upgrade_sect_tool(sec, installed_upgrades[i])
+		table.insert(upgr_tools,tool)
+	end
+	
+	for i=1,#upgr_tools do
+		if math.random(100) < con*50 then
+			table.insert(result_details,upgr_tools[i])
+		end
+	end
+	
+	-- Release weapon
+	alife_release(se_obj)
+	
+	-- Degrade disassemble tool
+	local diss_tools = GetItemList("disassemble")
+	local degr_val = diss_tools[obj_d:section()]
+	utils_item.degrade( obj_d , degr_val )
+
+	-- Increase Statistic
+	game_statistics.increment_statistic("items_disassembled")
+	item_parts.clear_parts_con(id)
+	
+	-- Play animation
+	actor_effects.play_item_fx("disassemble_metal_fast")
+	
+	-- Process
+	CreateTimeEvent(0,"delay_disassembly" .. id, delay, timer_disassembly_weapon, npc:id(), result_details, result_conditions, name)
+end
+
+-- here we go again
+WorkshopReplacePart = ui_workshop.UIWorkshopRepair.ReplacePart
+
+function ui_workshop.UIWorkshopRepair:ReplacePart()
+	local obj = self.CC["inventory"]:GetCell_Selected(true)
+	if (not obj) then
+		return
+	end
+
+	if not has_parts(obj) then
+		print_dbg("ReplacePart: Not weapon, going through original route")
+		WorkshopReplacePart(self)
+		return
+	end
+	local obj_part = self.CC["parts"]:GetCell_Selected(true)
+	if not (obj_part and self.selected_btn) then
+		return
+	end
+	
+	self.itm_selected[self.selected_btn]:InitTexture("ui_button_inv_t")
+		
+	print_ws("- UIWorkshopRepair:ReplacePart() | picked replacement part (%s) [%s] - condition: %s", obj_part:id(), obj_part:section(), obj_part:condition())
+	
+	-- Save the condition of selected part
+	local new_part_con = math.ceil(obj_part:condition()*100)
+	
+	self.new_con[self.selected_btn] = {}
+	self.new_con[self.selected_btn].id = obj_part:id()
+	self.new_con[self.selected_btn].con = new_part_con
+	
+	-- Calculate individual condition and update text
+	self.btn_repair:Enable(true)
+	local tot_con = 0
+	local cnt = 0
+	local active = 0
+	for i=1,6 do
+		if self.parts[i] and self.parts[i].sec and (self.parts[i].sec ~= "na") then
+			local t = self.parts[i].con
+			if self.new_con[i] then
+				t = self.new_con[i].con
+				active = active + 1
+			end
+			local clr = utils_xml.get_color_con(t)
+			if not t then return end
+			self.itm_con[i]:SetText(clr .. t .. "%")
+			tot_con = tot_con + t --AdjustCon(self.parts[i].sec, t, #self.parts, IsOutfit(self.object))
+			cnt = cnt + 1
+		end
+	end
+	
+	-- Calculate total condition and update text
+	tot_con = clamp(math.ceil(obj:condition() * 100),0,100)
+	self.itm_con_r:SetText(tot_con .. "%")
+	
+	-- Update remaining toolkit count
+	-- weapon_parts_overhaul do not consume toolkit charges for swapping parts
+	--self:UpdateToolkits(active)
+	
+	-- Hide part inventory
+	self.CC["parts"]:Reset()
+	
+	utils_obj.play_sound("interface\\items\\inv_items_cloth_" .. tostring(math.random(2,3)))
+	
+	SetTip("repair_tip_4", nil, nil, nil, true, self.info_text)
+	
+	-- Reset
+	self.selected_btn = nil
+	self.highlight_btn = nil
+end
+
+WorkshopRepair = ui_workshop.UIWorkshopRepair.Repair
+function ui_workshop.UIWorkshopRepair:Repair()
+	local obj = self.CC["inventory"]:GetCell_Selected(true)
+	if (not obj) then
+		return
+	end
+
+	if not has_parts(obj) then
+		print_dbg("Repair: Not weapon, going through original route")
+		WorkshopRepair(self)
+		return
+	end
+	
+	local sim = alife()
+	local tot_con = 0
+	local cnt = 0
+	if is_not_empty(self.new_con) then
+		for i=1,6 do
+			if self.parts[i] and self.parts[i].sec and (self.parts[i].sec ~= "na") then
+				if self.new_con[i] and self.new_con[i].id then
+					-- weapon_parts_overhaul refund parts
+					local temp = self.parts[i].con
+					self.parts[i].con = self.new_con[i].con
+					print_ws("- UIWorkshopRepair:Repair() | replaced part spotted | part: %s - condition: %s - order: %s - id: %s", self.parts[i].sec, self.new_con[i].con, i, self.new_con[i].id)
+					
+					-- Release replacement parts
+					if temp < 0 then
+						alife_release_id(self.new_con[i].id)
+					else
+						local part = get_object_by_id(self.new_con[i].id)
+						part:set_condition(temp/100)
+					end
+					-- weapon_parts_overhaul end
+				end
+				
+				tot_con = tot_con + self.parts[i].con --AdjustCon(self.parts[i].sec, self.parts[i].con, #self.parts, IsOutfit(self.object))
+				cnt = cnt + 1
+				print_ws("/ UIWorkshopRepair:Repair() | total condition calculation | part: %s - condition: %s - order: %s - total sum: %s", self.parts[i].sec, self.parts[i].con, i, tot_con)
+			end
+		end
+	else
+		print_ws("! UIWorkshopRepair:Repair() | no new parts have been replaced")
+		return
+	end
+	
+	-- Discharge tools
+	for i=1,#self.toolkit_pick do
+		local obj_tool = level.object_by_id(self.toolkit_pick[i])
+		if obj_tool then
+			utils_item.discharge(obj_tool)
+			print_ws("/ UIWorkshopRepair:Repair() | discharged toolkit (%s)", self.toolkit_pick[i])
+		else
+			printe("!ERROR UIWorkshopRepair:Repair() | can't discharge toolkit with id (%s). Object not found!", self.toolkit_pick[i])
+		end
+	end
+	
+	-- Apply condition changes
+	local id = obj:id()
+	local sec = obj:section()
+	sec = ini_sys:r_string_ex(sec,"parent_section") or sec -- for weapons with scopes
+	
+	local final_con = (cnt > 0) and (clamp(math.ceil(tot_con/cnt),1,100)/100)
+	local weapon = level.object_by_id(id)
+	if weapon and final_con and (final_con >= 0) and (final_con <= 1) then
+		-- weapon_parts_overhaul do not update condition
+		if not IsWeapon(weapon) then
+			weapon:set_condition(final_con)
+			print_ws("- UIWorkshopRepair:Repair() | object with id (%s) is set to a new condition: %s", id, final_con)
+		end
+	else
+		printe("! UIWorkshopRepair:Repair() | object with id (%s) is either not found. Or didn't register new condition (%s)!", id, final_con)
+	end
+	
+	local result_part_tbl = {}
+	result_part_tbl[sec] = math.ceil(tot_con/cnt)
+	for i=1,#self.parts do
+		result_part_tbl[self.parts[i].sec] = self.parts[i].con
+	end
+	item_parts.set_parts_con(id, result_part_tbl)
+	
+	for k,v in pairs(result_part_tbl) do
+		print_ws("~ UIWorkshopRepair:Repair() | item's new part table [%s] = %s",k,v)
+	end
+	
+	-- Effect
+	actor_effects.play_item_fx("craft_dummy")
+
+	self:Close()
+end
+
+function section_has_parts(sec)
+	local psec = ini_sys:r_string_ex(sec,"parent_section") or sec
+	local parts = ini_parts:r_string_ex("con_parts_list", psec)
+	return parts ~= nil
+end 
+
+HowMuch = inventory_upgrades_mp.how_much_repair
+function inventory_upgrades_mp.how_much_repair( item_name, item_condition )
+	if not section_has_parts(item_name) then return HowMuch(item_name, item_condition) end
+	local cost = ini_sys:r_u32(item_name, "cost")
+	local class = ini_sys:r_string_ex(item_name, "class")
+	local cof = game_difficulties.get_eco_factor("repair") or 1.67
+	local wpncoef = string.find(item_name, "wpn_") and 0.4 or 1
+	-- printf("coef is %s", wpncoef)
+	return math.floor( cost * (1 - item_condition) * cof * wpncoef ) -- CoP formula, adjusted down further (arti)
+end
+
+quality_map = {
+	[0] = "broken",
+	[1] = "damaged",
+	[2] = "worn",
+	[3] = "dirty",
+}
+
+unique_mapping = {
+	["prt_w_gas_tube_9"] = "extractor",
+	["prt_w_gas_tube_10"] = "extractor",
+	["prt_w_gas_tube_8"] = "ejector",
+	["prt_w_gas_tube_2"] = "pump",
+	["prt_w_bolt_11"] = "hammers",
+	["prt_w_bolt_12"] = "hammers",
+	["prt_w_bolt_carrier_8"] = "chock",
+	["prt_w_bolt_carrier_9"] = "chock",
+}
+
+name_mapping = {
+	"spring",
+	"bolt_carrier",
+	"bolt",
+	"gas_tube",
+	"barrel",
+	"trigger"
+}
+--Patching ui_item.script
+local string_find         = string.find
+local math_ceil           = math.ceil
+local math_floor          = math.floor
+local gc                  = game.translate_string
+local clr_r  = utils_xml.get_color("d_red")
+local clr_o  = utils_xml.get_color("d_orange")
+local clr_y  = utils_xml.get_color("yellow")
+local clr_g  = utils_xml.get_color("d_green")
+local clr_p  = utils_xml.get_color("d_purple")
+local clr_w	 = utils_xml.get_color("d_white")
+
+function process_part(name, condition)
+	local severity = condition == -1 and "missing" or math.floor(condition / 20)
+	local clr = clr_r
+	if condition >= 60 then clr = clr_g
+	elseif condition > 20 then clr = clr_o 
+	elseif condition == -1 then clr = clr_r end
+	local part_name = ""
+	if unique_mapping[name] then
+		part_name = unique_mapping[name]
+	else
+		if not string_find(name, "prt_w") then return "" end
+		local i = 1
+		while part_name == "" and i < 7 do
+			-- print_dbg("it %s, name %s", i, name)
+			if string_find(name, name_mapping[i]) then
+				part_name = name_mapping[i]
+			end
+			i = i + 1
+		end
+	end
+	print_dbg("part %s, category %s, sev %s", name, part_name, severity)
+	
+	if part_name ~= "barrel" then
+		return " " .. clr_w .. gc("st_dot") .. " " .. clr .. gc("st_damage_"..severity) .. " " .. gc("st_name_"..part_name) .. "\\n"
+	end
+	
+	condition = condition / 100
+	condition = ( 130 - ( 1.12 * condition ) ) * ( condition * 1.12 ) / 100
+	condition = tonumber(string.format("%.0f", condition * 100))
+	condition = math.min(condition, 100)
+	
+	return " " .. clr_w .. gc("st_dot") .. " " .. clr .. gc("st_damage_"..severity) .. " " .. gc("st_name_"..part_name) .. clr_w .. " (" .. condition .. "% DMG and AP)" .. "\\n"
+end
+
+function process_jam_chance(wpn)
+	if arti_jamming then
+		if arti_jamming.get_jam_chance then
+			if wpn then 
+				jam_prob = arti_jamming.get_jam_chance(wpn)
+
+				if jam_prob <= 5 then clr = clr_g
+				elseif jam_prob <= 10 then clr = clr_y
+				elseif jam_prob <= 20 then clr = clr_o
+				else clr = clr_r end
+				
+				jam_prob = tonumber(string.format("%.0f", jam_prob))
+				
+				return " " .. clr_w .. gc("st_dot") .. " " .. clr .. gc("st_jam") .. "" .. clr_w .. " " .. jam_prob .. "%" .. "\\n"
+			else
+				return "\\n"
+			end
+		end
+	end
+end
+
+original_build_desc_header = ui_item.build_desc_header
+function ui_item.build_desc_header(obj, sec, str)
+	local _str = ""
+	local _str2 = original_build_desc_header(obj, sec, str)
+	
+	if obj and IsWeapon(obj) and not IsAmmo(obj) and arti_jamming.has_parts(obj) then
+		local parts = item_parts.get_parts_con(obj, nil, true)
+		local display_str = ""
+		
+		if obj then
+			display_str = display_str .. process_jam_chance(obj)
+		end
+		
+		for k,v in pairs(parts) do
+			display_str = display_str .. process_part(k, v)
+		end
+
+		if display_str ~= "" then
+			display_str =  " " .. clr_p .. gc("st_name_issues") .. "\\n" .. display_str
+			_str = _str .. display_str
+		end
+	end
+	_str = _str .. _str2
+
+	return _str
+end
+
+-- cheap lookup to map repair types to toolkits for weapons
+local toolkit_map = {
+	["pistol"] 		= {"cleaning_kit_p","toolkit_p"},
+	["shotgun"] 	= {"cleaning_kit_s","toolkit_s"},
+	["rifle_5"] 	= {"cleaning_kit_r5","toolkit_r5"},
+	["rifle_7"] 	= {"cleaning_kit_r7","toolkit_r7"},
+}
+
+-- check for suitable repair kit as well as if weapon is suitable to have parts replaced
+function has_suitable_kit(obj)
+	local repair_sec = SYS_GetParam(0, obj:section(), "repair_type") or "none"
+	local toolkit_sec = toolkit_map[repair_sec] or "none"
+	print_dbg("checking suitability for %s, repair %s", obj:section(), repair_sec)
+	local has_clean = db.actor:object(toolkit_sec[1])
+	local has_repair = db.actor:object(toolkit_sec[2])
+	if not (has_clean or has_repair) then return false end
+	local parts = item_parts.get_parts_con(obj)
+	local allow = false
+	for k,v in pairs(parts) do
+		if is_part(k) then
+			-- allow for repair
+			if has_repair and v < 98 then
+				allow = true
+			-- allow for clean
+			elseif v >= 60 and v < 98 and has_clean then
+				allow = true
+			end
+		end
+	end
+	return allow
+end
+
+function get_suitable_kit(obj, clean)
+	local repair_sec = SYS_GetParam(0, obj:section(), "repair_type") or "none"
+	local toolkit_sec = toolkit_map[repair_sec] or "none"
+
+	return clean and db.actor:object(toolkit_sec[1]) or db.actor:object(toolkit_sec[2])
+end
+
+function replace_name(name, clean, condition)
+	local part_condition = " (" .. condition .. "%)";
+	local part_name = ""
+	if unique_mapping[name] then
+		part_name = unique_mapping[name]
+	else
+		if not string_find(name, "prt_w") then return "" end
+		local i = 1
+		while part_name == "" and i < 7 do
+			-- print_dbg("it %s, name %s", i, name)
+			if string_find(name, name_mapping[i]) then
+				part_name = name_mapping[i]
+			end
+			i = i + 1
+		end
+	end
+	return (clean and gc("st_wpo_clean") or gc("st_wpo_replace")) .. " " .. gc("st_name_"..part_name) .. part_condition
+end
+
+function replace_part(id, part, kit_name, clean)
+	print_dbg("replacing part %s on item %s", part, id)
+	local kit = db.actor:object(kit_name)
+	local parts = se_load_var(id, nil, "parts")
+	if parts and parts[part] then
+		if clean then
+			news_manager.send_tip(db.actor, gc("st_news_cleaned") .. " " .. ui_item.get_sec_name(part), nil, "swiss_knife", 6000)
+		else
+			news_manager.send_tip(db.actor, gc("st_news_parts_success") .. " " .. ui_item.get_sec_name(part), nil, "swiss_knife", 6000)
+		end
+		parts[part] = 99
+		utils_item.discharge(kit)
+		-- restore condition too
+		local wpn = level.object_by_id(id)
+		wpn:set_condition( clamp(wpn:condition() + 0.1, 0, 0.999) )
+		if id == current_id() then
+			reset_cgd()
+		end
+	end
+
+	GetActorMenu():UpdateItems()
+	GetActorMenu():UpdateSlots()
+
+end
+
+function maintain_all_parts(id, parts_table, kit_to_use, skip_menu_and_pda_updates, is_cleaning)
+	local parts = se_load_var(id, nil, "parts")
+	local parts_maintained = {}
+	local part_maintain_count = 0
+	local total_uses = 0
+	local actor_kits = 
+	{
+		kit_count = 0, --also used for the index when traversing the kits table
+		kits = {} --actual_kit, uses
+	}
+
+	-- I bet this is a resource heavy operation... But what else there is? Sry potato PCs
+	db.actor:iterate_inventory(
+		function(_, item)
+			if item:section() == kit_to_use then
+				local kit_remaining_uses = item:get_remaining_uses()
+				
+				table.insert(actor_kits.kits, {actual_kit = item, uses = kit_remaining_uses})
+				actor_kits.kit_count = actor_kits.kit_count + 1
+				total_uses = total_uses + kit_remaining_uses
+			end
+		end
+	)
+
+	if actor_kits.kit_count > 1 then
+		table.sort(actor_kits.kits,
+			function(a, b)
+				return a.uses > b.uses -- Descending order. We will iterate this backwards, because I need to remove items processed
+			end
+		)
+	end
+
+	local kit = actor_kits.kits[actor_kits.kit_count]
+
+	for i = #parts_table, 1, -1 do
+		local part = parts_table[i]
+		if kit.uses <= 0 then
+			table.remove(actor_kits.kits, actor_kits.kit_count)
+			actor_kits.kit_count = actor_kits.kit_count - 1
+			
+			if actor_kits.kit_count <= 0 then
+				break
+			end
+
+			kit = actor_kits.kits[actor_kits.kit_count]
+		end
+
+		parts[part.name] = 99
+		-- restore condition too
+		local wpn = level.object_by_id(id)
+		wpn:set_condition( clamp(wpn:condition() + 0.1, 0, 0.999) )
+
+		utils_item.discharge(kit.actual_kit)
+		part_maintain_count = part_maintain_count + 1
+		kit.uses = kit.uses - 1
+
+		table.insert(parts_maintained, part.name)
+
+
+		table.remove(parts_table, i)
+	end
+
+	if id == current_id() then
+		reset_cgd()
+	end
+
+	local parts_affected_str = ""
+	for i, part in pairs(parts_maintained) do
+		parts_affected_str = parts_affected_str .. part_name_to_human_form(part) .. (part_maintain_count ~= i and ", " or "")
+	end
+
+	if (skip_menu_and_pda_updates ~= true) then
+		local actor_menu = GetActorMenu()
+		actor_menu:UpdateItems()
+		actor_menu:UpdateSlots()
+
+		local parts_action_taken = is_cleaning and "Parts cleaned: " or "Parts replaced: "
+		news_manager.send_tip(db.actor, parts_action_taken .. parts_affected_str, nil, "swiss_knife", 6000)
+	end
+
+	return part_maintain_count, parts_affected_str
+end
+
+function replace_clean_all(batch_maintain_data)
+	local parts_cleaned = 0
+	local parts_replaced = 0
+	local parts_cleaned_str = ""
+	local parts_replaced_str = ""
+
+	 -- Clean all parts we can using clean_kit
+	parts_cleaned, parts_cleaned_str = maintain_all_parts(batch_maintain_data.obj_id, batch_maintain_data.cleanable_parts, batch_maintain_data.clean_kit, true, true)
+
+	 -- Replace all parts we can using repair_kit
+	parts_replaced, parts_replaced_str = maintain_all_parts(batch_maintain_data.obj_id, batch_maintain_data.repairable_parts, batch_maintain_data.repair_kit, true, false)
+
+	-- Replace all parts we couldn't clean with clean_kit
+	if (serious_mcm_conf("allow_clean_with_rep_kit")) then
+		local count, message = maintain_all_parts(batch_maintain_data.obj_id, batch_maintain_data.cleanable_parts, batch_maintain_data.repair_kit, true, false)
+		if message ~= nil and message ~= "" then
+			message = ", " .. message
+		end
+		parts_replaced = parts_replaced + count
+		parts_replaced_str = parts_replaced_str .. message
+	end
+
+
+	local actor_menu = GetActorMenu()
+	actor_menu:UpdateItems()
+	actor_menu:UpdateSlots()
+
+	local maintenance_results = string.format(
+    "Maintenance results:\\nParts cleaned: %s\\nParts replaced: %s\\n- Cleaning kits used: %d\\n- Repair kits used: %d",
+    parts_cleaned_str, parts_replaced_str, parts_cleaned, parts_replaced
+	)
+
+	news_manager.send_tip(db.actor, maintenance_results, nil, "swiss_knife", 10000)
+end
+
+local maint_gui
+
+
+function check_maintain(obj)
+	return has_parts(obj) and has_suitable_kit(obj)
+end
+function name_maintain(obj)
+	return gc("st_wpo_replace_parts")
+end
+
+function init_maintenance_menu(obj)
+	local def_cln_threshold = 70
+	local def_rplc_threshold = 59
+
+	--READ CONFIG VALS
+	local cln_min_conf = (serious_mcm_conf("cln_prt_cond_min")) or def_cln_threshold
+	local rplc_min_conf = (serious_mcm_conf("rplc_prt_cond_min")) or def_rplc_threshold
+	local replace_prio_barrel_conf = (serious_mcm_conf("rplc_prio_barrel"))
+	local disable_maintain_all_conf = (serious_mcm_conf("disable_maintain_all"))
+	local de_clutter_menu_conf = (serious_mcm_conf("de_clutter_menu"))
+	--READ CONFIG VALS
+
+	local clean_threshold_str = not de_clutter_menu_conf and string.format(" <= (%s%%)", cln_min_conf or def_cln_threshold) or ""
+	local repair_threshold_str = not de_clutter_menu_conf and string.format(" <= (%s%%)", rplc_min_conf or def_rplc_threshold) or ""
+
+	local repair_sec = SYS_GetParam(0, obj:section(), "repair_type") or "none"
+	local toolkit_sec = toolkit_map[repair_sec] or "none"
+	local context_str = {}
+	local context_action = {}
+	local context_params = {}
+	local batch_maintain_data = 
+	{
+		obj_id = obj:id(),
+		clean_kit = "",
+		repair_kit = "",
+		cleanable_part_count = 0,
+		cleanable_parts = 
+		{},
+		repairable_part_count = 0,
+		repairable_parts =
+		{}
+	}
+
+	local parts = item_parts.get_parts_con(obj)
+	local clean_kit = db.actor:object(toolkit_sec[1])
+	local repair_kit = db.actor:object(toolkit_sec[2])
+	local clean_kit_uses = (clean_kit and clean_kit:get_remaining_uses()) or 0
+	local repair_kit_uses = (repair_kit and repair_kit:get_remaining_uses()) or 0
+
+	for k,v in pairs(parts) do
+		if is_part(k) then
+			if v >= 60 and v < 98 and clean_kit ~= nil then
+				table.insert(context_str, replace_name(k, true, v))
+				table.insert(context_action, replace_part)
+				table.insert(context_params, {obj:id(), k, clean_kit:section(), true})
+
+				if (v <= cln_min_conf) then
+					table.insert(batch_maintain_data.cleanable_parts, {name = k, condition = v})
+					batch_maintain_data.clean_kit = clean_kit:section() -- redundant for each iteration, but I think it's fine as is (same for repair kit)
+					batch_maintain_data.cleanable_part_count = batch_maintain_data.cleanable_part_count + 1
+				end
+			elseif v < 98 and repair_kit ~= nil then
+				table.insert(context_str, replace_name(k, false, v))
+				table.insert(context_action, replace_part)
+				table.insert(context_params, {obj:id(), k, repair_kit:section(), false})
+
+				if (v <= rplc_min_conf) then
+					table.insert(batch_maintain_data.repairable_parts, {name = k, condition = v})
+					batch_maintain_data.repair_kit = repair_kit:section()
+					batch_maintain_data.repairable_part_count = batch_maintain_data.repairable_part_count + 1
+				end
+			end
+		end
+	end
+
+	if batch_maintain_data.cleanable_part_count >= 2 and clean_kit_uses > 1 then
+		table.insert(context_str, "clean all" .. clean_threshold_str)
+		table.insert(context_action, maintain_all_parts)
+		table.insert(context_params, {batch_maintain_data.obj_id, batch_maintain_data.cleanable_parts, batch_maintain_data.clean_kit, false, true})
+	end
+
+	if batch_maintain_data.repairable_part_count >= 2 and repair_kit_uses > 1 then
+		table.insert(context_str, "replace all" .. repair_threshold_str)
+		table.insert(context_action, maintain_all_parts)
+		table.insert(context_params, {batch_maintain_data.obj_id, batch_maintain_data.repairable_parts, batch_maintain_data.repair_kit, false, false})
+	end
+
+	if not disable_maintain_all_conf then
+		if batch_maintain_data.cleanable_part_count >= 1 and batch_maintain_data.repairable_part_count >= 1 then
+			table.insert(context_str, "maintain all [!]")
+			table.insert(context_action, replace_clean_all)
+			table.insert(context_params, {batch_maintain_data})
+		end
+	end
+
+	table.sort(batch_maintain_data.cleanable_parts, 
+		function(a, b) -- Should make this a function like order_descending. Or order_table with a parameter (is_descending)
+			return a.condition > b.condition -- Descending order. We will iterate this backwards, because I need to remove items processed
+		end
+	)
+
+	table.sort(batch_maintain_data.repairable_parts, 
+		function(a, b)
+			if replace_prio_barrel_conf then -- We override the default sorting if prioritize barrels is turned on
+				if string.find(a.name, "barrel") then
+					return false  -- a should be considered "greater" (move it to the end)
+				elseif string.find(b.name, "barrel") then
+					return true   -- b is a barrel, so it should go last
+				end
+			end
+
+			return a.condition > b.condition -- Descending order. We will iterate this backwards, because I need to remove items processed
+		end
+	)
+
+	if not maint_gui then maint_gui = serious_utils_ui_modified.SeriousUICellPropertiesModified(replace_part) end
+	maint_gui:Reset(GetCursorPosition(), context_action, context_str, context_params)
+	ui_inventory.GUI:PlaySND(sound_object([[interface\inv_properties_2]]))
+end
+
+-- custom parts replacement shit
+
+function name_fieldstrip(obj, bag, mode)
+	local mode = {
+		["inventory"] = true,
+		["loot"] = true,
+	}
+	local bag = {
+		["actor_equ"] = true,
+		["actor_belt"] = true,
+		["actor_bag"] = true,
+		["npc_bag"] = true,
+	}
+	return gc("st_field_strip")
+end
+
+function has_parts_fieldstrip(wpn, bag, mode)
+	local mode = {
+		["inventory"] = true,
+		["loot"] = true,
+	}
+	local bag = {
+		["actor_equ"] = true,
+		["actor_belt"] = true,
+		["actor_bag"] = true,
+		["npc_bag"] = true,
+	}
+	if not has_parts(wpn) then return false end
+	local parts = item_parts.get_parts_con(wpn, nil, true)
+	local has_parts = false
+	for k,v in pairs(parts) do
+		if v > 0 and is_part(k) and not arti_jamming.is_barrel(k) then has_parts = true end
+	end
+	return has_parts
+end
+
+function remove_name(name)	
+	local part_human_readable = part_name_to_human_form(name)
+	return  gc("st_wpo_remove") .. " " .. part_human_readable
+end
+
+function part_name_to_human_form(name)
+	local part_name = ""
+	if not name then
+		part_name = "all"
+	elseif unique_mapping[name] then
+		part_name = unique_mapping[name]
+	else
+		if not string_find(name, "prt_w") then return "" end
+		local i = 1
+		while part_name == "" and i < 7 do
+			-- print_dbg("it %s, name %s", i, name)
+			if string_find(name, name_mapping[i]) then
+				part_name = name_mapping[i]
+			end
+			i = i + 1
+		end
+	end
+	return gc("st_name_"..part_name)
+end
+
+local fs_gui
+function init_fieldstrip_menu(obj, bag, mode)
+	local mode = {
+		["inventory"] = true,
+		["loot"] = true,
+	}
+	local bag = {
+		["actor_equ"] = true,
+		["actor_belt"] = true,
+		["actor_bag"] = true,
+		["npc_bag"] = true,
+	}
+
+
+	local context_str = {}
+	local context_action = {}
+	local context_params = {}
+
+	local parts = item_parts.get_parts_con(obj)
+	local num = 0
+	for k,v in pairs(parts) do
+		if is_part(k) and not arti_jamming.is_barrel(k) and v > 0 then
+			table.insert(context_str, remove_name(k))
+			table.insert(context_action,  "remove_part")
+			table.insert(context_params, {obj:id(), k, v})
+			num = num + 1
+		end
+	end
+	-- remove all
+	if num > 1 then
+		table.insert(context_str, remove_name(nil))
+		table.insert(context_action,  "remove_part")
+		table.insert(context_params, {obj:id(), k, v})
+	end
+	if not fs_gui then fs_gui = utils_ui_custom.UICellPropertiesCustom(act_fieldstrip) end
+	fs_gui:Reset(GetCursorPosition(), context_action, context_str, context_params)
+	ui_inventory.GUI:PlaySND(sound_object([[interface\inv_properties_2]]))
+end
+
+-- remove the given part
+-- if no part is specified, remove all
+function act_fieldstrip(id, part_name)
+	local wpn = level.object_by_id(id)
+	local parts = item_parts.get_parts_con(wpn)
+	local parts_removed = false
+	local str_msg = gc("st_news_fieldstrip")
+
+	-- eject mag if applicable
+	if mag_support.using_mags() and mag_support.is_mag_loaded(wpn) then 
+		mag_support.eject_mag(wpn)
+	else
+		wpn:force_unload_magazine(true)
+	end
+
+	if part_name and parts[part_name] then
+		str_msg = str_msg .. "\\n -" .. ui_item.get_sec_name(part_name)
+		remove_part(part_name, parts)
+		parts_removed = true
+	else
+		for k,v in pairs(parts) do
+			if is_part(k) and v ~= -1 and not arti_jamming.is_barrel(k) then
+				str_msg = str_msg .. "\\n -" .. ui_item.get_sec_name(k)
+				remove_part(k, parts)
+				parts_removed = true
+			end
+		end
+	end
+	item_parts.set_parts_con(id, parts)
+	if arti_jamming.get_jammed(id) then
+		set_jam_status(id, nil)
+	end
+	-- send msg
+	if parts_removed then
+		news_manager.send_tip(db.actor, str_msg, nil, "swiss_knife", 6000)
+	end
+	arti_jamming.reset_cgd()
+end
+
+function remove_part(part_name, part_con)
+	if part_con[part_name] and part_con[part_name] ~= -1 then
+
+		local part_to_spawn = alife_create(part_name, db.actor:position(), db.actor:level_vertex_id(), db.actor:game_vertex_id(), db.actor:id(), false)
+		local data = utils_stpk.get_item_data(part_to_spawn)
+		data.condition = part_con[part_name]/100
+		utils_stpk.set_item_data(data,part_to_spawn)
+		alife():register(part_to_spawn)	
+
+		part_con[part_name] = -1
+	end
+end
+
+function on_game_start()
+	
+	disassembly_chance  = ini_parts:r_float_ex("settings","disassembly_chance") or 40
+	custom_functor_autoinject.add_functor("arti_fieldstrip", has_parts_fieldstrip, name_fieldstrip, nil, init_fieldstrip_menu, true)
+	custom_functor_autoinject.add_functor("arti_maintain", check_maintain, name_maintain, nil, init_maintenance_menu, false)
+end
