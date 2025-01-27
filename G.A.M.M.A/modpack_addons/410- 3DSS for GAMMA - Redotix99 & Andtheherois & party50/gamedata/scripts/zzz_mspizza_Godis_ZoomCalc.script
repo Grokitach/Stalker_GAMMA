@@ -1,0 +1,197 @@
+-- Zoom Calc Script
+-- original by mspizza
+-- extended by Godis
+
+
+
+saved_fov = nil
+local last_weapon_id
+last_alt = 0
+
+-- Black Magic. Gets information from global scope sections. Overwrites if local weapon section exists.
+function get(wpn_section, key)
+	local parent = ini_sys:r_string_ex(wpn_section, "parent_section") or wpn_section
+	local scope_section = parent ~= wpn_section and wpn_section:sub(#parent + 2)
+
+	local value = wpn_section and ini_sys:r_string_ex(wpn_section, key)
+	if value then
+		return value
+	end
+	value = scope_section and ini_sys:r_string_ex(scope_section, key)
+	if value then
+		return value
+	end
+end
+
+-- Custom rounding function based on specific rules
+function custom_round(num)
+	-- Round to the nearest 0.25
+	return math.floor(num * 4 + 0.5) / 4
+end
+
+-- Function to format number to 13 decimal places
+function format_to_13_digits(num)
+	return string.format("%.13f", num)
+end
+
+-- Global variable to save scope name
+current_scope_name = "No scope equipped"
+
+-- list of dynamic scopes
+local scopes_to_check = {
+    "razorhd",
+    "leupold",
+    "march_f_shorty",
+	"mark8_rmr",
+	"march_f_shorty_alt",
+	"cortex",
+	"gauss_sight",
+	"marchf",
+	"spec_alt",
+	"specter",
+	"pn23",
+	"1p59",
+	"1pn93",
+	"ps320",
+	"tac30",
+	"razorhd",
+	"ado"
+}
+
+-- Function to get scope zoom and normalise to x1.5
+function get_mcm_scope_zoom()
+	local zoom_in_zoom_level = z_3d_scopes_mcm.get_config("zoom_factor")
+	if zoom_in_zoom_level then
+		zoom_normalisation_factor = 1.5 / zoom_in_zoom_level
+	else
+		zoom_normalisation_factor = 1
+	end
+	
+	return zoom_normalisation_factor
+end
+
+-- Function to get the current scope name
+function get_current_scope_name()
+    local the_weapon = db.actor:active_item()
+    if not the_weapon then
+        current_scope_name = "No weapon equipped"
+        return current_scope_name
+    end
+
+    local cWeapon = the_weapon:cast_Weapon()
+    if not cWeapon then
+        current_scope_name = "Not a weapon."
+        return current_scope_name
+    end
+
+    local native_scope = cWeapon:GetScopeName()
+    if not native_scope then
+        current_scope_name = "No scope equipped"
+        return current_scope_name
+    end
+
+    current_scope_name = native_scope
+    return current_scope_name
+end
+
+-- check if current scope is listed above
+function is_scope_in_list(scope_name, scope_list)
+    for _, scope in ipairs(scope_list) do
+        if scope_name == scope then
+            return true
+        end
+    end
+    return false
+end
+
+-- Function to print the current scope name
+-- function print_current_scope_name()
+    
+--    print("Current Scope: " .. scope_name)
+--end
+
+/*
+-- Bind the function to a key (e.g., F5)
+function bind_key(key, func)
+    RegisterScriptCallback("on_key_release", function(released_key)
+        if released_key == key then
+            func()
+        end
+    end
+end
+
+bind_key("DIK_F5", print_current_scope_name) -- DIK_F5 is a DirectInput key code for F5
+*/
+
+-- Main Function
+function actor_on_weapon_zoom_in(obj)
+	local new_fov = 0
+	local first_aim = true
+
+	-- gets player FOV
+	saved_fov = device().fov
+
+	-- Cache the result of get() calls
+	local obj_section = obj:section()
+	local zoom_level = get(obj_section, "magnification")
+	local min_mag = get(obj_section, "min_magnification")
+	local is2d = ini_sys:r_string_ex(obj_section, "scope_texture") ~= nil
+
+	-- if there's no zoom_level attribute, this will not call.
+	if zoom_level then
+		local zoom_level_num = tonumber(zoom_level)
+		local scope_name = get_current_scope_name()
+		print("Current Scope: " .. scope_name)
+	
+		if is2d then
+			-- 2D Shader Scope zoom factor.
+			new_fov = (saved_fov / zoom_level_num) * 1.2
+		else
+			zoom_normalisation = get_mcm_scope_zoom()
+			-- 3D Shader Scope zoom factor.
+			new_fov = (saved_fov / 0.75) / zoom_level_num / zoom_normalisation
+		end
+
+		
+
+		if first_aim then
+			if not is_scope_in_list(scope_name, scopes_to_check) then
+				-- print("None of the specified scopes are equipped.")
+				new_fov = 0
+				first_aim = false				
+			else
+				-- print("One of the specified scopes is equipped.")
+				-- Remembers zoom level throughout weapon switch
+				new_fov = (saved_fov / 0.75) / zoom_level_num
+			end
+
+		end
+		if last_alt ~= 0 then
+			new_fov = 0
+		end
+
+		-- Apply custom rounding rules
+		new_fov = custom_round(new_fov)
+
+		-- Format new_fov to 13 decimal places
+	--	new_fov = format_to_13_digits(new_fov)
+
+		-- Debug output
+		printf("Calculated FOV: " .. new_fov)
+
+		obj:cast_Weapon():SetZoomFactor(tonumber(new_fov))
+	end
+end
+
+-- Sets current zoom type to global variable
+function actor_on_weapon_zoom_type_changed(obj, previous, current)
+	-- Changes global variable to aim setting
+	last_alt = current
+end
+
+function on_game_start()
+	-- Calls function when scope is aimed.
+	RegisterScriptCallback("actor_on_weapon_zoom_in", actor_on_weapon_zoom_in)
+	-- Calls function when alternate sight is used, does not work
+	RegisterScriptCallback("actor_on_weapon_zoom_type_changed", actor_on_weapon_zoom_type_changed)
+end
