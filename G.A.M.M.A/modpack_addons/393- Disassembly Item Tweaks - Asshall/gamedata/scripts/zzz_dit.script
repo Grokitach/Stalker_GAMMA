@@ -1,0 +1,133 @@
+
+local options = {
+	d_key = "DIK_LMENU",
+	b_key = "DIK_LALT",
+	leatherman_limit = 10,
+	swiss_limit = 10,
+	grooming_limit = 10,
+	outfit_knife = true,
+	consume_warning = true
+}
+
+local d_flag      = false
+-- local d_key       = dit_mcm.get_config("d_key") -- Saftey key hold for dissasembly
+local b_flag      = false
+-- local b_key       = dit_mcm.get_config("b_key") -- Saftey key hold for consuming
+
+local item_priority = {
+	grooming = 0,
+	swiss_knife = 1,
+	leatherman_tool = 2
+}
+
+local function is_breaking(obj_d)
+	if not obj_d then return end
+	local condition_reduced = GetItemList("disassemble")[obj_d:section()]
+	local cond = obj_d:condition() - (obj_d:section() == "leatherman_tool" and options.leatherman_limit/100 or 
+			obj_d:section() == "swiss_knife" and options.swiss_limit/100 or
+			obj_d:section() == "grooming" and options.grooming_limit/100)
+	return condition_reduced >= cond or false
+end
+
+item_parts.func_disassembly = function(obj,obj_d)
+
+	local function get_suitable_dtool(itm)
+
+		local itms_disassemble = {}
+		for k in pairs(GetItemList("disassemble")) do itms_disassemble[#itms_disassemble+1] = k end
+		table.sort(itms_disassemble, function(a,b) return item_priority[a] < item_priority[b] end) -- Sorts the dissasembly items by priority
+		local res = nil
+		for _,sec in pairs(itms_disassemble) do
+			-- Returns the most apropriate tool
+			local itm_d = IsWeapon(itm) and db.actor:object("leatherman_tool") or
+				options.outfit_knife and (IsOutfit(itm) or IsHeadgear(obj)) and (db.actor:object("swiss_knife") or
+				db.actor:object("leatherman_tool")) or db.actor:object(sec)
+
+			local inventory_d = {}
+			if itm_d then
+				for k in pairs(utils_item.collect_amount(db.actor,itm_d:section(),0)) do inventory_d[#inventory_d+1] = level.object_by_id(k) end
+
+				-- Returns the most damaged tool that won't break
+				table.sort(inventory_d, function(a,b) return a:condition() < b:condition()end)
+				local index = 1
+				if options.consume_warning then
+					for _,v in ipairs(inventory_d) do
+						if is_breaking(v) and index < #inventory_d then index = index + 1 end
+					end
+				end
+				if inventory_d[index] then
+					res = inventory_d[index]
+					if not is_breaking(inventory_d[index]) or sec == inventory_d[#inventory_d]:section()
+					and sec == itms_disassemble[#itms_disassemble] then return inventory_d[index] end -- If the tool is gonna break try the next type
+				end
+			end
+		end
+		return res
+	end
+
+	obj_d = obj_d or get_suitable_dtool(obj)
+	if not obj_d then
+		news_manager.send_tip(db.actor, game.translate_string("st_news_dis_items"), nil, "swiss_knife", 6000)
+		return
+	elseif IsWeapon(obj) and obj_d:section() ~= "leatherman_tool" then
+		actor_menu.set_item_news('fail', 'weapon', "st_dis_text_3", " ")
+		return
+	elseif (IsOutfit(obj) or IsHeadgear(obj)) and options.outfit_knife and (obj_d:section() ~= "swiss_knife" and obj_d:section() ~= "leatherman_tool") then
+		actor_menu.set_item_news('fail', 'weapon', "st_dis_text_3", " ")
+		return
+	end
+
+	-- The tool will break if we go through
+	local chk = options.consume_warning
+	if chk and is_breaking(obj_d) and not b_flag then
+		actor_menu.set_item_news("fail", "detail", "dit_no_consume_ctrl")
+		return
+	end
+
+	-- Warning message on safe keybind
+	chk = ui_options.get("control/general/disassembly_warning")
+	if chk and (not d_flag) then
+		actor_menu.set_item_news("success", "detail", "st_awr_ctrl")
+		return
+	end
+
+	-- Functionality
+	if IsWeapon(obj) then
+		item_parts.disassembly_weapon(obj, obj_d)
+	elseif IsOutfit(obj) or IsHeadgear(obj) then
+		item_parts.disassembly_outfit(obj, obj_d)
+	else
+		item_parts.disassembly_item(obj, obj_d)
+	end
+end
+
+local function on_key_press(key)
+	if key == DIK_keys[options.d_key] then
+		d_flag = true
+	elseif key == DIK_keys[options.b_key] then
+		b_flag = true
+	end
+end
+
+local function on_key_release(key)
+	if (key == DIK_keys[options.d_key]) then
+		d_flag = false
+	elseif key == DIK_keys[options.b_key] then
+		b_flag = false
+	end
+end
+
+function on_option_change()
+	options.outfit_knife = dit_mcm.get_config("outfit_knife")
+	options.consume_warning = dit_mcm.get_config("consume_warning")
+	options.leatherman_limit = dit_mcm.get_config("leatherman_limit")
+	options.swiss_limit = dit_mcm.get_config("swiss_limit")
+	options.grooming_limit = dit_mcm.get_config("grooming_limit")
+
+end
+function on_game_start()
+	RegisterScriptCallback("on_key_press",on_key_press)
+	RegisterScriptCallback("on_key_release",on_key_release)
+	on_option_change()
+	RegisterScriptCallback("on_option_change",on_option_change)
+end
