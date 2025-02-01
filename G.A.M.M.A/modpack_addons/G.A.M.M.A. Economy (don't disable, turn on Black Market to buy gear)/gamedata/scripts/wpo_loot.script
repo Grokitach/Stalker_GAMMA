@@ -1,0 +1,57 @@
+-- temp condition for trade
+local parts_list = {}
+print_dbg 			= arti_jamming.print_dbg
+has_parts 			= arti_jamming.has_parts
+
+TraderAuto = trader_autoinject.update
+function trader_autoinject.update(npc)
+    TraderAuto(npc)
+    add_parts(npc) -- you define this function ok
+end
+
+local BASE_AMT = 24
+function add_parts(npc)
+	if trader_autoinject.get_trader_type(npc) == trader_autoinject.MECHANIC then
+		-- purge any existing parts
+		function itr(temp, item)
+			if item and string.find(item:section(), "prt_w") then
+				local se_itm = alife_object(item:id())
+				if se_item then 
+					alife_release_id(item:id())
+				end
+			end
+		end
+		npc:iterate_inventory(itr)
+		-- generate an amount of parts based on trader type
+		local table = {}
+		local supply_level = trader_autoinject.supply_level(npc, true) or 1
+		print_dbg("npc %s has supply level %s", npc:name(), supply_level)
+		for i=1,supply_level * BASE_AMT do
+			local part = parts_list[math.random(#parts_list)]
+			print_dbg("Adding %s to trader %s", part, npc:name())
+			if table[part] then
+				table[part] = table[part] + 1
+			else
+				table[part] = 1
+			end
+		end
+		if supply_level > 1 then
+			printf("no partskit_tool")
+		end
+		-- add the parts
+		trader_autoinject.spawn_items(npc, table, true)
+	end
+end
+
+function on_game_start()
+    
+    local prices = ini_file("items\\settings\\part_prices.ltx")
+	local part_section = utils_data.collect_section(prices, "wpo_part_prices")
+	local n = prices:line_count("wpo_part_prices") or 0
+
+	for i=0, n-1 do
+		local result, sec, value = prices:r_line("wpo_part_prices" , i , "", "")
+        -- print_dbg("parts_list[%s] = %s", i + 1, sec)    
+		parts_list[i + 1] = sec
+	end
+end

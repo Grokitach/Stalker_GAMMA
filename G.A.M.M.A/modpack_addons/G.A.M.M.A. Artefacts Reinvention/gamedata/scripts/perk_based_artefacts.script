@@ -1412,42 +1412,61 @@ artefact_props = { -- Special props of artefacts that are used in processing
 	af_ball = {
 		monster_tiers = { -- Monster Tiers opening by artefact count
 			[1] = {
+				clsid.zombie,
 				clsid.zombie_s,
+				clsid.cat,
 				clsid.cat_s,
+				clsid.dog_black,
+				clsid.dog_red,
 				clsid.dog_s,
+				clsid.rat,
+				clsid.rat_s,
+				clsid.tushkano,
+				clsid.tushkano_s,
 				"SM_PIRANHA",
 			},
 			[2] = {
+				clsid.boar,
 				clsid.boar_s,
+				clsid.flesh,
 				clsid.flesh_s,
 				clsid.fracture_s,
 				clsid.pseudodog_s,
-				clsid.psy_dog_s,
+				clsid.snork,
+				clsid.snork_s,
+				"SM_LURKER",
 			},
 			[3] = {
+				clsid.bloodsucker,
 				clsid.bloodsucker_s,
-				clsid.snork_s,
 				"SM_KARLIK",
 				"SM_PSYSUCKER",
-				"SM_LURKER",
 				"SM_VOLK",
 				"SM_POLTER_CORP",
 				135, -- Borya
+				clsid.poltergeist,
+				clsid.poltergeist_s,
+				clsid.psy_dog_s,
 			},
 			[4] = {
+				clsid.burer,
 				clsid.burer_s,
+				clsid.controller,
 				clsid.controller_s,
 				"SM_TARK",
 			},
 			[5] = {
+				clsid.chimera,
 				clsid.chimera_s,
 				clsid.gigant_s,
+				clsid.pseudo_gigant,
 				"SM_MEDVED",
 				"SM_MONSTER_BOAR",
 				"SM_VENDIGO",
 				131, -- Bibliotekar
 			}
 		},
+		scan_radius = 2.7,	-- this is the original value from PBA 2.1
 		monsters = {} -- Generated table to check if current monster is allowed to be kick
 	},
 	af_spaika = {
@@ -2792,11 +2811,14 @@ artefact_on_update_functions = {
 			local heal_companion_min_health = 1
 			for id, v in pairs(non_task_companions) do
 				local obj = get_object_by_id(id)
-				local obj_community = obj:character_community()
-				if af_chelust.valid_companion_communities[obj_community] and obj.health < heal_companion_min_health then
-					heal_companion_min_health = obj.health
-					heal_companion = obj
-					trace("found companion %s, community %s, health %s", id, obj_community, heal_companion_min_health)
+				-- ilrathCXV (01/31/25): Valid check to avoid crashes in edge cases
+				if obj then
+					local obj_community = obj:character_community()
+					if af_chelust.valid_companion_communities[obj_community] and obj.health < heal_companion_min_health then
+						heal_companion_min_health = obj.health
+						heal_companion = obj
+						trace("found companion %s, community %s, health %s", id, obj_community, heal_companion_min_health)
+					end
 				end
 			end
 
@@ -3276,7 +3298,7 @@ artefact_on_before_hit_functions = {
 		end
 
 		af_black_angel.dice_roll = random(100)
-		if af_black_angel.dice_roll <= af_black_angel.reflect_chance[artefact_count] then
+		if af_black_angel.dice_roll <= af_black_angel.reflect_chance[math.min(artefact_count, 5)] then
 			s_hit.power = 0.001
 		end
 	end,
@@ -3290,8 +3312,8 @@ artefact_on_before_hit_functions = {
 		end
 
 		local dice_roll = random(100)
-		if dice_roll > af_medallion.reflect_chance[artefact_count] then
-			trace("Medallion, perk not triggered, dice_roll %s, chance %s", dice_roll, af_medallion.reflect_chance[artefact_count])
+		if dice_roll > af_medallion.reflect_chance[math.min(artefact_count, 5)] then
+			trace("Medallion, perk not triggered, dice_roll %s, chance %s", dice_roll, af_medallion.reflect_chance[math.min(artefact_count, 5)])
 			return
 		end
 
@@ -3414,7 +3436,7 @@ artefact_on_before_hit_functions = {
 			return
 		end
 
-		local rad_k = af_cell.reduction_coeff[artefact_count]
+		local rad_k = af_cell.reduction_coeff[math.min(artefact_count, 5)]
 		local power = s_hit.power
 		s_hit.power = s_hit.power * (1 - rad_k)
 		power = power - s_hit.power
@@ -3468,7 +3490,7 @@ artefact_on_before_hit_functions = {
 			return
 		end
 		
-		local fire_damage = af_sun.fire_damage[artefact_count]
+		local fire_damage = af_sun.fire_damage[math.min(artefact_count, 5)]
 		local fire_hit = hit(s_hit)
 		fire_hit.type = hit.burn
 		fire_hit.power = fire_hit.power * fire_damage
@@ -3494,8 +3516,8 @@ artefact_on_hit_functions = {
 	-- Black Angel, perk: Dodge This
 	af_black_angel = function(actor, artefact_count, artefact_ids, artefact_names, obj, amount, who, last_hit)
 		local af_black_angel = artefact_props.af_black_angel
-		if af_black_angel.dice_roll > af_black_angel.reflect_chance[artefact_count] then
-			trace("Black Angel not triggered, dice roll %s, chance %s", af_black_angel.dice_roll, af_black_angel.reflect_chance[artefact_count])
+		if af_black_angel.dice_roll > af_black_angel.reflect_chance[math.min(artefact_count, 5)] then
+			trace("Black Angel not triggered, dice roll %s, chance %s", af_black_angel.dice_roll, af_black_angel.reflect_chance[math.min(artefact_count, 5)])
 			return
 		end
 		if not (
@@ -3848,7 +3870,7 @@ artefact_on_equip_functions = {
 	af_ball = function(actor, artefact_count, artefact_ids, artefact_names)
 		local af_ball = artefact_props.af_ball
 		empty_table(af_ball.monsters)
-		for i = 1, artefact_count do
+		for i = 1, math.min(artefact_count, 5) do
 			for j, monster in ipairs(af_ball.monster_tiers[i]) do
 				af_ball.monsters[monster] = true
 			end
@@ -3954,6 +3976,197 @@ lucifer_sacrifice_func = {
 }
 add_functor("pba_lucifer", lucifer_sacrifice_func.check_lucifer_condition, lucifer_sacrifice_func.check_sacrifice, nil, lucifer_sacrifice_func.lucifer_sacrifice, true)
 
+-- Functions for artefacts on key press
+artefact_on_key_press_functions = {
+	-- Ball
+	af_ball = function(actor, artefact_count, artefact_ids, artefact_names, key)
+		local af_ball = artefact_props.af_ball
+		if not check_cooldown("af_ball") then return end
+
+		local bind = dik_to_bind(key)
+		if (bind == key_bindings.kUSE) then
+			local distance = math.huge
+			local target
+			local pointed = level.get_target_obj()
+			level.iterate_nearest(actor:position(), af_ball.scan_radius + 1, function(obj)
+				if not 
+				(
+					obj:id() ~= AC_ID
+					and (
+						(IsMonster(obj) and 
+						(
+							-- ilrathCXV (02/01/2025): Fixed Gigant Jumper being classified as a Snork - will now be counted as a Pseduogiant
+							af_ball.monsters[((obj:section() == "gigant_jumper" and clsid.pseudo_gigant) or obj:clsid())] or af_ball.monsters[SYS_GetParam(
+								2,
+								obj:section(),
+								"kind",
+								"definitely_not_found_kind"
+							)]
+						))
+						-- or (IsStalker(obj) and xr_combat_ignore.fighting_with_actor_npcs[obj:id()])
+					)
+					and obj:alive()
+					and obj:position():distance_to(actor:position()) <= af_ball.scan_radius
+				) then
+					-- printf("target %s is invalid", obj:name())
+					return
+				end
+
+				-- Pointed target takes priority
+				if pointed and pointed:id() == obj:id() then
+					-- printf("target %s is pointed", obj:name())
+					target = obj
+					return true
+				end
+
+				local pos = obj:position()
+
+				-- Visibility check, position or obj bones
+				local visibility_checks = {
+					function()
+						local see = game.world2ui(obj:position())
+						return (see.x > 0 and see.x < 1024 and see.y > 0 and see.y < 1024)
+					end,
+					function()
+						local pos = utils_obj.safe_bone_pos(obj, "bip01_spine")
+						if not (pos and pos.x ~= 0 and pos.y ~= 0 and pos.z ~= 0) then return end
+
+						local see = game.world2ui(pos)
+						return (see.x > 0 and see.x < 1024 and see.y > 0 and see.y < 1024)
+					end,
+					function()
+						local pos = utils_obj.safe_bone_pos(obj, "bip01_head")
+						if not (pos and pos.x ~= 0 and pos.y ~= 0 and pos.z ~= 0) then return end
+
+						local see = game.world2ui(pos)
+						return (see.x > 0 and see.x < 1024 and see.y > 0 and see.y < 1024)
+					end,
+				}
+				local see = false
+				for i, v in ipairs(visibility_checks) do
+					if v() then
+						see = true
+						break
+					end
+				end
+				if not see then
+					-- printf("cant see")
+					return
+				end
+
+				-- Obstacle check, rays
+				local obstacle_checks = {
+					function()
+						local ray = demonized_geometry_ray.geometry_ray({
+							ray_range = 200,
+							ignore_object = obj,
+							flags = 3,
+						})
+						local res = ray:get(pos, actor:position():sub(pos):normalize())
+						return res.result and res.result.object and res.result.object:id() == AC_ID
+					end,
+					function()
+						local p = utils_obj.safe_bone_pos(actor, "bip01_spine")
+						if not (p and p.x ~= 0 and p.y ~= 0 and p.z ~= 0) then return end
+
+						local ray = demonized_geometry_ray.geometry_ray({
+							ray_range = 200,
+							ignore_object = obj,
+							flags = 3,
+						})
+						local res = ray:get(pos, p:sub(pos):normalize())
+						return res.result and res.result.object and res.result.object:id() == AC_ID
+					end,
+				}
+				local no_obstacle = false
+				for i, v in ipairs(obstacle_checks) do
+					if v() then
+						no_obstacle = true
+						break
+					end
+				end
+				if not no_obstacle then
+					-- printf("obstacled")
+					return
+				end
+
+				local dist = pos:distance_to_sqr(actor:position())
+				if dist < distance then
+					distance = dist
+					target = obj
+				end
+			end)
+			if not target then return end
+			
+			-- ilrathCXV (01/31/25): We will be getting mutant's true health value as the hit power to avoid "Strength" leveling too fast
+			local t_health = ini_sys:r_float_ex(target:section(), "Health") or 100
+			t_health = (t_health * 0.01) -- + 1 -- adding a +1 to ensure enemy dies
+			
+			local pos = actor:position()
+			local h = hit()
+			local direction = device().cam_dir
+			local magnitude = artefact_count * 60
+			direction.x = direction.x * 1000 * magnitude
+			direction.y = random_float(0.1, 0.2) * 5000 * magnitude
+			direction.z = direction.z * 1000 * magnitude
+			h.power = t_health	--10000
+			h.direction = direction
+			h.bone = "bip01_spine"
+			h.draftsman = actor
+			h.impulse = 10000	--6000
+			h.type = hit.wound
+			
+			-- ilrathCXV (01/31/25): Will ensure the enemy dies from this hit (some enemies have enough  resistance to outlive a hit even if matching their HP)
+			if target:alive() then
+				target:set_health_ex(0.01)
+			end
+			
+			target:hit(h)
+
+			local obj_id = target:id()
+
+			local function fly(obj_id)
+				local monster = get_object_by_id(obj_id)
+				if monster and not monster:alive() and monster:get_physics_shell() then
+					trace("monster dead, physics shell works")
+					monster:get_physics_shell():apply_force(direction.x, direction.y, direction.z)
+					play_sound_on_actor("perk_based_artefacts\\BIGGIB0" .. random(6), 1, random_float(0.9, 1.0))
+					local position = monster:position()
+					position.y = position.y + 1
+					
+					if artefact_count < 2 then
+						play_sound_on_actor("perk_based_artefacts\\BONSNAP" .. random(8), 0.1 + 0.2 * (artefact_count - 1), random_float(0.9, 1.0))
+						local gibs = particles_object("artefact\\effects\\af_idle_dist")
+						if gibs and not gibs:playing() then
+							gibs:play_at_pos(position)
+						end
+					elseif artefact_count < 4 then
+						play_sound_on_actor("perk_based_artefacts\\BONSNAP" .. random(8), 0.7, random_float(0.9, 1.0))
+						local gibs = particles_object("artefact\\artefact_mincer")
+						if gibs and not gibs:playing() then
+							gibs:play_at_pos(position)
+						end
+					else
+						play_sound_on_actor("perk_based_artefacts\\GNTEAR0" .. random(2), 0.75, random_float(0.9, 1.0))
+						local gibs = particles_object("artefact\\artefact_gravi")
+						if gibs and not gibs:playing() then
+							gibs:play_at_pos(position)
+						end
+					end
+
+					return true
+				end
+				trace("monster not dead yet")
+				return false
+			end
+			CreateTimeEvent("af_bat_fly" .. obj_id, obj_id, 0, fly, obj_id)
+			
+			add_cooldown(IsStalker(target) and 5 or (1 + 1 * artefact_count), "af_ball")
+		end
+	end,
+}
+
+--[[
 -- Patch for Ball for kicking monsters
 local use_kick = bind_monster.generic_object_binder.use_kick
 bind_monster.generic_object_binder.use_kick = function(self, obj, who)
@@ -3968,7 +4181,10 @@ bind_monster.generic_object_binder.use_kick = function(self, obj, who)
 	end
 
 	if not (obj:alive() and check_cooldown("af_ball")) then return end
-
+	
+	local m_health = ini_sys:r_float_ex(obj:section(), "Health") or 100
+	m_health = m_health / 100
+	
 	local actor = db.actor
 	local pos = actor:position()
 	local h = hit()
@@ -3978,10 +4194,10 @@ bind_monster.generic_object_binder.use_kick = function(self, obj, who)
 	direction.x = direction.x * 1000 * magnitude
 	direction.y = random_float(0.1, 0.2) * 5000 * magnitude
 	direction.z = direction.z * 1000 * magnitude
-	h.power = 10000
+	h.power = m_health
 	h.direction = direction
 	h.bone = "bip01_spine"
-	h.draftsman = obj
+	h.draftsman = actor
 	h.impulse = 10000	--6000
 	h.type = hit.wound
 	obj:hit(h)
@@ -4046,7 +4262,7 @@ bind_monster.generic_object_binder.update = function(self, delta)
 		self.object:set_tip_text(self.object:set_tip_text(game.translate_string("st_body_kick")))
 	end
 end
-
+]]
 -- Patch for First Person Death
 if ayykyu_fp_death and ayykyu_fp_death.actor_on_before_death then
 	local fp_death = ayykyu_fp_death.actor_on_before_death
@@ -4467,6 +4683,10 @@ function monster_on_death_callback(monster, who)
 	process_artefacts(artefact_on_monster_death_functions, monster, who, last_monster_hit, last_monster_hit_bone_index)
 end
 
+function on_key_press(key)
+	process_artefacts(artefact_on_key_press_functions, key)
+end
+
 function on_item_drag_dropped(obj_1, obj_2, slot_from, slot_to)
 	if not (obj_1 and obj_2) then 
 		trace("No obj_1 or obj_2 found, o1 %s, o2 %s", obj_1 and obj_1:section(), obj_2 and obj_2:section())
@@ -4520,6 +4740,9 @@ function actor_on_first_update()
 	RegisterScriptCallback("monster_on_before_hit", monster_on_before_hit)
 	RegisterScriptCallback("monster_on_hit_callback", monster_on_hit_callback)
 	RegisterScriptCallback("monster_on_death_callback", monster_on_death_callback)
+	
+	-- Adding the PBA 2.1 functionality
+	RegisterScriptCallback("on_key_press", on_key_press)
 end
 
 function on_trade_started_set_values()

@@ -20,11 +20,14 @@ function load_mcm_options()
 end
 
 function actor_on_hud_animation_play(anm_table, item)
-    --printf("%s, %s", anm_table.anm_name, lower_weapon_sprint and lower_weapon_sprint.lower_weapon_sprint_status)
+    --printf("start: %s, %s", anm_table.anm_name, lower_weapon_sprint and lower_weapon_sprint.lower_weapon_sprint_status)
     if snd_obj and snd_obj:playing() then snd_obj:stop() end
-    if not enabled or not item then return end
+    local active_item = db.actor:active_item()
 
-    if string.find(anm_table.anm_name, "idle_sprint") then
+    if enabled
+    and IsMoveState("mcSprint")
+    and string.find(anm_table.anm_name, "idle_sprint")
+    and item and active_item and item and item:id() == active_item:id() then
         section = item:section()
         if not section then return end
 
@@ -63,13 +66,15 @@ function stop_sound_playback()
 end
 
 function actor_on_weapon_raise(item)
+    if not enabled then return end
     local active_item = db.actor:active_item()
     if not active_item or active_item and active_item:id() ~= cached_id then
         if snd_obj and snd_obj:playing() then
             snd_obj:stop()
         end
-    elseif item and item:id() and item:id() == cached_id and snd_obj and not snd_obj:playing() then
+    elseif IsMoveState("mcSprint") and item and item:id() and item:id() == cached_id and snd_obj and not snd_obj:playing() then
         snd_obj:play(db.actor, 0, sound_object.s2d + sound_object.looped)
+        snd_obj.volume = volume_base * volume
     end
 end
 
@@ -78,8 +83,8 @@ function on_game_start()
     RegisterScriptCallback("actor_on_item_drop", actor_on_item_moved)
     RegisterScriptCallback("actor_item_to_ruck", actor_on_item_moved)
     RegisterScriptCallback("actor_item_to_slot", actor_on_item_moved)
-    RegisterScriptCallback("actor_on_weapon_raise", actor_on_weapon_raise)
-    RegisterScriptCallback("actor_on_weapon_lower", stop_sound_playback)
+    --RegisterScriptCallback("actor_on_weapon_raise", actor_on_weapon_raise)
+    --RegisterScriptCallback("actor_on_weapon_lower", stop_sound_playback)
     RegisterScriptCallback("actor_on_attach_vehicle", stop_sound_playback)
 	RegisterScriptCallback("actor_on_before_death", stop_sound_playback)
 	RegisterScriptCallback("actor_on_net_destroy", stop_sound_playback)
