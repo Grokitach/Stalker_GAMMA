@@ -1,5 +1,4 @@
 local dte = demonized_time_events
-local saved_custom = {}
 
 local target_fov = 60
 local mouse_to_fov = 0.5
@@ -11,6 +10,10 @@ local special_gun = false
 local is_pistol = false
 local wpn = nil
 local last_sec = nil
+local onAds = false
+local outAds = false
+local alt_adsing = false
+local GuiOpening = {}
 -------------SPECIAL WEAPON: LIST OF WEAPON THAT HAVE CUSTOM HUD-FOV----------------
 
 special_weapons={
@@ -82,16 +85,42 @@ function get_wp_sec()
 	return sec
 end
 
+function priotised_hud_fov(hud_fov) -- THIS IS INSANITY, OVERWRITE HUD_FOV TO COMPATIBLE WITH ADJUSTABLE SCOPE VIEW
+	exec_console_cmd("hud_fov " .. hud_fov)
+	return true
+end
+
+function GuiCheck()
+	for i,v in pairs(GuiOpening) do
+		if v==true then
+			return true
+		end
+	end
+	return false
+end
+
 function change_zoom(fov)
 	exec_console_cmd("fov " .. fov)
-	local sec = get_wp_sec
-	if sec and saved_custom[sec] then
-		--print("custom")
-		--hud_to_fov = saved_custom[sec]/fov_before
-		exec_console_cmd("hud_fov " .. saved_custom[sec])
-	end
-	exec_console_cmd("hud_fov " .. fov*hud_to_fov)
 	exec_console_cmd("mouse_sens " .. fov*mouse_to_fov)
+	-- if sec and saved_custom[sec] then
+	-- 	--print("custom")
+	-- 	--hud_to_fov = saved_custom[sec]/fov_before
+	-- 	exec_console_cmd("hud_fov " .. saved_custom[sec])
+	-- end
+	if outAds then
+		dte.RemoveTimeEvent("free_zoom_fov", "priotised_hud_fov")
+		dte.CreateTimeEvent("free_zoom_fov", "priotised_hud_fov", 0.03, priotised_hud_fov, fov*hud_to_fov)
+		--exec_console_cmd("hud_fov " .. ) 
+	else
+		if onAds then ------ IF ADS THEN ADJUSTABLE SCOPE VIEW WILL HANDLE HUD_FOV
+			if freezooming then
+				dte.RemoveTimeEvent("free_zoom_fov", "priotised_hud_fov")
+				dte.CreateTimeEvent("free_zoom_fov", "priotised_hud_fov", 0.05, priotised_hud_fov, get_console_cmd(2, "hud_fov")*free_zoom_mult)
+			end
+		else
+			exec_console_cmd("hud_fov " .. fov*hud_to_fov)
+		end
+	end
 end
 
 function actor_on_first_update()
@@ -125,17 +154,17 @@ function actor_on_update()
                     hud_fov_before = hud_fov_backup
                 end
             end
+			hud_to_fov = hud_fov_before/fov_before
+			if freezooming then
+				target_fov = fov_before * free_zoom_mult
+			else
+				target_fov = fov_before
+			end
+			change_zoom(target_fov)
         end
-        hud_to_fov = hud_fov_before / fov_before
-        adsing = false
-        if freezooming then
-            target_fov = fov_before * free_zoom_mult
-        else
-            target_fov = fov_before
-        end
-        change_zoom(target_fov)
-        last_sec = sec
+		last_sec = sec
     end
+	--printf(tostring(hud_to_fov).." "..tostring(onAds))
 end
 
 function PDACheck()
@@ -151,13 +180,13 @@ function on_key_press(key)
   	local old_target_fov=target_fov
   	if PDACheck() then return end
 	if (key == KEY_TOGGLE_ZOOM) then
-		if freezooming then return end
+		if freezooming or GuiCheck() then return end
 		if wpn then
 			if wpn:get_state() == 7 then return end
 			if z_3d_scopes and not IsGrenade(wpn) and not IsBolt(wpn) then
 				scoped = wpn:cast_Weapon():IsScopeAttached()
 				zoomed = wpn:cast_Weapon():IsZoomed()
-				if scoped and zoomed then return end
+				if scoped and zoomed and wpn:cast_Weapon():GetZoomType()==0 then return end
 			end
 		end
 		target_fov=target_fov*free_zoom_mult
@@ -167,27 +196,27 @@ function on_key_press(key)
 		local sprint_coef = 0.95
 		speed.add_speed("freezoom_speed_run", run_coef, false, true)
 		speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
-		change_zoom(target_fov)
+		if adsing then
+			hud_to_fov = get_console_cmd(2, "hud_fov")/(fov_before*ads_mult)
+		end
+        change_zoom(target_fov)
+		if adsing then
+			hud_to_fov = hud_fov_before/fov_before
+		end
 	end
-	if (key == bind_to_dik(key_bindings.kWPN_FIRE)) then
-		--if adsing then
-		--	change_zoom(target_fov)
-		--end
-	end
-	--saved_custom = mdata.snk_saved_hud_fov or {}
 end
 
 function on_key_release(key)
     local old_target_fov = target_fov
     if PDACheck() then return end
     if (key == KEY_TOGGLE_ZOOM) then
-        if not freezooming then return end
+        if not freezooming or GuiCheck() then return end
         if wpn then
             if wpn:get_state() == 7 then return end
             if z_3d_scopes and not IsGrenade(wpn) and not IsBolt(wpn) then
                 scoped = wpn:cast_Weapon():IsScopeAttached()
                 zoomed = wpn:cast_Weapon():IsZoomed()
-                if scoped and zoomed then return end
+                if scoped and zoomed and wpn:cast_Weapon():GetZoomType()==0 then return end
             end
         end
         freezooming = false
@@ -196,43 +225,68 @@ function on_key_release(key)
         local sprint_coef = 1
         speed.add_speed("freezoom_speed_run", run_coef, false, true)
         speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
+		if adsing then
+			hud_to_fov = (get_console_cmd(2, "hud_fov")/free_zoom_mult)/(fov_before*ads_mult)
+		end
         change_zoom(target_fov)
+		if adsing then
+			hud_to_fov = hud_fov_before/fov_before
+		end
     end
 end
-
 
 function actor_on_weapon_zoom_in()
     if adsing then return end
     if z_3d_scopes then
         scoped = wpn:cast_Weapon():IsScopeAttached()
         zoomed = wpn:cast_Weapon():IsZoomed()
-        if scoped and zoomed then
-			if freezooming then
-				freezooming = false
-				local run_coef = 1
-				local sprint_coef = 1
-				speed.add_speed("freezoom_speed_run", run_coef, false, true)
-				speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
-				target_fov = target_fov/free_zoom_mult
-				change_zoom(target_fov)
-			end
+        if scoped and zoomed and wpn:cast_Weapon():GetZoomType()==0 and freezooming then
+			freezooming = false
+			local run_coef = 1
+			local sprint_coef = 1
+			speed.add_speed("freezoom_speed_run", run_coef, false, true)
+			speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
+			target_fov = target_fov/free_zoom_mult
+			exec_console_cmd("fov " .. target_fov)
+			exec_console_cmd("mouse_sens " .. target_fov*mouse_to_fov)
+			--change_zoom(target_fov)
 			return 
 		end
     end
     target_fov = target_fov * ads_mult
-    pressed = true
     adsing = true
+	onAds = true
 	change_zoom(target_fov)
+	onAds = false
     -- printf("adszoom")
 end
-
 
 function actor_on_weapon_zoom_out()
     if not adsing then return end
     adsing = false
     target_fov = target_fov / ads_mult
-    released = true
+	outAds = true
 	change_zoom(target_fov)
+	outAds = false
+end
+
+function actor_on_weapon_zoom_type_changed()
+	if z_3d_scopes then
+        scoped = wpn:cast_Weapon():IsScopeAttached()
+        zoomed = wpn:cast_Weapon():IsZoomed()
+        if scoped and zoomed and wpn:cast_Weapon():GetZoomType()==0 and freezooming then
+			freezooming = false
+			local run_coef = 1
+			local sprint_coef = 1
+			speed.add_speed("freezoom_speed_run", run_coef, false, true)
+			speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
+			target_fov = target_fov/free_zoom_mult
+			exec_console_cmd("fov " .. target_fov)
+			exec_console_cmd("mouse_sens " .. target_fov*mouse_to_fov)
+			--change_zoom(target_fov)
+			return 
+		end
+    end
 end
 
 function actor_on_weapon_reload()
@@ -247,33 +301,79 @@ function actor_on_weapon_reload()
 	change_zoom(target_fov)
 end
 
-function actor_on_before_death()
-	local run_coef = 1
+----- RESETs------------
+
+function reset_zoom()
+    local run_coef = 1
 	local sprint_coef = 1
 	speed.add_speed("freezoom_speed_run", run_coef, false, true)
 	speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
+    adsing = false
+    freezooming = false
+    special_gun = false
+    is_pistol = false
+    wpn = nil
+    last_sec = nil
+    onAds = false
 	hud_fov_before = hud_fov_backup
 	hud_to_fov = hud_fov_before/fov_before
+	mouse_to_fov = mouse_sens_before/fov_before
 	target_fov = fov_before
-	change_zoom(fov_before)
+	change_zoom(target_fov)
 end
 
-local function load_state(mdata)
-	saved_custom = mdata.snk_saved_hud_fov or {}
-	saved_gls = mdata.snk_saved_gl_fov or {}
+function actor_on_before_death()
+    reset_zoom()
 end
 
-function on_game_start()
+function on_level_changing()
+	--printf("RESET")
+    reset_zoom()
+end
+
+function onActorMenuOpen(name)
+	--printf("open: "..name)
+	if name=="UIInventory" or name == "Dialog" or name=="UIWorkshop" then --- prevent zoom on inventory
+		GuiOpening[name]=true
+		if freezooming then
+			freezooming = false
+			target_fov = target_fov / free_zoom_mult
+			local run_coef = 1
+			local sprint_coef = 1
+			speed.add_speed("freezoom_speed_run", run_coef, false, true)
+			speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
+			change_zoom(target_fov)
+		end
+	end
+end
+
+function onActorMenuClose(name)
+	--printf("close: "..name)
+	if name=="UIInventory" or name == "Dialog" or name=="UIWorkshop" then
+		GuiOpening[name] = false
+	end
+end
+
+function actor_on_net_destroy()
+	reset_zoom()
+end
+
+function on_game_start() -- I know thats a lot of just in case :)
 	RegisterScriptCallback("on_option_change",on_option_change)
 	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
 	RegisterScriptCallback("on_key_press",on_key_press)
 	RegisterScriptCallback("on_key_release",on_key_release)
-	RegisterScriptCallback("actor_on_before_death",actor_on_before_death)
 	RegisterScriptCallback("actor_on_weapon_zoom_out",actor_on_weapon_zoom_out)
 	RegisterScriptCallback("actor_on_weapon_zoom_in",actor_on_weapon_zoom_in)
-	RegisterScriptCallback("actor_on_weapon_reload",actor_on_weapon_reload)
+	RegisterScriptCallback("actor_on_weapon_zoom_in",actor_on_weapon_zoom_in)
+	RegisterScriptCallback("actor_on_weapon_zoom_type_changed",actor_on_weapon_zoom_type_changed)
 	RegisterScriptCallback("actor_on_update",actor_on_update)
-	RegisterScriptCallback("load_state", load_state)
+    RegisterScriptCallback("on_level_changing",on_level_changing)
+	RegisterScriptCallback("actor_on_before_death",actor_on_before_death)
+	RegisterScriptCallback("actor_on_net_destroy",actor_on_net_destroy)
+	RegisterScriptCallback("GUI_on_show",onActorMenuOpen)
+	RegisterScriptCallback("GUI_on_hide",onActorMenuClose)
+
 	on_option_change(mcm_keybinds)
 	hud_fov_backup = get_console_cmd(2, "hud_fov")
 end
