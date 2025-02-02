@@ -1412,6 +1412,7 @@ artefact_props = { -- Special props of artefacts that are used in processing
 	af_ball = {
 		monster_tiers = { -- Monster Tiers opening by artefact count
 			[1] = {
+				clsid.crow,
 				clsid.zombie,
 				clsid.zombie_s,
 				clsid.cat,
@@ -1460,6 +1461,7 @@ artefact_props = { -- Special props of artefacts that are used in processing
 				clsid.chimera_s,
 				clsid.gigant_s,
 				clsid.pseudo_gigant,
+				"gigant_jumper",
 				"SM_MEDVED",
 				"SM_MONSTER_BOAR",
 				"SM_VENDIGO",
@@ -3995,13 +3997,14 @@ artefact_on_key_press_functions = {
 					and (
 						(IsMonster(obj) and 
 						(
-							-- ilrathCXV (02/01/2025): Fixed Gigant Jumper being classified as a Snork - will now be counted as a Pseduogiant
-							af_ball.monsters[((obj:section() == "gigant_jumper" and clsid.pseudo_gigant) or obj:clsid())] or af_ball.monsters[SYS_GetParam(
+							-- ilrathCXV (02/01/2025): Section check to ensure gigant jumpers are assigned properly
+							--						   Final check is added so Lurkers are ID'd properly (shares clsid with Chimeras so was req. 5 Ball copies)
+							af_ball.monsters[obj:section()] or af_ball.monsters[obj:clsid()] or af_ball.monsters[SYS_GetParam(
 								2,
 								obj:section(),
 								"kind",
 								"definitely_not_found_kind"
-							)]
+							)] or af_ball.monsters[SYS_GetParam(0, obj:section(), "kind", 0)]
 						))
 						-- or (IsStalker(obj) and xr_combat_ignore.fighting_with_actor_npcs[obj:id()])
 					)
@@ -4010,8 +4013,7 @@ artefact_on_key_press_functions = {
 				) then
 					-- printf("target %s is invalid", obj:name())
 					return
-				end
-
+				end				
 				-- Pointed target takes priority
 				if pointed and pointed:id() == obj:id() then
 					-- printf("target %s is pointed", obj:name())
