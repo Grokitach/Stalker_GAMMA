@@ -1,0 +1,288 @@
+
+local printlog = npe_manager.Printlog_npe
+local printdebug = npe_manager.Printdebug_npe
+
+GUI = nil -- instance, don't touch
+
+local GAMETIME_STATE = {
+	STOPPED = 0,
+	INMOTION = 1 
+}
+
+local function change_gametime_to(state)
+	exec_console_cmd("time_factor " .. state)
+end
+
+local function pause_game(pause)
+	if pause then
+		exec_console_cmd("freeze_time on")
+	else
+		exec_console_cmd("freeze_time off")
+	end
+	
+end
+
+local PDA = "PDA"
+local NPE_HIGH = "NPE_HIGH"
+local NPE_LOW = "NPE_LOW"
+local NPE_MEDIUM = "NPE_MEDIUM"
+local RADIO = "RADIO"
+local SOUNDS_SET
+Sounds = {
+	[PDA] = {
+		open =  sound_object([[device\pda\pda_guide]]),
+		next =  sound_object([[radio\interact\click]]),
+		prev =  sound_object([[radio\interact\click]]),
+		close = sound_object([[device\pda\pda_note]])
+	},
+	[NPE_HIGH] = {
+		open =  sound_object([[interface\npe\open_panel-alt_high]]),
+		next =  sound_object([[interface\npe\next_page_high]]),
+		prev =  sound_object([[interface\npe\prev_page_high]]),
+		close = sound_object([[interface\npe\close_panel_high]])
+	},
+	[NPE_MEDIUM] = {
+		open =  sound_object([[interface\npe\open_panel-alt_med]]),
+		next =  sound_object([[interface\npe\next_page_med]]),
+		prev =  sound_object([[interface\npe\prev_page_med]]),
+		close = sound_object([[interface\npe\close_panel_med]])
+	},	
+	[NPE_LOW] = {
+		open =  sound_object([[interface\npe\open_panel-alt]]),
+		next =  sound_object([[interface\npe\next_page]]),
+		prev =  sound_object([[interface\npe\prev_page]]),
+		close = sound_object([[interface\npe\close_panel]])
+	},
+	[RADIO] = {
+		open = sound_object([[detectors\rf\on]]),
+		next = sound_object([[detectors\rf\beep]]),
+		prev = sound_object([[detectors\rf\beep]]),
+		close = sound_object([[detectors\rf\off]])
+	}	
+}
+
+local snd
+local function stop_sound()
+	if snd then
+		snd:stop()
+		snd = nil
+	end
+end
+local function play_sound(sound)
+	stop_sound()
+	snd = sound
+	snd:play(db.actor,0,sound_object.s2d)
+end
+
+function Play(set)
+	if set == nil then
+		printdebug("[NPE] Play set is nil")
+		npe_manager.Resume_execution()
+		return
+	end
+	SOUNDS_SET = npe_manager.Settings.sounds_set
+	printdebug("[NPE] Sounds set: " .. SOUNDS_SET)
+    printdebug("[NPE] Play set module: " .. set.module .. " set Id:" .. set.id)
+	printdebug("[NPE] Play set title: " .. set.title)
+	if npe_manager.Settings.pause_game or set.context.pause_game then
+    	pause_game(true)
+	end
+	play_sound(Sounds[SOUNDS_SET].open)
+    printdebug("[NPE] Creating GUI")
+    GUI = UINewPlayerExperience(set)
+
+	if (GUI) and (not GUI:IsShown()) then
+        printdebug("[NPE] Showing GUI")
+		GUI:ShowDialog(true)
+		Register_UI("UINewPlayerExperience","npe_dialog")
+    else
+        printdebug("[NPE] GUI already shown")
+		npe_manager.Resume_execution()
+		return
+    end
+end
+
+local xml = nil
+function LoadUIStatic()
+	printdebug("[NPE] LoadUIStatic")
+	if not xml then
+		printdebug("[NPE] Loading ui_npe_dialog.xml")
+		xml = CScriptXmlInit()
+		xml:ParseFile("ui_npe_dialog.xml")
+	end
+end
+
+-------------------------------------------------------------------
+class "UINewPlayerExperience" (CUIScriptWnd)
+
+function UINewPlayerExperience:__init(set) super()
+	self:InitControls(set)
+end
+
+function UINewPlayerExperience:__finalize()
+end
+
+function UINewPlayerExperience:InitControls(set)
+    printdebug("[NPE] InitControls")
+	self:SetWndRect			(Frect():set(0,0,1024,768))
+	self:SetAutoDelete(true)
+	self.set = set
+    LoadUIStatic()
+    self.xml = xml
+	self.dialog	= xml:InitStatic("ui_npe_dialog", self)
+	self.frame	= xml:InitFrame("ui_npe_dialog:frame", self.dialog)
+	
+	self.context = xml:InitTextWnd("ui_npe_dialog:context",self.dialog)
+	self.context:SetText("%c[0,255,208,0]" .. "NPE > " .. set.context.event.name)
+
+	local text
+	text = game.translate_string(self.set.title)
+	self.set_title = xml:InitTextWnd("ui_npe_dialog:set_title",self.dialog)
+	self.set_title:SetText(text)
+
+	-- card context
+	self.cardIndex = 1
+	if self.set.cards[self.cardIndex] then
+		if self.set.cards[self.cardIndex].title then
+			text = game.translate_string(self.set.cards[self.cardIndex].title)
+		else
+			text = game.translate_string(self.set.title)
+		end
+		self.card_title = xml:InitTextWnd("ui_npe_dialog:card_title",self.dialog)
+		self.card_title:SetText(text)
+	
+		self.top_line = xml:InitStatic("ui_npe_dialog:top_line",self.dialog)
+
+		self.card_description = xml:InitTextWnd("ui_npe_dialog:card_description",self.dialog)
+		text = game.translate_string(self.set.cards[self.cardIndex].description)
+		self.card_description:SetText(text)
+
+		self.card_image = xml:InitStatic("ui_npe_dialog:card_image",self.dialog)
+		self.card_image:InitTexture(self.set.cards[self.cardIndex].image)
+	end
+
+    self.bottom_line = xml:InitStatic("ui_npe_dialog:bottom_line",self.dialog)
+
+    self.card_index = xml:InitTextWnd("ui_npe_dialog:card_index",self.dialog)
+	local max_card = #self.set.cards > 3 and 3 or #self.set.cards
+	self.card_index:SetText(self.cardIndex .. "/" .. max_card)
+
+    self.btn_close = xml:Init3tButton("ui_npe_dialog:btn_close", self.dialog)
+	self:Register(self.btn_close, "btn_close")	
+	self:AddCallback("btn_close", ui_events.BUTTON_CLICKED, self.OnButtonClose, self)
+
+    self.btn_next = xml:Init3tButton("ui_npe_dialog:btn_next", self.dialog)
+	self:Register(self.btn_next, "btn_next")	
+	self:AddCallback("btn_next", ui_events.BUTTON_CLICKED, self.OnButtonNext, self)
+
+    self.btn_prev = xml:Init3tButton("ui_npe_dialog:btn_prev", self.dialog)
+    self:Register(self.btn_prev, "btn_prev")	
+	self:AddCallback("btn_prev", ui_events.BUTTON_CLICKED, self.OnButtonPrev, self)
+
+	self:UpdateButtons()
+end
+
+function UINewPlayerExperience:UpdateButtons()
+	printdebug("[NPE] UpdateButtons")
+	self.btn_prev:Show(true)
+	self.btn_next:Show(true)
+	if self.cardIndex == 1 then
+		self.btn_prev:Show(false)
+	else
+		self.btn_prev:Show(true)
+	end
+
+	if self.cardIndex == 3 or self.cardIndex == #self.set.cards then
+		self.btn_next:Show(false)
+	else
+		self.btn_next:Show(true)
+	end
+
+end
+
+function UINewPlayerExperience:OnButtonClose()
+    self:Close()
+end
+
+function UINewPlayerExperience:OnButtonNext()
+    printdebug("[NPE] OnButtonNext")
+	self.cardIndex = self.cardIndex + 1
+	if self.cardIndex <= #self.set.cards and self.cardIndex <= 3 and self.set.cards[self.cardIndex] then
+		local text
+		if self.set.cards[self.cardIndex].title then
+			text = game.translate_string(self.set.cards[self.cardIndex].title)
+		else
+			text = game.translate_string(self.set.title)
+		end
+		self.card_title:SetText(text)
+	
+		text = game.translate_string(self.set.cards[self.cardIndex].description)
+		self.card_description:SetText(text)
+
+		self.card_image:InitTexture(self.set.cards[self.cardIndex].image)
+		local max_card = #self.set.cards > 3 and 3 or #self.set.cards
+		self.card_index:SetText(self.cardIndex .. "/" .. max_card)
+	else
+		self.cardIndex = 3
+	end
+	play_sound(Sounds[SOUNDS_SET].next)
+	self:UpdateButtons()
+end
+
+function UINewPlayerExperience:OnButtonPrev()
+    printdebug("[NPE] OnButtonPrev")
+	self.cardIndex = self.cardIndex - 1
+	if self.cardIndex > 0 and self.set.cards[self.cardIndex] then
+		local text
+		if self.set.cards[self.cardIndex].title then
+			text = game.translate_string(self.set.cards[self.cardIndex].title)
+		else
+			text = game.translate_string(self.set.title)
+		end
+		self.card_title:SetText(text)
+	
+		text = game.translate_string(self.set.cards[self.cardIndex].description)
+		self.card_description:SetText(text)
+
+		self.card_image:InitTexture(self.set.cards[self.cardIndex].image)
+
+		local max_card = #self.set.cards > 3 and 3 or #self.set.cards
+		self.card_index:SetText(self.cardIndex .. "/" .. max_card)
+	else
+		self.cardIndex = 1
+	end
+	play_sound(Sounds[SOUNDS_SET].prev)
+	self:UpdateButtons()
+end
+
+function UINewPlayerExperience:Close()
+	self:HideDialog()
+	self:Show(false)
+	Unregister_UI("UINewPlayerExperience")
+	GUI = nil    
+	play_sound(Sounds[SOUNDS_SET].close)
+	if npe_manager.Settings.pause_game or self.set.context.pause_game then
+    	pause_game(false)
+	end	
+	npe_manager.Resume_execution()
+end
+
+function UINewPlayerExperience:TearDown()
+	self:HideDialog()
+	self:Show(false)
+	Unregister_UI("UINewPlayerExperience")
+	GUI = nil    
+end
+function UINewPlayerExperience:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+
+	if (res == false) then
+		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+			if dik == DIK_keys.DIK_ESCAPE then
+				printdebug("[NPE] OnKeyboard DIK_ESCAPE")
+				self:Close()
+			end
+		end
+    end
+    return res
+end
