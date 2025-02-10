@@ -1,18 +1,17 @@
 local dte = demonized_time_events
 
-local target_fov = 60
-local mouse_to_fov = 0.5
-local hud_to_fov = 0.5
+target_fov = 60
+mouse_to_fov = 0.5
+hud_to_fov = 0.5
 
-local adsing = false
-local freezooming = false
-local special_gun = false
-local is_pistol = false
+adsing = false
+freezooming = false
+special_gun = false
+is_pistol = false
 local wpn = nil
 local last_sec = nil
 local onAds = false
 local outAds = false
-local alt_adsing = false
 local GuiOpening = {}
 -------------SPECIAL WEAPON: LIST OF WEAPON THAT HAVE CUSTOM HUD-FOV----------------
 
@@ -29,7 +28,8 @@ special_weapons={
 	["wpn_val"] = 0.80,	
 	["wpn_val_modern"] = 0.80,		
 	["wpn_udp9"] = 0.61,
-	--["wpn_pm"] = 0.3, -- test
+	["wpn_akm_alfa"] = 0.72,
+	--["wpn_pm"] = 0.3, -- for testing
 	--["wpn_ak"] = 0.9
 }
 
@@ -47,10 +47,10 @@ function on_mcm_load()
 			-- LuaFormatter off
 			{id = "title", type = "slide", link = "ui_options_slider_player", text = "ui_mcm_menu_free_zoom", size = {512, 50}, spacing = 20},
 			{id = "key_bind_toggle", type = "key_bind", val = 2, def = KEY_TOGGLE_ZOOM},
+			{id = "freezoom_toggleable", type = "check", val = 1, def = false},
 			{id = "free_zoom_mult", type = "track", val = 2, min=0.5,max=1,step=0.01, def = 0.61},
 			{id = "pistol_mult", type = "track", val = 2, min=1,max=2,step=0.01, def = 1},
 			{id = "ads_mult", type = "track", val = 2, min=0.5,max=1,step=0.01, def = 0.85},
-			{id = "freezoom_toggleable", type = "check", val = 1, def = false},
 			-- LuaFormatter on
 		}
 	}
@@ -123,6 +123,7 @@ function change_zoom(fov)
 			exec_console_cmd("hud_fov " .. fov*hud_to_fov)
 		end
 	end
+	return true
 end
 
 function actor_on_first_update()
@@ -330,14 +331,18 @@ function actor_on_weapon_zoom_type_changed()
         zoomed = wpn:cast_Weapon():IsZoomed()
         if scoped and zoomed and wpn:cast_Weapon():GetZoomType()==0 and freezooming then
 			freezooming = false
+			target_fov = target_fov / free_zoom_mult
 			local run_coef = 1
 			local sprint_coef = 1
 			speed.add_speed("freezoom_speed_run", run_coef, false, true)
 			speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
-			target_fov = target_fov/free_zoom_mult
-			exec_console_cmd("fov " .. target_fov)
-			exec_console_cmd("mouse_sens " .. target_fov*mouse_to_fov)
-			--change_zoom(target_fov)
+			if adsing then
+				hud_to_fov = (get_console_cmd(2, "hud_fov")/free_zoom_mult)/(fov_before*ads_mult)
+			end
+			change_zoom(target_fov)
+			if adsing then
+				hud_to_fov = hud_fov_before/fov_before
+			end
 			return 
 		end
     end
@@ -352,7 +357,8 @@ function actor_on_weapon_reload()
 		speed.add_speed("freezoom_speed_run", run_coef, false, true)
 		speed.add_speed("freezoom_speed_sprint", sprint_coef, true, true)
 	end
-	change_zoom(target_fov)
+	--change_zoom(target_fov)
+	dte.CreateTimeEvent("free_zoom_fov", "priotised_fov", 0.03, change_zoom, target_fov)
 end
 
 ----- RESETs------------
@@ -419,7 +425,7 @@ function on_game_start() -- I know thats a lot of just in case :)
 	RegisterScriptCallback("on_key_release",on_key_release)
 	RegisterScriptCallback("actor_on_weapon_zoom_out",actor_on_weapon_zoom_out)
 	RegisterScriptCallback("actor_on_weapon_zoom_in",actor_on_weapon_zoom_in)
-	RegisterScriptCallback("actor_on_weapon_zoom_in",actor_on_weapon_zoom_in)
+	RegisterScriptCallback("actor_on_weapon_reload",actor_on_weapon_reload)
 	RegisterScriptCallback("actor_on_weapon_zoom_type_changed",actor_on_weapon_zoom_type_changed)
 	RegisterScriptCallback("actor_on_update",actor_on_update)
     RegisterScriptCallback("on_level_changing",on_level_changing)
