@@ -626,6 +626,26 @@ function sim_squad_scripted:add_squad_member(spawn_section, spawn_position, lv_i
 	return obj.id
 end
 
+function sim_squad_scripted:get_random_spawn_count(settings_id)
+	local count = ini_sys:r_string_ex(settings_id,"npc_in_squad") or "1,2"
+	count = str_explode(count,",")
+	count[1] = count[1] and tonumber(count[1])
+	count[2] = count[2] and tonumber(count[2]) or count[1]
+
+	if _G.WARFARE then
+		local faction = ini_sys:r_string_ex(settings_id, "faction")
+		if (warfare_options.options.factions[faction]) then
+			if (warfare_options.options.factions[faction].random_squad_count) then
+				printf("!!! GETTING RANDOM COUNT FOR "..faction.." | " .. tonumber(warfare_options.options.factions[faction].min_random_squad_count) .. " - " .. tonumber(warfare_options.options.factions[faction].max_random_squad_count) .. " !!!!")
+				count[1] = tonumber(warfare_options.options.factions[faction].min_random_squad_count)
+				count[2] = tonumber(warfare_options.options.factions[faction].max_random_squad_count)
+			end
+		end
+	end
+
+	return count
+end
+
 function sim_squad_scripted:create_npc(spawn_smart,pos,lvid,gvid)
 	--utils_data.debug_write("sim_squad_scripted:create_npc")
 	local settings_id = self:section_name()
@@ -701,21 +721,7 @@ function sim_squad_scripted:create_npc(spawn_smart,pos,lvid,gvid)
 	if random_spawn ~= nil then
 		random_spawn = parse_names(random_spawn)
 
-		local count = ini_sys:r_string_ex(settings_id,"npc_in_squad") or "1,2"
-		count = str_explode(count,",")
-		count[1] = count[1] and tonumber(count[1])
-		count[2] = count[2] and tonumber(count[2]) or count[1]
-
-		if _G.WARFARE then
-			local faction = ini_sys:r_string_ex(settings_id, "faction")
-			if (warfare_options.options.factions[faction]) then
-				if (warfare_options.options.factions[faction].random_squad_count) then
-					printf("!!! GETTING RANDOM COUNT FOR "..faction.." | " .. tonumber(warfare_options.options.factions[faction].min_random_squad_count) .. " - " .. tonumber(warfare_options.options.factions[faction].max_random_squad_count) .. " !!!!")
-					count[1] = tonumber(warfare_options.options.factions[faction].min_random_squad_count)
-					count[2] = tonumber(warfare_options.options.factions[faction].max_random_squad_count)
-				end
-			end
-		end
+		local count = self:get_random_spawn_count(settings_id)
 		
 		-- check for random squad members for each faction here.
 		
