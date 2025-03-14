@@ -1,0 +1,169 @@
+local common = animation_common
+
+valid_anims = {}
+local mutate_anim = animation_common.mutate_anim
+function animation_common.mutate_anim(anm_table, anm_suffix, section)
+    table.insert(valid_anims, anm_suffix)
+    return mutate_anim(anm_table, anm_suffix, section)
+end
+
+transitions = {
+}
+
+function add_strict_transition(hud_section, start_anm, end_anm, transition_anm)
+    if not (hud_section and start_anm and end_anm and transition_anm) then
+        printf("[ERROR] aol_anim_transitions: Could not add new transition (a parameter was nil)")
+        return
+    end
+
+    -- Make sure transitions is properly set as a table of tables
+    transitions[hud_section] = transitions[hud_section] or {}
+    transitions[hud_section][start_anm] = transitions[hud_section][start_anm] or {}
+    
+    transitions[hud_section][start_anm][end_anm] = transition_anm
+end
+
+pattern_transitions = {
+}
+
+function add_pattern_transition(hud_section, start_anm, end_anm, transition_anm, priority)
+    priority = priority or 25565
+    if not (hud_section and start_anm and end_anm and transition_anm) then
+        printf("[ERROR] aol_anim_transitions: Could not add new transition (a parameter was nil)")
+        return
+    end
+
+    pattern_transitions[hud_section] = pattern_transitions[hud_section] or {}
+    table.insert(pattern_transitions[hud_section], {
+        ["start_anm"] = start_anm, 
+        ["end_anm"] = end_anm,
+        ["transition_anm"] = transition_anm,
+        ["priority"] = priority
+    })
+end
+
+local ini_items = ini_file("system.ltx")
+local function itr(section)
+    local is_hud_section = section:match('_hud$')
+    if is_hud_section then
+        local line_count = ini_items:line_count(section)
+        for i=0,line_count-1 do
+            local result, id, value	= ini_items:r_line_ex(section,i,"","")
+            
+            local is_strict_transition = id:match("^ts_strict_")
+            if is_strict_transition then
+                local anm_names = str_explode(value,",")
+                add_strict_transition(section, anm_names[1], anm_names[2], anm_names[3])
+            end
+
+            local is_pattern_transition = id:match("^ts_pattern_")
+            if is_pattern_transition then
+                local anm_names = str_explode(value,",")
+                add_pattern_transition(section, anm_names[1], anm_names[2], anm_names[3], anm_names[4])
+            end
+        end
+    end
+    return false
+end
+ini_items:section_for_each(itr)
+table.sort(pattern_transitions, function(a,b) return a["priority"] < b["priority"] end)
+
+local previous_anms = {}
+
+function set_strict_transition(anm_table, hud_section)
+    -- Make sure item has transitions
+    local item_transitions = transitions[hud_section]
+	if not (item_transitions) then
+        -- previous_anms[hud_section] = anm_table.anm_name
+        return false
+    end
+
+    -- Make sure there is a previous anm to check
+    local start_anm = previous_anms[hud_section]
+    if not start_anm then
+        -- previous_anms[hud_section] = anm_table.anm_name
+        return false
+    end
+
+    -- Get transition anm from table
+    local end_anm = anm_table.anm_name
+    local transition_anm = item_transitions[start_anm] and item_transitions[start_anm][end_anm]
+    if not (transition_anm) then
+        -- previous_anms[hud_section] = anm_table.anm_name
+        return false
+    end
+
+    -- Re-add valid suffixes from previous mutations
+    for i, anm_suffix in ipairs(valid_anims) do
+        if animation_common.has_animation(hud_section, transition_anm .. anm_suffix) then
+            transition_anm = transition_anm .. anm_suffix
+        end
+    end
+
+    anm_table.anm_name = transition_anm
+    return true
+end
+
+function set_pattern_transition(anm_table, hud_section)
+    -- Make sure item has transitions
+    local item_transitions = pattern_transitions[hud_section]
+    if not item_transitions then
+        return false
+    end
+
+    -- Make sure there is a previous anm to check
+    local start_anm = previous_anms[hud_section]
+    if not start_anm then
+        -- previous_anms[hud_section] = anm_table.anm_name
+        return false
+    end
+
+    
+    local end_anm = anm_table.anm_name
+    for _, transition in ipairs(item_transitions) do
+        local transition_anm = transition["transition_anm"]
+        -- Re-add valid suffixes from previous mutations
+        for i, anm_suffix in ipairs(valid_anims) do
+            if animation_common.has_animation(hud_section, transition_anm .. anm_suffix) then
+                transition_anm = transition_anm .. anm_suffix
+            end
+        end
+
+        if end_anm:match(transition["end_anm"]) and
+           start_anm:match(transition["start_anm"]) and
+           start_anm ~= transition_anm and
+           end_anm ~= transition_anm and 
+           start_anm ~= end_anm then
+
+            anm_table.anm_name = transition_anm
+            return true
+        end
+    end
+    return false
+end
+
+function anm_transitions(anm_table, item)
+    -- printf("ITEM: " .. item:section() .. " | ANM: " .. anm_table.anm_name)
+    local hud_section = SYS_GetParam(0, item:section(), "hud", nil)
+    if not hud_section then
+        return
+    end
+
+    local has_strict_transition = set_strict_transition(anm_table, hud_section)
+    
+    if not has_strict_transition then
+        set_pattern_transition(anm_table, hud_section)
+    end
+    
+    -- Track now playing animation
+    previous_anms[hud_section] = anm_table.anm_name
+
+    -- Clear valid anims
+    valid_anims = {}
+
+    -- printf("ITEM: " .. item:section() .. " | ANM: " .. anm_table.anm_name)
+end
+
+function on_game_start()
+	common.add_anim_mutator(anm_transitions, 999)
+end 
