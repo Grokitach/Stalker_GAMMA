@@ -1,0 +1,175 @@
+-- Thanks Aoldri!
+-- also do NOT review this code I'm fucking terrible at this
+
+local common = animation_common
+
+local is_on_air = false
+local fired_empty = false
+local is_first_round = false
+local firstodd = false
+
+-- _firemodeX (0 = automatic. 1 = single, 2 = two-burst, 3 = three-burst, etc)
+local function anm_firemode(anm_table, item)
+    if IsWeapon(item) then
+        local section = item:section()
+        local wpn = item:cast_Weapon()
+        local firemode = wpn:GetFireMode()
+    
+        -- rpm
+        local customrpm = SYS_GetParam(2, section, "rpm_custom")
+        if not (customrpm == nil) then
+            local rpm = SYS_GetParam(2, section, "rpm")
+            --local disp = wpn:GetBaseDispersion(1)
+            --local customdisp = SYS_GetParam(2, section, "fire_dispersion_custom")
+            --print_dbg("system disp")
+            --print_dbg(wpn:GetBaseDispersion(1))
+            if (firemode == -1) then
+                wpn:SetRPM(60/customrpm)
+                --wpn:SetFireDispersion(customdisp)
+                else
+                wpn:SetRPM(60/rpm)
+                --wpn:SetFireDispersion(disp)
+            end
+        end
+
+        -- I think its weird to use "firemode-1"
+        if (firemode == -1) then
+            firemode = 0
+        end
+        local suffix = "_firemode" .. firemode
+    
+        common.mutate_anim(anm_table, suffix, section)
+    end
+end
+
+function actor_on_jump()
+    local item = db.actor:active_item()
+    if not (item == nil) then
+        if (common.has_animation(item:section(), "anm_idle_jump")) then
+            is_on_air = true
+            game.stop_hud_motion()
+        end
+    end
+end
+function actor_on_land()
+    local item = db.actor:active_item()
+    if not (item == nil) then
+        if (common.has_animation(item:section(), "anm_idle_jump")) then
+            is_on_air = false
+            game.stop_hud_motion()
+        end
+    end
+end
+
+function on_before_key_press(key, bind, dis, flags)
+    local item = db.actor:active_item()
+    if IsWeapon(item) then
+        if (bind == key_bindings.kWPN_RELOAD and item:get_state() ~= 7 and is_first_round == false) then
+            is_first_round = true
+            firstodd = false
+        end
+        if (bind == key_bindings.kWPN_FIRE) then
+            local ammocount = item:get_ammo_in_magazine()
+            if (ammocount <= 0 and ammocount ~= nil) then
+                if (fired_empty == false and actor_menu.last_mode == 0 and item:get_state() == 0 and common.has_animation(item:section(), "anm_empty_fire")) then
+                    item:switch_state(4)
+                    fired_empty = true
+                end
+            end
+        end
+    end
+end
+
+-- _jump
+local function anm_jump(anm_table, item)
+        local section = item:section()
+    
+        if (is_on_air) then
+            common.mutate_anim(anm_table, "_jump", section)
+        end
+end
+
+
+-- _run
+local function anm_sprint(anm_table, item)
+    local section = item:section()
+
+    if (IsMoveState("mcSprint")) then
+        common.mutate_anim(anm_table, "_run", section)
+    end
+end
+
+-- _prone
+local function anm_prone(anm_table, item)
+    local section = item:section()
+
+    if (IsMoveState('mcAccel') and IsMoveState('mcCrouch')) then
+        common.mutate_anim(anm_table, "_prone", section)
+    end
+end
+
+-- _move
+local function anm_moving(anm_table, item)
+    local section = item:section()
+
+    if (IsMoveState("mcAnyMove")) then
+        common.mutate_anim(anm_table, "_move", section)
+    end
+end
+
+-- goofy ahh animation
+-- if it has less than 2 bullets loaded it will play _ammoodd to start
+local function anm_ammofix(anm_table, item)
+    if IsWeapon(item) then
+        local section = item:section()
+        local ammocount = item:get_ammo_in_magazine()
+        local ammoparity
+
+        -- RANDOM BULLSHIT GO
+        if (item:get_state() == 7 and is_first_round == true and ammocount % 2 == 0 and ammocount >= 2) then
+            firstodd = true
+        end
+        if (firstodd == true) then
+            ammocount = ammocount + 1
+        end
+
+        if (ammocount % 2 == 0) then
+            ammoparity = "even"
+        else
+            ammoparity = "odd"
+        end
+
+        is_first_round = false
+
+        local suffix = "_ammo" .. ammoparity
+
+        common.mutate_anim(anm_table, suffix, section)
+    end
+end
+
+-- anm_empty_fire
+local function anm_emptyfire(anm_table, item)
+    if (fired_empty==true and item:get_state() == 4) then -- double check just in case
+        anm_table.anm_name = "anm_empty_fire"
+    end
+    fired_empty = false
+end
+
+--function actor_on_hud_animation_end(item,section,motion,state,slot)
+--    fired_empty = false
+--end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_jump", actor_on_jump)
+    RegisterScriptCallback("actor_on_land", actor_on_land)
+    RegisterScriptCallback("on_before_key_press", on_before_key_press)
+    --RegisterScriptCallback("actor_on_hud_animation_end", actor_on_hud_animation_end)
+end
+
+common.add_anim_mutator(anm_firemode, 5.0)
+common.add_anim_mutator(anm_sprint, 2.0)
+common.add_anim_mutator(anm_prone, 2.5)
+common.add_anim_mutator(anm_jump, 3.0)
+common.add_anim_mutator(anm_moving, 3.0)
+common.add_anim_mutator(anm_ammofix, 5.0)
+common.add_anim_mutator(anm_emptyfire, 1.0)
