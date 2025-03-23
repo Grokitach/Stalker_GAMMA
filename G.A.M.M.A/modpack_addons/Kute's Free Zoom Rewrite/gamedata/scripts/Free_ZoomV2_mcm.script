@@ -12,7 +12,7 @@ local wpn = nil
 local last_sec = nil
 local onAds = false
 local outAds = false
-local GuiOpening = {}
+GuiOpening = {}
 -------------SPECIAL WEAPON: LIST OF WEAPON THAT HAVE CUSTOM HUD-FOV----------------
 
 special_weapons={
@@ -92,6 +92,7 @@ function priotised_hud_fov(hud_fov) -- THIS IS INSANITY, OVERWRITE HUD_FOV TO CO
 	return true
 end
 
+
 function GuiCheck()
 	for i,v in pairs(GuiOpening) do
 		if v==true then
@@ -111,7 +112,10 @@ function change_zoom(fov)
 	-- end
 	if outAds then
 		dte.RemoveTimeEvent("free_zoom_fov", "priotised_hud_fov")
-		dte.CreateTimeEvent("free_zoom_fov", "priotised_hud_fov", 0.03, priotised_hud_fov, fov*hud_to_fov)
+		dte.CreateTimeEvent("free_zoom_fov", "priotised_hud_fov", 0.03, function ()
+			exec_console_cmd("hud_fov " .. target_fov*hud_to_fov)
+			return true ---------------------------- CHANGE TO COUNTER THE EDGE CASE OF NOT ADSING AND FREEZOOMING AT THE SAME TIME
+		end)
 		--exec_console_cmd("hud_fov " .. ) 
 	else
 		if onAds then ------ IF ADS THEN ADJUSTABLE SCOPE VIEW WILL HANDLE HUD_FOV
@@ -125,6 +129,8 @@ function change_zoom(fov)
 	end
 	return true
 end
+
+
 
 function actor_on_first_update()
 	fov_before = get_console_cmd(2, "fov")
@@ -291,6 +297,7 @@ function on_key_release(key)
 end
 
 function actor_on_weapon_zoom_in()
+    if not wpn then return end
     if adsing then return end
     if z_3d_scopes then
         scoped = wpn:cast_Weapon():IsScopeAttached()
@@ -317,6 +324,7 @@ function actor_on_weapon_zoom_in()
 end
 
 function actor_on_weapon_zoom_out()
+    if not wpn then return end
     if not adsing then return end
     adsing = false
     target_fov = target_fov / ads_mult
@@ -349,6 +357,7 @@ function actor_on_weapon_zoom_type_changed()
 end
 
 function actor_on_weapon_reload()
+    if not wpn then return end
 	target_fov = fov_before
 	if freezooming then
 		freezooming = false
@@ -380,15 +389,7 @@ function reset_zoom()
 	mouse_to_fov = mouse_sens_before/fov_before
 	target_fov = fov_before
 	change_zoom(target_fov)
-end
-
-function actor_on_before_death()
-    reset_zoom()
-end
-
-function on_level_changing()
-	--printf("RESET")
-    reset_zoom()
+	GuiOpeing = {}
 end
 
 function onActorMenuOpen(name)
@@ -428,8 +429,6 @@ function on_game_start() -- I know thats a lot of just in case :)
 	RegisterScriptCallback("actor_on_weapon_reload",actor_on_weapon_reload)
 	RegisterScriptCallback("actor_on_weapon_zoom_type_changed",actor_on_weapon_zoom_type_changed)
 	RegisterScriptCallback("actor_on_update",actor_on_update)
-    RegisterScriptCallback("on_level_changing",on_level_changing)
-	RegisterScriptCallback("actor_on_before_death",actor_on_before_death)
 	RegisterScriptCallback("actor_on_net_destroy",actor_on_net_destroy)
 	RegisterScriptCallback("GUI_on_show",onActorMenuOpen)
 	RegisterScriptCallback("GUI_on_hide",onActorMenuClose)
