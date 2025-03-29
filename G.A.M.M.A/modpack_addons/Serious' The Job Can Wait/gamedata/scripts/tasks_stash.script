@@ -1,0 +1,184 @@
+--[[
+	Modified by Tronex
+	2019/4/22
+	Stash tasks use a single functors, with the ability for showing location info before accepting the task
+--]]
+
+--==========================================< Effects >==========================================--
+local function drx_sl_quest_stash_bonus() -- Pick quest stash bonus:
+--	Description: Picks a random bonus item for a quest stash
+--	Usage: drx_sl_quest_stash_bonus()
+--	Parameters: none
+--	Return value (type: none): none
+
+	-- List of reward items:
+	local reward_items = {
+		"ammo_11.43x23_fmj",		-- [29]    600
+		"ammo_5.45x39_fmj",		-- [31]    650
+		"ammo_5.56x45_ss190",	-- [34]    700
+		"ammo_9x39_ap",				-- [35]    700
+		"ammo_11.43x23_hydro",	-- [39]   1000
+		"ammo_5.45x39_ap",			-- [42]   1100
+		"ammo_5.56x45_ap",			-- [43]   1150
+		"ammo_gauss",					-- [48]   2000
+		"ammo_pkm_100",			-- [50]   2000
+	}
+
+	-- Pick random bonus item:
+	return reward_items[math.random( 1, #reward_items )]
+
+end
+
+local cache_stash = {}
+xr_effects.drx_sl_create_quest_stash = function( actor, npc, p )
+--	Description: Spawns a quest item in a random available stash location
+--	Usage: drx_sl_create_quest_stash_1()
+--	Parameters: none
+--	Return value (type: none): none
+	if not (p and p[1] and p[2]) then
+		return
+	end
+	
+	local target_id = nil
+	local se_target = nil
+			
+	local level_target = nil
+	local level_task = nil
+	local tbl = {}
+
+	local typ = tonumber(p[2])
+	local stashRerollCount = 0
+
+	local function RollStash()
+		if (not cache_stash[p[1]]) then
+			local stash_id = treasure_manager.get_random_stash(nil, nil, true, true)
+			if ( not stash_id ) then
+				printf( "! %s - Unable to get quest stash %s id !!", p[1], typ )
+			end
+			
+			cache_stash[p[1]] = stash_id
+		end
+		
+		target_id = cache_stash[p[1]]
+		se_target = target_id and alife_object(target_id)
+		if not (se_target) then
+			printf( "! %s - Unable to get quest stash %s object !!", p[1], typ )
+			return
+		end
+		
+		level_target = alife():level_name(game_graph():vertex(se_target.m_game_vertex_id):level_id())
+		level_task = level.name()
+		
+		local rerollStash = false
+		if blacklist_helper.ShouldBlacklistNorth() then
+			local blacklistedMaps = blacklist_helper.GetNorthernMaps()
+			
+			if blacklistedMaps[level_target] then
+				rerollStash = true
+			end
+		end
+		
+		if rerollStash and stashRerollCount < 50 then --If with 50 rerolls we still get limansk then...
+			cache_stash[p[1]] = nil
+			stashRerollCount = stashRerollCount + 1
+			RollStash()
+		end
+
+		tbl = {
+			lvl_task = level_task,
+			lvl_target = level_target,
+			target_id = target_id,
+			stash_type = typ,
+		}
+	end --sed
+
+	RollStash()
+
+	-- Save the stash id:
+	save_var( db.actor, p[1], tbl )
+	printdbg("- %s | drx_sl_create_quest_stash | target_id: %s - lvl_target: %s - type: %s", p[1], target_id, level_target, typ)
+	
+	local function postpone_for_next_frame()
+		local news_caption = game.translate_string(task_manager.task_ini:r_string_ex(p[1], "title")) or "error"
+		local news_icon = task_manager.task_ini:r_string_ex(p[1], "icon") or "ui_inGame2_Poslednie_razrabotki"
+		local news_text = game.translate_string("st_location") .. " " .. game.translate_string(level_target)
+		db.actor:give_talk_message2(news_caption, news_text, news_icon, "iconed_answer_item")
+		return true
+	end
+	CreateTimeEvent(0,"setup_bounty_task",0,postpone_for_next_frame)
+end
+
+--==========================================< Task functors >==========================================--
+task_functor.drx_sl_quest_item_task_target = function( task_id, field, p, tsk )
+--	Description: Returns the id of the current target for the quest item task
+--	Usage: drx_sl_quest_item_task_3_target( task_id )
+--	Parameters: none
+--	Return value (type: ): ID of the current task target
+	
+	if (not db.actor) then
+		return bil
+	end
+	
+	if (field == "target") then
+
+		-- If quest item is found then return the quest giver id:
+		if (tsk.stage == 1) then
+			return tsk.task_giver_id
+		end
+
+		-- Otherwise return the quest stash location:
+		local var = load_var( db.actor, task_id )
+		local id = var and var.target_id
+		local typ = var and var.stash_type
+		if id then
+			return id
+		elseif typ then
+			local se_obj = get_story_se_item( "drx_sl_quest_item_" .. typ )
+			if ( se_obj ) then
+				return se_obj.id
+			end
+		end
+	end
+	return nil
+end
+
+
+--==========================================< Task Status functors >==========================================--
+task_status_functor.drx_sl_quest_item_task_status = function( tsk, task_id )
+--	Description: Determines the status of quest item task 3
+--	Usage: drx_sl_quest_item_task_3_status( )
+--	Parameters: none
+--	Return value (type: ): none; increments task stage if needed
+
+	if (not db.actor) or (not tsk) then
+		return
+	end
+	
+	local var = load_var( db.actor, task_id )
+	if (not var) then
+		return
+	end
+	local typ = var.stash_type
+	
+	-- Create stash and update var afterwards
+	if (not var.stash_created) then
+		
+		local t = var
+		local created = treasure_manager.set_random_stash(nil, nil, {("drx_sl_quest_item_" .. typ) , drx_sl_quest_stash_bonus()}, var.target_id)
+		if created then
+			t.stash_created = true
+			save_var(db.actor, task_id, t)
+			db.actor:give_info_portion("drx_sl_quest_item_task_" .. typ .. "_started")
+			--printdbg("- %s | stash created", task_id)
+		end
+		return
+	end
+
+	if db.actor:object( "drx_sl_quest_item_" .. typ ) then
+		tsk.stage = 1
+		--save_var( db.actor, task_id, nil )
+	else
+		tsk.stage = 0
+	end
+
+end

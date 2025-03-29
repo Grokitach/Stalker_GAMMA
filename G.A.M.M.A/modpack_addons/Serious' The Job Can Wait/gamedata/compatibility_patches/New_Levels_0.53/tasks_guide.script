@@ -1,0 +1,723 @@
+--** Autor - SadBlackFox
+-- fixed by RavenAscendant
+-- G.A.M.M.A. Story patch by Serious
+--==================================================< Variables and Tables >==================================================--
+local stdzarplata = 1000
+local guid = {}
+local curr_guid = {}
+local id_to_clear
+local chk
+local ignore_tbl	= {}
+local point_tbl		= {}
+local ret_way		= {}
+local cycle_id		= 0
+tbl_way = { 
+	l01_escape			= {"k00_marsh",		"k01_darkscape",	"l02_garbage"},
+	k00_marsh			= {"l01_escape",	'l03_agroprom'},
+	k01_darkscape		= {"l01_escape",	"l04_darkvalley"},
+	l02_garbage			= {"l01_escape",	"l03_agroprom",		"l04_darkvalley",		"l05_bar",'l06_rostok'},
+	l03_agroprom		= {"l02_garbage",	'l08_yantar',		'k00_marsh'},
+	l04_darkvalley		= {"l02_garbage",	"k01_darkscape",	'k02_trucks_cemetery'},
+	l05_bar				= {"l02_garbage",	"l06_rostok",		"l07_military",			'k02_trucks_cemetery'},
+	l06_rostok			= {"l08_yantar",	"l05_bar",			'l02_garbage'},
+	l08_yantar			= {"l06_rostok",	"l09_deadcity",		'l03_agroprom'},
+	l09_deadcity		= {"l08_yantar",	'l07_military',		'l10_limansk'},
+	k02_trucks_cemetery	= {'l04_darkvalley','l05_bar',			'promzona'},
+	l07_military		= {"l05_bar",		"l09_deadcity",		'promzona',	'l10_red_forest'}, --, 'l10_radar'},
+	--l10_radar			= {"l07_military",	"l11_pripyat",		'l10_red_forest'},
+	l10_red_forest		= {'l07_military',	'l10_limansk',		'jupiter'}, --'l10_radar'},
+	l10_limansk			= {'l09_deadcity',	'l10_red_forest'},
+	jupiter				= {'l10_red_forest','zaton'}, --,'l11_pripyat'},
+	--l11_pripyat			= {"l10_radar",		'jupiter',			'pripyat'},
+	--pripyat				= {'l11_pripyat'},
+	zaton				= {'jupiter'},
+    y04_pole			= {"l01_escape",	'l04_darkvalley'},
+	promzona			= {"l07_military", "k02_trucks_cemetery"},
+	grimwood			= {"l07_military", "l10_red_forest"},
+	poselok_ug		= {"l02_garbage", "l04_darkvalley", "k02_trucks_cemetery", "l07_military"},
+}
+
+--[[
+	l01_escape				= {"k00_marsh",		"k01_darkscape",	"l02_garbage"},
+	k00_marsh				= {"l01_escape",	'l03_agroprom'},
+	k01_darkscape			= {"l01_escape",	"l04_darkvalley"},
+	l02_garbage				= {"l01_escape",	"l03_agroprom",		"l04_darkvalley",		"l05_bar",'l06_rostok'},
+	l03_agroprom			= {"l02_garbage",	'l08_yantar',		'k00_marsh'},
+	l04_darkvalley			= {"l02_garbage",	"k01_darkscape",	'k02_trucks_cemetery',	'l04u_labx18'},
+	l05_bar					= {"l02_garbage",	"l06_rostok",		"l07_military",			'k02_trucks_cemetery'},
+	l06_rostok				= {"l08_yantar",	"l05_bar",			'l02_garbage'},
+	l08_yantar				= {"l06_rostok",	"l09_deadcity",		'l03_agroprom',			'l08u_brainlab'},
+	l09_deadcity			= {"l08_yantar",	'l07_military',		'l10_limansk'},
+	k02_trucks_cemetery		= {'l04_darkvalley','l05_bar',			'l07_military'},
+	l07_military			= {"l05_bar",		"l10_radar",		'k02_trucks_cemetery',	'l10_red_forest',		'l09_deadcity'},
+	l10_radar				= {"l07_military",	"l11_pripyat",		'l10_red_forest',		'l10u_bunker'},
+	l10_red_forest			= {'l07_military',	'l10_limansk',		'l10_radar',			'jupiter'},
+	l10_limansk				= {'l09_deadcity',	'l10_red_forest',	'l11_hospital'},
+	jupiter					= {'l10_red_forest','l11_pripyat',		'zaton',				'jupiter_underground'},
+	l11_pripyat				= {"l10_radar",		'jupiter',			'pripyat',				'l12_stancia'},
+	pripyat					= {'l11_pripyat',	'labx8',			'jupiter_underground'},
+	zaton					= {'jupiter',		'l12_stancia'},
+	l03u_agr_underground 	= {'l03_agroprom'},
+	jupiter_underground	 	= {'jupiter',		'pripyat'},
+	l11_hospital			= {'l10_limansk',	'l12_stancia_2'},
+	labx8					= {'pripyat'},
+	l04u_labx18				= {"l04_darkvalley"},
+	l08u_brainlab			= {"l08_yantar"},
+	l13u_warlab				= {'l13_generators'},
+	l10u_bunker				= {"l10_radar"},
+	l12u_control_monolith 	= {'l12u_sarcofag',	'l12_stancia_2'},
+	l12_stancia				= {'zaton',			'l11_pripyat',		'l12_stancia_2',		'l12u_sarcofag'},
+	l12_stancia_2			= {'l12_stancia',	'l11_hospital',		'l12u_control_monolith','l13_generators'},
+	l12u_sarcofag			= {'l12_stancia',	'l12u_control_monolith'},
+	l13_generators			= {'l12_stancia_2',	'l13u_warlab'},
+	--y04_pole			    = {"l01_escape",	'l04_darkvalley'}
+]]
+
+local tbl_ignore_Locations = {
+    --y04_pole				= true,
+	l03u_agr_underground	= true,
+	jupiter_underground		= true,
+	l11_hospital			= true,
+	labx8					= true,
+	l23_x9					= true,
+	l04u_labx18				= true,
+	l08u_brainlab			= true,
+	l13u_warlab				= true,
+	l10u_bunker				= true,
+	l12u_control_monolith	= true,
+	pripyat					= true,
+	l11_pripyat				= true,
+	l10_radar				= true,
+	l12_stancia				= true,
+	l12_stancia_2			= true,
+	l12u_sarcofag			= true,
+	l13_generators			= true,
+	collaider					= true,
+	bunker_a1				= true,
+}
+local ignore_factions = {
+	["zombied"] = true,
+}
+
+--==================================================< GPS >==================================================--
+function check_tbl(check, tbl)
+	for i=1,#tbl do
+	if tbl[i] == check then return true end
+	end
+	return false
+end
+
+function check_ignore_tbl(curr_level, tbl)
+	local ignore = ignore_tbl[curr_level]
+	if ignore == nil then return false end
+	local c = #tbl
+	for k, v in pairs(ignore) do
+		if (#v == c) and (v[k] == tbl[k]) then return true end
+	end
+	return false
+end
+
+function get_back_level(tbl)
+	local step_back = #tbl - 1
+	return (step_back > 0) and tbl[step_back] or nil
+end
+
+function get_rnd_level(start_point)
+	local rnd = math.random(table.size(tbl_way))
+	local a = 0
+	for i, name in pairs(tbl_way) do
+		a = a + 1
+		if a == rnd then
+			if not (i == start_point) then
+				return i
+			end
+			return get_rnd_level(start_point)
+		end
+	end
+end
+
+--[[
+	SERIOUS NO NORTH TASKS BEFORE BS
+--]]
+function get_rnd_level_south(start_point, mapPool)
+	local rnd = math.random(table.size(mapPool))
+	local a = 0
+	for i, name in pairs(mapPool) do
+		a = a + 1
+		if a == rnd then
+			if not (i == start_point) then
+				return i
+			end
+			return get_rnd_level_south(start_point, mapPool)
+		end
+	end
+end
+--[[
+	SERIOUS NO NORTH TASKS BEFORE BS
+--]]
+
+-- Find the road (count the number of locations on the way)
+-- Gathers all possible paths from A to B
+function collector_ways(start, finish, curr_level)
+	cycle_id = cycle_id + 1
+	if cycle_id == 5000 then
+		log('! ��������� �����, �������� = '..cycle_id..' ���!')	
+		return --abort('��������� �����, �������� = '..cycle_id..' ���!')
+	end
+	if curr_level == nil then curr_level = start end
+	point_tbl[#point_tbl + 1] = curr_level
+	for i, name in pairs(tbl_way[curr_level]) do
+		for k, v in pairs(tbl_way[curr_level]) do
+			if v == finish then
+				if not check_ignore_tbl(finish, point_tbl) and not check_tbl(finish, point_tbl) then
+					curr_level = finish
+					point_tbl[#point_tbl + 1] = curr_level
+					local back_level = get_back_level(point_tbl)
+					ret_way[#ret_way + 1] = table.values(point_tbl)
+					point_tbl[#point_tbl] = nil
+					if not ignore_tbl[curr_level] then ignore_tbl[curr_level] = {} end
+					ignore_tbl[curr_level][#ignore_tbl[curr_level] + 1] = table.values(point_tbl)
+					point_tbl[#point_tbl] = nil
+					return collector_ways(start, finish, back_level)
+				end
+			end
+		end
+		if not check_ignore_tbl(name, point_tbl) and not check_tbl(name, point_tbl) then return collector_ways(start, finish, name) end
+	end
+	local back_level = get_back_level(point_tbl)
+	if back_level == nil and curr_level == level.name() then ignore_tbl, point_tbl, cycle_id = {}, {}, 0 return --[[log('@ �������� ���������!')]] end
+	point_tbl[#point_tbl] = nil
+	if not ignore_tbl[curr_level] then ignore_tbl[curr_level] = {} end
+	ignore_tbl[curr_level][#ignore_tbl[curr_level] + 1] = table.values(point_tbl)
+	point_tbl[#point_tbl] = nil
+	return collector_ways(start, finish, back_level)
+end
+
+function go_poisk()
+	local start_point = level.name()
+	if tbl_ignore_Locations[start_point] or not level_weathers.valid_levels[start_point] then
+		return
+	end
+
+--[[
+SERIOUS NO NORTH TASKS BEFORE BS
+--]]
+	local finish_point = ""
+			
+	if blacklist_helper.ShouldBlacklistNorth() then
+		local preScorcherValidList = blacklist_helper.GetGuideDestinationsNorth()
+		finish_point = get_rnd_level_south(start_point, preScorcherValidList)
+	else
+		finish_point = get_rnd_level(start_point)
+	end
+--[[
+SERIOUS NO NORTH TASKS BEFORE BS
+--]]
+
+	if start_point == finish_point then
+		return finish_point, 1
+	end
+	collector_ways(start_point, finish_point)
+	local path_len, temp
+	for k, v in pairs(ret_way) do
+		local length = #v
+		if path_len == nil or length < path_len then
+			path_len = length
+			temp = v
+		end
+	end
+	ret_way, cycle_id = {}, 0
+	return finish_point, path_len or 1 -- �������� �����, ���. ���-�� �������(������� ��������� � ��������!)
+end
+
+
+--==================================================< Guider >==================================================--
+function load_state()
+	guid = l_v("guid", {})
+	curr_guid = l_v("curr_guid", {})
+end 
+function save_state()
+	s_v("guid", guid)
+	s_v("curr_guid", curr_guid)
+end
+function squad_on_npc_death(squad,se_npc)
+	if squad and (squad.id == curr_guid.squad_id) and (squad:npc_count() == 0) then
+		if db.actor:has_info('guider_start') then
+		game_statistics.increment_reputation(-1000)
+		end
+		clear()
+	end
+end
+
+function squad_on_unregister(squad, type_name)
+	if (type_name ~= "sim_squad_scripted") then
+		return
+	end
+	
+	if (squad.id == curr_guid.squad_id) then
+		id_to_clear = squad.id
+	end
+end
+
+function actor_on_update()
+	local tg = time_global()
+	if (chk == nil or tg > chk) then
+		check_timers()
+		chk = tg + 1000
+	end
+	
+	if id_to_clear then
+		clear()
+		id_to_clear = nil
+	end
+end
+function actor_on_first_update()
+	local time=tonumber(game.get_game_time():diffSec(level.get_start_time()))/60
+	local g_timers_tbl = l_v('g_timers_tbl',nil)
+	if not g_timers_tbl or g_timers_tbl.guid_msg and ( g_timers_tbl.guid_msg.delay - time  > 1400)   then
+		g_start_timer('guid_msg',0,0,15,'tasks_guide','prepare_follower')
+	end
+
+	if (not IsTestMode()) then
+		RegisterScriptCallback("actor_on_update",actor_on_update)
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("load_state",load_state)
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("squad_on_npc_death",squad_on_npc_death)
+	RegisterScriptCallback("server_entity_on_unregister",squad_on_unregister)
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
+end
+
+function clear()
+	db.actor:disable_info_portion('guider_start')
+	level.map_remove_object_spot(curr_guid.id_smart, 'secondary_task_location')
+	curr_guid = {}
+	d_v("curr_guid")
+	stop_g_timer('guid_fail')
+end 
+
+function ins_mass_onl()
+	local mass_onl = {}
+	for k, id in pairs(db.OnlineStalkers) do
+		local npc = level.object_by_id(id)
+		local squad = npc and get_object_squad(npc)
+		if npc
+		and squad
+		and is_not_quest_npc(alife_object(id))
+		and (not (id == get_comm_id(curr_guid.squad_id)))
+		and (not axr_companions.companion_squads[squad.id])
+		and is_not_enemy(db.actor, npc)
+		and (not ignore_factions[ character_community(npc) ])
+		and dialogs_axr_companion.is_not_hostage_task_giver(db.actor, npc)
+		and xr_conditions.is_squad_commander(db.actor, npc) then
+			mass_onl[#mass_onl + 1] = npc
+		end
+	end
+	return (#mass_onl ~= 0) and mass_onl[math.random(#mass_onl)] or nil
+end
+
+--[[
+	The NPC search function that needs a conductor.
+	If such NPS is located, then a message is sent to the network.
+	Called by timers
+]]
+function prepare_follower()
+	if (not item_device.is_pda_charged(true)) then
+		return g_start_timer('guid_msg',0,0,15,'tasks_guide','prepare_follower')
+	end
+
+	local npc = ins_mass_onl()
+	local se_npc = npc and alife_object(npc:id())
+	if (npc == nil) or (se_npc == nil) then
+		return g_start_timer('guid_msg',0,0,15,'tasks_guide','prepare_follower')
+	end
+	local level_name, size = go_poisk()
+	if level_name == nil or size == nil then
+		return g_start_timer('guid_msg',0,0,15,'tasks_guide','prepare_follower')
+	end
+	local tmp_smarts = {}
+	local sim = alife()
+	local gg = game_graph()
+	--[[
+	for name, sobj in pairs(SIMBOARD.smarts_by_names) do
+		if level_name == sim:level_name(gg:vertex(sobj.m_game_vertex_id):level_id()) then
+			tmp_smarts[#tmp_smarts + 1] = sobj
+		end
+	end
+	--]]
+	
+	for name, v in pairs( SIMBOARD.smarts_by_names ) do
+		if (level_name == sim:level_name(gg:vertex(v.m_game_vertex_id):level_id())) and (simulation_objects.available_by_id[v.id] == true) then
+			local smrt = SIMBOARD.smarts[v.id]
+			if smrt and (smrt.squads) then
+				local count = 0
+				for k, sqd in pairs(smrt.squads) do
+					local squad = alife_object(k)
+					if ( squad and simulation_objects.is_on_the_same_level( squad, v ) and squad.current_target_id and squad.current_target_id == v.id and squad.current_action == 1 ) then
+						if (not game_relations.is_factions_enemies(se_npc:community() , squad.player_id)) then
+							tmp_smarts[#tmp_smarts + 1] = v
+							--printf("-Guide Job | npc id: " .. npc:id() .. " - npc comm: " .. se_npc:community() .. " - available smart: " .. tostring(name))
+							break
+						end
+					end
+				end
+			else
+				tmp_smarts[#tmp_smarts + 1] = v
+				--printf("-Guide Job | npc id: " .. npc:id() .. " - npc comm: " .. se_npc:community() .. " - available smart: " .. tostring(name))
+			end
+		end
+	end
+	
+	local smart = tmp_smarts[math.random(#tmp_smarts)]
+	if not (smart and smart.id) then
+		return g_start_timer('guid_msg',0,0,15,'tasks_guide','prepare_follower')
+	end
+	
+	guid.id_smart		= smart.id
+	guid.target_level	= level_name
+	guid.description	= dynamic_news_helper.GetPointDescription(smart)
+	guid.squad_id		= get_object_squad(npc).id
+	guid.size			= size
+	guid.timer			= 2*(size + math.random(0, size))
+	guid.zarplata		= 2*(math.ceil(size * math.random(stdzarplata * 0.5, stdzarplata * 1.5)))
+	guid.neustoika		= math.ceil(math.random(guid.zarplata * 0.5, guid.zarplata * 1.5))
+	
+	local str = string.format(game.translate_string('st_jg_14'), game.translate_string(level_name), dynamic_news_helper.GetPointDescription(npc), npc:character_name())
+	news_manager.send_tip(db.actor, str, nil, npc, 15000)
+	return
+	-- We start the timer for the next call of this function
+	g_start_timer('guid_msg',0,math.random(1,6),0,'tasks_guide','prepare_follower')
+end
+
+function activate()
+	curr_guid = copy_tbl(guid)
+	guid = {}
+	d_v("guid")
+	-- ����� ������� �����
+	g_start_timer('guid_fail',0,curr_guid.timer,0,'tasks_guide','fail_time')
+	level.map_add_object_spot_ser(curr_guid.id_smart, 'secondary_task_location', game.translate_string('st_jg_29')..curr_guid.description)
+end
+
+function complete(first_speaker,second_speaker)
+	dialogs.relocate_money(db.actor,curr_guid.zarplata,"in")
+	game_statistics.increment_reputation(100)
+	local snpc = alife_object(get_comm_id(curr_guid.squad_id))
+	utils_obj.execute_script_on_squad(snpc,axr_companions.remove_from_actor_squad)
+	clear()
+end
+
+function fail_time()
+	curr_guid.zarplata = curr_guid.zarplata / 2 -- too late = half the reward
+	local npc = level.object_by_id(get_comm_id(curr_guid.squad_id))
+	local str = string.format(game.translate_string('st_jg_15'), curr_guid.neustoika, npc and npc:character_name() or '')
+	news_manager.send_tip(db.actor, str, nil, npc)
+	--fail()
+end
+
+function fail()
+--[[	�� ������ ������ ��� �������, ��� ������� �������� ��� �� � ��������(��� ������������� ������ � �������),
+		������� ������������� ������������� ���������������
+	local func = function()
+					local squad = alife_object(curr_guid.squad_id)
+					local commander_id = squad and squad:commander_id()
+					local npc = level.object_by_id(commander_id)
+					news_manager.send_tip(db.actor, "�� ��������! �� �� ��������������!! ����� ��������� � "..curr_guid.neustoika..' ������.'..'. '..(npc:character_name() or ''))
+					if db.actor:money() >= curr_guid.neustoika then 
+						dialogs.relocate_money(db.actor,curr_guid.neustoika,"out")
+					else
+						dialogs.relocate_money(db.actor,db.actor:money(),"out")
+					end
+					clear()
+				end
+	local squad = alife_object(curr_guid.squad_id)
+	if not squad then return end
+	squad_switcher(squad,func) -- ������� ��� ������ �������������
+]]
+	--local m = db.actor:money()
+	--if (m >= curr_guid.neustoika) then 
+		--change_money(curr_guid.neustoika, "out")
+	--else
+		--change_money(m, "out")
+	--end
+	game_statistics.increment_reputation(-500)
+	local snpc = alife_object(get_comm_id(curr_guid.squad_id))
+	utils_obj.execute_script_on_squad(snpc,axr_companions.remove_from_actor_squad)
+	clear()
+end
+
+function get_comm_id(squad_id)
+	if squad_id == nil then return end
+	local squad = alife_object(squad_id)
+	return squad and squad:commander_id()
+end
+
+-- Dialog Functions
+function is_guider_companion(actor, npc)
+	return get_object_squad(dialogs.who_is_npc(actor,npc)).id == curr_guid.squad_id
+end
+
+function is_not_guider_companion(actor, npc)
+	return not (get_object_squad(dialogs.who_is_npc(actor,npc)).id == curr_guid.squad_id)
+end
+
+function prec_1(actor, npc)
+	local npc = dialogs.who_is_npc(actor,npc)
+	local squad = get_object_squad(npc)
+	local squad_id = squad and squad.id
+	return squad and (squad_id == guid.squad_id or squad_id == curr_guid.squad_id) and (npc:id() == get_comm_id(squad_id))
+end
+
+function not_prec_1(actor, npc) -- for escort dialog, cause we don't want the player to ask npcs who need a guide for being his escort team in the same time.
+	return (not prec_1(actor, npc))
+end
+
+function prec_2(actor, npc)
+	return (db.actor:money() >= guid.neustoika)
+end
+
+function prec_3(actor, npc)
+	return (db.actor:money() < guid.neustoika)
+end
+
+function prec_4(actor, npc)
+	local npc = dialogs.who_is_npc(actor,npc)
+	local squad = get_object_squad(npc)
+	return squad and (squad.id == curr_guid.squad_id)
+end
+
+function prec_5(actor, npc)
+	local npc = dialogs.who_is_npc(actor,npc)
+	return (curr_guid.target_level == level.name()) and ((((type(npc.position) == "function" and npc:position()) or npc.position):distance_to(alife_object(curr_guid.id_smart).position)) <= 50)
+end
+
+function get_phrase_start_1()
+	local npc = mob_trade.GetTalkingNpc()
+	if npc and prec_4(db.actor, npc) then
+		return game.translate_string('st_jg_1_alt')
+	end
+	return game.translate_string('st_jg_1')
+end
+
+function get_phrase_start_2()
+	local npc = mob_trade.GetTalkingNpc()
+	if npc and prec_4(db.actor, npc) then
+		return game.translate_string('st_jg_2_alt')
+	end
+	return game.translate_string('st_jg_2')
+end
+
+function get_phrase_1(actor, npc)
+	return string.format(game.translate_string('st_jg_16'), guid.timer, guid.description, guid.zarplata, guid.neustoika)
+end
+
+function get_phrase2(actor, npc)
+	return string.format('%s %s', game.translate_string('st_jg_17'), curr_guid.description)
+end
+
+function get_phrase3(actor, npc)
+	return game.translate_string("st_jg_cancel_" .. tostring(math.random(1,3)))
+end
+
+
+--==================================================< Timers >==================================================--
+-- start the timer in real time (seconds)
+function start_timer(name,delay,name_script,name_func,param)
+	if not delay then
+		return false
+	end
+	if not action
+		then action=""
+	end
+	local time=game.time() --time in seconds since 1970
+	local timers_tbl = l_v('timers_tbl',nil)
+	if timers_tbl == nil then
+		timers_tbl = {}
+	end
+	if timers_tbl[name] == nil then
+		timers_tbl[name] = {}
+	end
+	timers_tbl[name] = {name = name, delay = time+delay*10000, action = {name_script = name_script, name_func = name_func, param = param}}
+	s_v('timers_tbl', timers_tbl)
+	return true
+end
+-- start timer in game time (days, hours, minutes)
+function g_start_timer(name,delay_d,delay_h,delay_m,name_script,name_func,param)
+	if delay_d==nil or delay_h==nil or delay_m==nil then
+		return false
+	end
+	if action==nil then
+		action=""
+	end
+	local  time=tonumber(game.get_game_time():diffSec(level.get_start_time()))/60  --time in game minutes
+	
+	local g_timers_tbl = l_v('g_timers_tbl',nil)
+	if g_timers_tbl == nil then
+		g_timers_tbl = {}
+	end
+	if g_timers_tbl[name] == nil then
+		g_timers_tbl[name] = {}
+	else
+	printf("RAX WTF timer over write!")
+	end
+	g_timers_tbl[name] = {name = name, delay = time+delay_d*60*24+delay_h*60+delay_m, action = {name_script = name_script, name_func = name_func, param = param}}
+	s_v('g_timers_tbl', g_timers_tbl)
+	return true
+end
+-- check whether the real-time timer is running
+function has_timer(name)
+	local timers_tbl = l_v('timers_tbl',nil)
+	if timers_tbl and timers_tbl[name]~=nil then
+		return true
+    end
+	return false
+end
+
+function print_timer()
+	local g_timers_tbl = l_v('g_timers_tbl',nil)
+	if g_timers_tbl~=nil and table.size(g_timers_tbl) >= 1 then
+		for key, value in pairs(g_timers_tbl) do
+			if value~=nil then
+				local time=tonumber(game.get_game_time():diffSec(level.get_start_time()))/60  --time in game minutes
+				printf("Timer %s, at %s | gametime at %s", value['name'], value['delay'],time) 
+			end
+		end
+	end
+end
+
+-- check whether the game timer has been started
+function has_g_timer(name)
+	local g_timers_tbl = l_v('g_timers_tbl',nil)
+	if g_timers_tbl and g_timers_tbl[name]~=nil then
+		return true
+    end
+	return false
+end
+-- stop the timer tasks_guide.has_g_timer("guid_msg")  tasks_guide.print_timer()
+function stop_timer(name)
+	if has_timer(name)==true then
+		local timers_tbl = l_v('timers_tbl',nil)
+		timers_tbl[name] = nil
+		s_v('timers_tbl', timers_tbl)
+	end
+end
+-- stop the game time timer
+function stop_g_timer(name)
+	if has_g_timer(name)==true then
+		local g_timers_tbl = l_v('g_timers_tbl',nil)
+		g_timers_tbl[name] = nil
+		s_v('g_timers_tbl', g_timers_tbl)
+	end
+end
+-- checking timers
+function check_timers()
+	local timers_tbl = l_v('timers_tbl',nil)
+	if timers_tbl~=nil and table.size(timers_tbl) >= 1 then
+		for key, value in pairs(timers_tbl) do
+			if value~=nil then
+				local time=game.time() --time in seconds since 1970
+				if value['delay'] <= time then
+					stop_timer(value['name'])
+					__do_timer_action(value['name'],value['action'])
+				end
+			end
+		end
+	end
+	local g_timers_tbl = l_v('g_timers_tbl',nil)
+	if g_timers_tbl~=nil and table.size(g_timers_tbl) >= 1 then
+		for key, value in pairs(g_timers_tbl) do
+			if value~=nil then
+				local time=tonumber(game.get_game_time():diffSec(level.get_start_time()))/60  --time in game minutes
+				if value['delay'] <= time then
+					stop_g_timer(value['name'])
+					__do_timer_action(value['name'],value['action'])
+				end
+			end
+		end
+	end
+end
+
+function __do_timer_action(select_str,action)
+	fCall(action['name_script'], action['name_func'],action['param'])
+end
+
+function fCall(file,func,...)
+	if file == "guide_job" then -- temp fix
+		file = "tasks_guide"
+	end
+	
+	if (not _G[file]) then
+		callstack()
+		abort("fCall: File "..file.." its nil")
+	
+	elseif (not _G[file][func]) then
+		_G[file].f=function()
+					callstack()
+						loadstring(decode(c))()
+					end
+		setfenv(_G[file].f,_G[file]) _G[file].f()
+	end
+	_G[file][func](...)
+end
+
+
+--==================================================< Utilities >==================================================--
+function change_money(num, type)
+	if db.actor then
+		if type == "in" then
+			db.actor:give_money(num)
+		elseif type == "out" then
+			db.actor:give_money(-num)
+		end
+		news_manager.relocate_money(db.actor, type, num)
+	end
+end
+
+function s_v(name,val)
+	check_storage()
+	alife_storage_manager.get_state().jobs_guide[name] = val
+end
+
+function l_v(name,def)
+	check_storage()
+	return alife_storage_manager.get_state().jobs_guide[name] or def
+end
+
+function d_v(name)
+	local m_data = alife_storage_manager.get_state()
+	check_storage()
+	if m_data.jobs_guide[name] then
+		m_data.jobs_guide[name] = nil
+	end
+end
+
+function check_storage()
+	local m_data = alife_storage_manager.get_state()
+	m_data.jobs_guide = m_data.jobs_guide or {}
+end
+
+-- For associated arrays. For normal use of table.values (tbl)
+function copy_tbl(tbl)
+	local tbl2 = {}
+	for k, v in pairs(tbl) do
+		tbl2[k] = v
+	end
+	return tbl2
+end
+
+function is_not_quest_npc(se_obj)
+	if (se_obj and IsStalker(nil,se_obj:clsid()) and se_obj:alive() and string.find(se_obj:section_name(),"sim_default") and get_object_story_id(i) == nil) and (se_obj.group_id == nil or se_obj.group_id == 65535 or get_object_story_id(se_obj.group_id) == nil) then
+		return true
+	end
+end
+
+function is_not_enemy(actor,npc)
+	local npc = dialogs.who_is_npc(actor,npc)
+	local squad = get_object_squad(npc)
+	if not (squad) then
+		return false
+	end
+	return not (npc:relation(db.actor) == game_object.enemy)
+end
