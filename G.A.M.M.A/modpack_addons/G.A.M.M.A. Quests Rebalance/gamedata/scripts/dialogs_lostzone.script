@@ -1,0 +1,927 @@
+
+--[[
+	Made by SarisKhan (Living Legend, Mortal Sin, Operation Afterglow)
+	Modified by Tronex (Hollow Boundaries)
+	Last Edit: 2019/7/12
+	
+	Lost to the Zone questlines dialog/events handlers
+--]]
+
+
+-----------------------------------
+-- Info switch on faction change
+-----------------------------------
+local lttz_faction_infos = {
+	["csky"] = {
+		info = {
+			[1] = "living_legend_csky",
+			[2] = "living_legend_csky_answer",
+			[3] = "mortal_sin_csky",
+			[4] = "operation_afterglow_csky",
+			[5] = "living_legend_st",
+		},
+		task = {
+			[1] = "lttz_ll_finish_csky",
+			[2] = "lttz_ms_start_csky",
+			[3] = "lttz_ms_report_csky",
+			[4] = "lttz_ms_ambush_csky",
+			[5] = "lttz_ms_urban_warfare_csky",
+			[6] = "lttz_ms_zone_hero_csky",
+			[7] = "lttz_ll_visit_barkeep",
+		}
+	},
+	
+	["dolg"] = {
+		info = {
+			[1] = "living_legend_dolg",
+			[2] = "living_legend_dolg_answer",
+			[3] = "mortal_sin_dolg",
+			[4] = "operation_afterglow_dolg",
+			[5] = "living_legend_st",
+		},
+		task = {
+			[1] = "lttz_ll_finish_dolg",
+			[2] = "lttz_ms_start_dolg",
+			[3] = "lttz_ms_report_dolg",
+			[4] = "lttz_ms_ambush_dolg",
+			[5] = "lttz_ms_urban_warfare_dolg",
+			[6] = "lttz_ms_zone_hero_dolg",
+			[7] = "lttz_ll_visit_barkeep",
+		}
+	},
+	
+	["freedom"] = {
+		info = {
+			[1] = "living_legend_freedom",
+			[2] = "living_legend_freedom_answer",
+			[3] = "mortal_sin_freedom",
+			[4] = "operation_afterglow_freedom",
+			[5] = "living_legend_alt",
+		},
+		task = {
+			[1] = "lttz_ll_finish_freedom",
+			[2] = "lttz_ms_start_freedom",
+			[3] = "lttz_ms_report_freedom",
+			[4] = "lttz_ms_ambush_freedom",
+			[5] = "lttz_ms_urban_warfare_freedom",
+			[6] = "lttz_ms_zone_hero_freedom",
+			[7] = "lttz_ll_visit_blackjack",
+		}
+	},
+	
+	["ecolog"] = {
+		info = {
+			[1] = "living_legend_ecolog",
+			[2] = "living_legend_ecolog_answer",
+			[3] = "mortal_sin_ecolog",
+			[4] = "operation_afterglow_ecolog",
+			[5] = "living_legend_st",
+		},
+		task = {
+			[1] = "lttz_ll_finish_ecolog",
+			[2] = "lttz_ms_start_ecolog",
+			[3] = "lttz_ms_report_ecolog",
+			[4] = "lttz_ms_ambush_ecolog",
+			[5] = "lttz_ms_urban_warfare_ecolog",
+			[6] = "lttz_ms_zone_hero_ecolog",
+			[7] = "lttz_ll_visit_barkeep",
+		}
+	},
+	
+	["killer"] = {
+		info = {
+			[1] = "living_legend_killer",
+			[2] = "living_legend_killer_answer",
+			[3] = "mortal_sin_killer",
+			[4] = "operation_afterglow_killer",
+			[5] = "living_legend_alt",
+		},
+		task = {
+			[1] = "lttz_ll_finish_killer",
+			[2] = "lttz_ms_start_killer",
+			[3] = "lttz_ms_report_killer",
+			[4] = "lttz_ms_ambush_killer",
+			[5] = "lttz_ms_urban_warfare_killer",
+			[6] = "lttz_ms_zone_hero_killer",
+			[7] = "lttz_ll_visit_blackjack",
+		}
+	},
+	
+	["stalker"] = {
+		info = {
+			[1] = "living_legend_stalker",
+			[2] = "living_legend_stalker_answer",
+			[3] = "mortal_sin_stalker",
+			[4] = "operation_afterglow_stalker",
+			[5] = "living_legend_st",
+		},
+		task = {
+			[1] = "lttz_ll_finish_stalker",
+			[2] = "lttz_ms_start_stalker",
+			[3] = "lttz_ms_report_stalker",
+			[4] = "lttz_ms_ambush_stalker",
+			[5] = "lttz_ms_urban_warfare_stalker",
+			[6] = "lttz_ms_zone_hero_stalker",
+			[7] = "lttz_ll_visit_barkeep",
+		}
+	},
+}
+
+function update_lttz_faction_info(old_faction, new_faction)
+
+	-- Disable old info
+	local info_old = old_faction and lttz_faction_infos[old_faction] and lttz_faction_infos[old_faction].info
+	if (not info_old) then return end
+	
+	local info = {}
+	for k,v in pairs(info_old) do
+		if has_alife_info(v) then
+			db.actor:disable_info_portion(v)
+			info[#info + 1] = k
+			printdbg("!info disabled: %s", v)
+		end
+	end
+	if (#info == 0) then return end
+	
+	
+	-- Enable new info
+	local info_new = new_faction and lttz_faction_infos[new_faction] and lttz_faction_infos[new_faction].info
+	if (not info_new) then return end
+	
+	for i=1,#info do
+		local inf = info_new[info[i]]
+		printdbg("-info given: %s", inf)
+		db.actor:give_info_portion(inf)
+	end
+end
+
+function check_lttz_faction_task(a, b)
+	local old_faction = get_actor_true_community()
+	local task_old = old_faction and lttz_faction_infos[old_faction] and lttz_faction_infos[old_faction].task
+	if task_old then
+		local tm = task_manager.get_task_manager()
+		for k,v in pairs(task_old) do
+			if tm.task_info[v] then
+				return false
+			end
+		end
+	end
+	return true
+end
+
+
+------------------------
+-- Common functions
+------------------------
+local aditional_spawn_table = {
+-- {x,y,z,game_vertex_id,level_vertex_id, кол-во}
+	spawn_wpn_ak74_jurov_task_2_1 = {wpn_ak74_jurov_task_2 = {-118.6462097168,-30.205032348633,-359.24914550781, 140513, 465}},
+	spawn_wpn_ak74_jurov_task_2_2 = {wpn_ak74_jurov_task_2 = {-177.9986114502,-29.81822013855,-355.06866455078, 73576, 460}},
+	spawn_wpn_ak74_jurov_task_2_3 = {wpn_ak74_jurov_task_2 = {-138.13748168945,-25.463516235352,-352.16937255859, 118138, 451}},
+	spawn_wpn_pm_esc_2_12_stalker_fanat_task_3_1 = {wpn_pm_esc_2_12_stalker_fanat_task_3 = {113.63149261475,0.20527046918869,-36.471702575684, 445153, 444}},
+	spawn_wpn_pm_esc_2_12_stalker_fanat_task_3_2 = {wpn_pm_esc_2_12_stalker_fanat_task_3 = {105.98963928223,-7.5173659324646,10.584038734436, 436192, 440}},
+	spawn_wpn_pm_esc_2_12_stalker_fanat_task_3_3 = {wpn_pm_esc_2_12_stalker_fanat_task_3 = {129.74220275879,-3.9539701938629,-2.0078217983246, 462132, 445}},
+	spawn_wpn_pm_esc_2_12_stalker_fanat_task_3_4 = {wpn_pm_esc_2_12_stalker_fanat_task_3 = {107.52114105225,0.41759753227234,10.651744842529, 438618, 440}},
+	spawn_wpn_pm_esc_2_12_stalker_fanat_task_3_5 = {wpn_pm_esc_2_12_stalker_fanat_task_3 = {95.632209777832,-2.4896833896637,-22.111057281494, 424676, 444}},		
+}
+
+function set_stalker_living_legend_as_companion(a,b)
+	local npc = dialogs.who_is_npc(a,b)
+	local squad = get_object_squad(npc)
+	axr_companions.add_special_squad(squad)
+end
+
+function dismiss_speaker_companion(a,b)
+	local npc = dialogs.who_is_npc(a,b)
+	local squad = get_object_squad(npc)
+	axr_companions.dismiss_special_squad(squad)
+end
+
+function aditional_spawn(name)
+	local tbl = aditional_spawn_table[name]
+	for k, v in pairs(tbl) do
+		for i = 1, (v[6] or 1) do 
+			alife_create(k, vector():set(v[1], v[2], v[3]), v[4], v[5])
+		end
+	end
+end
+
+function give_task(name)
+	task_manager.get_task_manager():give_task(name)
+end
+
+function is_task_active(task_id)
+	local tm = task_manager.get_task_manager()
+	local task_info = tm.task_info
+	if not (task_info[task_id]) then
+		return false
+	end
+	return task_info[task_id].stage == nil
+end
+
+
+------------------------
+-- Living Legend --
+------------------------
+function give_task_lttz_ll_find_doctor()
+	dialogs_lostzone.give_task('lttz_ll_find_doctor')
+end
+
+function set_degtyarev_taskforce_squad_as_companion(a,b)
+	local squad = get_story_squad("degtyarev_taskforce_squad")
+	axr_companions.add_special_squad(squad)
+end
+
+function give_task_lttz_ll_medical_supplies()
+	dialogs_lostzone.give_task('lttz_ll_medical_supplies')
+end
+
+function actor_has_lttz_ll_medical_supplies(a, b)
+	local tm = task_manager.get_task_manager( )
+	local task_info = tm.task_info['lttz_ll_medical_supplies']
+	if task_info then
+		return (task_info.stage == 1)
+	end
+	return false
+end
+
+function give_task_lttz_ll_attack_on_titan()
+	dialogs_lostzone.give_task('lttz_ll_attack_on_titan')
+end
+
+function give_task_lttz_ll_find_documents()
+	dialogs_lostzone.give_task('lttz_ll_find_documents')
+end
+
+function lttz_ll_answers_complete(a,b)
+	task_manager.get_task_manager():set_task_completed("lttz_ll_answers")
+	a:stop_talk()
+	b:stop_talk()
+end
+
+function give_task_lttz_ll_finish_csky()
+	dialogs_lostzone.give_task('lttz_ll_finish_csky')
+end
+
+function give_task_lttz_ll_finish_stalker()
+	dialogs_lostzone.give_task('lttz_ll_finish_stalker')
+end
+
+function give_task_lttz_ll_finish_killer()
+	dialogs_lostzone.give_task('lttz_ll_finish_killer')
+end
+
+function give_task_lttz_ll_finish_freedom()
+	dialogs_lostzone.give_task('lttz_ll_finish_freedom')
+end
+
+function give_task_lttz_ll_finish_dolg()
+	dialogs_lostzone.give_task('lttz_ll_finish_dolg')
+end
+
+function give_task_lttz_ll_finish_ecolog()
+	dialogs_lostzone.give_task('lttz_ll_finish_ecolog')
+end
+
+
+------------------------
+-- Mortal Sin --
+------------------------
+function give_task_lttz_ms_start_dolg()
+	dialogs_lostzone.give_task('lttz_ms_start_dolg')
+end
+
+function give_task_lttz_ms_start_killer()
+	dialogs_lostzone.give_task('lttz_ms_start_killer')
+end
+
+function give_task_lttz_ms_start_stalker()
+	dialogs_lostzone.give_task('lttz_ms_start_stalker')
+end
+
+function give_task_lttz_ms_start_csky()
+	dialogs_lostzone.give_task('lttz_ms_start_csky')
+end
+
+function give_task_lttz_ms_start_freedom()
+	dialogs_lostzone.give_task('lttz_ms_start_freedom')
+end
+
+function give_task_lttz_ms_start_ecolog()
+	dialogs_lostzone.give_task('lttz_ms_start_ecolog')
+end
+
+function actor_has_stitch_decoder(first_speaker, second_speaker)
+	return db.actor:object("stitch_decoder") ~= nil
+end
+
+function end_conversation(a,b)
+	a:stop_talk()
+	b:stop_talk()
+end
+
+function give_task_lttz_ms_report_dolg()
+	dialogs_lostzone.give_task('lttz_ms_report_dolg')
+end
+
+function give_task_lttz_ms_report_killer()
+	dialogs_lostzone.give_task('lttz_ms_report_killer')
+end
+
+function give_task_lttz_ms_report_stalker()
+	dialogs_lostzone.give_task('lttz_ms_report_stalker')
+end
+
+function give_task_lttz_ms_report_csky()
+	dialogs_lostzone.give_task('lttz_ms_report_csky')
+end
+
+function give_task_lttz_ms_report_freedom()
+	dialogs_lostzone.give_task('lttz_ms_report_freedom')
+end
+
+function give_task_lttz_ms_report_ecolog()
+	dialogs_lostzone.give_task('lttz_ms_report_ecolog')
+end
+
+function give_task_lttz_ms_ambush_dolg()
+	dialogs_lostzone.give_task('lttz_ms_ambush_dolg')
+end
+
+function give_task_lttz_ms_ambush_killer()
+	dialogs_lostzone.give_task('lttz_ms_ambush_killer')
+end
+
+function give_task_lttz_ms_ambush_stalker()
+	dialogs_lostzone.give_task('lttz_ms_ambush_stalker')
+end
+
+function give_task_lttz_ms_ambush_csky()
+	dialogs_lostzone.give_task('lttz_ms_ambush_csky')
+end
+
+function give_task_lttz_ms_ambush_freedom()
+	dialogs_lostzone.give_task('lttz_ms_ambush_freedom')
+end
+
+function give_task_lttz_ms_ambush_ecolog()
+	dialogs_lostzone.give_task('lttz_ms_ambush_ecolog')
+end
+
+function give_task_lttz_ms_dark_crusade()
+	dialogs_lostzone.give_task('lttz_ms_dark_crusade')
+end
+
+function give_task_lttz_ms_protect_miracle_machine()
+	dialogs_lostzone.give_task('lttz_ms_protect_miracle_machine')
+end
+
+function give_task_lttz_ms_protect_brain_scorcher()
+	dialogs_lostzone.give_task('lttz_ms_protect_brain_scorcher')
+end
+
+function give_task_lttz_ms_urban_warfare_dolg()
+	dialogs_lostzone.give_task('lttz_ms_urban_warfare_dolg')
+end
+
+function give_task_lttz_ms_urban_warfare_killer()
+	dialogs_lostzone.give_task('lttz_ms_urban_warfare_killer')
+end
+
+function give_task_lttz_ms_urban_warfare_stalker()
+	dialogs_lostzone.give_task('lttz_ms_urban_warfare_stalker')
+end
+
+function give_task_lttz_ms_urban_warfare_csky()
+	dialogs_lostzone.give_task('lttz_ms_urban_warfare_csky')
+end
+
+function give_task_lttz_ms_urban_warfare_freedom()
+	dialogs_lostzone.give_task('lttz_ms_urban_warfare_freedom')
+end
+
+function give_task_lttz_ms_urban_warfare_ecolog()
+	dialogs_lostzone.give_task('lttz_ms_urban_warfare_ecolog')
+end
+
+function actor_has_contact_lost_pda(first_speaker, second_speaker)
+	return db.actor:object("contact_lost_pda") ~= nil
+end
+
+function give_task_lttz_ms_destruction_site()
+	dialogs_lostzone.give_task('lttz_ms_destruction_site')
+end
+
+function actor_has_lttz_ms_heart_zone(a,b)
+	return xr_conditions.has_task_not_completed(nil,nil,{"lttz_ms_heart_zone"})
+end
+
+function set_impending_doom_timer(a,b)
+	save_ctime(db.actor,"impending_doom_timer",game.get_game_time())
+end
+
+function give_task_lttz_ms_zone_hero_dolg()
+	dialogs_lostzone.give_task('lttz_ms_zone_hero_dolg')
+end
+
+function give_task_lttz_ms_zone_hero_killer()
+	dialogs_lostzone.give_task('lttz_ms_zone_hero_killer')
+end
+
+function give_task_lttz_ms_zone_hero_stalker()
+	dialogs_lostzone.give_task('lttz_ms_zone_hero_stalker')
+end
+
+function give_task_lttz_ms_zone_hero_csky()
+	dialogs_lostzone.give_task('lttz_ms_zone_hero_csky')
+end
+
+function give_task_lttz_ms_zone_hero_freedom()
+	dialogs_lostzone.give_task('lttz_ms_zone_hero_freedom')
+end
+
+function give_task_lttz_ms_zone_hero_ecolog()
+	dialogs_lostzone.give_task('lttz_ms_zone_hero_ecolog')
+end
+
+
+------------------------
+-- Operation Afterglow --
+------------------------
+function give_task_lttz_oa_encrypted_transmission()
+	dialogs_lostzone.give_task('lttz_oa_encrypted_transmission')
+end
+
+function actor_has_zat_b40_sarge_pda(first_speaker, second_speaker)
+	return db.actor:object("zat_b40_sarge_pda") ~= nil
+end
+
+function oa_transmission_report_honest_reward_dolg(first_speaker, second_speaker) 
+	dialogs.relocate_money_to_actor(first_speaker, second_speaker, 10000)
+	if ((math.random(1,100)/100) <= 0.5) then
+		treasure_manager.create_random_stash()
+	end
+	xr_effects.inc_faction_goodwill_to_actor(db.actor, nil, {"dolg", 50})	
+end
+
+function oa_transmission_report_honest_reward_killer(first_speaker, second_speaker) 
+	dialogs.relocate_money_to_actor(first_speaker, second_speaker, 12000)
+	xr_effects.inc_faction_goodwill_to_actor(db.actor, nil, {"killer", 50})	
+end
+
+function oa_transmission_report_honest_reward_stalker(first_speaker, second_speaker) 
+	dialogs.relocate_money_to_actor(first_speaker, second_speaker, 4000)
+	if ((math.random(1,100)/100) <= 0.5) then
+		treasure_manager.create_random_stash()
+	end
+	xr_effects.inc_faction_goodwill_to_actor(db.actor, nil, {"stalker", 50})	
+end
+
+function oa_transmission_report_honest_reward_csky(first_speaker, second_speaker) 
+	dialogs.relocate_money_to_actor(first_speaker, second_speaker, 10000)
+	if ((math.random(1,100)/100) <= 0.5) then
+		treasure_manager.create_random_stash()
+	end
+	xr_effects.inc_faction_goodwill_to_actor(db.actor, nil, {"csky", 50})	
+end
+
+function oa_transmission_report_honest_reward_freedom(first_speaker, second_speaker) 
+	dialogs.relocate_money_to_actor(first_speaker, second_speaker, 10000)
+	if ((math.random(1,100)/100) <= 0.5) then
+		treasure_manager.create_random_stash()
+	end
+	xr_effects.inc_faction_goodwill_to_actor(db.actor, nil, {"freedom", 50})	
+end
+
+function oa_transmission_report_honest_reward_ecolog(first_speaker, second_speaker) 
+	dialogs.relocate_item_section_to_actor(first_speaker, second_speaker, "af_gravi")
+	xr_effects.inc_faction_goodwill_to_actor(db.actor, nil, {"ecolog", 50})	
+end
+
+function oa_transmission_report_secret_reward(first_speaker, second_speaker) 
+	dialogs.relocate_money_to_actor(first_speaker, second_speaker, 3000)
+	xr_effects.inc_faction_goodwill_to_actor(db.actor, nil, {"army_npc", 250})
+end
+
+function xr_effects.lttz_set_squad_enemy_to_actor(a,b,c)
+    local story_id = c and c[1]
+    local squad = story_id and get_story_squad(story_id)
+    if squad == nil then
+        printf("There is no squad with id[%s]", story_id)
+        return
+    end
+    for k in squad:squad_members() do
+        local id = k.id
+        local npc = level.object_by_id(id)
+        if npc then npc:force_set_goodwill(-5000, db.actor) end
+    end
+end
+
+function actor_has_jupiter_documents(first_speaker, second_speaker)
+	return db.actor:object("jupiter_documents") ~= nil
+end
+
+------------------------
+-- Hollow Boundaries
+------------------------
+function give_task_lttz_hb_1_1_dushman_intel(first_speaker, second_speaker)
+	if (not has_alife_info("lttz_hb_task_1_1_dushman_intel_started")) then
+		dialogs_lostzone.give_task('lttz_hb_task_1_1_dushman_intel')
+		unlock_routes_south(first_speaker, second_speaker)
+	end
+end
+
+function complete_task_lttz_hb_1_2_recruit(first_speaker, second_speaker)
+	task_manager.get_task_manager():set_task_completed('lttz_hb_task_1_2_recruit')
+end
+
+function give_task_lttz_hb_2_1_guarded_secrets(first_speaker, second_speaker)
+	dialogs_lostzone.give_task('lttz_hb_task_2_1_guarded_secrets')
+end
+function complete_task_lttz_hb_2_1_guarded_secrets(first_speaker, second_speaker)
+	task_manager.get_task_manager():set_task_completed("lttz_hb_task_2_1_guarded_secrets")
+end
+
+function give_task_lttz_hb_2_2_breakthrough(first_speaker, second_speaker)
+	dialogs_lostzone.give_task('lttz_hb_task_2_2_breakthrough')
+end
+function complete_task_lttz_hb_2_2_breakthrough(first_speaker, second_speaker)
+	task_manager.get_task_manager():set_task_completed("lttz_hb_task_2_2_breakthrough")
+end
+
+function complete_task_lttz_hb_3_8_handle_docs(first_speaker, second_speaker)
+	task_manager.get_task_manager():set_task_completed("lttz_hb_task_3_8_handle_docs")
+end
+
+function give_mysteries_of_the_zone_tasks(first_speaker, second_speaker)
+	dialogs_lostzone.give_task('lttz_hb_task_3_1_search_agr_ug')
+	dialogs_lostzone.give_task('lttz_hb_task_3_2_search_labx18')
+	dialogs_lostzone.give_task('lttz_hb_task_3_3_search_labx16')
+	dialogs_lostzone.give_task('lttz_hb_task_3_4_search_labx10')
+	dialogs_lostzone.give_task('lttz_hb_task_3_5_search_labx8')
+end
+
+xr_effects.evaluate_mysteries_of_the_zone_tasks = function(actor,npc,p)
+	if has_alife_info("main_1_search_agr_ug_task_done")
+	and has_alife_info("main_2_search_labx18_task_done")
+	and has_alife_info("main_3_search_labx16_task_done")
+	and has_alife_info("main_4_search_labx10_task_done")
+	and has_alife_info("main_5_search_labx8_task_done")
+	then
+		dialogs_lostzone.give_task('lttz_hb_task_3_8_handle_docs')
+	end
+end
+
+function give_task_lttz_hb_4_1_crossfire(first_speaker, second_speaker)
+	dialogs_lostzone.give_task('lttz_hb_task_4_1_crossfire')
+end
+function complete_task_lttz_hb_4_1_crossfire(first_speaker, second_speaker)
+	task_manager.get_task_manager():set_task_completed("lttz_hb_task_4_1_crossfire")
+end
+function fail_task_lttz_hb_4_1_crossfire(first_speaker, second_speaker)
+	task_manager.get_task_manager():set_task_failed("lttz_hb_task_4_1_crossfire")
+end
+
+function give_hb_isg_dushman_intel(first_speaker, second_speaker)
+	dialogs.relocate_item_section_to_actor(first_speaker, second_speaker, "hb_isg_dushman_intel",1)  
+end
+
+function give_strelok_pendrive(first_speaker, second_speaker)
+	dialogs.relocate_item_section_to_actor(first_speaker, second_speaker, "strelok_pendrive",1)  
+end
+
+function has_hb_isg_dushman_intel(first_speaker, second_speaker)
+	return db.actor:object("hb_isg_dushman_intel") ~= nil
+end
+
+function actor_has_main_story_6_jup_ug_documents(first_speaker, second_speaker)
+	return db.actor:object("main_story_6_jup_ug_documents") ~= nil
+end
+
+function actor_has_strelok_pendrive(first_speaker, second_speaker)
+	return db.actor:object("strelok_pendrive") ~= nil
+end
+
+function give_actor_good_psi_helmet(first_speaker, second_speaker)
+	if (not db.actor:object("good_psy_helmet")) then
+		alife_create_item("good_psy_helmet", db.actor)
+		news_manager.relocate_item( db.actor, "in", "good_psy_helmet" )
+	end
+end
+
+function give_task_turn_off_brain_machine(first_speaker, second_speaker)
+	dialogs_lostzone.give_task('turn_off_brain_machine')
+end
+
+function give_task_turn_off_brain_scorcher(first_speaker, second_speaker)
+	dialogs_lostzone.give_task('turn_off_brain_scorcher')
+end
+
+function spawn_pass_hall_isg_companion_squad(first_speaker, second_speaker)
+	xr_effects.create_squad(nil,nil,{"pass_hall_isg_companion_squad","pas_b400_hall"})
+	xr_effects.add_task_companion(nil,nil,{"pass_hall_isg_companion_squad"})
+end
+
+function actor_in_red_forest(first_speaker, second_speaker)
+	if xr_conditions.actor_on_level(nil,nil,{"l10_red_forest"}) then
+		return true
+	end
+	return false
+end
+
+function unlock_routes_south(first_speaker, second_speaker)
+	txr_routes.open_route("esc","pol",true)
+	txr_routes.open_route("esc","mar",true)
+	txr_routes.open_route("esc","gar",true)
+	txr_routes.open_route("esc","dsc",true)
+	txr_routes.open_route("mar","agr",true)
+	txr_routes.open_route("val","pol",true)
+	txr_routes.open_route("val","trc",true)
+	txr_routes.open_route("val","gar",true)
+	txr_routes.open_route("val","dsc",true)
+	txr_routes.open_route("mil","trc",true)
+	txr_routes.open_route("gar","agr",true)
+	txr_routes.open_route("gar","bar",true)
+	txr_routes.open_route("gar","ros",true)
+	txr_routes.open_route("bar","mil",true)
+	txr_routes.open_route("bar","ros",true)
+	txr_routes.open_route("yan","ros",true)
+	txr_routes.open_route("cit","mil",true)
+	txr_routes.open_route("cit","yan",true)
+	
+	local sender = game.translate_string("st_route_open_title")
+	local msg = game.translate_string("st_msg_unlocked_routes")
+	db.actor:give_game_news(sender, msg, "ui_iconsTotal_locations", 0, 5000, 0)
+	local snd = sound_object([[device\pda\route_opened]])
+	snd.volume = 1
+	snd:play(db.actor, 0, sound_object.s2d)
+end
+
+function unlock_routes_north(first_speaker, second_speaker)
+	txr_routes.open_route("cit","lim",true)
+	txr_routes.open_route("lim","red",true)
+	txr_routes.open_route("mil","red",true)
+	txr_routes.open_route("jup","red",true)
+	txr_routes.open_route("jup","zat",true)
+	txr_routes.open_route("out","pri",true)
+	txr_routes.open_route("jup","pri",true)
+	
+	txr_routes.msg_route_general()
+end
+
+function unlock_routes_underpass(first_speaker, second_speaker)
+	txr_routes.open_route("jup","jup_u",true)
+	txr_routes.open_route("out","jup_u",true)
+	
+	txr_routes.msg_route_general()
+end
+
+function unlock_routes_labs(first_speaker, second_speaker)
+	txr_routes.open_route("rad","mil",true)
+	txr_routes.open_route("rad","red",true)
+	
+	txr_routes.open_route("agr","agr_u",true)
+	txr_routes.open_route("yan","x16",true)
+	txr_routes.open_route("val","x18",true)
+	txr_routes.open_route("rad","x19",true)
+	txr_routes.open_route("out","x8",true)
+	
+	txr_routes.msg_route_general()
+end
+
+function travel_to_jup_depo(first_speaker, second_speaker)
+	mlr_utils.change_lvl('jup_depo')
+end
+
+function travel_to_outskirts(first_speaker, second_speaker)
+	mlr_utils.change_lvl('out_entrance')
+end
+
+function travel_to_pas_hall(first_speaker, second_speaker)
+	mlr_utils.change_lvl('pass_hall')
+end
+
+xr_effects.send_msg_hb_isg_dushman_intel = function(actor, npc, p)
+	local msg = game.translate_string("st_msg_hb_isg_dushman_intel")
+	local name = game.translate_string("ds_domik_isg_leader_name")
+	local comm = game.translate_string("st_dyn_news_comm_isg_6")
+	local se = strformat("%s, %s",name,comm)
+	db.actor:give_game_news(se, msg, "ui_inGame2_Hernandez", 20000, 20000)
+	xr_sound.set_sound_play(AC_ID, "pda_task")
+end
+
+xr_effects.send_msg_hb_isg_tech_goodluck = function(actor, npc, p)
+	local squad = get_story_squad("jup_depo_isg_tech_squad")
+	if squad then
+		local msg = game.translate_string("st_msg_hb_isg_tech_goodluck")
+		local name = game.translate_string("jup_depo_isg_tech_name")
+		local comm = game.translate_string("st_dyn_news_comm_isg_6")
+		local se = strformat("%s, %s",name,comm)
+		db.actor:give_game_news(se, msg, "ui_inGame2_Maus", 10000, 20000)
+		xr_sound.set_sound_play(AC_ID, "pda_task")
+	end
+end
+
+xr_effects.send_msg_hb_isg_breakthrough = function(actor, npc, p)
+	local msg = game.translate_string("st_msg_hb_isg_breakthrough")
+	local name = game.translate_string("ds_domik_isg_leader_name")
+	local comm = game.translate_string("st_dyn_news_comm_isg_6")
+	local se = strformat("%s, %s",name,comm)
+	db.actor:give_game_news(se, msg, "ui_inGame2_Hernandez", 20000, 20000)
+	xr_sound.set_sound_play(AC_ID, "pda_task")
+end
+
+xr_effects.send_msg_hb_isg_petray = function(actor, npc, p)
+	local squad = get_story_squad("stalker_strelok_hb_squad")
+	if squad then
+		local msg = game.translate_string("st_msg_hb_isg_petray")
+		local name = game.translate_string("stalker_strelok_oa_name")
+		local se = strformat("%s",name)
+		db.actor:give_game_news(se, msg, "ui_inGame2_strelok_ico", 0, 20000)
+		xr_sound.set_sound_play(AC_ID, "pda_task")
+	end
+end
+
+xr_effects.pripyat_degtyarev_message_isg = function(actor, npc, p)
+	local msg = game.translate_string("st_lttz_pripyat_degtyarev_message")
+	local name = game.translate_string("army_degtyarev_name")
+	local comm = game.translate_string("st_dyn_news_ssu")
+	local se = strformat("%s, %s",name,comm)
+	db.actor:give_game_news(se, msg, "ui_inGame2_Hero", 20000, 30000)
+	xr_sound.set_sound_play(AC_ID, "pda_task")
+end
+
+local stash_check_timer = 60 -- seconds
+local isg_stash_bonus
+function isg_emergency_stash_timer()
+	ResetTimeEvent("cycle","isg_stash",stash_check_timer)
+	
+	local next_stash_time = alife_storage_manager.get_state().lttz_hb_next_stash_time
+	local last_stash_time = alife_storage_manager.get_state().lttz_hb_last_stash_time
+	if (not next_stash_time) or (not last_stash_time) then
+		alife_storage_manager.get_state().lttz_hb_next_stash_time = math.random(15,30)
+		alife_storage_manager.get_state().lttz_hb_last_stash_time = utils_data.CTime_to_table(game.get_game_time())
+		printdbg("- ISG Story | Recorded stash timer for the first time")
+		return false
+	end
+	
+	local last_stash_time_ct = utils_data.CTime_from_table(last_stash_time)
+	if (game.get_game_time():diffSec(last_stash_time_ct) > (next_stash_time * 3600)) then
+		printdbg("- ISG Story | Stash timer reached to spawn a stash")
+		
+		-- Set next stash time
+		alife_storage_manager.get_state().lttz_hb_next_stash_time = math.random(15,30)
+		alife_storage_manager.get_state().lttz_hb_last_stash_time = utils_data.CTime_to_table(game.get_game_time())
+		
+		-- Get Stash
+		local stash_id, stash_name, stash_desc, stash_hint = treasure_manager.get_random_stash("treasure_unique")
+		local se_stash = stash_id and alife_object(stash_id)
+		if (not se_stash) then
+			return false
+		end
+		
+		-- Send News
+		local trans = utils_data.collect_translations("st_dyn_news_isg_stash_",true)
+		if (not trans) then
+			return false
+		end
+		
+		local mil_ranks = {
+			"private",
+			"senior_sergeant",
+			"sergeant",
+			"lieutenant",
+			--"captain",
+		}
+		local mil_rank = mil_ranks[math.random(#mil_ranks)]
+		local f_names = utils_data.collect_translations("name_" .. mil_rank .. "_", true)
+		local s_names = utils_data.collect_translations("lname_" .. mil_rank .. "_", true)
+		if not (f_names and s_names) then
+			return false
+		end
+		
+		local name = f_names[math.random(#f_names)] .. s_names[math.random(#s_names)]
+		local location = dynamic_news_helper.GetPointDescription(se_stash) or ""
+		local Se = game.translate_string("isg") .. ", " .. name
+		local msg = utils_data.parse_string_keys( trans[math.random(#trans)] , { ["name"]=name , ["location"]=location } )
+		
+		dynamic_news_helper.send_tip(msg, Se, nil, 10, "isg", "news", "gr")
+		
+		-- Set stash
+		if (not isg_stash_bonus) then
+			isg_stash_bonus = {}
+			local n = treasure_manager.ini_treasure:line_count("isg_stash_bonus")
+			for i=0, n-1 do
+				local junk, kind, value = treasure_manager.ini_treasure:r_line("isg_stash_bonus" , i , "", "")
+				if value then
+					isg_stash_bonus[#isg_stash_bonus + 1] = str_explode(value,",")
+				end
+			end
+		end
+		
+		local bonus = isg_stash_bonus and isg_stash_bonus[math.random(#isg_stash_bonus)]
+		treasure_manager.set_random_stash("treasure_unique", msg, bonus, stash_id)
+	end
+	
+	return false
+end
+
+function kill_darkscape_stalkers()
+	for i=1, #db.OnlineStalkers do
+		local st = db.storage[db.OnlineStalkers[i]]
+		local npc = st and st.object or level.object_by_id(db.OnlineStalkers[i])
+		if (npc and IsStalker(npc,npc:clsid()) and npc:alive() and (npc:character_community() == "stalker")) then
+			npc:kill(npc)
+			printdbg("- ISG Story | Kill stalker(%s): %s", npc:id(), npc:name())
+		end
+	end
+	give_info("killed_darkscape_stalkers")
+	return true
+end
+
+local function actor_on_first_update()
+	local current_level = level.name()
+	
+	-- Spawn ISG leader squad in the Safe house in Darkscape
+	if (not has_alife_info("story_mode_disabled"))
+	and dialogs.actor_true_isg()
+	and (not has_alife_info("lttz_hb_spawned_ds_isg_leader_squad"))
+	then
+		printdbg("- ISG Story | Spawned ISG leader in Darkscape")
+		give_info("lttz_hb_spawned_ds_isg_leader_squad")
+		xr_effects.clear_smart_terrain(nil,nil,{"ds2_domik_st","true"})
+		xr_effects.create_squad(nil,nil,{"ds_isg_leader_squad","ds2_domik_st"})
+		xr_effects.create_squad(nil,nil,{"ds_isg_recon_squad","ds2_domik_st"})
+	end
+	
+	if (current_level == "k01_darkscape")
+	and (has_alife_info("lttz_hb_spawned_ds_isg_leader_squad"))
+	and (not has_alife_info("killed_darkscape_stalkers"))
+	then
+		CreateTimeEvent(0,"kill_stalkers",10,kill_darkscape_stalkers)
+	end
+	
+	-- Remove ISG leader once actor accept first task and leave Darkscape
+	if has_alife_info("lttz_hb_task_1_1_dushman_intel_started")
+	and (current_level ~= "k01_darkscape")
+	and (not has_alife_info("lttz_hb_removed_ds_isg_leader_squad"))
+	then
+		printdbg("- ISG Story | ISG leader and his squad left Darkscape")
+		give_info("lttz_hb_removed_ds_isg_leader_squad")
+		xr_effects.remove_squad(nil,nil,{"ds_isg_leader_squad"})
+		xr_effects.remove_squad(nil,nil,{"ds_isg_recon_squad"})
+	end
+	
+	-- Spawn ISG guard squad in Underpass once actor invades the hall then actor leave Underpass
+	if has_alife_info("lttz_hb_isg_breakthrough")
+	and (current_level ~= "jupiter_underground")
+	and (not has_alife_info("lttz_hb_spawned_jup_u_isg_guard_squad"))
+	then
+		printdbg("- ISG Story | iSG guard squad appeared in Jupiter Underground")
+		give_info("lttz_hb_spawned_jup_u_isg_guard_squad")
+		xr_effects.create_squad(nil,nil,{"jup_u_isg_guard_squad","pas_b400_hall"})
+		xr_effects.create_squad(nil,nil,{"jup_u_isg_guard_2_squad","pas_b400_hall"})
+	end
+	
+	-- Leaving the Zone after mission success
+	if has_alife_info("lttz_hb_task_4_1_crossfire_done") 
+	and (not (has_alife_info("lttz_hb_leaving_jup_done") and has_alife_info("lttz_hb_leaving_jup_u_done")))
+	then
+		local leave_time_t = alife_storage_manager.get_state().lttz_hb_leave_time
+		if (not leave_time_t) then
+			local current_time_t = utils_data.CTime_to_table(game.get_game_time())
+			alife_storage_manager.get_state().lttz_hb_leave_time = current_time_t
+		else
+			local leave_time_ct = utils_data.CTime_from_table(leave_time_t)
+			if (game.get_game_time():diffSec(leave_time_ct) > (2 * 3600)) then
+			
+				if (current_level ~= "jupiter_underground") and (not has_alife_info("lttz_hb_leaving_jup_u_done")) then
+					printdbg("- ISG Story | iSG squads left Jupiter Underground")
+					-- xr_effects.remove_squad(nil,nil,{"jup_depo_isg_leader_squad"})
+					-- xr_effects.remove_squad(nil,nil,{"jup_depo_isg_guard_squad"})
+					-- xr_effects.remove_squad(nil,nil,{"jup_u_isg_guard_squad"})
+					-- xr_effects.remove_squad(nil,nil,{"jup_u_isg_guard_2_squad"})
+					-- xr_effects.remove_squad(nil,nil,{"pass_hall_isg_companion_squad"})
+					give_info("lttz_hb_leaving_jup_u_done")
+					
+				elseif (current_level ~= "jupiter") and (not has_alife_info("lttz_hb_leaving_jup_done")) then
+					printdbg("- ISG Story | iSG squads left Jupiter")
+					-- xr_effects.remove_squad(nil,nil,{"jup_depo_isg_tech_squad"})
+					-- xr_effects.remove_squad(nil,nil,{"jup_depo_isg_recon_squad"})
+					give_info("lttz_hb_leaving_jup_done")
+				end
+			end
+		end
+	end
+	
+	-- During ISG questlines, ISG members will share stashes they hide every day
+	if has_alife_info("lttz_hb_task_1_1_dushman_intel_started")
+	and (not has_alife_info("lttz_hb_task_4_1_crossfire_done"))
+	then
+		CreateTimeEvent("cycle","isg_stash",stash_check_timer,isg_emergency_stash_timer)
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
+end
