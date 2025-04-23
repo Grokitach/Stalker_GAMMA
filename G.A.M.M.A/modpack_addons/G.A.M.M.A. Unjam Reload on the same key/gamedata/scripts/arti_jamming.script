@@ -149,23 +149,80 @@ function missing_parts(wpn)
 	return false
 end
 
+-- Postpone on next n tick
+local nextTick = _G.nextTick or function(f, n)
+	n = floor(max(n or 1, 1))
+	AddUniqueCall(function()
+		if n == 1 then
+			return f()
+		else
+			n = n - 1
+			return false
+		end
+	end)
+end
 
 function play_anim(weapon, anim, sound)
 	if not block_repeat then
+		-- oleh5230
+		-- force exit ADS before unjam animation
+		if axr_main.weapon_is_zoomed then
+			if get_console():get_bool("wpn_aim_toggle") then
+				level.press_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+			else
+				level.release_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+			end
+		end
+		RegisterScriptCallback("on_before_key_press", block_weapon_keybinds)
 		block_repeat = true
-		local length = weapon:play_hud_motion(anim, true, 0, 1, 0)
-		print_dbg("playing animation %s for %s time", anim, length)
-		if sound then
-			utils_obj.play_sound(sound)
-		end				
-		CreateTimeEvent("arti_jamming", "restore", length/1000, unset)
-
+		local length = game.get_motion_length(weapon:section() .. "_hud", anim, 1) or 1000
+		-- postpone to next tick to avoid anm_idle_aim_start interruption
+		nextTick(function()
+			weapon:play_hud_motion(anim, true, 0, 1, 0)
+			print_dbg("playing animation %s for %s time", anim, length)
+			if sound then
+				utils_obj.play_sound(sound)
+			end
+			return true
+		end)
+		CreateTimeEvent("arti_jamming", "restore", length/1000 - 0.25, unset, weapon:id())
+		-- oleh5230 end
 	end
 end
 
+-- oleh5230
+-- block weapon keybinds during unjam animation 
+local keybinds_blacklist = {
+	[key_bindings.kWPN_FIRE] = true,
+	[key_bindings.kWPN_ZOOM] = true,
+	[key_bindings.kWPN_RELOAD] = true,
+	[key_bindings.kWPN_FIREMODE_PREV] = true,
+	[key_bindings.kWPN_FIREMODE_NEXT] = true,
+	-- grenade launcher toggle key
+	[key_bindings.kCUSTOM16] = true,
+}
 
-function unset()
+function block_weapon_keybinds(dik, bind, dis, flags)
+	if not block_repeat or not keybinds_blacklist[bind] then return end
+
+	local active_item = db.actor:active_item()
+	if active_item and jammed_guns[active_item:id()] then
+		flags.ret_value = false
+	end
+end
+-- oleh5230 end
+
+function unset(id)
+	-- oleh5230
+	-- unjam gun when animation ends
 	block_repeat = false
+	UnregisterScriptCallback("on_before_key_press", block_weapon_keybinds)
+	local active_item = db.actor:active_item()
+	if id and active_item and id == active_item:id() then
+		jammed_guns[id] = nil
+		guarantee_not_jam = true
+	end
+	-- oleh5230 end
 	return true
 end
 
@@ -703,8 +760,6 @@ function unjam(wpn)
 					local unjam_sound = ini_sys:r_string_ex(sec, "snd_reload_misfire") or ini_sys:r_string_ex(sec, "snd_reload_1") or "$no_sound"
 					print_dbg("found "..unjam_anims)
 					play_anim(weapon, to_search, unjam_sound)
-					jammed_guns[id] = nil
-					guarantee_not_jam = true
 				else
 					--lower/raise
 					db.actor:hide_weapon()
