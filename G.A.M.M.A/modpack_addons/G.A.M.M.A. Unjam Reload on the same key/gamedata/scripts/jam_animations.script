@@ -1,0 +1,49 @@
+function isMisfireWeapon(item)
+	return 	item
+	and 	item:cast_Weapon()
+	and 	((item:cast_Weapon():IsMisfire()) or (arti_jamming and arti_jamming.get_jammed(item:id())))
+end
+
+function getJammedAnimation(animName)
+	return animName .. "_jammed"
+end
+
+function actor_on_hud_animation_play(anm_table, item)
+	if not isMisfireWeapon(item) then return end
+
+	local hudSection = SYS_GetParam(0, item:section(), "hud", item:section())
+	local newAnimName = getJammedAnimation(anm_table.anm_name)
+	if SYS_GetParam(0, hudSection, newAnimName) then
+		anm_table.anm_name = newAnimName
+	end
+end
+
+function actor_on_weapon_before_fire(flags)
+	local item = db.actor:active_item()
+	if not isMisfireWeapon(item) then return end
+
+	local hudSection = SYS_GetParam(0, item:section(), "hud", item:section())
+	local animName = utils_item.addon_attached(item, "gl") and "anm_bore_w_gl" or "anm_bore"
+
+	
+	if IsWeapon(item) and item.get_ammo_in_magazine then
+        local ammo = item:get_ammo_in_magazine()
+        -- check if weapon is empty
+        if ammo == 0 then
+            -- check if anim is defined in config
+			animName = utils_item.addon_attached(item, "gl") and "anm_bore_empty_w_gl" or "anm_bore_empty"
+        end
+    end
+
+	local newAnimName = getJammedAnimation(animName)
+	if SYS_GetParam(0, hudSection, newAnimName) then
+
+		-- play animName animation, actual animation is overriden in actor_on_hud_animation_play
+		item:play_hud_motion(animName, true, 4, 1, 0)
+	end
+end
+
+function on_game_start()
+	--RegisterScriptCallback("actor_on_weapon_before_fire", actor_on_weapon_before_fire)
+	RegisterScriptCallback("actor_on_hud_animation_play", actor_on_hud_animation_play)
+end
