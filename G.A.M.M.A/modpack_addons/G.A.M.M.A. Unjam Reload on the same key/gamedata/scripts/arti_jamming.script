@@ -173,11 +173,16 @@ function play_anim(weapon, anim, sound)
 				level.release_action(bind_to_dik(key_bindings.kWPN_ZOOM))
 			end
 		end
-		RegisterScriptCallback("on_before_key_press", block_weapon_keybinds)
 		block_repeat = true
-		local hud = ini_sys:r_string_ex(weapon:section(), "hud")
-		local length = hud and game.get_motion_length(hud, anim, 1) or 1000
-		-- postpone to next tick to avoid anm_idle_aim_start interruption
+		anim_playing = true
+
+		local hud = weapon and ini_sys:r_string_ex(weapon:section(), "hud")
+		if not (hud and anim) then return end
+		local anim_str = ini_sys:r_string_ex(hud, anim)
+		local _anim_str = anim_str and str_explode(anim_str, ",")
+		local speed = _anim_str[3] or 1
+		local length = hud and game.get_motion_length(hud, anim, speed) or 1000
+		-- postpone to next tick to avoid anm_idle_aim_end interruption
 		nextTick(function()
 			weapon:play_hud_motion(anim, true, 0, 1, 0)
 			print_dbg("playing animation %s for %s time", anim, length)
@@ -204,7 +209,7 @@ local keybinds_blacklist = {
 }
 
 function block_weapon_keybinds(dik, bind, dis, flags)
-	if not block_repeat or not keybinds_blacklist[bind] then return end
+	if not block_repeat or not anim_playing or not keybinds_blacklist[bind] then return end
 
 	local active_item = db.actor:active_item()
 	if active_item and jammed_guns[active_item:id()] then
@@ -217,15 +222,31 @@ function unset(id)
 	-- oleh5230
 	-- unjam gun when animation ends
 	block_repeat = false
-	UnregisterScriptCallback("on_before_key_press", block_weapon_keybinds)
+	anim_playing = false
 	local active_item = db.actor:active_item()
-	if id and active_item and id == active_item:id() then
+	if id and active_item and id == active_item:id() or unjam_motion_mark then
+		print_dbg("unset")
 		jammed_guns[id] = nil
 		guarantee_not_jam = true
+		unjam_motion_mark = false
 	end
 	-- oleh5230 end
 	return true
 end
+
+-- oleh5230
+-- motion mark support
+function actor_on_hud_animation_mark(state, mark)
+	if not anim_playing then return end
+	if mark == "clear_jam" then
+		local active_item = db.actor:active_item()
+		if active_item and jammed_guns[active_item:id()] then
+			print_dbg("clear_jam motion mark")
+			unjam_motion_mark = true
+		end
+	end
+end
+-- oleh5230 end
 
 function persist_current_weapon()
 	if cgd.id and cgd.has_parts then
@@ -1043,4 +1064,9 @@ function on_game_start()
 	RegisterScriptCallback("monster_on_before_hit",monster_on_before_hit)
 	RegisterScriptCallback("ActorMenu_on_item_focus_receive", get_jam_chance)
 	exec_console_cmd("bind wpn_reload kF10")
+
+	-- oleh5230
+	RegisterScriptCallback("on_before_key_press", block_weapon_keybinds)
+	RegisterScriptCallback("actor_on_hud_animation_mark",actor_on_hud_animation_mark)
+	-- oleh5230 end
 end
