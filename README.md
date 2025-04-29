@@ -35,18 +35,22 @@ G.A.M.M.A. aims at providing a balanced survival, scavenging, cooking, crafting 
 
 The main motivation behind this project is to provide an easy to install, automatically updated and modular modding platform for Stalker Anomaly, with base parameters and gameplay mechanics setup to create a meaningful and enjoyable sense of progression.
 
+The sense of progression in GAMMA is achieved through different aspects, that you can customise to some extent:
+- The more to the north you go, the more dangerous the Zone is (stronger stalkers, stronger mutants, more deadly anomalies, stronger radiations) but the better are the rewards (better gear, better toolkits, better artefacts).
+- Gear acquisition is locked behind getting toolkits that are obtained by visiting rare stashes acquired by accomplishing several maps.
+- Guns with green barrels will deal full damage and just need few parts of good quality to stop jamming (without the need of toolkits or repair kits).
+- The gear you find on enemies need to be repaired using repair kits crafted using toolkits.
+- The artefacts you find are immediately useable but need to be empowered by combining artefacts to achieve higher protection levels (using a specific tool buyable at Ecologists).
+- Access to the North of the Zone is locked behind completing the Miracle Machine and the Brain Scorcher.
+- GAMMA removes all gear trading, meaning you cannot buy or sell weapons or armor.
+- GAMMA removes random stash loot, so you can't just run to the meta stashes and have endgame equipment instantly.
+- The healing system uses multiple body parts that get damaged individually and that you heal by using first-aid kits/bandages/stimpacks followed by post-heal items such as antibiotics, antidotes, painkillers, and anti-inflammatory drugs. 
+- GAMMA completely revamps the STALKER Anomaly graphics, gun models, animations, A-life, Combat AI and much more thanks to the many mods made by the community.
+
 This modpack is 100% copyright free since it redistributes little to no copyrighted content developed by other modders. Indeed, G.A.M.M.A. downloads every add-on directly from moddb or github, and installs them automatically. You will thus directly support modders by installing G.A.M.M.A. On top of this, each addon original source (moddb or github page) is directly accessible from the Mod Organizer 2 instance by right-clicking addons > visit moddb.com.
 
-Many addons are developed exclusively for this project, including:
-- A new UI.
-- A rebalanced survival experience focused on crafting, repairing and cooking.
-- A new economy where traders will only sell you supplies, and where good ammunition will only be available to trustful stalkers.
-- New starting loadouts focused on providing pistols, SMGs or WW2 guns to have a smoother start with calibers for which you can buy ammo. It also gives you the basic tools to wander the Zone, which is nice for Ironman runs.
-- Rebalanced close quarter combat to make knives more useful and to free even more inventory slots, yup you can equip 2 pistols and 2 main weapons and still profit from your best knife with a reworked quick melee motion and system.
-- Rebalanced actor damage.
-- Rebalanced sleep.
-- Rebalanced Skill System from Haruka.
-- Overhauled radiations effects and dynamic radiation areas.
-- Many fixes for some major addons including the Boomsticks and Sharpsticks gunpack.
-- And more!
 
+
+## Other Projects
+
+I also made a modpack for Dragon's Dogma 2 called "Dragon's Dogamma", for which I notably remade the entire gear looting system to put more emphasis on exploration and boss hunting instead of buying gear from shops: https://github.com/Grokitach/Dragons-Dogamma
