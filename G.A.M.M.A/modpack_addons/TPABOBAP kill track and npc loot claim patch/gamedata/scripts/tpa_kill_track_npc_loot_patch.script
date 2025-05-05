@@ -1,0 +1,38 @@
+-- remove kill markers
+function on_before_key_press(key, bind, dis, flags)
+    if bind ~= key_bindings.kUSE then return end
+
+    local max_dist = 10
+    local ray = ray_pick()
+    ray:set_flags(3)
+    ray:set_range(max_dist)
+    ray:set_position(device().cam_pos)
+    ray:set_direction(device().cam_dir)
+    ray:set_ignore_object(db.actor)
+    ray:query()
+    result = ray:get_result()
+
+    if not result then return end
+    obj = result.object
+    if not obj or (not IsStalker(obj) and not IsMonster(obj)) then return end
+    if obj:alive() then return end
+
+    -- TPABOBAP KillTrack
+    if tpa_kill_tracker and tpa_kill_tracker.remove_dot then
+        tpa_kill_tracker.remove_dot(obj)
+    end
+
+    if ish_kill_tracker then
+        if ish_kill_tracker.clear_kill then
+            --Catspaw Milspec PDA
+            ish_kill_tracker.clear_kill(obj)
+        elseif ish_kill_tracker.remove_dot then
+            --Ishmaeel KillTrack
+            ish_kill_tracker.remove_dot(obj)
+        end
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("on_before_key_press", on_before_key_press)
+end
