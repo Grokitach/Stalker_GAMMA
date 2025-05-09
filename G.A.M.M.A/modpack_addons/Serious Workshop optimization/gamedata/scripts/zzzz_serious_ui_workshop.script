@@ -1,0 +1,227 @@
+--SERIOUS This script overwrites a monkey patch.
+-- Monkey patch overwrite: 141- Fixed Crafting with Multi-Use Items - thisisntmysteamid
+-- File: zzz_timsi_ui_workshop
+
+UpdateItem = ui_workshop.UIWorkshopCraft.UpdateItem
+SetTip = ui_workshop.SetTip
+
+function ui_workshop.UIWorkshopCraft:UpdateItem (n, sec, amount, result, toolkit_idx, toolkit_sec)
+	-- Text (Amount)
+	local amt = amount
+	local box = 1
+	if IsItem("ammo",sec) then
+		box = IsItem("ammo",sec)
+		amt = box * amount
+	end
+	--self.itm_num[n]:SetText("x" .. tostring(amt))
+	
+	-- Text (Name)
+	local parts_id = {}
+	local counter = 0
+	local name = ui_item.get_sec_name(sec)
+
+	if (not result) then
+		-- Reset
+		if self.resetcomplexCraft then
+			self.resetcomplexCraft = false
+			self.complexCraft = {}
+		end
+
+		self.craft_item[n] = {}
+		self.craft_item_remain[n] = {}
+		self.craft_allow[n] = false
+		
+		self.itm_name[n]:SetText(name)
+		self.itm_num[n]:SetTextColor(GetARGB(250, 255, 50, 50)) --GetARGB(200, 255, 50, 20)
+	
+		-- Collect valid items
+		local function search(temp, item)
+			if (item:section() == sec) and (not parts_id[item:id()]) then
+				local cnt = IsItem("multiuse",nil,item) and item:get_remaining_uses() or 1
+				parts_id[item:id()] = cnt
+			end
+		end
+		db.actor:iterate_inventory(search,nil)
+		
+		--SERIOUS OPTI
+		local stashId = self.stashId or (self.owner and self.owner.stashId)
+		if stashId  then
+			local stash_obj = get_object_by_id(stashId)
+			stash_obj:iterate_inventory_box(search, nil)
+		end
+		--SERIOUS OPTI
+
+		-- Check and Allow/Prevent
+		local dischargeAmount = amount
+		local count = 0
+		for _,cnt in pairs(parts_id) do
+			count = count + cnt
+		end
+		
+		-- Ammo boxes
+		if IsItem("ammo",sec) then -- ammo
+			local full_ammo = 0
+			local full_ammo_txt = 0
+
+			--This is for when there's a partial amount of components in stash and in player inv.
+			--We check if we find similar item in parts_id.
+
+			local partialComponent = {
+				-- ["sect"] =
+				-- {
+				-- 	id = 0,
+				-- 	size = 0,
+				-- 	boxSize = 0,
+				-- 	findSimilar = false
+				-- }
+			}
+
+			--Need to reset complexCraft: In the "if result" part of code we assign a bool to true
+			--If that bool is true when the IsItem("ammo", sec) returns true then we clear complexCraft.
+
+			--If we find similar in parts_id we register both id for release later.
+			--After release we will give the player a new item with size = id1.size + id2.size - recipe required size
+			--Also. I need to clean partialComponent and complexCraft each time the code enters UpdateItem.
+			--Maybe even when the workshop closes just to be safe.
+			--Also. There's never going to be a need for a 3rd Id (As long as we search only 2 containers: bag, stash)
+			--If we can complete recipe like this: 2partial + 1full. We release the full ones with parts[id]
+			--then we release partial ones with the custom "complex craft" code.
+			--I could just increase "amount" when "complex crafting", but that could lead to the recipe required amount...
+			--growing indefinetly if the player keeps clicking on the item.
+
+			-- complexCraft = {
+			-- 	{ 
+			-- 		id1 = 0,
+			-- 		id2 = 0,
+			-- 		section = "", --This will store what I need to create
+			-- 		newItemSize = 0
+			-- 	}
+			-- }
+
+			for id,_ in pairs(parts_id) do
+				local ammo = level.object_by_id(id)
+				if ammo then
+					local size = ammo:ammo_get_count()
+					local box_size = ammo:ammo_box_size()
+					local similar = partialComponent[sec]
+					
+					full_ammo_txt = full_ammo_txt + size
+					
+					if (size >= box_size) then
+						full_ammo = full_ammo + 1
+					else
+						if not similar then
+							partialComponent[sec] = {
+								id = id,
+								size = size,
+								boxSize = box_size,
+								findSimilar = true
+							}
+						elseif similar and similar.findSimilar and size + similar.size >= box_size then
+							--I think this handles if we need more than 1 full box.
+							full_ammo = full_ammo + 1
+							similar.findSimilar = false
+
+							self.complexCraft[#self.complexCraft + 1] = 
+							{
+								id1 = id,
+								id2 = similar.id,
+								section = sec,
+								newItemSize = size + similar.size - box_size --Later check if it's at least 1
+							}
+						end
+
+						parts_id[id] = nil --This is only needed for release? Will need checking. If it is then we're good.
+					end
+					if (full_ammo >= amount) then
+						self.itm_num[n]:SetTextColor(GetARGB(200, 50, 255, 50))
+						self.craft_allow[n] = true
+					end
+				end
+			end
+			self.itm_num[n]:SetText(tostring(full_ammo_txt) .. "/" .. tostring(amt))
+			
+		-- Normal items
+		else
+			if (count >= amount) then
+				self.itm_num[n]:SetTextColor(GetARGB(200, 50, 255, 50))
+				self.craft_allow[n] = true
+			end
+			self.itm_num[n]:SetText(tostring(count) .. "/" .. tostring(amt))
+		end
+		
+		-- Store items id
+		count = 0
+		for id,cnt in pairs(parts_id) do
+			count = count + cnt
+
+			-- to delete
+			if (count <= amount) then
+				self.craft_item[n][#self.craft_item[n] + 1] = id
+				dischargeAmount = dischargeAmount - count
+			end
+			
+			if count == amount then
+				break
+			end
+			
+			-- to discharge
+			if count > amount then
+				self.craft_item_remain[n] = { id = id , cnt = (count - (count - dischargeAmount)) }
+				break
+			end
+		end
+		
+		utils_xml.set_icon(sec, (not self.craft_allow[n]), self.itm_ico_temp[n], self.itm_ico[n])
+		
+	-- if its the result item
+	else
+		local stop = false
+		local toolkit_name = ui_item.get_sec_name(toolkit_sec)
+
+		self.resetcomplexCraft = true
+		
+		for i=1,4 do
+			if self.craft_allow[i] == false then
+				stop = true
+				SetTip(nil, "craft_warning_4", "craft_solution_4", nil, false, self.info_text)
+				break
+			end
+		end
+		if not (stop) then 
+			if (not self.toolkits_state[toolkit_idx]) then
+				stop = true
+				SetTip(nil, "craft_warning_3", "craft_solution_3", toolkit_sec, false, self.info_text)
+			end
+		end
+		
+		if (not stop) then
+			self.craft_allow_r = true
+			self.itm_num_r:SetTextColor(GetARGB(250, 50, 255, 50))
+			SetTip("craft_tip_5", nil, nil, sec, true, self.info_text)
+			self.btn_craft:Enable(true)
+		else
+			self.itm_num_r:SetTextColor(GetARGB(250, 255, 50, 50))
+			self.btn_craft:Enable(false)
+		end
+		
+		if IsItem("ammo",sec) then
+			amount = box
+		end
+		self.craft_item_r = {sec , amount}
+		
+		-- Repesent finale uses if its mulit-use item
+		local amount_txt = tostring(amount) or ""
+		if IsItem("multiuse",sec) then
+			local uses = ini_sys:r_float_ex(sec,"max_uses") or amount
+			amount_txt = tostring(uses) or ""
+		end
+		
+		self.itm_name_r:SetText(name)
+		self.itm_num_r:SetText(amount_txt)
+		utils_xml.set_icon(sec, (not self.craft_allow_r), self.itm_ico_temp_r, self.itm_ico_r)
+		
+		self.itm_name_t:SetText(toolkit_name)
+		utils_xml.set_icon(toolkit_sec, (not self.toolkits_state[toolkit_idx]), self.itm_ico_temp_t, self.itm_ico_t)
+	end
+end
