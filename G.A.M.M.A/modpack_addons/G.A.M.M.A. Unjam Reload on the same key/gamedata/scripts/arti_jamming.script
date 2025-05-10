@@ -187,7 +187,10 @@ function play_anim(weapon, anim, sound)
 			weapon:play_hud_motion(anim, true, 0, 1, 0)
 			print_dbg("playing animation %s for %s time", anim, length)
 			if sound then
-				utils_obj.play_sound(sound)
+				local _sound = sound and str_explode(sound, ",")
+				snd_obj = sound_object(_sound[1])
+				snd_obj:play(db.actor, 0, sound_object.s2d)
+				snd_obj.volume = _sound[2] or 1
 			end
 			return true
 		end)
@@ -233,6 +236,26 @@ function unset(id)
 	-- oleh5230 end
 	return true
 end
+
+-- oleh5230
+-- cancel unjam if weapon is holstered
+function actor_on_hud_animation_play(anm_table, item)
+	if not anim_playing
+	or not string.find(anm_table.anm_name, "anm_hide")
+	or not (item and jammed_guns[item:id()])
+	or unjam_motion_mark
+	then return end
+
+	print_dbg("cancel anim")
+	RemoveTimeEvent("arti_jamming", "restore")
+	block_repeat = false
+	anim_playing = false
+	unjam_motion_mark = false
+	if snd_obj and snd_obj:playing() then
+		snd_obj:stop()
+	end
+end
+-- oleh5230 end
 
 -- oleh5230
 -- motion mark support
@@ -1067,6 +1090,7 @@ function on_game_start()
 
 	-- oleh5230
 	RegisterScriptCallback("on_before_key_press", block_weapon_keybinds)
+	RegisterScriptCallback("actor_on_hud_animation_play",actor_on_hud_animation_play)
 	RegisterScriptCallback("actor_on_hud_animation_mark",actor_on_hud_animation_mark)
 	-- oleh5230 end
 end
