@@ -8,6 +8,7 @@ Credits: Aoldri, demonized
 To Do:
 - add sound variants support
 - add volume/delay parameters?
+- add arti_jamming.block_repeat check? (unlocalizing needed)
 ]]
 
 local charged_guns = {}
@@ -20,10 +21,13 @@ function actor_on_weapon_before_fire(flags)
     if wpn and IsWeapon(wpn) and not (IsMelee(wpn) or IsGrenade(wpn)) then
         local wpn_id = wpn:id()
         local state = wpn:get_state()
+        local zoom_type = wpn:cast_Weapon():GetZoomType()
         local dryfire = ini_sys:r_string_ex(wpn:section(),"snd_empty_first")
 
-        --printf("%s %s %s %s %s", dryfire, wpn:get_ammo_in_magazine(), isMisfireWeapon(wpn, wpn_id), state, charged_guns[wpn_id])
-        if dryfire and (wpn:get_ammo_in_magazine() == 0 or isMisfireWeapon(wpn, wpn_id)) and state == 0 and charged_guns[wpn_id] then
+        --printf("%s %s %s %s %s %s", dryfire, wpn:get_ammo_in_magazine(), isMisfireWeapon(wpn, wpn_id), state, charged_guns[wpn_id], arti_jamming.block_repeat)
+        if  dryfire
+        and (wpn:get_ammo_in_magazine() == 0 or isMisfireWeapon(wpn, wpn_id))
+        and state == 0 and charged_guns[wpn_id] and zoom_type ~= 2 then
             sound_to_play = sound_object(dryfire)
             sound_to_play:play(db.actor, 0, sound_object.s2d)
             charged_guns[wpn_id] = false
