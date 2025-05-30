@@ -1,0 +1,83 @@
+local gc = game.translate_string
+local parse_keys = utils_data.parse_string_keys
+
+function tasks_fetch.postpone_fetch_for_next_frame(task_id, section, amount)
+	if not (task_id and section) then
+		return true
+	end
+	
+	task_id = string.sub(task_id,1,-7) or "" -- because it ends with fetch
+	amount = amount or 1
+	local extra = ""
+	if (ini_sys:r_string_ex(section,"kind") == "i_arty") then
+		extra = " " .. game.translate_string("st_ui_artefact")
+	end
+	
+	local clr = utils_xml.get_color("pda_white") --"%c[255,238,153,26]"
+	local news_caption = game.translate_string("ui_inv_needs") .. ":" --game.translate_string(task_manager.task_ini:r_string_ex(task_id, "title")) or "error"
+	local news_ico = task_manager.task_ini:r_string_ex(task_id, "icon") or "ui_inGame2_D_Sisshik"
+	local news_text = ui_item.get_sec_name(section) .. extra .. clr .. " (x" .. amount .. ")"
+
+	news_text = extend_news_text(news_text, section, amount)
+		
+	db.actor:give_talk_message2(news_caption, news_text, news_ico, "iconed_answer_item", task_id)
+	
+	return true
+end
+
+function extend_news_text(text, section, amount)
+	local cnt = 0
+	local function find_needed_items(npc, item)
+		if item:section() == section then
+			if item:get_remaining_uses() > 1 then
+				cnt = cnt + item:get_remaining_uses()
+			else
+				cnt = cnt + 1
+			end
+		end
+	end
+	db.actor:iterate_inventory(find_needed_items, nil)
+
+	local clr_txt = utils_xml.get_color("pda_white")
+	local clr_number
+	if cnt == 0 then
+		clr_number = utils_xml.get_color("d_red")
+	elseif cnt >= amount then
+		clr_number = utils_xml.get_color("pda_green")
+	else
+		clr_number = utils_xml.get_color("pda_yellow")
+	end
+
+	text = text .. "\\n" .. parse_keys(gc("st_fetch_count_have"), {["count"] = cnt, ["clr_txt"] = clr_txt, ["clr_number"] = clr_number})
+
+	cnt = 0
+	local m_data = alife_storage_manager.get_state()
+	if m_data.player_created_stashes then 
+		for k,v in pairs(m_data.player_created_stashes) do
+			local stash_obj = level.object_by_id(k)
+			if stash_obj then
+				stash_obj:iterate_inventory_box(find_needed_items, stash_obj)
+			end
+		end
+	end
+	if m_data.workshop_stashes then 
+		for k,v in pairs(m_data.workshop_stashes) do
+			local stash_obj = level.object_by_id(v)
+			if stash_obj then
+				stash_obj:iterate_inventory_box(find_needed_items, stash_obj)
+			end
+		end
+	end
+
+	if cnt == 0 then
+		clr_number = utils_xml.get_color("d_red")
+	elseif cnt >= amount then
+		clr_number = utils_xml.get_color("pda_green")
+	else
+		clr_number = utils_xml.get_color("pda_yellow")
+	end
+
+	text = text .. "\\n" .. parse_keys(gc("st_fetch_count_in_stashes"), {["count"] = cnt, ["clr_txt"] = clr_txt, ["clr_number"] = clr_number})
+	
+	return text
+end
