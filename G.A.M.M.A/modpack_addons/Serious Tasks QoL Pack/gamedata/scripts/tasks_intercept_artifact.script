@@ -1,0 +1,194 @@
+
+local art_sections = {
+    -- T1
+    {},
+    -- T2
+    {
+        "af_empty",
+        "af_eye",
+        "af_fuzz_kolobok",
+        "af_bracelet",
+        "af_mincer_meat",
+        "af_gravi",
+        "af_cristall",
+        "af_pin",
+        "af_ring",
+        "af_vyvert",
+        "af_sponge",
+        "af_dummy_dummy",
+        "af_electra_moonlight",
+        "af_lobster_eyes"
+    },
+    -- T3
+    {
+        "af_baloon",
+        "af_black_spray",
+        "af_electra_flash",
+        "af_fire",
+        "af_fireball",
+        "af_full_empty",
+        "af_glass",
+        "af_gold_fish",
+        "af_ice"
+    }
+}
+
+local state = {
+    artifact_id = {},
+    artifact_section = {},
+    stalker_id = {},
+}
+local target = {}
+local rolled_artifact = {}
+-- Target reroll will be available on reload/location change if player was unlucky. It should be cool.
+local target_rolled = {}
+
+function save_state(mdata)
+	mdata.nta_intercept_artifact_task_data = state
+end
+
+function load_state(mdata)
+	if mdata.nta_intercept_artifact_task_data then
+		state = mdata.nta_intercept_artifact_task_data
+	end
+end
+
+local function task_initialized(task_id)
+    return state[task_id] and state[task_id].stalker_id
+end
+
+task_status_functor.intercept_artifact_task_status_functor = function(tsk,task_id)
+	if not (db.actor and tsk and state[task_id] and task_initialized(task_id)) then return end
+	local stage = tsk.stage
+
+    local art_id = state[task_id].artifact_id
+    local art = alife_object(art_id)
+    if not art or not string.find(art:section_name(), state[task_id].artifact_section) then
+        -- Fail if the item doesn't exist anymore (stalker holding it or the item itself despawned)
+        return "fail"
+    end
+
+	if stage == 0 or stage == 1 then
+        if utils_item.has_item_by_id(nil, art_id) then
+            tsk.stage = 2
+        end
+    end
+
+	if stage == 2 then
+        if not utils_item.has_item_by_id(nil, art_id) then
+            tsk.stage = 1
+        end
+    end
+end
+
+task_functor.intercept_artifact_task_target_functor = function(task_id,field,p,tsk)
+	if not (db.actor and tsk and task_initialized(task_id)) then return nil end
+	local stage = tsk.stage
+
+    if stage == 0 then
+        return state[task_id].stalker_id
+    end
+
+    -- Stage 1 happens only if player picks up the artifact container and stores it somewhere/drops it
+    if stage == 1 then
+        return state[task_id].artifact_id
+    end
+
+    if stage == 2 then
+        return tsk.task_giver_id
+    end
+end
+
+xr_effects.intercept_artifact_cleanup = function(actor, npc, p)
+    local task_id = p[1]
+    state[task_id] = {
+        artifact_id = nil,
+        artifact_section = nil,
+        stalker_id = nil,
+    }
+end
+
+xr_effects.intercept_artifact_completed = function(actor, npc, p)
+    local task_id = p[1]
+    news_manager.relocate_item(nil, "out", state[task_id].artifact_section)
+    safe_release_manager.release({ id = state[task_id].artifact_id })
+end
+
+local function collect_targeted_factons(p)
+    local result = {}
+    for i=4,#p do
+        table.insert(result, p[i])
+    end
+    return result
+end
+
+-- p1: task id
+-- p2: artifact tier
+-- p3: scanned maps (group name)
+-- p4+: targeted factions
+xr_conditions.intercept_artifact_check = function(actor,npc,p)
+    local task_id = p[1]
+    if not target_rolled[task_id] then
+        local art_tier = tonumber(p[2])
+        
+        local scanned_maps = p[3]
+
+        --[[
+            SERIOUS NO NORTH TASKS BEFORE BS
+            AND THE NORTHERN JOB
+        --]]
+        local northernMaps = blacklist_helper.GetNorthernMaps()
+        
+        if blacklist_helper.ShouldBlacklistNorth() then
+            scanned_maps = "southern_maps"
+        elseif northernMaps[level.name()] then -- Player is in the Northern region and rightfully so
+            scanned_maps = "northern_maps"
+        end
+        --[[
+            SERIOUS NO NORTH TASKS BEFORE BS
+            AND THE NORTHERN JOB
+        --]]
+
+        local targeted_factions = collect_targeted_factons(p)
+
+        target[task_id] = nta_utils.find_random_stalker(targeted_factions, nta_utils[scanned_maps])
+        target_rolled[task_id] = true
+        local art_tier_selected = art_sections[art_tier]
+        rolled_artifact[task_id] = art_tier_selected[math.random(1, #art_tier_selected)]
+    end
+    return not not target[task_id]
+end
+
+xr_effects.dispatch_intercept_artifact_task_details = function(actor, npc, p)
+    CreateTimeEvent(0,"intercept_artifact_task_details",0, function ()
+        local task_id = p[1]
+        -- Build News
+        local news_caption = game.translate_string(task_manager.task_ini:r_string_ex(task_id, "title")) or "error"
+
+        local news_text = game.translate_string("st_mm_new_game_name") .. " " .. target[task_id].name ..
+            "\\n " .. game.translate_string("st_mm_new_game_faction_2") .. " " .. game.translate_string(target[task_id].faction) ..
+            "\\n " .. game.translate_string("st_location") .. " " .. game.translate_string(target[task_id].level) ..
+            "\\n " .. game.translate_string("nta_intercept_item") .. " " .. game.translate_string("st_" .. rolled_artifact[task_id] .. "_name")
+        local news_ico = task_manager.task_ini:r_string_ex(task_id, "icon")
+
+        db.actor:give_talk_message2(news_caption, news_text, news_ico, "iconed_answer_item", task_id)
+        return true
+    end)
+end
+
+xr_effects.spawn_intercept_artifact_artifact = function(actor, npc, p)
+    local task_id = p[1]
+    local section = rolled_artifact[task_id] .. "_lead_box"
+
+    if not state[task_id] then
+        state[task_id] = {}
+    end
+    state[task_id].artifact_id = alife_create_item(section, alife_object(target[task_id].id)).id
+    state[task_id].artifact_section = section
+    state[task_id].stalker_id = target[task_id].id
+end
+
+function on_game_start()
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+end

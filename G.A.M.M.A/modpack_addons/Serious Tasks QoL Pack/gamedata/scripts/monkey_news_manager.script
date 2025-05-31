@@ -1,0 +1,29 @@
+OldSendTask = news_manager.send_task
+
+local action_descr_by_type = {
+	new = "general_new_task",
+	complete = "general_complete_task",
+	fail = "general_fail_task",
+	reversed = "general_reverse_task",
+	updated = "general_update_task"
+}
+
+function news_manager.send_task(actor, type, tsk)
+    if db.actor == nil then
+		return false
+	end
+	local time_on_screen = (type == "updated") and 5000 or 10000
+	xr_sound.set_sound_play(AC_ID, "pda_task")
+	local news_caption = game.translate_string(action_descr_by_type[type])
+	local news_text = game.translate_string(tsk:get_title() or "")
+	local icon = tsk:get_icon_name()
+	if(icon==nil) then
+		icon = "ui_iconsTotal_storyline"
+	end
+
+	if db.actor:is_talking() then
+		db.actor:give_talk_message2(news_caption, news_text..".", icon, "iconed_answer_item", tsk.id)
+	else
+		db.actor:give_game_news(news_caption, news_text..".", icon, 0, time_on_screen)
+	end
+end
