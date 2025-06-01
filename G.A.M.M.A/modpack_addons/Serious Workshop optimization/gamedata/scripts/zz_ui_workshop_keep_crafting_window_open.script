@@ -47,39 +47,75 @@ ui_workshop.UIWorkshopCraft.Close = function(self)
 end
 
 ui_workshop.UIWorkshopCraft.Craft = function(self)
-	if (not self.craft_allow_r) then 
-		return 
+	if (not self.craft_allow_r) then
+		return
 	end
 
 	--printf("calling override Craft")
-	
+
 	-- Remove supportive items
 	local lead_box_number = 0
 	local total_cond = 0
 	local counter = 0
 	local randomize = 0
+	local complexCraftingSections = {} -- I store the item that is "substituted" by complex crafting.
+
+	if self.complexCraft and #self.complexCraft > 0 then
+		for _, ccInfo in pairs(self.complexCraft) do
+			alife_release_id(ccInfo.id1)
+			alife_release_id(ccInfo.id2)
+
+			if ccInfo.newItemSize >= 1 then
+				local stashId = self.stashId or (self.owner and self.owner.stashId)
+				if stashId then
+					local stash_obj = get_object_by_id(stashId)
+					alife_create_item(ccInfo.section, stash_obj, {ammo = ccInfo.newItemSize})
+				else
+					alife_create_item(ccInfo.section, db.actor, {ammo = ccInfo.newItemSize})
+				end
+			end
+
+			complexCraftingSections[ccInfo.section] = true
+		end
+	end
+
 	for i=1,#self.craft_item do
 		-- Release
 		if #self.craft_item[i] > 0 then
 			for j=1,#self.craft_item[i] do
 				local itm = get_object_by_id(self.craft_item[i][j])
-				if string.find(itm:section(),"_lead_box") then
+				local itmSect = itm:section()
+
+				if string.find(itmSect,"_lead_box") then
 					lead_box_number = lead_box_number + 1
 				end
-				
+
 				local cond = itm:condition()
-				local kind = SYS_GetParam(0, itm:section(), "kind") 
+				local kind = SYS_GetParam(0, itmSect, "kind")
 				if cond and kind == "i_arty" then
 					total_cond = total_cond + cond
 					counter = counter + 1
-				end           
+				end
 				if cond and kind == "i_arty_junk" then
 					total_cond = 1
 					counter = 1
 					randomize = 1
 				end
 
-				alife_release_id(self.craft_item[i][j])
+				--[[
+					SERIOUS
+					If a component is substituted by complex crafting it will be released in a different way, so for that I don't release an item here.
+					
+					If you need 1 full box of powder for the craft and you have 1 full box in player or stash inventory 
+					and you have partial stacks that add up to a full stack then this prevents both the full box and the partial stack from being consumed.
+					
+					I only do this once because after that if the recipe asks for 3 full boxes I still need to consume the rest regardless of complex crafting.
+				--]]
+				if complexCraftingSections[itmSect] then
+					complexCraftingSections[itmSect] = nil
+				else
+					alife_release_id(self.craft_item[i][j])
+				end
 			end
 		end
 
@@ -97,23 +133,6 @@ ui_workshop.UIWorkshopCraft.Craft = function(self)
 		end
 	end
 
-	if self.complexCraft and #self.complexCraft > 1 then
-		for _, ccInfo in pairs(self.complexCraft) do
-			alife_release_id(ccInfo.id1)
-			alife_release_id(ccInfo.id2)
-
-			if ccInfo.newItemSize >= 1 then
-				local stashId = self.stashId or (self.owner and self.owner.stashId)
-				if stashId then
-					local stash_obj = get_object_by_id(stashId)
-					alife_create_item(ccInfo.section, stash_obj, {ammo = ccInfo.newItemSize})
-				else
-					alife_create_item(ccInfo.section, db.actor, {ammo = ccInfo.newItemSize})
-				end
-			end
-		end
-	end
-	
 	-- Craft
 	if IsItem("ammo",self.craft_item_r[1]) then
 		alife_create_item(self.craft_item_r[1], db.actor, {ammo = self.craft_item_r[2]})
@@ -126,11 +145,11 @@ ui_workshop.UIWorkshopCraft.Craft = function(self)
 					if cond_to_set >= 0.99 then
 						cond_to_set = 0.989
 					end
-					
+
 					if randomize == 1 then
 						cond_to_set = ((math.random(zz_item_artefact.arti_min_eff, zz_item_artefact.arti_max_eff)) / 100)
 					end
-					
+
 					alife_create_item(self.craft_item_r[1], db.actor, {cond = cond_to_set})
 				end
 			else
@@ -138,7 +157,7 @@ ui_workshop.UIWorkshopCraft.Craft = function(self)
 			end
 		end
 	end
-	
+
 	if string.find(self.craft_item_r[1],"_lead_box") then
 		lead_box_number = lead_box_number - 1
 		if lead_box_number > 0 then
@@ -149,7 +168,7 @@ ui_workshop.UIWorkshopCraft.Craft = function(self)
 	end
 	-- Increase Statistic
 	game_statistics.increment_statistic("items_crafted")
-	
+
 	hasCraftedItem = true
 	if (self.last_cont and self.last_idx) then
 		--Dirty hack to update ui after alife item removal
@@ -202,7 +221,7 @@ ui_workshop.UIWorkshopRepair.Repair = function(self)
 	if (not obj) then
 		return
 	end
-	
+
 	local sim = alife()
 	local tot_con = 0
 	local cnt = 0
@@ -212,11 +231,11 @@ ui_workshop.UIWorkshopRepair.Repair = function(self)
 				if self.new_con[i] and self.new_con[i].id then
 					self.parts[i].con = self.new_con[i].con
 					print_ws("- UIWorkshopRepair:Repair() | replaced part spotted | part: %s - condition: %s - order: %s - id: %s", self.parts[i].sec, self.new_con[i].con, i, self.new_con[i].id)
-					
+
 					-- Release replacement parts
 					alife_release_id(self.new_con[i].id)
 				end
-				
+
 				tot_con = tot_con + self.parts[i].con --AdjustCon(self.parts[i].sec, self.parts[i].con, #self.parts, IsOutfit(self.object))
 				cnt = cnt + 1
 				print_ws("/ UIWorkshopRepair:Repair() | total condition calculation | part: %s - condition: %s - order: %s - total sum: %s", self.parts[i].sec, self.parts[i].con, i, tot_con)
@@ -226,7 +245,7 @@ ui_workshop.UIWorkshopRepair.Repair = function(self)
 		print_ws("! UIWorkshopRepair:Repair() | no new parts have been replaced")
 		return
 	end
-	
+
 	-- Discharge tools
 	for i=1,#self.toolkit_pick do
 		local obj_tool = level.object_by_id(self.toolkit_pick[i])
@@ -237,12 +256,12 @@ ui_workshop.UIWorkshopRepair.Repair = function(self)
 			printe("!ERROR UIWorkshopRepair:Repair() | can't discharge toolkit with id (%s). Object not found!", self.toolkit_pick[i])
 		end
 	end
-	
+
 	-- Apply condition changes
 	local id = obj:id()
 	local sec = obj:section()
 	sec = ini_sys:r_string_ex(sec,"parent_section") or sec -- for weapons with scopes
-	
+
 	local final_con = (cnt > 0) and (clamp(math.ceil(tot_con/cnt),1,100)/100)
 	local weapon = level.object_by_id(id)
 	if weapon and final_con and (final_con >= 0) and (final_con <= 1) then
@@ -251,20 +270,20 @@ ui_workshop.UIWorkshopRepair.Repair = function(self)
 	else
 		printe("! UIWorkshopRepair:Repair() | object with id (%s) is either not found. Or didn't register new condition (%s)!", id, final_con)
 	end
-	
+
 	local result_part_tbl = {}
 	result_part_tbl[sec] = math.ceil(tot_con/cnt)
 	for i=1,#self.parts do
 		result_part_tbl[self.parts[i].sec] = self.parts[i].con
 	end
 	item_parts.set_parts_con(id, result_part_tbl)
-	
+
 	for k,v in pairs(result_part_tbl) do
 		print_ws("~ UIWorkshopRepair:Repair() | item's new part table [%s] = %s",k,v)
 	end
 
 	utils_obj.play_sound("interface\\inv_properties_2")
-	
+
 	hasCraftedItem = true
 	if (self.last_cont and self.last_idx) then
 		--Dirty hack to update ui after alife item removal
@@ -301,7 +320,7 @@ end
 ui_workshop.UIWorkshopUpgrade.Close = function(self)
 	-- Effect
 	if self.owner.dbg then
-	
+
 	elseif hasCraftedItem then
 		actor_effects.play_item_fx("craft_dummy")
 	end
@@ -319,13 +338,13 @@ ui_workshop.UIWorkshopUpgrade.Upgrade = function(self)
 	if (not obj) then
 		return
 	end
-	
+
 	-- For weapons, unload mag and clear ammo cache in case of ammo type upgrades
 	if IsWeapon(obj) and (not IsItem("fake_ammo_wpn",obj:section())) then
 		obj:force_unload_magazine(true)
 		item_weapon.clear_cache(obj)
 	end
-	
+
 	-- Sort upgrades
 	k2t_table(self.inst_upgr)
 	local sort_tbl = {}
@@ -337,7 +356,7 @@ ui_workshop.UIWorkshopUpgrade.Upgrade = function(self)
 			end
 		end
 	end
-	
+
 	-- Install upgrades
 	inventory_upgrades.force_upgrade = true
 	for i=1,#sort_tbl do
@@ -355,7 +374,7 @@ ui_workshop.UIWorkshopUpgrade.Upgrade = function(self)
 	end
 
 	utils_obj.play_sound("interface\\inv_properties_2")
-		
+
 	hasCraftedItem = true
 	if (self.last_cont and self.last_idx) then
 		--Dirty hack to update ui after alife item removal
