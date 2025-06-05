@@ -1,0 +1,260 @@
+-- ======================================================================
+--[[    Monkeypatch to enable dynamic UI elements in MCM
+-- ======================================================================
+    Author: Catspaw
+    Version: 2.3
+    Updated: 20231020
+    Source: https://www.moddb.com/mods/stalker-anomaly/addons/personal-adjustable-waypoint-for-anomaly-151-152-and-gamma
+
+    Included with Personal Adjustable Waypoint, but parameterized so that
+    any addon can make use of it.
+
+    The code in this script is based on code from RavenAscendant's MCM,
+    which is in turn based on the works of Tronex and others.
+
+    You may freely include this script in your own addon, unaltered--but
+    unless your name is RavenAscendant, please do not release it merged 
+    with ui_mcm.script or otherwise as an integrated alteration to your
+    own (or your modpack's) version of MCM.
+	
+	2.3 roll back support for the Track element due to reported issues
+	2.2 adds "borderless" attribute to the slide element and "desc"
+		to supported elements
+    2.1 adds support for the Track element.
+-- ======================================================================
+	USAGE
+-- ======================================================================
+	Adds a new functor attribute to the Slide and Image element types:
+	- [ui_hook_functor]
+	- Define: ( table {function, parameters} )
+	- Used by: image, slide, list, desc (only in this monkeypatch)
+	- Parameters passed: anchor, handlers, attrs, flags
+		Execute a function on initial registration of a UI element
+		anchor	- empty static image container
+		handlers- table of UI handlers
+		attrs	- table of MCM attributes for the menu option
+		flags 	- table of MCM metadata
+		The value of the "parameters" option in the table is added to the end of the parameters list.
+
+	Adds a new functor attribute that triggers on changes in all input types:
+	- [on_selection_functor]
+	- Define: ( table {function, parameters} )
+	- Used by option elements: ALL (only in this monkeypatch)
+	- Parameters passed: path, opt, value, attrs
+		Execute a function on any unsaved change to an option value
+		path 	- MCM path to changed option
+		opt 	- name of the changed option
+		value 	- value of uncommitted change
+		attrs 	- table of MCM attributes for the menu option
+		The value of the "parameters" option in the table is added to the end of the parameters list.
+
+	For most purposes, like simple custom text or image display and/or
+	formatting, it is sufficient to just instantiate an "image"-type
+	menu element with a ui_hook_functor, and let the called functor do 
+	whatever work is necessary to build your UI.
+-- ======================================================================
+	COMPATIBILITY / TROUBLESHOOTING
+-- ======================================================================
+	This monkeypatch should work with any recent MCM version. If yours 
+	is old and doesn't work, just upgrade already.
+
+	This monkeypatch should NOT alter any functionality of MCM for any 
+	element that does not explicitly invoke either of the new functors.
+
+	However, if you beleve this script is causing problems, you should be 
+	able to delete or disable it without causing issues. Anyone using 
+	these functors in their own addon should know to have it gracefully 
+	fail if this script is missing.
+-- ==================================================================--]]
+
+if ui_mcm and not ui_mcm.ui_functors_enabled then
+	cache_value = ui_mcm.UIMCM.CacheValue
+	-- Storing pointer to the unmodified MCM function
+	function init_wrapper_box(xml, anchor, w, h, posx, posy)
+		if not (xml and anchor) then return end
+		wrapbox	= xml:InitStatic("elements:image", anchor)
+		if not wrapbox then return end
+		w 		= w or anchor:GetWidth()
+		h 		= h or anchor:GetHeight()
+		posx 	= posx and (type(posx) == "number") and posx or 0
+		posy 	= posy and (type(posy) == "number") and posy or 0
+		wrapbox:SetWndSize(vector2():set(w,h))
+		pos		= wrapbox:GetWndPos()
+		wrapbox:SetWndPos(vector2():set(pos.x + posx, pos.y + posy))
+		return wrapbox
+	end
+
+	function ui_mcm.UIMCM:CacheValue(path, opt, value, v)
+		cache_value(self,path,opt,value,v)
+		-- Use pointer to pass the args through to MCM unaltered
+		-- We need to prepend "self" to the args because we're invoking a class method without the colon
+		if v and v.on_selection_functor then ui_mcm.exec(unpack(v.on_selection_functor),path,opt,value,v) end
+		-- If the on_selection_functor attribute contains a functor, pass a copy of the same args to the functor
+	end
+
+	function ui_mcm.UIMCM:Register_Image(xml, handler, v)
+		local pic = xml:InitStatic("elements:image",handler)
+		if v.link then
+			if (v.pos) then
+				local pos = pic:GetWndPos()
+				pic:SetWndPos(vector2():set( pos.x + v.pos[1] , pos.y + v.pos[2] ))
+			end
+			if (v.size) then
+				pic:SetWndSize(vector2():set( v.size[1] , v.size[2] ))
+			end
+			pic:InitTexture(v.link)
+			pic:SetStretchTexture(v.stretch and true or false)
+		end
+
+		if v.ui_hook_functor then
+			local wrapbox 	= init_wrapper_box(xml,handler,pic:GetWidth(),pic:GetHeight(),-10)
+			local handlers = {
+				pic 		= pic, 	-- Handler for the image element
+			}
+			local flags = {
+				etype 		= "image",
+			}
+			ui_mcm.exec(unpack(v.ui_hook_functor),wrapbox,handlers,v,flags)
+		end
+		
+		return pic:GetHeight()
+	end
+
+	function ui_mcm.UIMCM:Register_Slide(xml, handler, v)
+		local frame = xml:InitStatic("elements:slide", handler)
+		local _pos = frame:GetWndPos()
+		frame:SetWndPos(vector2():set( _pos.x , _pos.y + (v.spacing or 20) ))
+		
+		local pic = xml:InitStatic("elements:slide:pic", frame)
+		if v.link then
+			pic:InitTexture(v.link)
+			pic:SetStretchTexture(true)
+			if (v.pos) then
+				local pos = pic:GetWndPos()
+				pic:SetWndPos(vector2():set( pos.x + v.pos[1] , pos.y + v.pos[2] ))
+			end
+			if (v.size) then
+				pic:SetWndSize(vector2():set( v.size[1] * (utils_xml.is_widescreen() and 0.8 or 1) , v.size[2] ))
+			end
+			pic:InitTexture(v.link)
+		end
+		
+		local txt = xml:InitTextWnd("elements:slide:txt", frame)
+		if v.text then
+			txt:SetText( game.translate_string(v.text) )
+		end
+		
+		if not v.borderless then
+			xml:InitStatic("elements:slide:line_1", frame)
+			xml:InitStatic("elements:slide:line_2", frame)
+		end
+		
+		if v.ui_hook_functor then
+			local wrapbox 	= init_wrapper_box(xml,handler,pic:GetWidth(),pic:GetHeight() + 20,-10)
+			local handlers = {
+				pic 		= pic, 	-- handler for the image element
+				txt 		= txt, 	-- handler for the text element
+			}
+			local flags = {
+				etype 		= "slide",
+			}
+			ui_mcm.exec(unpack(v.ui_hook_functor),wrapbox,handlers,v,flags)
+		end
+
+		return (pic:GetHeight() + 20)
+	end
+
+	function ui_mcm.UIMCM:Register_Desc(xml, handler, v)
+		local desc = xml:InitTextWnd("elements:desc", handler)
+		desc:SetText( game.translate_string(v.text) )
+		desc:AdjustHeightToText()
+		desc:SetWndSize(vector2():set(desc:GetWidth(), desc:GetHeight() + 20))
+		if v.clr and v.clr[4] then
+			desc:SetTextColor( GetARGB(v.clr[1], v.clr[2], v.clr[3], v.clr[4]) )
+		end
+
+		if v.ui_hook_functor then
+			local wrapbox 	= init_wrapper_box(xml,handler,desc:GetWidth(),desc:GetHeight(),-10)
+			local handlers = {
+				desc 		= desc, -- Handler for the text description element
+			}
+			local flags = {
+				etype 		= "desc",
+			}
+			ui_mcm.exec(unpack(v.ui_hook_functor),wrapbox,handlers,v,flags)
+		end
+
+		return desc:GetHeight()
+	end
+
+	function ui_mcm.UIMCM:Register_List(xml, handler, path, opt, v, flags)
+		local id = ui_mcm.cc(path , opt)
+		
+		-- Caption
+		local h = self:Register_Cap(xml, handler,  id, v.hint)
+		
+		-- Apply to all button
+		if flags.apply_to_all and flags.group then
+			self:Register_BtnAll(xml, handler, path, opt, v, flags)
+		end
+		
+		-- Create control
+		local ctrl = xml:InitComboBox("elements:list",handler)
+		if (ctrl:GetHeight() > h) then
+			--h = ctrl:GetHeight()
+		end
+		
+		-- Get values
+		local idx
+		local value = self:GetValue(path, opt, v, flags)
+		local content = self:GetContent(path, opt, v)
+		
+		-- Setup
+		for i=1,#content do 
+			local str_2 = content[i][2] or tostring(content[i][1])
+			local str = v.no_str and str_2 or game.translate_string("ui_mcm_lst_" .. str_2)
+			ctrl:AddItem( game.translate_string(str), i)
+			
+			if content[i][1] == value then
+				idx = i
+			end
+		end
+		idx = idx or 1
+		local str_2 = content[idx][2] or tostring(content[idx][1])
+		local str = v.no_str and str_2 or game.translate_string("ui_mcm_lst_" .. str_2)
+		ctrl:enable_id( idx )
+		ctrl:SetText( game.translate_string(str) )
+		
+		-- Register
+		local id_ctrl = self:Stacker(path, opt, v)
+		
+		self:Register(ctrl, id_ctrl)
+		local _wrapper = function(handler) -- we need wrapper in order to pass ctrl to method
+			self:Callback_List(ctrl, path, opt, v)
+		end
+		self:AddCallback(id_ctrl, ui_events.LIST_ITEM_SELECT, _wrapper, self)
+
+		if v.ui_hook_functor then
+			local id_cap 	= string.gsub(id, "/", "_")
+			local cap 		= self._Cap[id_cap]
+			local wrapbox 	= init_wrapper_box(xml,handler,handler:GetWidth(),ctrl:GetHeight(),-10)
+			local handlers = {
+				ctrl 		= ctrl, 	-- handler for the list control element
+				cap 		= cap, 		-- handler for text caption element
+			}
+			flags.etype 	= "list"
+			flags.path 		= path 		-- MCM menu path
+			flags.opt		= opt 		-- MCM option ID
+			ui_mcm.exec(unpack(v.ui_hook_functor),wrapbox,handlers,v,flags)
+		end
+		
+		return h
+	end	
+
+
+	printf("ui_mcm.script monkeypatched by zzzzz_monkey_paw_ui_mcm.script")
+elseif ui_mcm then
+	printf("zzzzz_monkey_paw_ui_mcm.script: installed MCM already supports UI functors, aborting monkeypatch")
+else
+	printf("zzzzz_monkey_paw_ui_mcm.script: MCM not found, aborting monkeypatch")
+end
