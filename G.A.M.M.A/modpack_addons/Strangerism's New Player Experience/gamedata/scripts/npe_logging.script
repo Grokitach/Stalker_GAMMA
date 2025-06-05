@@ -1,0 +1,144 @@
+
+-- app name
+APP = { tag = "[NPE]"}
+
+-- log level
+
+LEVEL = 0
+
+-- log types
+INFO = { tag = ""}
+START = { tag = "$"}
+STOP = { tag = "%"}
+ERROR = { tag = "!"}
+WARN = { tag = "~"}
+ADD = { tag = "-"}
+REMOVE = { tag = "*"}
+RUN = { tag = "//"}
+
+-- categories
+CONF = { tag = "[CONF]", enabled = false}
+OVERR = { tag = "[OVERR]", enabled = false}
+RGSTR = { tag = "[RGSTR]", enabled = false}
+TRACE = { tag = "[TRACE]", enabled = false}
+EXEC = { tag = "[EXEC]", enabled = false}
+ACTIV = { tag = "[ACTIV]", enabled = false}
+QUEUE = { tag = "[QUEUE]", enabled = false}
+PLAY = { tag = "[PLAY]", enabled = false}
+EVENT = { tag = "[EVENT]", enabled = false}
+ACTION = { tag = "[ACTION]", enabled = false}
+UI = { tag = "[UI]", enabled = false}
+UI_EXEC = { tag = "[UI_EXEC]", enabled = false}
+
+
+local function printlog(type,category,msg,...)
+    if LEVEL > 0 then
+        msg = msg or " "
+        if not category.enabled then return end
+        if type then
+            msg = type.tag .. APP.tag .. category.tag  .. msg
+        else
+            msg = APP.tag .. category.tag  .. msg
+        end
+        if select('#', ...) ~= 0 then printf(string.format(msg,...))
+        else printf(msg)
+        end
+    end
+end
+
+local function printdebug(type,category, msg,...) -- debug logging
+	if LEVEL > 1 then printlog(type,category, msg,...) end
+end
+Printlog_npe = printlog
+Printdebug_npe = printdebug
+
+local function printtrace(type,category, msg,...) -- debug logging
+	if LEVEL > 2 then printlog(type,category, msg,...) end
+end
+Printtrace_npe = printtrace
+
+local function print_table(t, indent)
+    if not t then
+        return
+    end
+    indent = indent or ''
+    for key, value in pairs(t) do
+        if type(value) == 'table' then
+            printlog(INFO, CONF, indent .. '' .. key .. ':')
+            print_table(value, indent .. '  ')
+        else
+            printlog(INFO, CONF, indent .. key .. ': ' .. tostring(value))
+        end
+    end
+end
+Print_table_npe = print_table
+
+local function debug_table(t, indent)
+    if not t then
+        return
+    end
+    indent = indent or ''
+    for key, value in pairs(t) do
+        if type(value) == 'table' then
+            printdebug(INFO, CONF,indent .. '' .. key .. ':')
+            debug_table(value, indent .. '  ')
+        else
+            printdebug(INFO, CONF,indent .. key .. ': ' .. tostring(value))
+        end
+    end
+end
+Debug_table_npe = debug_table
+
+local function print_functor(functor)
+    for i, v in ipairs(functor) do
+        if type(v) == "table" then
+            printtrace(INFO, EXEC,"Table at index " .. i .. ":")
+            print_functor(v)
+        else
+            printtrace(INFO, EXEC,"Element at index " .. i .. ": " .. v)
+        end
+    end
+end
+Print_functor_npe = print_functor
+
+
+local function update_logs()
+    LEVEL = tonumber(npe_mcm.npe_get_setting("logs", "logging_level"))
+    printf("Log level: %s", tostring(LEVEL))
+    CONF.enabled = npe_mcm.npe_get_setting("logs", "conf_logs")
+    printf("CONF enabled: %s", tostring(CONF.enabled))
+    OVERR.enabled = npe_mcm.npe_get_setting("logs", "overr_logs")
+    RGSTR.enabled = npe_mcm.npe_get_setting("logs", "rgstr_logs")
+    TRACE.enabled = npe_mcm.npe_get_setting("logs", "trace_logs")
+    EXEC.enabled = npe_mcm.npe_get_setting("logs", "exec_logs")
+    ACTIV.enabled = npe_mcm.npe_get_setting("logs", "activ_logs")
+    QUEUE.enabled = npe_mcm.npe_get_setting("logs", "queue_logs")
+    PLAY.enabled = npe_mcm.npe_get_setting("logs", "play_logs")
+    EVENT.enabled = npe_mcm.npe_get_setting("logs", "event_logs")
+    ACTION.enabled = npe_mcm.npe_get_setting("logs", "action_logs")
+    UI.enabled = npe_mcm.npe_get_setting("logs", "ui_logs")
+    UI_EXEC.enabled = npe_mcm.npe_get_setting("logs", "ui_exec_logs")
+
+end
+
+local function mcm_on_option_change()
+    update_logs()
+    SendScriptCallback("npe_on_log_update")
+end
+
+local function actor_on_first_update()
+    printlog(RUN, CONF,"[Logging] Actor on first update")
+    update_logs()
+    SendScriptCallback("npe_on_log_init")
+end
+
+if AddScriptCallback then
+    AddScriptCallback("npe_on_log_update")
+end
+if AddScriptCallback then
+    AddScriptCallback("npe_on_log_init")
+end
+function on_game_start()
+    RegisterScriptCallback("on_option_change", mcm_on_option_change)
+    RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+end
