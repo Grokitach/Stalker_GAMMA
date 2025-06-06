@@ -1,15 +1,38 @@
--- This file contains the events that can be used to trigger the NPE system
+----------------------------------------------------------------- NPE CONSTANTS AND PREFABS -----------------------------------------------------------------
+
+-- This file contains the built-in events that can be used to trigger the NPE system
 -- The events are defined as constants
+-- It also contains all the constants that can be referenced in the npe_modules
 
+-- module types is referenced in the EVENTs
 MODULE_TYPE = {
-    NONE = "none",
-    NPE = "npe",
-    ANOMALY = "anomaly",
+    NONE = "NONE",
+    NPE = "NPE",
+    ANOMALY = "ANOMALY",
 }
-
+-- Dialog type is referenced in the npe_module's deck definitions
+DIALOG = {
+    UI_TUTORIAL = "npe_dialog_tutorial",
+    UI_CODEC = "npe_dialog_codec"
+}
+-- Tasks can be referenced in the npe_modules custom events  
+TASK = {
+    fanatic_training_day_boar_hunting = "task_fanat_training_1",
+    wolf_mutant_threat_from_cordon = "esc_2_12_stalker_wolf_task_1_name",
+    wolf_rescue_courier_from_cordon = "esc_2_12_stalker_wolf_task_2_name"
+}
+-- smart terrains can be referenced in the npe_modules custom events
+SMART_TERRAIN = {
+    cordon_loners_base = "esc_smart_terrain_2_12",
+    cordon_military_base = "esc_smart_terrain_3_16",
+    cordon_loners_se_first_post = "esc_smart_terrain_4_13",
+    cordon_underpass_workshop_overlook = "esc_smart_terrain_5_12",
+}
+-- the full list of built-in events that can be referenced in the npe_modules sets' contexts definitions
 EVENT = {
 
     GAME_START = { name = "Game Start", handler = { name ="on_game_start", module = MODULE_TYPE.NONE } },
+    DLC_START = { name = "DLC", handler = { name ="on_dlc_start", module = MODULE_TYPE.NONE } },
 
     -- NPCs
     NPC_LOOTED = { name = "NPC Looted", handler = nil, module = MODULE_TYPE.NPE },
@@ -29,13 +52,13 @@ EVENT = {
     ACTOR_USE_NPC_CORPSE = { name = "Check NPC Corpse", handler = { name = "npc_on_use", module = MODULE_TYPE.ANOMALY } },
     ACTOR_DEATH = { name = "Actor Death", handler = nil, module = MODULE_TYPE.NPE },
     ACTOR_HIT = { name = "Actor Hit", handler = { name = "actor_on_hit_callback", module = MODULE_TYPE.ANOMALY } },
-    ACTOR_BLEEDING = { name = "Actor Bleeding", handler = { name = "npe_on_actor_bleeding", functor = { "npe", "npe_on_actor_bleeding" }, module = MODULE_TYPE.NPE } },
-    ACTOR_IRRADIATED = { name = "Actor Irradiated", handler = { name = "npe_on_actor_irradiated", functor = { "npe", "npe_on_actor_irradiated" }, module = MODULE_TYPE.NPE } },
-    ACTOR_HUNGRY = { name = "Actor Hungry", handler = { name = "npe_on_actor_hungry", functor = { "npe", "npe_on_actor_hungry" }, module = MODULE_TYPE.NPE } },
-    ACTOR_OVERWEIGHT = { name = "Actor Overweight", handler = { name = "npe_on_actor_overweight", functor = { "npe", "npe_on_actor_overweight" }, module = MODULE_TYPE.NPE } },
-    ACTOR_THIRSTY = { name = "Actor Thirsty", handler = { name = "npe_on_actor_thirsty", functor = { "npe", "npe_on_actor_thirsty" }, module = MODULE_TYPE.NPE } },
-    ACTOR_STRESSED = { name = "Actor Stressed", handler = { name = "npe_on_actor_stressed", functor = { "npe", "npe_on_actor_stressed" }, module = MODULE_TYPE.NPE } },
-    ACTOR_MAD = { name = "Actor Mad", handler = { name = "npe_on_actor_mad", functor = { "npe", "npe_on_actor_mad" }, module = MODULE_TYPE.NPE } },
+    ACTOR_BLEEDING = { name = "Actor Bleeding", handler = { name = "npe_on_actor_bleeding", functors = {{ "npe_events", "on_actor_bleeding" }}, module = MODULE_TYPE.NPE } },
+    ACTOR_IRRADIATED = { name = "Actor Irradiated", handler = { name = "npe_on_actor_irradiated", functors = {{ "npe_events", "on_actor_irradiated" }}, module = MODULE_TYPE.NPE } },
+    ACTOR_HUNGRY = { name = "Actor Hungry", handler = { name = "npe_on_actor_hungry", functors = {{ "npe_events", "on_actor_hungry" }}, module = MODULE_TYPE.NPE } },
+    ACTOR_OVERWEIGHT = { name = "Actor Overweight", handler = { name = "npe_on_actor_overweight", functors = {{ "npe_events", "on_actor_overweight" }}, module = MODULE_TYPE.NPE } },
+    ACTOR_THIRSTY = { name = "Actor Thirsty", handler = { name = "npe_on_actor_thirsty", functors = {{ "npe_events", "on_actor_thirsty" }}, module = MODULE_TYPE.NPE } },
+    ACTOR_STRESSED = { name = "Actor Stressed", handler = { name = "npe_on_actor_stressed", functors = {{ "npe_events", "on_actor_stressed" }}, module = MODULE_TYPE.NPE } },
+    ACTOR_MAD = { name = "Actor Mad", handler = { name = "npe_on_actor_mad", functors = {{ "npe_events", "on_actor_mad" }}, module = MODULE_TYPE.NPE } },
     ACTOR_SLEEP = { name = "Actor Sleep", handler = "actor_on_sleep", module = MODULE_TYPE.NPE },
     ACTOR_RANK_UP = { name = "Actor Rank Up", handler = nil, module = MODULE_TYPE.NPE },
     ACTOR_LEVEL_UP = { name = "Actor Level Up", handler = nil, module = MODULE_TYPE.NPE },
@@ -74,52 +97,7 @@ EVENT = {
     WEAPON_NO_AMMO = { name = "Weapon No Ammo", handler = nil, module = MODULE_TYPE.NPE },
     SCOPE_ATTACHED = { name = "Scope Attached", handler = nil, module = MODULE_TYPE.NPE },
 
+    -- codec calls and questlines event
+    TALKED_TO_NPC = { name = "Talked To NPC", handler = nil, module = MODULE_TYPE.NPE },
+
 }
--- list of all the events that can be triggered
-function npe_on_actor_bleeding()
-    if db.actor == nil then
-        return false
-    end
-    local bleeding = db.actor.bleeding > 0
-    return bleeding
-end
-
-function npe_on_actor_irradiated()
-    if db.actor == nil then
-        return false
-    end
-    local irradiated = db.actor.radiation > 0
-    return irradiated
-end
-
-function npe_on_actor_stressed()
-    if db.actor == nil then
-        return false
-    end
-    local stressed = db.actor.psy_health < 1
-    return stressed
-end
-
-function npe_on_actor_mad()
-    if db.actor == nil then
-        return false
-    end
-    local madness = db.actor.psy_health < 0.5
-    return madness
-end
-
-function npe_on_actor_hungry()
-    local hungry = actor_status.get_satienty(true) > 0
-    return hungry
-end
-
-function npe_on_actor_overweight()
-    local overweight = actor_status.get_overweight(true) > 0
-    return overweight
-end
-
-function npe_on_actor_thirsty()
-    -- local thirsty = actor_status.get_thirst(true) > 0
-    -- return thirsty
-    return false
-end
