@@ -1,0 +1,192 @@
+local printlog = npe_logging.Printlog_npe
+local printdebug = npe_logging.Printdebug_npe
+local printtrace = npe_logging.Printtrace_npe
+local print_table = npe_logging.Print_table_npe
+local debug_table = npe_logging.Debug_table_npe
+local print_functor = npe_logging.Print_functor_npe
+local LOG = npe_logging
+
+-- USABLE ACTIONS
+
+EFFECTOR = {
+    BLUR = {name ="blur.ppe", c_id = 5606},
+    BLACK_INFINITE = {name = "black_infinite.ppe", c_id = 5600},
+    AUDIO_SHOCK = {name = "snd_shock.ppe", c_id = 5607},
+    RADIATION = {name = "radiation.ppe", c_id = 5608},
+    ALCOHOL = {name = "alcohol.ppe", c_id = 5609},
+}
+
+function remove_all_psy_ppe_effects()
+    printdebug(LOG.RUN, LOG.ACTION," remove_all_psy_ppe_effects")
+    level.remove_pp_effector(EFFECTOR.BLUR.c_id)
+    -- level.remove_pp_effector(EFFECTOR.BLACK_INFINITE.name)
+    level.remove_pp_effector(EFFECTOR.AUDIO_SHOCK.c_id)
+    level.remove_pp_effector(EFFECTOR.RADIATION.c_id)
+    level.remove_pp_effector(EFFECTOR.ALCOHOL.c_id)
+    return true
+end
+
+function set_all_psy_ppe_effects(duration, set_id)
+    printdebug(LOG.RUN, LOG.ACTION," set_all_psy_ppe_effects with duration = " .. duration .. " for set_id = " .. set_id)
+    level.add_pp_effector(EFFECTOR.BLUR.name, EFFECTOR.BLUR.c_id, true)
+    -- level.add_pp_effector(EFFECTOR.BLACK_INFINITE.name, EFFECTOR.BLACK_INFINITE.c_id, true)
+    level.add_pp_effector(EFFECTOR.AUDIO_SHOCK.name, EFFECTOR.AUDIO_SHOCK.c_id, true)
+    level.add_pp_effector(EFFECTOR.RADIATION.name, EFFECTOR.RADIATION.c_id, true)
+    level.add_pp_effector(EFFECTOR.ALCOHOL.name, EFFECTOR.ALCOHOL.c_id, true)
+    CreateTimeEvent("npe_remove_all_psy_ppe_effects", "npe_remove_all_psy_ppe_effects" .. set_id, duration, remove_all_psy_ppe_effects)
+    return true
+end
+
+function npe_remove_effector(effector)
+    printdebug(LOG.RUN, LOG.ACTION," npe_remove_effector("..effector.name..")")
+    level.remove_pp_effector(effector.c_id)
+    return true
+end
+
+function npe_remove_effectors(effectors_table)
+    printdebug(LOG.RUN, LOG.ACTION," npe_remove_effectors")
+    for i, effector in ipairs(effectors_table) do
+        npe_remove_effector(effector)
+    end
+    return true
+end
+
+function npe_add_effector(effector, duration, set_id)
+    printdebug(LOG.RUN, LOG.ACTION," npe_add_effector("..effector.name..", "..duration..", "..set_id..")")
+    level.add_pp_effector(effector.name. effector.c_id, true)
+    if duration then
+        CreateTimeEvent("npe_remove_effector", "npe_remove_effector" .. set_id, duration, npe_remove_effector, effector)
+    end
+    return true
+end
+
+function npe_add_effectors(effectors_table, duration, set_id)
+    printdebug(LOG.RUN, LOG.ACTION," npe_add_effectors")
+    for i, effector in ipairs(effectors_table) do
+        npe_add_effector(effector, duration, set_id)
+    end
+    return true
+end
+
+function add_to_actor(money, items)
+    printdebug(LOG.RUN, LOG.ACTION," add_to_actor("..money..", items)")
+    local reward = {
+        [1] = { reward_money = money, reward_item = items}
+    }
+    
+    xr_effects.give_reward(db.actor,nil,reward)
+    return true
+end
+
+function remove_from_actor(items)
+    printdebug(LOG.RUN, LOG.ACTION," remove_from_actor(items)")
+    xr_effects.remove_item(db.actor, nil, items)
+    return true
+end
+
+function add_to_stash(items, stash_id)
+    printdebug(LOG.RUN, LOG.ACTION," add_to_stash(items, "..stash_id..")")
+    local stash_obj = alife_object(stash_id) 
+    if not stash_obj then
+        printdebug(LOG.ERROR, LOG.ACTION," stash does not exists")
+        return true
+    end
+	for i=1,#items do
+		local section = items[i]
+        local se_itm = alife_create_item(section, stash_obj, nil)
+    end
+    return true
+end
+
+-- NPE Runners functors
+local Runner ={}
+local task_target_id = 0
+local my_task_name  = "My Task"
+local my_task_desc  = "Go do stuff here"
+local tm            = task_manager.get_task_manager()
+local task_info     = tm.task_info
+
+function dummy_task_functor()
+    return true
+end
+
+function clearup_task(task_id)
+    printdebug(LOG.RUN, LOG.ACTION," clearup_task("..task_id..")")
+    tm.task_info[task_id] = nil
+    npe_execution.Stop(Runner[task_id].name)
+    npe_execution.Remove(Runner[task_id].name)
+    Runner[task_id] = nil
+    return true
+end
+
+task_functor.npe_task_target_functor = function (task_id,field,p,tsk)
+    if (field == "target") then
+        tsk.target = task_target_id
+        tsk.current_target = task_target_id
+        return task_target_id
+    end
+end
+
+task_functor.npe_task_text_functor = function (task_id,field,p,tsk)
+    if (field == "title") then
+        return my_task_name
+    elseif (field == "descr") then
+        return my_task_desc
+    end
+end
+
+
+local default_task_id  = "task_npe_actions_default"
+function create_task(name, desc, target_id,complete_functor, create_functor)
+    printdebug(LOG.RUN, LOG.ACTION," create_task("..tostring(name)..", "..tostring(desc)..", "..tostring(target_id)..")")
+    print_functor(LOG.INFO, LOG.ACTION," create_functor", create_functor)
+    print_functor(LOG.INFO, LOG.ACTION," complete_functor", complete_functor)
+    my_task_name  = name
+    my_task_desc  = desc
+
+    -- sets task_id and target_id so they can be referenced by the task_functors above, npe_task_target_functor and npe_task_text_functor
+    local task_id = default_task_id
+    if target_id ~= nil then
+        task_target_id = target_id
+    end
+
+    if complete_functor == nil then
+        -- use the default functor
+        complete_functor = { "npe_events", "on_near_game_object", task_target_id}
+    end
+
+    local runner_config = {
+		name = task_id,
+		module = "npe_actions",
+		group_name = "npe_actions_tasks",
+		execution = npe_execution.TYPE.CONDITIONAL,
+		stop_condition = complete_functor,
+		start_timer = 1,
+		loop_timer = 3,
+		functor = { "npe_actions", "dummy_task_functor"},
+		start = create_functor,
+        stop = { "npe_actions", "clearup_task", task_id },
+	}
+    if Runner[task_id] == nil then
+        Runner[task_id] = runner_config
+    else
+        printdebug(LOG.INFO, LOG.ACTION," runner with key "..task_id.." already exists")
+        return false
+    end
+    
+    tm:give_task(task_id)
+    npe_execution.Add(Runner[task_id])
+    npe_execution.Resume(Runner[task_id].name)
+    return true
+end
+
+function actor_on_item_put_in_box(box, itm)
+	printdebug(LOG.RUN, LOG.ACTION," box_id = " .. box:id())
+end
+
+-------------------------------------------------------------------------- GANE SYSTEM CALLBACKS --------------------------------------------------------------------------
+
+
+function on_game_start()
+end
+
