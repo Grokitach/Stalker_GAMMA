@@ -1,0 +1,129 @@
+-- Edited by CustomBeerFairy. Special thanks for ForserX for idea about ray casting.
+-- edited by oleh5230, 17.04.25
+
+local debug = false
+
+available_materials = {
+    asphalt             = "asphalt_", -- Асфальт
+    bricks              = "asphalt_", -- Кирпичная стена
+    bush                = "grass_", -- Кусты, крона деревьев, камышы, листья 
+    bush_sux            = "grass_", -- Кусты, крона деревьев, камышы, листья сухие
+    cloth               = "grass_", -- Ткань
+    concrete            = "asphalt_", -- Монолитный бетон
+    death               = "dirt_", -- Смертоносная земля (нестандартный материал)
+    dirt                = "dirt_", -- Мокрая грязь, болото 
+    earth               = "dirt_", -- Сухая твердая земля (стандартный материал)
+    earth_death         = "dirt_", -- Сухая твердая земля (нестандартный материал)
+    earth_slide         = "dirt_", -- Сухая твердая земля (стандартный материал)
+    flooring_tile       = "asphalt_", -- Плитка, кафель
+    glass               = "asphalt_", -- Стекло
+    grass               = "dirt_", -- Земля, покрытая травой
+    gravel              = "gravel_", -- Гравий
+    metal               = "metal_", -- Монолитный метал, толстый кусок железа, танк
+    metal_pipe          = "metal_", -- Металлическая труба
+    metal_plate         = "metal_thin_", -- Металлическая пластина (толщина 2-5см), Ступеньки
+    sand                = "gravel_", -- Песок, насыпь
+    setka_rabica        = "metal_", -- Сетка рабица, колючая проволока
+    shifer              = "asphalt_", -- Шифер
+    stucco              = "asphalt_", -- штукатурка
+    tin                 = "metal_thin_", -- Жесть, крыша домов
+    tree_trunk          = "wood_", -- Дерево (ствол)
+    water               = "water_", -- Вода
+    water_radiation     = "water_", -- Вода
+    wood                = "wood_", -- Деревянная поверхность, деревянный пол, деревянные ступеньки
+    wooden_board        = "wood_", -- Деревянная доска (толщина 2-5см), деревянный вагон, ящик
+    default             = "dirt_",
+
+    occ                 = "fake", -- Материал для оклюжен геометрии
+    fake                = "fake", -- Материал для колижена (нет звука, следов от пуль, теней)
+    fake_ladders        = "fake", -- невидимая лестница
+    fake_ladders_woods  = "fake", -- невидимая деревянная лестница
+    fake_slide          = "fake", -- Материал для колижена (нет звука, следов от пуль, теней)
+}
+
+local jump_sound, land_sound
+local volume = 0.5
+local enabled = true
+
+function actor_on_jump()
+    if not enabled then return end
+
+    local material = available_materials[ray_cast()] or "dirt_"
+    jump_sound = sound_object("jump\\jump_" .. material .. math.random(3))
+    jump_sound:play(db.actor, 0, sound_object.s2d)
+    jump_sound.volume = volume
+end
+
+function actor_on_land(landing_speed)
+    if not enabled then return end
+    print_dbg("landing_speed: %s", landing_speed)
+
+    -- patch for speed set to 0 by fake geometry
+    if landing_speed == 0 then landing_speed = 5 end
+	if landing_speed > 3 then
+        local material = available_materials[ray_cast()] or "dirt_"
+        land_sound = sound_object("landing\\landing_" .. material .. math.random(3))
+        land_sound:play(db.actor, 0, sound_object.s2d)
+        land_sound.volume = volume * (landing_speed / 5)
+    end
+end
+
+function ray_cast()
+    actor_position = vector():set(db.actor:position())
+    position = vector():set(actor_position.x, actor_position.y + 1, actor_position.z)
+    direction = vector():set(0, -1, 0)
+    ray = demonized_geometry_ray.geometry_ray({
+        ray_range = 1.25,
+        flags = 1 + 2 + 4 + 8,
+        visualize = debug
+    })
+    material = ray:get(position ,direction).result.material_name
+    material = material and string.gsub(material, "materials\\" , "")
+
+    if available_materials[material] == "fake" then
+        print_dbg("!Fake material!")
+        position = vector():set(actor_position.x, actor_position.y - 0.5, actor_position.z)
+        direction = vector():set(0, 1, 0)
+        ray = demonized_geometry_ray.geometry_ray({
+            ray_range = 1,
+            flags = 1 + 2 + 4 + 8,
+            visualize = debug
+        })
+        material = ray:get(position ,direction).result.material_name
+        material = material and string.gsub(material, "materials\\" , "")
+    end
+
+    if material and available_materials[material] ~= "fake" then
+        print_dbg("!material name: %s", material)
+        return material
+    else
+        print_dbg("!No valid material!")
+        return
+    end
+end
+
+function on_option_change()
+    if ui_mcm then
+        enabled = ui_mcm.get("extended_movement_sounds/enabled_jump_sounds") or false
+	    volume  = ui_mcm.get("extended_movement_sounds/volume_jump_sounds") or 0.5
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_jump", actor_on_jump)
+    RegisterScriptCallback("actor_on_land", actor_on_land)
+    RegisterScriptCallback("on_option_change", on_option_change)
+	on_option_change()
+
+    --RegisterScriptCallback("actor_on_footstep", actor_on_footstep) -- uncomment to disable footsteps sounds
+end
+
+function actor_on_footstep(material, power, hud_view, flags)
+    flags.ret_value = false
+end
+
+function print_dbg(...)
+	if debug then
+		printf(...)
+	end
+end

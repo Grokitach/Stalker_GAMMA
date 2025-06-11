@@ -1,0 +1,174 @@
+--[[
+plays crouch and lean sounds
+oleh5230, 16.04.25
+
+Credits:
+xcvb: get_body_state()
+]]
+
+local debug = false
+
+MovementAllowed = true
+local crouch_toggle, accel_toggle, lookout_toggle
+
+local toggle_settings = {
+    ["crouch"]      = true,
+    ["stand"]       = true,
+    ["lookout"]     = true,
+    ["lookback"]    = true
+}
+local volume_settings = {
+    ["crouch"]      = 0.5,
+    ["stand"]       = 0.5,
+    ["lookout"]     = 0.5,
+    ["lookback"]    = 0.5,
+}
+local count = {
+    ["crouch"]      = 1,
+    ["stand"]       = 1,
+    ["lookout"]     = 1,
+    ["lookback"]    = 1,
+}
+local limit = {
+    ["crouch"]      = 8,
+    ["stand"]       = 8,
+    ["lookout"]     = 4,
+    ["lookback"]    = 4,
+}
+
+local states_blacklist = {
+    ['mcJump']      = true,
+    ['mcFall']      = true,
+    ['mcClimb']     = true,
+}
+
+function on_key_press(key)
+    if device():is_paused() or not is_hud_free() or not MovementAllowed then return end
+
+    local bind = dik_to_bind(key)
+    local volume = 1
+    local body_st = get_body_state()
+    if body_st == "blocked" then return end
+
+    if bind == key_bindings.kCROUCH and IsMoveState('mcAccel') then volume = 1.7 end
+
+    if bind == key_bindings.kCROUCH then
+        if body_st == "stand" then
+            play_sound("crouch", volume)
+        else
+            play_sound("stand", volume)
+        end
+
+    elseif (bind == key_bindings.kACCEL and IsMoveState('mcCrouch')) then
+        if body_st == "crouch" then
+            play_sound("crouch", volume)
+        else
+            play_sound("stand", volume)
+        end
+
+    elseif (bind == key_bindings.kR_LOOKOUT or bind == key_bindings.kL_LOOKOUT) and not freelook_state.FreelookActive then
+        play_sound("lookout", volume)
+    end
+end
+
+function on_key_release(key)
+    if device():is_paused() or not actor_menu.is_hud_free() or not MovementAllowed then return end
+
+    local bind = dik_to_bind(key)
+    local volume = 1
+    local body_st = get_body_state()
+    if body_st == "blocked" then return false end
+
+    if bind == key_bindings.kCROUCH and not crouch_toggle then
+        play_sound("stand", volume)
+
+    elseif (bind == key_bindings.kACCEL and IsMoveState('mcCrouch')) and not accel_toggle then
+        play_sound("stand", volume)
+
+    elseif (bind == key_bindings.kR_LOOKOUT or bind == key_bindings.kL_LOOKOUT) and not lookout_toggle and not freelook_state.FreelookActive then
+        play_sound("lookback", volume)
+    end
+end
+
+function play_sound(movement, volume)
+    if not toggle_settings[movement] then return end
+
+    sound = sound_object(movement .. "\\" .. movement .. "_" .. count[movement])
+    sound:play(db.actor, 0, sound_object.s2d)
+    sound.volume = volume * volume_settings[movement]
+
+    count[movement] = count[movement] + 1
+    if count[movement] > limit[movement] then count[movement] = 1 end
+    --print_dbg("movement_sounds // movement: %s volume: %s", movement, volume)
+end
+
+function is_hud_free()
+    return  actor_menu.is_hud_free()
+    or      _GUIs["UIInventory"] and ui_inventory.GUI and ui_inventory.GUI.mode == "inventory"
+    or      _GUIs["UIWheelAmmo"]
+    or      _GUIs["UIWheelCompanion"]
+end
+
+function get_body_state()
+	local crouch = IsMoveState('mcCrouch')
+	local accel = IsMoveState('mcAccel')
+	local body_st = "stand"
+
+	if crouch then
+		if accel then body_st = "low_crouch"
+		else body_st = "crouch"
+		end
+	end
+
+    for k,v in pairs(states_blacklist) do
+        if IsMoveState(k) then body_st = "blocked" end
+    end
+    return body_st
+end
+
+function load_settings()
+    crouch_toggle   = get_console_cmd(1,"g_crouch_toggle")  or false
+    accel_toggle    = get_console_cmd(1,"g_walk_toggle")    or false
+    lookout_toggle  = get_console_cmd(1,"g_lookout_toggle") or false
+
+    if ui_mcm then
+        volume_settings = {
+            ["crouch"]      = ui_mcm.get("extended_movement_sounds/volume_stance_sounds")   or 0.5,
+            ["stand"]       = ui_mcm.get("extended_movement_sounds/volume_stance_sounds")   or 0.5,
+            ["lookout"]     = ui_mcm.get("extended_movement_sounds/volume_lookout_sounds")  or 0.5,
+            ["lookback"]    = ui_mcm.get("extended_movement_sounds/volume_lookout_sounds")  or 0.5,
+        }
+        toggle_settings = {
+            ["crouch"]      = ui_mcm.get("extended_movement_sounds/enabled_stance_sounds")  or false,
+            ["stand"]       = ui_mcm.get("extended_movement_sounds/enabled_stance_sounds")  or false,
+            ["lookout"]     = ui_mcm.get("extended_movement_sounds/enabled_lookout_sounds") or false,
+            ["lookback"]    = ui_mcm.get("extended_movement_sounds/enabled_lookout_sounds") or false,
+        }
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("on_before_key_press", on_key_press)
+    RegisterScriptCallback("on_key_release", on_key_release)
+
+    if demonized_ledge_grabbing then
+        RegisterScriptCallback("actor_on_climb_start",  function() MovementAllowed = false end)
+        RegisterScriptCallback("actor_on_climb_end",    function() MovementAllowed = true end)
+    end
+
+    RegisterScriptCallback("actor_on_attach_vehicle",   function() MovementAllowed = false end)
+    RegisterScriptCallback("actor_on_detach_vehicle",   function() MovementAllowed = true end)
+    RegisterScriptCallback("actor_on_before_death",     function() MovementAllowed = false end)
+	RegisterScriptCallback("actor_on_net_destroy",      function() MovementAllowed = false end)
+    RegisterScriptCallback("actor_on_first_update",     function() MovementAllowed = true end)
+
+    RegisterScriptCallback("on_option_change", load_settings)
+    RegisterScriptCallback("on_console_execute",load_settings)
+    load_settings()
+end
+
+function print_dbg(...)
+	if debug then
+		printf(...)
+	end
+end
