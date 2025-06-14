@@ -1,0 +1,50 @@
+-- plays sounds for crawling animation (from Weapon Inertia Expanded addon)
+-- oleh5230, 14.04.25
+-- Credits: lizzardman
+
+local enabled = true
+local volume = 0.5
+local sound
+local count = 1
+local tg
+local speed_min = 0
+local speed_max = 0.035
+local old_pos = vector()
+
+function actor_on_update(_, delta)
+    if not enabled or not liz_inertia_expanded_crawl.is_crawl_active then return end
+
+    -- anm_speed calc from original script
+    local cur_pos = db.actor:position()
+    cur_pos.y = 0
+    old_pos.y = 0
+    local crawl_speed = cur_pos:distance_to(old_pos or cur_pos) / (delta / 100)
+    local anm_speed = clamp( (crawl_speed - speed_min) / (speed_max - speed_min), 0, 1.15 )
+    old_pos = cur_pos
+
+    if not tg then tg = time_global() end
+    if time_global() > tg + (640 / anm_speed) then
+        tg = nil
+
+        sound = sound_object("crawl\\prone_gear_slow_" .. count)
+        if anm_speed > 0.5 then
+            sound:play(db.actor, 0, sound_object.s2d)
+            sound.volume = anm_speed * volume
+            sound.frequency = anm_speed
+
+            count = count + 1
+            if count > 12 then count = 1 end
+        end
+    end
+end
+
+function load_settings()
+    enabled = ui_mcm.get("extended_movement_sounds/enabled_crawl_sounds") or false
+    volume  = ui_mcm.get("extended_movement_sounds/volume_crawl_sounds") or 0.5
+end
+
+function on_game_start()
+    if liz_inertia_expanded_crawl then RegisterScriptCallback("actor_on_update", actor_on_update) end
+    RegisterScriptCallback("on_console_execute",load_settings)
+    load_settings()
+end
