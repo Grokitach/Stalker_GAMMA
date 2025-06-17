@@ -380,6 +380,10 @@ local function calculate_jam(wpn, old_ammo)
 	end
 	print_dbg("Final jam chance is %s", jam_chance)
 
+	silencer_status = wpn:weapon_is_silencer() and 1 or SYS_GetParam(2, wpn:section(), "silencer_status") == 1 and 1 or 0
+	silencer_jam_chance = SYS_GetParam(2, wpn:section(), "misfire_start_prob") * 500 * silencer_status
+	print_dbg("silencer status: %s; jam chance: %s", silencer_status, silencer_jam_chance)
+
 	if (math_random(1000) <= jam_chance) then
 		local str = gc("ui_st_jam")
 		local verbosity = 1
@@ -395,7 +399,13 @@ local function calculate_jam(wpn, old_ammo)
 		end
 		start_jammin(2)
 		send_msg(str, verbosity)
+	-- oleh5230
+	-- silencers can cause jams
+	elseif math_random(0,1000) < (silencer_jam_chance * silencer_status) then
+		print_dbg("silencer jam")
+		jammed_guns[wpn:id()] = 2
 	end
+	-- oleh5230 end
 end
 
 function get_jam_chance(wpn)
@@ -436,9 +446,9 @@ function get_jam_chance(wpn)
 
 			if jc_cond < 1 then
 				local jc_ratio = (1.0-jc_cond)/0.7 - 0.05
-				printf(jc_ratio)
+				--printf(jc_ratio)
 				jc = jc * (1 + jc_ratio)
-				printf(jc)
+				--printf(jc)
 			end
 				
 			if jc then
