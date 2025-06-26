@@ -1,0 +1,58 @@
+-- @ Version: SCREEN SPACE SHADERS - UPDATE 20
+-- @ Description: SSR script
+-- @ Author: https://www.moddb.com/members/ascii1457
+-- @ Mod: https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders
+
+-- Screen Space Reflections
+local ssfx_ssr_quality = 0
+
+local ssfx_ssr_int = 0
+local ssfx_ssr_int_sky = 0
+local ssfx_ssr_int_wpn = 0
+local ssfx_ssr_int_wpn_max = 0
+
+local ssfx_ssr_scale = 0
+local ssfx_ssr_blur = 0
+--local ssfx_ssr_temporal = 0
+local ssfx_ssr_noise = 0
+
+
+
+function apply_ssr_settings()
+
+	get_console():execute("ssfx_ssr_quality " .. ssfx_ssr_quality)
+	get_console():execute("ssfx_ssr (" .. ssfx_ssr_scale .. "," .. ssfx_ssr_blur .. "," .. 0 .."," .. (ssfx_ssr_noise and 1 or 0) .. ")")
+	get_console():execute("ssfx_ssr_2 (" .. ssfx_ssr_int .. "," .. ssfx_ssr_int_sky .. "," .. ssfx_ssr_int_wpn .."," .. ssfx_ssr_int_wpn_max .. ")")
+
+end
+
+function on_option_change()
+	
+	-- Get settings
+	ssfx_ssr_quality = ssfx_001_mcm.ssfx_get_setting("ssr", "quality", ssfx_ssr_settings)
+	
+	ssfx_ssr_int = ssfx_001_mcm.ssfx_get_setting("ssr", "general_int", ssfx_ssr_settings)
+	ssfx_ssr_int_sky  = ssfx_001_mcm.ssfx_get_setting("ssr", "sky_int", ssfx_ssr_settings)
+	ssfx_ssr_int_wpn = ssfx_001_mcm.ssfx_get_setting("ssr", "weapon_int", ssfx_ssr_settings)
+	ssfx_ssr_int_wpn_max = ssfx_001_mcm.ssfx_get_setting("ssr", "weapon_int_max", ssfx_ssr_settings)
+
+	ssfx_ssr_scale = ssfx_001_mcm.ssfx_get_setting("ssr", "render_scale", ssfx_ssr_settings)
+	ssfx_ssr_blur = ssfx_001_mcm.ssfx_get_setting("ssr", "blur", ssfx_ssr_settings)
+	--ssfx_ssr_temporal = ssfx_001_mcm.ssfx_get_setting("ssr", "temporal", ssfx_ssr_settings)
+	ssfx_ssr_noise = ssfx_001_mcm.ssfx_get_setting("ssr", "use_noise", ssfx_ssr_settings)
+
+	ssfx_ssr_scale = 1.0 / ssfx_ssr_scale -- 1.0 = 1.0 ~ 0.5 = 2.0
+
+	-- Apply settings
+	apply_ssr_settings()
+
+end
+
+function on_game_start()
+
+	-- General Functions
+	RegisterScriptCallback("on_option_change", on_option_change)
+	
+	-- Read and apply settigns
+	on_option_change()
+end
