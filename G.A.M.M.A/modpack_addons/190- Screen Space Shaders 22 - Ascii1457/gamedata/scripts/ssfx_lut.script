@@ -1,0 +1,167 @@
+-- @ Version: SCREEN SPACE SHADERS - UPDATE 19
+-- @ Description: LUT script
+-- @ Author: https://www.moddb.com/members/ascii1457
+-- @ Mod: https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders
+
+local ssfx_lut_default = { group = 1, intensity = 0.5 }
+local ssfx_lut_transition_speed = 0.005
+
+-- Internal vars
+local ssfx_lut_group1 = 0
+local ssfx_lut_group2 = 0
+local ssfx_lut_lerp = 0
+
+local ssfx_lut_lerp_target = 0
+local ssfx_lut_int = 0
+local ssfx_lut_lerp_done = true
+
+local DebugGroup = 0;
+
+-- Set a LUT table for a specific map
+local ssfx_maps = {
+--	["jupiter"]					= { group = 2, intensity = 1 }, -- Example
+--	["jupiter_underground"]		= { group = 0, intensity = 0 },
+--	["k00_marsh"]				= { group = 0, intensity = 0 },
+--	["k01_darkscape"]			= { group = 0, intensity = 0 },
+--	["k02_trucks_cemetery"]		= { group = 0, intensity = 0 },
+--	["l01_escape"]				= { group = 0, intensity = 0 },
+--	["l02_garbage"]				= { group = 0, intensity = 0 },
+--	["l03_agroprom"]			= { group = 0, intensity = 0 },
+--	["l03u_agr_underground"]	= { group = 0, intensity = 0 },
+--	["l04_darkvalley"]			= { group = 0, intensity = 0 },
+--	["l04u_labx18"]				= { group = 0, intensity = 0 },
+--	["l05_bar"]					= { group = 0, intensity = 0 },
+--	["l06_rostok"]				= { group = 0, intensity = 0 },
+--	["l07_military"]			= { group = 0, intensity = 0 },
+--	["l08_yantar"]				= { group = 0, intensity = 0 },
+--	["l08u_brainlab"]			= { group = 0, intensity = 0 },
+--	["l09_deadcity"]			= { group = 0, intensity = 0 },
+--	["l10_limansk"]				= { group = 0, intensity = 0 },
+--	["l10_radar"]				= { group = 0, intensity = 0 },
+--	["l10_red_forest"]			= { group = 0, intensity = 0 },
+--	["l10u_bunker"]				= { group = 0, intensity = 0 },
+--	["l11_hospital"]			= { group = 0, intensity = 0 },
+--	["l11_pripyat"]				= { group = 0, intensity = 0 },
+--	["l12_stancia"]				= { group = 0, intensity = 0 },
+--	["l12_stancia_2"]			= { group = 0, intensity = 0 },
+--	["l12u_control_monolith"]	= { group = 0, intensity = 0 },
+--	["l12u_sarcofag"]			= { group = 0, intensity = 0 },
+--	["l13_generators"]			= { group = 0, intensity = 0 },
+--	["l13u_warlab"]				= { group = 0, intensity = 0 },
+--	["labx8"]					= { group = 0, intensity = 0 },
+--	["pripyat"]					= { group = 0, intensity = 0 },
+--	["zaton"]					= { group = 0, intensity = 0 },
+--	["y04_pole"]				= { group = 0, intensity = 0 },
+}
+
+local function ssfx_lut_transition()
+
+	get_console():execute("ssfx_lut (" .. ssfx_lut_int .. "," .. ssfx_lut_group1 .. "," .. ssfx_lut_group2 .. "," .. ssfx_lut_lerp .. ")")
+	
+end
+
+
+function ssfx_lut_diminish()
+	
+	-- Frame independent smoothing
+	local smoothing = math.min(ssfx_lut_transition_speed * device().time_delta / 20, 0.19)
+	
+	-- Let's go!
+	if (ssfx_lut_lerp < ssfx_lut_lerp_target) then
+		ssfx_lut_lerp = ssfx_lut_lerp + smoothing
+	else
+		ssfx_lut_lerp = ssfx_lut_lerp - smoothing
+	end
+	
+	if math.abs(ssfx_lut_lerp - ssfx_lut_lerp_target) <= ssfx_lut_transition_speed then
+
+		ssfx_lut_group1 = ssfx_lut_group2
+		ssfx_lut_group2 = 0
+		ssfx_lut_lerp = 0
+		ssfx_lut_lerp_target = 0
+
+		ssfx_lut_lerp_done = true
+	end
+	
+end
+
+function ssfx_lut_change(group, insta)
+
+	if (ssfx_lut_lerp_done == false) then return end
+
+	if (insta == true) then
+		ssfx_lut_group1 = group
+		ssfx_lut_lerp = 0
+		ssfx_lut_lerp_target = 0
+		ssfx_lut_lerp_done = true
+		ssfx_lut_transition()
+	else
+
+		ssfx_lut_group2 = group
+		ssfx_lut_lerp_target = 1
+
+		ssfx_lut_lerp_done = false
+
+	end
+
+end
+
+-- DEBUG
+local function ssfx_on_key_press(dik)
+
+	local bind = dik_to_bind(dik)
+	local kb = key_bindings
+
+	if bind == kb.kWPN_RELOAD then
+		DebugGroup = DebugGroup + 1
+		ssfx_lut_change(DebugGroup, false)
+	end
+
+end
+
+local function actor_on_update()
+
+	--local game_hours = level.get_time_hours()
+	--printf("LUT TIME : %s", game_hours)
+
+	if (ssfx_lut_lerp_done == false) then
+
+		ssfx_lut_diminish()
+		ssfx_lut_transition()
+
+	end
+
+
+end
+
+local function actor_on_first_update()
+
+	if (ssfx_maps[level.name()]) then
+		Map_LUT = ssfx_maps[level.name()].group or ssfx_lut_default.group
+		ssfx_lut_int = ssfx_maps[level.name()].intensity or ssfx_lut_default.intensity
+	else
+		Map_LUT = ssfx_lut_default.group
+		ssfx_lut_int = ssfx_lut_default.intensity
+	end
+
+
+	ssfx_lut_change(Map_LUT, true)
+
+end
+
+function on_option_change()
+	
+end
+
+function on_game_start()
+
+	--RegisterScriptCallback("on_key_press", ssfx_on_key_press)
+
+	-- General Functions
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	
+	-- Read and apply settigns
+	on_option_change()
+end

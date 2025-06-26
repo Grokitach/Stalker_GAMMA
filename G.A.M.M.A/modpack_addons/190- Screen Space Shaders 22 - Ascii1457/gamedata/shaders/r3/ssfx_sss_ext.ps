@@ -1,0 +1,115 @@
+/**
+ * @ Version: SCREEN SPACE SHADERS - UPDATE 22
+ * @ Description: Screen Space Shadows - Extend Shadows
+ * @ Modified time: 2024-11-15 23:26
+ * @ Author: https://www.moddb.com/members/ascii1457
+ * @ Mod: https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders
+ */
+
+#include "screenspace_shadows.h"
+
+float4x4 m_current; // Current projection matrix
+float4x4 m_previous; // Previous projection matrix
+
+float4 lights_data[8]; // Light data ( Position )
+int id_offset;
+
+Texture2D sss_image;
+Texture2D s_prev_pos;
+
+float4 main(p_screen I) : SV_Target
+{
+
+	// Var to accumulate the SSS, each channel is 2 lights
+	float4 sss = 0.0f;
+
+	{
+// Sample buffers and prepare all requiered data ------------------
+		
+		// Scale TexCoor
+		float2 tc = I.tc0; // * float2(2, 1);
+		float2 Pos2D = I.hpos; // * float2(2, 1);
+
+		// Sample buffers
+	#ifndef USE_MSAA
+		float4 Pos = s_position.Sample( smp_nofilter, tc );
+	#else
+		float4 Pos = s_position.Load( int3( Pos2D, 0 ), 0 );
+	#endif
+
+		// The s_hud_mask is declared on "screenspace_shadows.h"
+		float3 HUD_mask = s_hud_mask.Sample(smp_nofilter, tc);
+
+		// Reconstruct Position, Normal and Material
+		float3 P 	= float3( Pos.z * ( Pos2D * pos_decompression_params.zw - pos_decompression_params.xy ), Pos.z );
+		float3 N 	= gbuf_unpack_normal( Pos.xy );
+		float mtl	= gbuf_unpack_mtl( Pos.w );
+
+// SSS -------------------------------------------------------------
+
+		bool mat_flora = abs(mtl - MAT_FLORA) <= 0.04f;
+		bool mat_terrain = abs(mtl - 0.95f) <= 0.04f;
+
+		if (!mat_flora && !mat_terrain && HUD_mask.x > 0)
+			return 1;
+
+		for (int x = 0; x < 4; x++)
+		{
+			sss[x] = SSFX_ScreenSpaceShadows_Point(float4(P, mtl), tc, lights_data[x + (4 * id_offset)].xyz, HUD_mask.x, 0);
+			sss[x] = saturate(sss[x] + lights_data[x + (4 * id_offset)].a);
+		}
+
+// Accumulation ----------------------------------------------------
+
+		// Position
+		float4 P4 = float4(P, 1.0);
+		
+		// Get current
+		float4 p_current = mul(m_current, P4);
+		
+		// Get previous
+		float4 p_previous = mul(m_previous, P4);
+
+		float2 current = p_current.xy / p_current.w;
+		float2 previous = p_previous.xy / p_previous.w;
+
+		// Reprojection UV
+		float2 uv_rp = current.xy - previous.xy;
+		uv_rp = float2(uv_rp.x, -uv_rp.y) * 0.5f;
+
+		float vel = 0; //distance(current.xy, previous.xy);
+
+		// HUD Mask
+		if (HUD_mask.x <= 0.0f)
+		{
+			// Use HUD motion vectors for reprojection
+			uv_rp = float2(HUD_mask.y, -HUD_mask.z) * 0.5f;
+			vel = (abs(uv_rp.x) + abs(uv_rp.y)) * 50.0f;
+		}
+
+		// Prev Position + Reprojection UV
+		float4 prev_P = s_prev_pos.Sample( smp_linear, (tc - uv_rp) );
+
+		// Disocclusion
+		float docc = saturate(abs(1.0f - P.z / prev_P.z)) * 2.5f;
+
+		// Agressive disocclusion for the HUD elements
+		docc *= 1.0f + 10.0f * (1.0f - HUD_mask.x);
+
+		// Offscreen check	
+		int outoffsrc = any((tc - uv_rp) < 0) + any((tc - uv_rp) > 1.0);
+		
+		// AA Noise
+		float2 rnd = hash22(tc * 100 + timers.xx * 100) * 2.0f - 1.0f;
+		rnd = rnd * (1.0f / screen_res.xy) * 0.25f;
+
+		// Previous frame + Reprojection UV + Noise
+		float4 prev = sss_image.Sample(smp_linear, (I.tc0 + rnd) - uv_rp);
+
+		// 0 Current frame ~ 1 Prev frame
+		sss = lerp(sss, prev, saturate(0.97f - (outoffsrc + docc + vel)));
+
+	}
+
+	return sss;
+}

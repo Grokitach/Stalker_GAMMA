@@ -1,0 +1,123 @@
+-- @ Version: SCREEN SPACE SHADERS - UPDATE 17
+-- @ Description: HUD raindrops
+-- @ Author: https://www.moddb.com/members/ascii1457
+-- @ Mod: https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders
+
+-- Settings
+local ssfx_hud_raindrops_density = 0
+local ssfx_hud_raindrops_refle = 0
+local ssfx_hud_raindrops_refra = 0
+
+local ssfx_hud_raindrops_anim_speed = 0
+local ssfx_hud_raindrops_build_speed = 0
+local ssfx_hud_raindrops_drying_speed = 0
+local ssfx_hud_raindrops_size = 0
+
+local ssfx_hud_raindrops_gloss = 0
+local ssfx_hud_raindrops_extragloss = 0
+
+-- Internal
+module_installed = true
+
+local drops_int = 0
+local drops_anim = 0
+local Rain_Hemi = 0;
+
+local dbug_time = 0;
+
+local function actor_on_update()
+
+	Rain_factor = level.rain_factor();
+
+	-- Don't do anything if intensity of drops is <= 0 and isn't raining
+	if (Rain_factor <= 0 and drops_int <= 0) then
+		return
+	end
+
+	delta_time = device().time_delta;
+
+	-- If raining
+	if (Rain_factor > 0) then
+
+		Rain_Hemi = level.rain_hemi()
+
+		if (Rain_Hemi > 0.15) then
+			-- Use rain intensity factor to slowdown <-> speedup rain animation
+			rain_speed_factor = (1.5 - Rain_factor) * 10
+			drops_anim = drops_anim + ssfx_hud_raindrops_anim_speed * delta_time / rain_speed_factor
+			drops_int = drops_int + ssfx_hud_raindrops_build_speed * delta_time / 100
+		else
+			drops_int = drops_int - ssfx_hud_raindrops_drying_speed * delta_time / 100
+		end
+
+	else
+		drops_int = drops_int - ssfx_hud_raindrops_drying_speed * delta_time / 100
+	end
+	
+	-- Saturate drops intensity
+	drops_int = clamp(drops_int, 0.0, 1.0)
+
+	-- Reset after 99k
+	if (drops_anim > 99000) then
+		drops_anim = 0
+	end
+
+	-- Update shader data
+	ssfx_update_raindrops()
+	
+	--dbug_time = dbug_time + 1
+	--if (dbug_time % 10 == 0) then printdbg("* RAIN - RAINDROPS : [%s] [%s]", drops_anim, drops_int) end
+end
+
+
+function actor_on_first_update()
+
+	Rain_Hemi = 0
+	drops_anim = 0
+	drops_int = 0
+	ssfx_update_raindrops()
+
+end
+
+function ssfx_update_raindrops()
+	get_console():execute("ssfx_hud_drops_1 (" .. drops_anim .. "," .. drops_int .. "," .. (ssfx_hud_raindrops_refle) .. "," .. (ssfx_hud_raindrops_refra) .. ")")
+end
+
+local function apply_extra_settings()
+
+	val_density = 0.15 * (3.5 - ssfx_hud_raindrops_density) -- 0.5 ~ 3.0
+	val_texsize = 2.0 - ssfx_hud_raindrops_size
+
+	get_console():execute("ssfx_hud_drops_2 (" .. val_density .. "," .. val_texsize .. "," .. ssfx_hud_raindrops_extragloss .. "," .. ssfx_hud_raindrops_gloss .. ")")
+end
+
+function on_option_change()
+	
+	-- Get settings
+	local module_id = "ssfx_rain_module/ssfx_rain_hud_raindrops"
+	ssfx_hud_raindrops_density = ssfx_001_mcm.ssfx_get_setting(module_id, "density", ssfx_rain_hud_raindrops_settings)
+	ssfx_hud_raindrops_refle = 30 * ssfx_001_mcm.ssfx_get_setting(module_id, "reflection_str", ssfx_rain_hud_raindrops_settings)
+	ssfx_hud_raindrops_refra = 0.05 * ssfx_001_mcm.ssfx_get_setting(module_id, "refraction_str", ssfx_rain_hud_raindrops_settings)
+
+	ssfx_hud_raindrops_anim_speed = 0.02 * ssfx_001_mcm.ssfx_get_setting(module_id, "animation_speed", ssfx_rain_hud_raindrops_settings)
+	ssfx_hud_raindrops_build_speed = 0.009 * ssfx_001_mcm.ssfx_get_setting(module_id, "buildup", ssfx_rain_hud_raindrops_settings)
+	ssfx_hud_raindrops_drying_speed = 0.001 * ssfx_001_mcm.ssfx_get_setting(module_id, "drying", ssfx_rain_hud_raindrops_settings)
+	ssfx_hud_raindrops_size = ssfx_001_mcm.ssfx_get_setting(module_id, "size", ssfx_rain_hud_raindrops_settings)
+
+	ssfx_hud_raindrops_gloss = ssfx_001_mcm.ssfx_get_setting(module_id, "gloss", ssfx_rain_hud_raindrops_settings)
+	ssfx_hud_raindrops_extragloss = ssfx_001_mcm.ssfx_get_setting(module_id, "extra_gloss", ssfx_rain_hud_raindrops_settings)
+
+	apply_extra_settings()
+
+end
+
+function on_game_start()
+
+	-- General Functions
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+
+	-- Read and apply settigns
+	on_option_change()
+end
