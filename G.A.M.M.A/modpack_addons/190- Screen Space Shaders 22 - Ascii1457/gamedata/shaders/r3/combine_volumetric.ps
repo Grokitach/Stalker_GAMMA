@@ -1,0 +1,69 @@
+#include "common.h"
+
+Texture2D noise_tex;
+
+//	Igor: used for volumetric light
+#ifndef USE_MSAA
+	Texture2D s_vollight;
+#else
+	#ifndef SM_5
+		Texture2DMS<float4,MSAA_SAMPLES> s_vollight;
+	#else
+		Texture2DMS<float4>	s_vollight;
+	#endif
+#endif
+
+struct	_input
+{
+	float4	tc0	: TEXCOORD0;	// tc.xy, tc.w = tonemap scale
+};
+
+struct	_out
+{
+	float4	low		: SV_Target0;
+	float4	high	: SV_Target1;
+};
+
+//	TODO: DX10: Use load instead of sample
+_out main( _input I )
+{
+	_out	o;
+	float4	color;
+
+#ifndef USE_MSAA // Get Volumetric Buffer [ No MSAA ]
+
+	color = s_vollight.SampleLevel( smp_linear, I.tc0.xy, 0);
+
+	// Read Depth
+	float _depth = s_position.Sample(smp_nofilter, I.tc0.xy).z;
+
+#else // Get Volumetric Buffer [ MSAA ]
+
+	float2 tc = I.tc0.xy * screen_res.xy;
+
+	color = s_vollight.Load(int3(tc, 0), 0);
+	[unroll] for(int iSample = 1; iSample < MSAA_SAMPLES; ++iSample)
+	{
+		color	+= s_vollight.Load(int3(tc, 0), iSample);
+	}
+	color /= MSAA_SAMPLES;
+
+	// Read Depth [ MSAA ]
+	float _depth = s_position.Load(int3(tc, 0), iSample).z;
+#endif
+
+	// Noise TC
+	float2 uv_noise = I.tc0.xy;
+	uv_noise.x *= screen_res.x / screen_res.y;
+
+	// Add noise to dither the result
+	color = saturate(color - noise_tex.Sample( smp_linear, uv_noise * 2.5).xxxx * 0.01f);
+
+	// Discard Sky.
+	color *= _depth < 0.001 ? 1.0f : saturate(_depth * 1.5f);
+
+
+	tonemap(o.low, o.high, color, I.tc0.w );
+
+	return o;
+}

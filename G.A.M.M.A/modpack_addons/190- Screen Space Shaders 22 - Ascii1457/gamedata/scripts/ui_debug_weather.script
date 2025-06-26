@@ -1,0 +1,1719 @@
+
+--[[
+	Script by: Tronex
+	Engine support by: Rezy
+	
+	Added: 2019/6/1
+	Last Edit: 2020/3/23
+	Weather Editor 2.0
+	
+	Weather editor allows you to change weather values in real-time. Minute precision.
+	The GUI is interactive and easy to use, with ability to modify or create new weather files.
+	Edited values are temporarly cached for the weathers, hours and minutes you worked on. You can return to them in case you turned off the editor (Avoid exiting or reloading when you have unsaved values).
+	In (Viewer) mode, you can witness weather changes by the time slider.
+	
+	Keybinds:
+	• Up Arrow: 		select previous parameter.
+	• Down Arrow: 		select next parameter.
+	• Left Arrow: 		reduce\rotate value of selected parameter.
+	• Right Arrow: 		increase\rotate value of selected parameter.
+	• LShift (hold): 	x10 value step.
+	• LAlt (hold): 		x50 value step.
+	• Q: 				previous hour.
+	• A: 				next hour.
+	• W: 				previous minute.
+	• S: 				next minute.
+	• E: 				increase selected parameter value.
+	• D: 				reduce selected parameter value.
+	• R: 				increase selected group value (all parameters within).
+	• F: 				reduce selected group value (all parameters within).
+	• T: 				next moment.
+	• G: 				previous moment.
+	
+	• C: 				copy select paramter value.
+	• C + CTRL: 		copy current moment settings.
+	• V: 				paste/apply copied parameter value.
+	• V + CTRL: 		paste/apply to current moment settings.
+	• Z: 				viewer mode.
+	• Delete: 			Reset current modified moment.
+	• Delete + CTRL: 	Reset all modified moments.
+	• H: 				toggle hint window.
+	• Esc or Home: 		turn off editor.
+--]]
+
+local parameters = {
+-- Type: 0 = string | 1 = number | 2 = 3d vector | 3 = 4d vector | 
+	["ambient"]                          = { typ = 0, def = {""},      indx = 1  	                                 	  , ini= "environment\\ambients.ltx" },
+	["ambient_color"]                    = { typ = 2, def = {0,0,0},   indx = 2 , 	min = 0,   max = 1,    step = 0.001   },
+	["clouds_color"]                     = { typ = 3, def = {0,0,0,0}, indx = 3 , 	min = 0,   max = 1,    step = 0.001   },
+	["clouds_texture"]                   = { typ = 0, def = {""},      indx = 4  	                                 	  , empty_value= true },
+	["far_plane"]                        = { typ = 1, def = {0},       indx = 5 , 	min = 200, max = 1500, step = 1 	  },
+	["fog_color"]                        = { typ = 2, def = {0,0,0},   indx = 6 , 	min = 0,   max = 1,    step = 0.001   },
+	["fog_density"]                      = { typ = 1, def = {0},       indx = 7 , 	min = 0,   max = 1,    step = 0.01    },
+	["fog_distance"]                     = { typ = 1, def = {0},       indx = 8 , 	min = 0,   max = 1500, step = 1       },
+	["hemisphere_color"]                 = { typ = 3, def = {0,0,0,0}, indx = 9 , 	min = 0,   max = 1,    step = 0.001   },
+	["rain_density"]                     = { typ = 1, def = {0},       indx = 10, 	min = 0,   max = 1,    step = 0.01    },
+	["rain_color"]                       = { typ = 2, def = {0,0,0},   indx = 11, 	min = 0,   max = 1,    step = 0.001   },
+	["sky_color"]                        = { typ = 2, def = {0,0,0},   indx = 12, 	min = 0,   max = 1,    step = 0.001   },
+	["sky_rotation"]                     = { typ = 1, def = {0},       indx = 13, 	min = 0,   max = 360,  step = 0.005   },
+	["sky_texture"]                      = { typ = 4, def = {"",""},   indx = 14 	                                 	  , path= "sky\\" },
+	["sun"]                              = { typ = 0, def = {""},      indx = 15 	                                 	  , ini= "environment\\suns.ltx" , empty_value= true },
+	["sun_color"]                        = { typ = 2, def = {0,0,0},   indx = 16, 	min = 0,   max = 5,    step = 0.001   },
+--	["sun_longitude"]                    = { typ = 1, def = {0},       indx = 17, 	min = 0,   max = 360,  step = 1       },
+--	["sun_altitude"]                     = { typ = 1, def = {0},       indx = 18, 	min = 0,   max = 360,  step = 1       },
+	["sun_shafts_intensity"]             = { typ = 1, def = {0},       indx = 19, 	min = 0,   max = 1,    step = 0.01    },
+	["thunderbolt_collection"]           = { typ = 0, def = {""},      indx = 20 	                                 	  , ini= "environment\\thunderbolt_collections.ltx" , empty_value= true },
+	["thunderbolt_duration"]             = { typ = 1, def = {0},       indx = 21, 	min = 0,   max = 1,    step = 0.01    },
+	["thunderbolt_period"]               = { typ = 1, def = {0},       indx = 22, 	min = 0,   max = 1000, step = 1       },
+	["water_intensity"]                  = { typ = 1, def = {0},       indx = 23, 	min = 0,   max = 1,    step = 0.01    },
+	["wind_velocity"]                    = { typ = 1, def = {0},       indx = 24, 	min = 0,   max = 1000, step = 1       },
+	["tree_amplitude_intensity"]         = { typ = 1, def = {0},       indx = 25, 	min = 0,   max = 1,    step = 0.01    },
+	["wind_direction"]                   = { typ = 1, def = {0},       indx = 26, 	min = 0,   max = 360,  step = 1       },
+
+	["bloom_threshold"]                  = { typ = 1, def = {0},       indx = 50 , 	min = 1,   max = 100,  step = 0.01 	  },
+	["bloom_exposure"]                   = { typ = 1, def = {0},       indx = 51 , 	min = 0,   max = 100,  step = 0.01 	  },
+	["bloom_sky_intensity"]              = { typ = 1, def = {0},       indx = 52 , 	min = 0,   max = 100,  step = 0.01 	  },
+}
+
+local dir = "environment\\weathers\\"
+local precision = 6 -- allowed number of zeros
+local clr_list = {
+	["def"] = GetARGB(255,200,200,200),
+	["temp"] = GetARGB(255,255,100,100),
+	["saved"] = GetARGB(255,100,255,100),
+}
+
+local string_find = string.find
+local string_gsub = string.gsub
+local func_small = function(t,a,b) return a < b end
+
+-- Keybinds
+local jump_1 = 1
+local jump_2 = 10
+local jump_3 = 50
+local D_JUMP2      = DIK_keys.DIK_LSHIFT
+local D_JUMP3      = DIK_keys.DIK_LCONTROL
+
+local D_HOUR_ADD   = DIK_keys.DIK_Q
+local D_HOUR_SUB   = DIK_keys.DIK_A
+
+local D_MIN_ADD    = DIK_keys.DIK_W
+local D_MIN_SUB    = DIK_keys.DIK_S
+
+local D_MOMENT_ADD = DIK_keys.DIK_E
+local D_MOMENT_SUB = DIK_keys.DIK_D
+
+local D_VAL_ADD    = DIK_keys.DIK_R
+local D_VAL_SUB    = DIK_keys.DIK_F
+
+local D_VALG_ADD   = DIK_keys.DIK_T
+local D_VALG_SUB   = DIK_keys.DIK_G
+
+local D_COPY       = DIK_keys.DIK_C
+local D_PASTE      = DIK_keys.DIK_V
+
+local D_MOVE_UP    = DIK_keys.DIK_UP
+local D_MOVE_DOWN  = DIK_keys.DIK_DOWN
+local D_MOVE_LEFT  = DIK_keys.DIK_LEFT
+local D_MOVE_RIGHT = DIK_keys.DIK_RIGHT
+
+local D_VIEWER     = DIK_keys.DIK_Z
+local D_CLEAR      = DIK_keys.DIK_DELETE
+local D_HELP       = DIK_keys.DIK_H
+
+
+-------------------------------------------------------------------
+GUI = nil -- instance, don't touch
+function start(owner)
+	-- Hide the owner
+	if owner then
+		if (owner:IsShown()) then
+			owner:HideDialog()
+			owner:Show(false)
+		end
+	else
+		hide_hud_inventory()
+	end
+	
+	if (not GUI) then
+		GUI = WeatherEditor(owner)
+	end
+
+	if (GUI) and (not GUI:IsShown()) then
+		GUI:ShowDialog(true)
+		GUI:Refresh()
+		
+		Register_UI("WeatherEditor","ui_debug_weather")
+	end
+end
+
+
+-------------------------------------------------------------------
+class "WeatherEditor" (CUIScriptWnd)
+
+function WeatherEditor:__init(owner) super()
+	self.owner    = owner
+	self.debug    = true
+	
+	self.help     = false
+	self.select   = 1
+	self.select_g = 1
+	self.jump = jump_1
+	
+	-- Indexing
+	self.idx    = 0  -- number of indexes
+	self.idx_g  = {} -- index [per count]
+	self.idx_i  = {} -- inner index [per index]
+	self.idx_p  = {} -- count [per par]
+	self.name   = {} -- parameter name [per index]
+	self.type   = {} -- parameter type [per index]
+	self.parent = {} -- parent parameter [per index]
+	self.list 	= {} -- parameter list [line] = true [per index]
+	self.list_n = {} -- parameter list [order] = line [per index]
+	self.list_i = 1  -- to trace list values
+	self.folder = {} -- parameter list [line] = true [per index]
+	self.folder_last = {} -- to trace last selected folder
+	
+	-- current time
+	self.c_weather = level.get_weather()
+	self.c_hour    = math.floor(level.get_time_hours())
+	self.c_minute  = math.floor(level.get_time_minutes())
+	
+	-- Storage
+	self.range = {}
+	self.memo  = {}
+	self.copy  = {}
+	self.copy_1 = {}
+	
+	-- Viewer
+	self.vw_i           = {}
+	self.vw_val         = 1
+	self.vw_width       = 0
+	self.vw_pos         = 0
+	self.vw_autoplay    = false
+	self.vw_tg          = 0
+	self.vw_g_step      = 100 -- [ms] autoplay speed (1 min per time step )
+	self.vw_marks       = {}
+	self.vw_ruler_start = false
+	self.vw_ruler_min = {
+		[15] = true,
+		[30] = true,
+		[45] = true,
+	}
+
+	-- Weather files
+	self.weather_files = {}
+	local fileList = getFS():file_list_open("$game_config$", dir, bit_or(FS.FS_ListFiles, FS.FS_RootOnly))
+	local count = fileList and fileList:Size() or 0
+	if count > 0 then
+		for i = 1, count do
+			local file_name_full = fileList:GetAt(i - 1)
+			local file_name = file_name_full:sub(1, -5)
+			local file_ext = file_name_full:sub(-4, -1)
+			if file_name and starts_with(file_name,"w_") and (file_ext == ".ltx") then
+				self.weather_files[#self.weather_files + 1] = file_name
+			end
+		end
+	end
+	
+	self:InitControls()
+	self:InitCallBacks()
+	
+	self:Reset(true)
+end
+
+function WeatherEditor:__finalize()
+end
+
+function WeatherEditor:InitControls()
+	self:SetWndRect			(Frect():set(0,0,1024,768))
+	self:SetAutoDelete(true)
+	
+	self.xml = self.owner and self.owner.xml or CScriptXmlInit()
+	
+	local xml = self.xml
+	if (not self.owner) then
+		xml:ParseFile			("ui_debug_launcher.xml")
+	end
+	
+	self.dialog	= xml:InitStatic("dbg_weather_editor", self)
+	
+	self.frame = xml:InitFrame("dbg_weather_editor:frame", self.dialog)
+	self.cap = xml:InitStatic("dbg_weather_editor:cap",self.dialog)
+	
+	-- Select weather file
+	self.cap_weather = xml:InitStatic("dbg_weather_editor:cap_weather",self.dialog)
+	
+	self.list_weather = xml:InitComboBox("dbg_weather_editor:list_weather", self.dialog)
+	self.list_weather:SetAutoDelete(true)
+	self:Register(self.list_weather, "list_weather")
+	
+	-- Select time
+	self.cap_time = xml:InitStatic("dbg_weather_editor:cap_time",self.dialog)
+	
+	self.input_hour = xml:InitEditBox("dbg_weather_editor:input_hour", self.dialog)
+	self:Register(self.input_hour,"input_hour")
+	
+	self.input_minute = xml:InitEditBox("dbg_weather_editor:input_minute", self.dialog)
+	self:Register(self.input_minute,"input_minute")
+	
+	-- Buttons
+	self.dialog_btn = xml:InitStatic("dbg_weather_editor:buttons",self.dialog)
+	
+	-- Copy params
+	self.btn_copy = xml:Init3tButton("dbg_weather_editor:buttons:btn_copy", self.dialog_btn)
+	self:Register(self.btn_copy, "btn_copy")
+	
+	-- Paste params
+	self.btn_paste = xml:Init3tButton("dbg_weather_editor:buttons:btn_paste", self.dialog_btn)
+	self:Register(self.btn_paste, "btn_paste")
+	
+	-- View
+	self.btn_view = xml:Init3tButton("dbg_weather_editor:buttons:btn_view", self.dialog_btn)
+	self:Register(self.btn_view, "btn_view")
+	
+	-- Save
+	self.btn_save = xml:Init3tButton("dbg_weather_editor:buttons:btn_save", self.dialog_btn)
+	self:Register(self.btn_save, "btn_save")
+	
+	-- Resume
+	self.btn_resume = xml:Init3tButton("dbg_weather_editor:buttons:btn_resume", self.dialog_btn)
+	self:Register(self.btn_resume, "btn_resume")
+	
+	-- Clear
+	self.btn_clear = xml:Init3tButton("dbg_weather_editor:buttons:btn_clear", self.dialog_btn)
+	self:Register(self.btn_clear, "btn_clear")
+	
+	-- Help
+	self.btn_help = xml:Init3tButton("dbg_weather_editor:buttons:btn_help", self.dialog_btn)
+	self:Register(self.btn_help, "btn_help")
+	
+	-- Exit
+	self.btn_exit = xml:Init3tButton("dbg_weather_editor:buttons:btn_exit", self.dialog_btn)
+	self:Register(self.btn_exit, "btn_exit")
+	
+	-- Name new preset
+	self.input_preset = xml:InitEditBox("dbg_weather_editor:input_preset", self.dialog)
+	self.input_preset:SetText("Enter new file name...")
+	--self:Register(self.input_preset,"input_preset")
+	
+	-- Line
+	xml:InitStatic("dbg_weather_editor:line",self.dialog)
+	
+	-- Parameters
+	self.par = {} -- input box [per index]
+	self.par_cap = {} -- parameter cap [per count]
+	self.par_hl = {} -- highlight box [per index]
+	
+	self.scroll_par = xml:InitScrollView("dbg_weather_editor:scroll_par", self.dialog)
+	self.scroll_par:Clear()
+	
+	self.st = {}
+	local cnt = 0
+	local functor = function(t,a,b) return t[a].indx < t[b].indx end
+	for par,v in spairs(parameters,functor) do
+		cnt = cnt + 1
+		
+		self.st[cnt] = xml:InitStatic("dbg_weather_editor:tmp_par", nil)
+
+		self.idx_g[cnt] = {}
+		
+		self.par_cap[cnt] = xml:InitTextWnd("dbg_weather_editor:op_par:cap", self.st[cnt])
+		self.par_cap[cnt]:SetText(par)
+		
+		-- Multi boxes for vectors
+		local typ = v.typ
+		local idx = ((typ == 2) and 3) or ((typ == 3) and 4) or ((typ == 4) and 2)  or 1
+		for i=1,idx do
+			
+			-- Tracing
+			local ext = self:GetStringByType(i,typ)
+			self.idx = self.idx + 1
+			self.idx_g[cnt][i] = self.idx
+			self.idx_i[self.idx] = i
+			self.idx_p[par] = cnt
+			self.name[self.idx] = par .. ext
+			self.type[self.idx] = typ
+			self.parent[self.idx] = par
+			
+			-- Parameter element and hightlight texture
+			if self:IsList(typ) then
+				self.par[self.idx] = xml:InitComboBox("dbg_weather_editor:op_par:list" .. ext, self.st[cnt])
+				self.par_hl[self.idx] = xml:InitStatic("dbg_weather_editor:op_par:hl_list" .. ext, self.st[cnt])
+			else
+				self.par[self.idx] = xml:InitEditBox("dbg_weather_editor:op_par:input" .. ext, self.st[cnt])
+				self.par_hl[self.idx] = xml:InitStatic("dbg_weather_editor:op_par:hl" .. ext, self.st[cnt])
+			end
+			
+			-- Hightlight last selected parameter
+			if (self.idx ~= self.select) then
+				self.par_hl[self.idx]:Show(false)
+			end
+			
+			local ii = self.idx
+			local _wrapper = function(handler) -- we need wrapper in order to pass ctrl to method
+				self:On_Param(ii)
+			end
+			self:Register(self.par[self.idx], "par_" .. self.idx)
+			self:AddCallback("par_" .. self.idx, self:IsList(typ) and ui_events.LIST_ITEM_SELECT or ui_events.EDIT_TEXT_COMMIT, _wrapper, self)
+		end
+		
+		self.scroll_par:AddWindow(self.st[cnt], true)
+		self.st[cnt]:SetAutoDelete(false)
+	end
+	
+	-- Weather viewer
+	self.dialog_v          = xml:InitStatic("dbg_weather_viewer",self)
+	self.vw_frame          = xml:InitFrame("dbg_weather_viewer:frame", self.dialog_v)
+	self.vw_scroll         = xml:InitScrollView("dbg_weather_viewer:scroll", self.dialog_v)
+	self.vw_track          = xml:InitTrackBar("dbg_weather_viewer:track", self.dialog_v)
+	self.vw_time           = xml:InitTextWnd("dbg_weather_viewer:time", self.dialog_v)
+	self.vw_cap_autoplay   = xml:InitStatic("dbg_weather_viewer:playing",self.dialog_v)
+	self.vw_btn_play       = xml:Init3tButton("dbg_weather_viewer:btn_play", self.dialog_v)
+	self.vw_btn_pause      = xml:Init3tButton("dbg_weather_viewer:btn_pause", self.dialog_v)
+	
+	self.vw_width = self.vw_track:GetWidth()
+	self.vw_pos = self.vw_track:GetWndPos()
+	self:Register(self.vw_btn_play, "btn_play")
+	self:Register(self.vw_btn_pause, "btn_pause")
+	self.dialog_v:Show(false)
+	self.vw_cap_autoplay:Show(false)
+	--self.vw_btn_play:Show(false)
+	--self.vw_btn_pause:Show(false)
+	
+	local is_wide = utils_xml.is_widescreen()
+	self.width = (device().width) - self.dialog:GetWidth()
+	self.hight = (device().height)
+	self.msg_width = is_wide and (self.width * 0.8) or self.width
+	
+	-- Message boxes
+	self.message_box_save		  = CUIMessageBoxEx()
+	self:Register(self.message_box_save, "mb_save")
+	
+	-- Message Window 
+	self.msg_wnd = xml:InitFrame("hint_wnd:background",self)
+	self.msg_wnd:SetAutoDelete(false)
+	self.msg_wnd_text = xml:InitTextWnd("hint_wnd:text",self.msg_wnd)
+	self.msg_wnd_text:SetTextAlignment(2)
+	
+	self.msg_wnd:Show(false)
+	self.msg_wnd:SetColor(GetARGB(255,0,0,0))
+	
+	-- Help Window 
+	self.help_wnd = xml:InitFrame("help_wnd:background",self)
+	self.help_wnd:SetAutoDelete(false)
+	self.help_wnd_text = xml:InitTextWnd("help_wnd:text",self.help_wnd)
+	--self.help_wnd_text:SetTextAlignment(2)
+	self.help_wnd_text:SetText(game.translate_string("st_ui_dbg_weather_about"))
+	self.help_wnd_text:AdjustHeightToText()
+	self.help_wnd_text:SetWndSize(vector2():set(self.msg_width, self.help_wnd_text:GetHeight()+10))
+	self.help_wnd_text:SetWndPos(vector2():set(20,10))
+	
+	self.help_wnd:Show(false)
+	self.help_wnd:SetWndSize(vector2():set(self.msg_width, 700))
+	self.help_wnd:SetWndPos(vector2():set( self.dialog:GetWidth() , 1 ))
+	self.help_wnd:SetColor(GetARGB(255,0,0,0))
+	
+	-- Hint Window
+	self.hint_wnd = xml:InitFrame("hint_wnd:background",self)
+	self.hint_wnd:SetAutoDelete(false)
+	self.hint_wnd_text = xml:InitTextWnd("hint_wnd:text",self.hint_wnd)
+	self.hint_wnd:Show(false)
+end
+
+function WeatherEditor:InitCallBacks()
+	self:AddCallback("list_weather", ui_events.LIST_ITEM_SELECT, self.On_Weather, self)
+	
+	self:AddCallback("input_hour", ui_events.EDIT_TEXT_COMMIT, self.On_Time, self)
+	self:AddCallback("input_minute", ui_events.EDIT_TEXT_COMMIT, self.On_Time, self)
+	
+	self:AddCallback("btn_copy",   ui_events.BUTTON_CLICKED, self.OnBTN_Copy, self)
+	self:AddCallback("btn_paste",  ui_events.BUTTON_CLICKED, self.OnBTN_Paste, self)
+	self:AddCallback("btn_view",   ui_events.BUTTON_CLICKED, self.Viewer_Start, self)
+	self:AddCallback("btn_save",   ui_events.BUTTON_CLICKED, self.OnBTN_Save, self)
+	self:AddCallback("btn_resume", ui_events.BUTTON_CLICKED, self.OnBTN_Resume, self)
+	self:AddCallback("btn_clear",  ui_events.BUTTON_CLICKED, self.OnBTN_Clear, self)
+	self:AddCallback("btn_exit",   ui_events.BUTTON_CLICKED, self.OnBTN_Exit, self)
+	self:AddCallback("btn_help",   ui_events.BUTTON_CLICKED, self.OnBTN_Help, self)
+	
+	self:AddCallback("btn_play",   ui_events.BUTTON_CLICKED, self.Viewer_Play, self)
+	self:AddCallback("btn_pause",   ui_events.BUTTON_CLICKED, self.Viewer_Pause, self)
+	
+	self:AddCallback("mb_save", ui_events.MESSAGE_BOX_YES_CLICKED, self.SaveToFile, self)
+	self:AddCallback("mb_save", ui_events.MESSAGE_BOX_NO_CLICKED, self.Discard, self)
+	self:AddCallback("mb_save", ui_events.MESSAGE_BOX_OK_CLICKED, self.Discard, self)
+end
+
+function WeatherEditor:Reset(force)
+
+	-- Fill weather file list
+	self.list_weather:ClearList()
+	for i=1,#self.weather_files do
+		local file = self.weather_files[i]
+		self.list_weather:AddItem(file, i)
+		self:Print("Reset | self.list_weather:AddItem(%s, %s)",file,i)
+	end
+	
+	-- Set up current time
+	self.list_weather:SetText(self.c_weather)
+	self.input_hour:SetText(self.c_hour)
+	self.input_minute:SetText(self.c_minute)
+	
+	if (not force) then
+		return
+	end
+
+	-- Fill all string parameter lists
+	for i=1,self.idx do
+		if (self.type[i] == 0) then
+			local par = self.parent[i]
+			self.par[i]:ClearList()
+			
+			local path = parameters[par].ini
+			if path then
+				local ini = ini_file(path)
+				if ini then
+					local cnt = {}
+					if parameters[par].empty_value then
+						self:AddToList(par, i, cnt, "")
+					end
+					ini:section_for_each( function(section)
+						self:AddToList(par, i, cnt, section)
+					end)
+					
+				end
+				
+			elseif parameters[par].empty_value then
+				local cnt = {}
+				self:AddToList(par, i, cnt, "")
+			end
+			
+		elseif (self.type[i] == 4) then
+			local par = self.parent[i]
+			local path = parameters[par].path
+			if path and (not self.folder[par]) then -- only once, which is first list
+				self.folder[par] = {}
+				local folderList = getFS():file_list_open("$textures$", path, bit_or(FS.FS_ListFolders, FS.FS_RootOnly))
+				local count1 = folderList and folderList:Size() or 0
+				if count1 > 0 then
+					local cnt = {}
+					for c = 1, count1 do
+						local folder_name = folderList:GetAt(c - 1)
+						if folder_name then
+							local folder_path = folder_name
+							self:Print("Reset | Filling path [%s] | Folder = %s", par, folder_path)
+							self.folder[par][folder_path] = {}
+							self:AddToList(par, i, cnt, folder_path)
+						end
+					end
+				end
+
+				for folder_path,t in pairs(self.folder[par]) do
+					local fileList = getFS():file_list_open("$textures$", path .. folder_path, bit_or(FS.FS_ListFiles, FS.FS_RootOnly))
+					local count = fileList and fileList:Size() or 0
+					if count > 0 then
+						for c = 1, count do
+							local file_name_full = fileList:GetAt(c - 1)
+							local file_name = file_name_full:sub(1, -5)
+							local file_ext = file_name_full:sub(-4, -1)
+							if file_name and (not string_find(file_name,"#small")) and (file_ext == ".dds") then
+								self:Print("Reset | Filling path [%s] | Folder = %s , File: %s", par, folder_path, file_name)
+								self.folder[par][folder_path][file_name] = true
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+function WeatherEditor:Refresh(clear)
+	self:PauseEngine(true)
+	
+	
+	if (not self.memo[self.c_weather]) then
+		local fl = self.c_weather
+		local ltx_name = dir .. fl .. ".ltx"
+		local ltx = ini_file(ltx_name)
+		if ltx then
+			self:Print("Refresh | Reading LTX (%s)", ltx_name)
+			self.memo[fl] = {}
+
+			-- Fill defined moments
+			ltx:section_for_each(function(sec)	
+				local h, m = self:StringToTime(sec)
+				self:Print("Refresh | Reading section [%s] | hour: %s - minute: %s", sec, h, m)
+				
+				if (not self.memo[fl][h]) then self.memo[fl][h] = {} end
+				self.memo[fl][h][m] = { defined = true } -- "defined" indicate that this moment is a defined section
+				for par,v in pairs(parameters) do
+
+					local val = self:ParseFromString(ltx, sec, par, v.typ)
+
+					-- SSS 22 Change - If the value is NIL... Use v.def
+					if (val[1] == nil) then 
+						val[1] = v.def[1]
+					end
+
+					self.memo[fl][h][m][par] = val
+				end
+			end)
+			
+
+
+			self.range = self:GetTimeRange(self.memo[fl])	
+		end
+	end
+	self.input_hour:SetText(self.c_hour)
+	self.input_minute:SetText(self.c_minute)
+
+	-- Lerp non-existing moments
+	local memo = self:CurrentMoment()
+	if (not memo) then
+		memo = self:LerpMoment(self.c_weather, self.c_hour, self.c_minute)
+		if (not memo) then
+			self:Print("Refresh | can't lerp new moment for file: %s - hour: %s - minute: %s", self.c_weather, self.c_hour, self.c_minute)
+			return
+		end
+	end
+	
+	-- Clear any temp moments near this moment
+	if clear then
+		self:ClearMomentsInRange(self.c_weather, self.c_hour, self.c_minute)
+	end
+	
+	-- Adjusting text color
+	local defined = memo.defined
+	if (defined == true) then
+		self.cap_time:SetTextureColor( clr_list["saved"] )
+		--self.cap_time:TextControl():SetTextColor( clr_list["saved"] )
+	elseif (defined == false) then
+		self.cap_time:SetTextureColor( clr_list["temp"] )
+		--self.cap_time:TextControl():SetTextColor( clr_list["temp"] )
+	else
+		self.cap_time:SetTextureColor( clr_list["def"] )
+		--self.cap_time:TextControl():SetTextColor( clr_list["def"] )
+	end
+	
+	-- Apply weather values in-game
+	for par,v in pairs(parameters) do
+		self:Apply(par, v.typ, memo)
+	end
+	weather.sun_time(self.c_hour, self.c_minute)
+end
+
+function WeatherEditor:Update()
+	CUIScriptWnd.Update(self)
+	
+	if (self.msg_wnd_timer and time_global() > self.msg_wnd_timer) then 
+		self.msg_wnd_timer = nil
+		self.msg_wnd:Show(false)
+	end
+	
+	self.help_wnd:Show( self.help )
+	
+	-- Viewer mode
+	if self.dialog_v:IsShown() then
+		-- Player input
+		if self.vw_autoplay or self.vw_track:IsCursorOverWindow() then
+			local val = self.vw_track:GetFValue()
+			val = math.floor(val)
+			if (val ~= self.vw_val) then
+				self.vw_val = val
+				local h,m = self:Viewer_Value()
+				if h and m then
+					self.c_hour = h
+					self.c_minute = m
+					self:Refresh()
+					self:Viewer_Update()
+				end
+			end
+		end
+		
+		-- Auto playing
+		if self.vw_autoplay and (time_global() > self.vw_tg + self.vw_g_step) then
+			self.vw_tg = time_global()
+			local val = self.vw_track:GetFValue()
+			val = math.floor(val) + 1
+			val = val > #self.vw_i and 0 or val
+			self.vw_track:SetFValue( val )
+		end
+		
+		-- Hint for markers
+		for cnt,ele in pairs(self.vw_marks) do
+			if ele and ele:IsCursorOverWindow() then
+				local t = self.vw_i[cnt]
+				local str = self:TimeToString(t.h, t.m)
+				local ln = (t.defined and "Saved" or "New")
+				self:SetHint(ln .. " \\n" .. str, t.defined and true or false)
+				return
+			end
+		end
+	end
+	
+	self.hint_wnd:Show(false)
+end
+
+-- Viewer
+function WeatherEditor:Viewer_Play()
+	self.vw_autoplay = true
+	self.vw_cap_autoplay:Show(true)
+end
+
+function WeatherEditor:Viewer_Pause()
+	self.vw_autoplay = false
+	self.vw_cap_autoplay:Show(false)
+end
+
+function WeatherEditor:Viewer_Exit()
+	self:Viewer_Pause()
+	self.dialog_v:Show(false)
+	self.dialog:Show(true)
+	self:Refresh()
+end
+
+function WeatherEditor:Viewer_Value()
+	local point = self.vw_track:GetFValue()
+	local t = self.vw_i[ math.floor(point) ]
+	if t then
+		return t.h, t.m
+	else
+		--printf(" can't get table of %s", point)
+	end
+end
+
+function WeatherEditor:Viewer_Update()
+	self.vw_time:SetText( self:TimeToString( self.c_hour , self.c_minute ) )
+	
+	local memo = self:CurrentMoment()
+	local defined = memo and memo.defined
+	self.vw_time:SetTextColor( ((defined == true) and clr_list["saved"]) or ((defined == false) and clr_list["temp"]) or clr_list["def"] )
+end
+
+function WeatherEditor:Viewer_Start()
+	self.vw_scroll:Clear()
+	local xml = self.xml
+	local _st = xml:InitStatic("dbg_weather_viewer:tmp", nil)
+	empty_table(self.vw_i)
+	--empty_table(self.vw_marks)
+	if (not self.vw_ruler) then
+		self.vw_ruler_start = true
+		self.vw_ruler = xml:InitStatic("dbg_weather_viewer:tmp", nil)
+	end
+	
+	-- Lerping for all moments
+	local cnt = 0
+	local cnt_tot = 24 * 60
+	local hh = self.c_hour
+	local mm = self.c_minute
+	local memos = self.memo[self.c_weather]
+	for h=0,23 do
+		for m=0,59 do
+			cnt = cnt + 1
+			self.vw_i[cnt] = { h = h , m = m }
+			if (h == hh) and (m == mm) then
+				point = cnt
+			end
+			if not (memos[h] and memos[h][m]) then -- look for undefined moments
+				local ts, te = self:GetNearestMoment(memos, h, m)
+				local ps = ts and memos[ts.h] and memos[ts.h][ts.m]
+				local pe = te and memos[te.h] and memos[te.h][te.m]
+				if ps and pe then
+					if (not memos[h]) then memos[h] = {} end
+					if (not memos[h][m]) then memos[h][m] = {} end
+					memos[h][m] = self:Lerp(h, m, ts, te, ps, pe)
+				end
+			
+			-- Mark saved moments
+			elseif (memos[h][m].defined ~= nil) then
+				local defined = memos[h][m].defined
+				self.vw_i[cnt].defined = defined
+				local pos = self.vw_width * (cnt / cnt_tot)
+				self.vw_marks[cnt] = xml:InitStatic("dbg_weather_viewer:marker",_st)
+				self.vw_marks[cnt]:SetTextureColor( defined and clr_list["saved"] or clr_list["temp"] )
+				self.vw_marks[cnt]:SetWndPos(vector2():set( pos , 0 ))
+			end
+			
+			-- Ruler minutes
+			if self.vw_ruler_start and self.vw_ruler_min[m]  then
+				local pos = self.vw_width * (cnt / cnt_tot)
+				local mark = xml:InitStatic("dbg_weather_viewer:marker_min",self.vw_ruler)
+				mark:SetWndPos(vector2():set( pos , 0 ))
+			end
+		end
+		
+		-- Ruler hours
+		if self.vw_ruler_start then
+			local pos = self.vw_width * (cnt / cnt_tot)
+			local mark = xml:InitStatic("dbg_weather_viewer:marker_hr",self.vw_ruler)
+			mark:SetWndPos(vector2():set( pos , 0 ))
+		end
+	end
+	self.vw_scroll:AddWindow(_st, true)
+	self.vw_scroll:AddWindow(self.vw_ruler, true)
+	_st:SetAutoDelete(true)
+	self.vw_ruler:SetAutoDelete(false)
+	self.vw_ruler_start = false
+	
+	self.vw_track:SetOptFBounds(1, #self.vw_i)
+	self.vw_track:SetStep( 1 )
+	self.vw_track:SetFValue( point )
+	self.vw_val = point
+	self:Viewer_Update()
+	
+	self.dialog:Show(false)
+	self.dialog_v:Show(true)
+end
+
+-- Callbacks
+function WeatherEditor:On_Weather()
+	local cid = self.list_weather:CurrentID()
+	cid = cid == 0 and 1 or cid
+	self.c_weather = self.weather_files[cid]
+	if not (self.c_weather and self.c_weather ~= "") then
+		self:Print("On_Weather | ERROR can't get weather file name [%s] from the list | ID: %s", self.c_weather, cid)
+	end
+	
+	level.set_weather(self.c_weather,true)
+	self:Refresh()
+	self:MSG("Selected weather file: %s", self.c_weather)
+end
+
+function WeatherEditor:On_Time(h, m)
+
+	-- Get hour
+	h = h or tonumber(self.input_hour:GetText() or "")
+	if (not h) then
+		self.input_hour:SetText(self.c_hour)
+		return
+	end
+	h = (h > 23 and 23) or (h < 0 and 0) or h
+	self.c_hour = h
+	
+	-- Get minute
+	m = m or tonumber(self.input_minute:GetText() or "")
+	if (not m) then
+		self.input_minute:SetText(self.c_hour)
+		return
+	end
+	m = (m > 59 and 59) or (m < 0 and 0) or m
+	self.c_minute = m
+	
+	self:Refresh()
+	self:MSG("Selected time [%s] of file: %s", self:TimeToString(h,m), self.c_weather)
+end
+
+function WeatherEditor:On_Param(idx, val, ignore)
+	local val = val or self.par[idx]:GetText()
+	local typ = self.type[idx]
+	
+	local i = self.idx_i[idx]
+	local par = self.parent[idx]
+	
+	self:Print("On_Param | idx: %s - i: %s - val: %s - typ: %s - par: %s", idx, i, val, typ, par)
+	
+	if self:IsInvalidValue(idx,typ,val) then
+		-- Restore old value
+		local memo = self:CurrentMoment()
+		if memo and memo[par][i] then
+			self.par[idx]:SetText( memo[par][i] )
+		end
+		
+		self:MSG("%c[pda_red]Error with input for parameter (%s)", self.name[idx])
+		return
+	end
+	
+	if self:IsList(typ) then
+		val = val or ""
+	else
+		val = tonumber(val)
+		val = clamp(val, parameters[par].min, parameters[par].max)
+		val = round_idp(val, precision)
+	end
+	
+	local memo = self:CurrentMoment()
+	if (not memo) then
+		self:Print("On_Param | Can't find cache for file: %s - hour: %s - minute: %s", self.c_weather, self.c_hour, self.c_minute)
+		return
+	end
+	
+	-- Store value, mark as modified moment
+	memo[par][i] = val
+	if (memo.defined == nil) then
+		memo.defined = false
+	end
+	
+	self.par[idx]:SetText(val)
+	
+	if (not ignore) then
+		self:Refresh(true)
+	end
+end
+
+function WeatherEditor:OnBTN_Copy()
+	local memo = self:CurrentMoment()
+	if (not memo) then
+		self:Print("OnBTN_Copy | Can't find cache for file: %s - hour: %s - minute: %s", self.c_weather, self.c_hour, self.c_minute)
+		return
+	end
+	
+	self.copy = dup_table(memo)
+	self.copy.defined = false
+	self:MSG("Copied values of file: %s - hour: %s - minute: %s", self.c_weather, self.c_hour, self.c_minute)
+end
+
+function WeatherEditor:OnBTN_Paste()
+	if is_empty(self.copy) then
+		self:MSG("%c[pda_red]Nothing is copied yet!")
+		return
+	end
+	
+	local w = self.c_weather
+	local h = self.c_hour
+	local m = self.c_minute
+	if self.memo[w] and self.memo[w][h] and self.memo[w][h][m] then
+		self.memo[w][h][m] = dup_table(self.copy)
+		self:Refresh(true)
+	else
+		self:Print("OnBTN_Paste | Can't find cache for file: %s - hour: %s - minute: %s", w, h, m)
+	end
+end
+
+function WeatherEditor:OnBTN_Copy_Param()
+	local memo = self:CurrentMoment()
+	if (not memo) then
+		self:Print("OnBTN_Copy_Param | Can't find cache for file: %s - hour: %s - minute: %s", self.c_weather, self.c_hour, self.c_minute)
+		return
+	end
+	
+	local idx = self.select
+	if (not idx) then
+		self:MSG("No parameter is selected to copy")
+		return
+	end
+	
+	local par = self.parent[idx]
+	local i = self.idx_i[idx]
+	local val = memo[par][i]
+	if (not val) then
+		self:Print("OnBTN_Copy_Param | No value is found for parameter [%s]", par)
+		return
+	end
+	
+	self.copy_1.par = par
+	self.copy_1.idx = idx
+	self.copy_1.val = type(val) == "table" and dup_table(val) or val
+	
+	self:MSG("Copied value (%s) from parameter", val, par)
+end
+
+function WeatherEditor:OnBTN_Paste_Param()
+	local memo = self:CurrentMoment()
+	if (not memo) then
+		self:Print("OnBTN_Paste_Param | Can't find cache for file: %s - hour: %s - minute: %s", self.c_weather, self.c_hour, self.c_minute)
+		return
+	end
+
+	local val = self.copy_1.val
+	if (not val) then
+		self:MSG("No value is copied yet")
+		return
+	end
+	
+	local par = self.copy_1.par
+	local idx = self.copy_1.idx
+	self:On_Param(idx, val)
+
+	self:MSG("Pasted value (%s) for parameter", val, par)
+end
+
+function WeatherEditor:OnBTN_Save()
+
+	local is_new = false
+	local file_name = self.input_preset:GetText()
+	if not (file_name and file_name ~= "") then
+		file_name = self.c_weather
+	else
+		local str_w = string.sub(file_name,1,2)
+		local is_w = (str_w == "w_")
+		if not (is_w) then
+			--self:MSG("%c[pda_red]Incorrect name pattern!\\n%c[ui_gray_1]Naming pattern: w_(custom_name)")
+			self.message_box_save:InitMessageBox("message_box_ok")
+			self.message_box_save:SetText( strformat( game.translate_string("st_ui_dbg_weather_save_msg_error") , file_name ) )
+			self.message_box_save:ShowDialog(true)
+			return
+		end
+		
+		is_new = true
+		for i=1,#self.weather_files do
+			local file = self.weather_files[i]
+			if file == file_name then
+				is_new = false
+			end
+		end
+	end
+	
+	file_name = dir .. file_name .. ".ltx"
+	local str = game.translate_string(is_new and "st_ui_dbg_weather_save_msg_new" or "st_ui_dbg_weather_save_msg_old")
+	self.message_box_save:InitMessageBox("message_box_yes_no")
+	self.message_box_save:SetText( strformat( str , file_name ) )
+	self.message_box_save:ShowDialog(true)
+end
+
+function WeatherEditor:OnBTN_Resume()
+	self:PauseEngine(false)
+	self:Close()
+end
+
+function WeatherEditor:OnBTN_Help()
+	self.help = (not self.help)
+end
+
+function WeatherEditor:OnBTN_Clear()
+	self.memo[self.c_weather] = nil
+	
+	self:Refresh()
+	self:MSG("Cleared memory and all modified moments!")
+end
+
+function WeatherEditor:OnBTN_Clear_Moment()
+	local memo = self:CurrentMoment()
+	if (not memo) then
+		self:Print("OnBTN_Clear_Moment | Can't find cache for file: %s - hour: %s - minute: %s", self.c_weather, self.c_hour, self.c_minute)
+		return
+	end
+	
+	if (memo.defined == false) then
+		self.memo[self.c_weather][self.c_hour][self.c_minute] = nil
+		
+		self:Refresh(true)
+		self:MSG("Reset moment for file: %s - hour: %s - minute: %s", self.c_weather, self.c_hour, self.c_minute)
+	else
+		self:MSG("Can't reset unmodified moment[%s:%s]", self.c_hour, self.c_minute)
+	end
+end
+
+function WeatherEditor:OnBTN_Exit()
+	self:Close()
+end
+
+function WeatherEditor:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (res == false) then
+		local bind = dik_to_bind(dik)
+		if keyboard_action == ui_events.WINDOW_KEY_RELEASED then
+			if (dik == D_JUMP3) or (dik == D_JUMP2) then
+				self.jump = jump_1
+			end
+			
+		elseif keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+			if (dik == D_JUMP3) then
+				self.jump = jump_3
+				
+			elseif (dik == D_JUMP2) then
+				self.jump = jump_2
+		
+			elseif (dik == D_VAL_ADD) then
+				self:SwitchValue(true)
+				
+			elseif (dik == D_VAL_SUB) then
+				self:SwitchValue(false)
+				
+			elseif (dik == D_VALG_ADD) then
+				self:SwitchValueGroup(true)
+				
+			elseif (dik == D_VALG_SUB) then
+				self:SwitchValueGroup(false)
+				
+			elseif (dik == D_MOVE_UP) then
+				self:SwitchParam(false, true)
+				
+			elseif (dik == D_MOVE_DOWN) then
+				self:SwitchParam(true, true)
+				
+			elseif (dik == D_MOVE_RIGHT) then
+				self:SwitchParam(true, false)
+				
+			elseif (dik == D_MOVE_LEFT) then
+				self:SwitchParam(false, false)
+				
+			elseif (dik == D_HOUR_ADD) then
+				local h = self.c_hour + (self.jump == jump_2 and 3 or self.jump == jump_2 and 6 or 1)
+				self:On_Time( self:ReviseTime(h, self.c_minute) )
+				
+			elseif (dik == D_HOUR_SUB) then
+				local h = self.c_hour - (self.jump == jump_2 and 3 or self.jump == jump_2 and 6 or 1)
+				self:On_Time( self:ReviseTime(h, self.c_minute) )
+				
+			elseif (dik == D_MIN_ADD) then
+				local m = self.c_minute + (self.jump == jump_2 and 5 or self.jump == jump_2 and 10 or 1) 
+				self:On_Time( self:ReviseTime(self.c_hour, m) )
+
+			elseif (dik == D_MIN_SUB) then
+				local m = self.c_minute - (self.jump == jump_2 and 5 or self.jump == jump_2 and 10 or 1) 
+				self:On_Time( self:ReviseTime(self.c_hour, m) )
+				
+			elseif (dik == D_MOMENT_ADD) or (dik == D_MOMENT_SUB) then
+				local ts, te = self:GetNearestMoment(self.memo[self.c_weather], self.c_hour, self.c_minute)
+				if (dik == D_MOMENT_ADD) and te.h and te.m then
+					self:On_Time( self:ReviseTime(te.h, te.m) )
+				elseif (dik == D_MOMENT_SUB) and ts.h and ts.m then
+					self:On_Time( self:ReviseTime(ts.h, ts.m) )
+				end
+				
+			elseif (dik == D_COPY) then
+				if self.jump == jump_3 then
+					self:OnBTN_Copy()
+				else
+					self:OnBTN_Copy_Param()
+				end
+				
+			elseif (dik == D_PASTE) then
+				if self.jump == jump_3 then
+					self:OnBTN_Paste()
+				else
+					self:OnBTN_Paste_Param()
+				end
+				
+			elseif (dik == D_VIEWER) and (not self.dialog_v:IsShown()) then
+				self:Viewer_Start()
+				
+			elseif (dik == D_CLEAR) then
+				if self.jump == jump_3 then
+					self:OnBTN_Clear()
+				else
+					self:OnBTN_Clear_Moment()
+				end
+				
+			elseif (dik == D_HELP) then
+				self:OnBTN_Help()
+				
+			elseif (dik == DIK_keys.DIK_ESCAPE) then
+				if self.dialog_v:IsShown() then
+					self:Viewer_Exit()
+				else
+					self:Close()
+				end
+			end
+		end
+	end
+	return res
+end
+
+-- Functionality
+function WeatherEditor:CurrentMoment()
+	local w = self.c_weather
+	local h = self.c_hour
+	local m = self.c_minute
+	return self.memo[w] and self.memo[w][h] and self.memo[w][h][m]
+end
+
+function WeatherEditor:Apply(par, typ, memo)
+
+	local val = memo[par][1]
+	if (not val) then
+		self:Print("Apply | MISSING VALUE | par: %s - typ: %s", par, typ)
+		return
+	end
+	
+	if (not self:IsList(typ)) and (type(val) ~= "number") then
+		self:Print("Apply | INCORRECNT VALUE TYPE | par: %s - typ: %s", par, typ)
+		return
+	end
+	
+	local cnt = self.idx_p[par]
+
+	if self:IsList(typ) then
+		local path = parameters[par].path or ""
+		local str = val
+		self.par[ self.idx_g[cnt][1] ]:SetText(val)
+		if (typ == 4) then
+			self:Reset_FolderList(self.idx_g[cnt][1], par, val, memo[par][2])
+			
+			local val_2 = memo[par][2]
+			self.par[ self.idx_g[cnt][2] ]:SetText(val_2)
+			str = val .. val_2
+		end
+		weather.set_value_string(par, path .. str)
+		
+	elseif (typ == 1) then
+		weather.set_value_numric(par,val)
+		self.par[ self.idx_g[cnt][1] ]:SetText(val)
+	elseif (typ == 2) then
+		local val_2 = memo[par][2]
+		local val_3 = memo[par][3]
+		if (type(val_2) == "number") and (type(val_3) == "number") then
+			weather.set_value_vector(par, val, val_2, val_3)
+			self.par[ self.idx_g[cnt][1] ]:SetText(val)
+			self.par[ self.idx_g[cnt][2] ]:SetText(val_2)
+			self.par[ self.idx_g[cnt][3] ]:SetText(val_3)
+		end
+	elseif (typ == 3) then
+		local val_2 = memo[par][2]
+		local val_3 = memo[par][3]
+		local val_4 = memo[par][4]
+		if (type(val_2) == "number") and (type(val_3) == "number") and (type(val_4) == "number") then
+			weather.set_value_vector(par, val, val_2, val_3, val_4)
+			self.par[ self.idx_g[cnt][1] ]:SetText(val)
+			self.par[ self.idx_g[cnt][2] ]:SetText(val_2)
+			self.par[ self.idx_g[cnt][3] ]:SetText(val_3)
+			self.par[ self.idx_g[cnt][4] ]:SetText(val_4)
+		end
+	end
+end
+
+function WeatherEditor:LerpMoment(f, h, m)
+	local ts, te = self:GetNearestMoment(self.memo[f], h, m)
+	local ps = ts and self.memo[f][ts.h] and self.memo[f][ts.h][ts.m]
+	local pe = te and self.memo[f][te.h] and self.memo[f][te.h][te.m]
+	if ps and pe then
+		if (not self.memo[f][h]) then self.memo[f][h] = {} end
+		if (not self.memo[f][h][m]) then self.memo[f][h][m] = {} end
+		self.memo[f][h][m] = self:Lerp(h, m, ts, te, ps, pe)
+		self:Print("LerpMoment | file: %s - hour: %s - minute: %s", f, h, m)
+		return self.memo[f][h][m]
+	end
+end
+
+function WeatherEditor:Lerp(h, m, ts, te, ps, pe)
+	local t = {}
+	local min_range = ((te.h - ts.h) * 60) + (te.m - ts.m)
+	local min_mid = ((h - ts.h) * 60) + (m - ts.m)
+	local min_ratio = min_mid/min_range
+	
+	--local par = "ambient_color"
+	--local v = parameters[par]
+	for par,v in pairs(parameters) do
+		t[par] = {}
+		for i=1,#ps[par] do
+			if self:IsList(v.typ) then
+				t[par][i] = ps[par][i]
+			else
+				local val = ps[par][i] + ((pe[par][i] - ps[par][i]) * min_ratio)
+				t[par][i] = round_idp(val, precision)
+			end
+		end
+	end
+	return t
+end
+
+function WeatherEditor:ClearMomentsInRange(f, hh, mm)
+	local ts, te = self:GetNearestMoment(self.memo[f], hh, mm)
+	local h1 = ts.h
+	local h2 = te.h
+	local m_t = {}
+	
+	if (h1 == h2) then
+		m_t[h1] = { s = ts.m , e = te.m }
+	else
+		for h = h1, h2 do
+			m_t[h] = (h == h1) and { s = ts.m , e = 59 } or (h == h2) and { s = 0 , e = te.m } or { s = 0 , e = 59 }
+		end
+	end
+	
+	for h = h1, h2 do
+		for m = m_t[h].s, m_t[h].e do
+			local memo = self.memo[f][h] and self.memo[f][h][m]
+			if memo and memo.defined == nil then
+				if (h ~= hh) or (h == hh and m ~= mm) then
+					self.memo[f][h][m] = nil
+					self:Print("ClearMomentsInRange | for [%s][%s][%s] | [%s][%s] is cleared", f, hh, mm, h, m)
+				end
+			end
+		end
+	end
+end
+
+function WeatherEditor:GetTimeRange(t)
+	local s,e = {},{}
+	for h,v in spairs(t, func_small) do
+		for m,vv in spairs(v, func_small) do
+			if (vv.defined == true) then
+				if (not s.h) then
+					s.h = h
+					s.m = m
+				end
+				e.h = h
+				e.m = m
+			end
+		end
+	end
+	
+	self:Print("GetTimeRange | START: h(%s) m(%s) | END: h(%s) m(%s)", s.h, s.m, e.h, e.m )
+	return { s=s , e=e }
+end
+
+function WeatherEditor:GetNearestMoment(t, hh, mm)
+	local ts, te = { h = 0 , m = 0 }, { h = 23 , m = 59 }
+	local v, found
+	
+	-- Searching for nearest previous moment
+	for h=0,hh do
+		for m=0,59 do
+			v = t[h] and t[h][m]
+			if (v and v.defined ~= nil) and ((h < hh) or (h == hh and m < mm)) then
+				ts.h = h
+				ts.m = m
+			end
+		end
+	end
+	
+	-- Searching for nearest next moment
+	for h=hh,23 do
+		for m=0,59 do
+			v = t[h] and t[h][m]
+			if (v and v.defined ~= nil) and ((h > hh) or (h == hh and m > mm)) then
+				found = true
+				te.h = h
+				te.m = m
+			end
+			if found then break end
+		end
+		if found then break end
+	end
+
+	-- Rotate on range limit
+	if (ts.h == 0) and (ts.m == 0) then
+		ts = dup_table(self.range.e)
+	end
+	if (te.h == 23) and (te.m == 59) then
+		te = dup_table(self.range.s)
+	end
+	
+	--self:Print("GetNearestMoment h(%s) m(%s) | previous: h(%s) m(%s) | next: h(%s) m(%s)", hh, mm, ts.h, ts.m, te.h, te.m )
+	return ts, te
+end
+
+function WeatherEditor:SwitchParam(state, vert)
+
+	local function get_param_index(state, vert)
+	
+		--// Vertical movement - Move between parameters
+		if vert then
+			local jumps = ((self.jump == jump_3) and 3) or ((self.jump == jump_2) and 2) or 1
+			
+			if state then
+				self.select_g = self.select_g + jumps
+			else
+				self.select_g = self.select_g - jumps
+			end
+			
+			if (self.select_g > #self.idx_g) then
+				self.select_g = 1
+			elseif (self.select_g < 1) then
+				self.select_g = #self.idx_g
+			end
+			
+			return self.idx_g[self.select_g][1]
+		
+		--// Horizental movement - Move inside a parameter
+		else
+			local group = self.idx_g[self.select_g]
+			if group then
+				local first = group[1]
+				local last = group[#group]
+				if state and (self.select < last) then
+					self.select = self.select + 1
+				elseif (not state) and (self.select > first) then
+					self.select = self.select - 1
+				end
+			else
+				printe("! group doesn't exist for selecte_g: %s", self.select_g)
+			end
+			return self.select
+		end
+	end
+	
+	-- Move highlight
+	self.par_hl[self.select]:Show(false)
+	self.select = get_param_index(state, vert)
+	self.par_hl[self.select]:Show(true)
+	
+	-- Scroll to highlighted button
+	self:ScrollToElement(self.select)
+end
+
+function WeatherEditor:SwitchValue(state, idx, ignore)
+	local idx = idx or self.select
+	local par = self.parent[idx]
+	local i = self.idx_i[idx]
+	local typ = self.type[idx]
+	local memo = self:CurrentMoment()
+	local val = memo[par][i]
+	
+	local val_n
+	if (not self:IsList(typ)) then
+		local min_val = parameters[par].min
+		local max_val = parameters[par].max
+		local step = parameters[par].step * self.jump
+		val = state and (val + step) or (val - step)
+		val_n = clamp(val, min_val, max_val)
+	else
+		if not (self.list_n[idx]) then
+			return
+		end
+		
+		local index
+		local list = self.list_n[idx]
+		for i=1,#list do
+			if list[i] == val then
+				index = i
+				break
+			end
+		end
+		if (not index) then
+			return
+		end
+		
+		local list_size = #list
+		index = state and (index + 1) or (index - 1)
+		if index > list_size then
+			index = 1
+		elseif index < 1 then
+			index = list_size
+		end
+
+		local txt = list[index]
+		if self:IsInvalidValue(idx, 0, txt) then
+			self:MSG("%c[pda_red]Invalid path/section for parameter (%s)", self.name[idx])
+			return
+		end
+		
+		val_n = txt
+	end
+	
+	if val_n then
+		self:On_Param(idx, val_n, ignore)
+	else
+		self:MSG("%c[pda_red]No value can be set for (%s)",self.name[idx])
+	end
+end
+
+function WeatherEditor:SwitchValueGroup(state)
+	local group = self.idx_g[self.select_g]
+	local size = (#group > 3) and 3 or #group -- no need for alpha value
+	for i=1,size do
+		self:SwitchValue(state, group[i], true)
+	end
+	self:Refresh(true)
+end
+
+function WeatherEditor:ReviseTime(h,m)
+	if m > 59 then
+		m = m - 60
+		h = h + 1
+	elseif m < 0 then
+		m = m + 60
+		h = h - 1
+	end
+	
+	if h > 23 then
+		h = h - 24
+	elseif h < 0 then
+		h = h + 24
+	end
+	
+	return h, m
+end
+
+function WeatherEditor:HasChanges()
+	local cnt = 0
+	for h,v1 in pairs(self.memo[self.c_weather]) do
+		for m,v2 in pairs(v1) do
+			if v2.defined == false then
+				cnt = cnt + 1
+			end
+		end
+	end
+	return cnt
+end
+
+function WeatherEditor:SaveToFile()
+	local is_new = false
+	local file_name = self.input_preset:GetText()
+	if not (file_name and file_name ~= "") then
+		file_name = self.c_weather
+	else
+		local str_w = string.sub(file_name,1,2)
+		local is_w = (str_w == "w_")
+		if not (is_w) then
+			self:MSG("%c[pda_red]Incorrect name pattern!\\n%c[ui_gray_1]Naming pattern: w_(custom_name)")
+			return
+		end
+		
+		is_new = true
+		for i=1,#self.weather_files do
+			local file = self.weather_files[i]
+			if file == file_name then
+				is_new = false
+			end
+		end
+	end
+	local path = dir .. file_name .. ".ltx"
+	
+	local ltx = ini_file_ex(path, true)
+	if (not ltx) then
+		self:MSG("%c[pda_red]No file found or created!")
+		return
+	end
+	
+	local modified = false
+	for h,v1 in spairs(self.memo[self.c_weather], func_small) do
+		for m,v2 in spairs(v1, func_small) do
+			if is_new and (v2.defined == true) or (v2.defined == false) then
+				for par,v in pairs(parameters) do
+					if v2[par] then
+						local val
+						if (v.typ == 2) then
+							val = v2[par][1] .. "," .. v2[par][2] .. "," .. v2[par][3]
+						elseif (v.typ == 3) then
+							val = v2[par][1] .. "," .. v2[par][2] .. "," .. v2[par][3] .. "," .. v2[par][4]
+						elseif (v.typ == 4) then
+							val = (v.path or "") .. v2[par][1] .. v2[par][2]
+						else
+							val = v2[par][1]
+						end
+						
+						local section = self:TimeToString(h,m)
+						ltx:w_value(section, par, val)
+						modified = true
+						self:Print("OnBTN_Save | new file? %s - file name: %s | section: %s - parameter: %s - value: %s", is_new, path, section, par, val)
+					else
+						self:Print("OnBTN_Save | ERROR can't find modified parameter value [%s]", par)
+					end
+				end
+			end
+		end
+	end
+	
+	if (not modified) then
+		self:MSG("Saved%sfile: nothing is modified for [%s] yet?", is_new and " new " or " ", file_name)
+		return
+	end
+	
+	-- Save to ltx
+	ltx:save()
+	self:MSG("Saved%sfile: %s\\nCheck it under weather's directory: %s", is_new and " new " or " ", file_name, dir)
+	
+	-- Force reloading file and clearning all temp values
+	if (is_new) then
+		self.memo[self.c_weather] = nil
+		local id = #self.weather_files + 1
+		self.weather_files[id] = file_name
+		self:Reset()
+		-- self.list_weather:SetCurrentID(id)
+		self.list_weather:SetCurrentIdx(id)
+		self:On_Weather()
+	else
+		self.memo[self.c_weather] = nil
+		self:Refresh()
+	end
+end
+
+function WeatherEditor:Discard()
+end
+
+-- Utilities
+local indx_str = {
+	[1] = "_r",
+	[2] = "_g",
+	[3] = "_b",
+	[4] = "_a",
+}
+function WeatherEditor:GetStringByType(indx,typ)
+	if (typ == 0) or (typ == 1) then
+		return ""
+	else
+		return indx_str[indx]
+	end
+end
+
+function WeatherEditor:IsList(typ)
+	return (typ == 0) or (typ == 4)
+end
+
+function WeatherEditor:AddToList(par, indx, cnt, value)
+	cnt[#cnt + 1] = true
+	self.par[indx]:AddItem(value, #cnt)
+	
+	if (not self.list[indx]) then self.list[indx] = {} end
+	if (not self.list_n[indx]) then self.list_n[indx] = {} end
+	
+	self.list[indx][value] = true
+	self.list_n[indx][#self.list_n[indx] + 1] = value
+	self:Print("Reset | Filling list [%s] | self.list[%s] = %s", par, indx, value)
+end
+
+function WeatherEditor:Reset_FolderList(indx, par, val, val_2)
+	self:Print("Reset | Reset_FolderList | indx: %s - par: %s - val: %s - val_2: %s", indx, par, val, val_2)
+	
+	indx = indx + 1 -- we need the child list (files)
+	local folder = self.folder[par][val]
+	if folder and self.par[indx] and (val ~= self.folder_last[par]) then
+		self.folder_last[par] = val
+		self.par[indx]:ClearList()
+		empty_table(self.list[indx])
+		empty_table(self.list_n[indx])
+		
+		local cnt = {}
+		for file_name,_ in pairs(folder) do
+			self:AddToList(par, indx, cnt, file_name)
+		end
+		
+		local val_f = self.list_n[indx][1]
+		self.par[indx]:SetText(val_f or "")
+
+		if (not self.list[indx][val_2]) then
+			local memo = self:CurrentMoment()
+			memo[par][2] = self.list_n[indx][1]
+			self:Print("Reset | Reset_FolderList | file %s\\%s doesn't exist, use first path %s\\%s", val, val_2, val, memo[par][2])
+		end
+		self:Print("Reset | Reset_FolderList | updated self.par[%s] = %s", indx, val_f)
+	end
+end
+
+function WeatherEditor:StringToTime(str)
+	local t = str_explode(str,":")
+	return tonumber(t[1]), tonumber(t[2])
+end
+
+function WeatherEditor:TimeToString(h,m)
+	if h < 10 then
+		h = "0" .. h
+	end
+	if m < 10 then
+		m = "0" .. m
+	end
+	return (h .. ":" .. m .. ":00")
+end
+
+function WeatherEditor:ParseFromString(ltx, sec, par, typ)
+	local t = parse_list(ltx, sec, par)
+	if typ == 4 and t[1] then
+		local p = str_explode(t[1],"\\")
+		local file = p[#p] or ""
+		local folder = ""
+		for i=1,#p-1 do
+			folder = folder .. p[i] .. "\\"
+		end
+		folder = string_gsub(folder, parameters[par].path, "")
+		t = { folder , file }
+		
+	elseif (not self:IsList(typ)) then
+		for i=1,#t do
+			t[i] = tonumber(t[i])
+		end
+	elseif (not t[1]) then
+		t[1] = ""
+	end
+	return t
+end
+
+function WeatherEditor:IsInvalidValue(idx, typ, val)
+
+	-- Strings
+	if self:IsList(typ) then
+		if val == "" then
+			return false -- it's ok for strings to be empty
+		elseif val and self.list[idx][val] then
+			return false 
+		else
+			return true -- value that doesn't exist in the list
+		end 
+		
+	-- Numbers
+	elseif not (val and val ~= "" and tonumber(val)) then
+		return true -- not number
+	end
+	
+	return false
+end
+
+function WeatherEditor:ScrollToElement(idx)
+	if (not idx) then
+		return
+	end
+	
+	local par = self.parent[idx]
+	local cnt = self.idx_p[par]
+	local ele = idx and self.st[cnt]
+	if (not ele) then
+		return
+	end
+	
+	local h = self.scroll_par:GetHeight()
+	local curr_pos = self.scroll_par:GetCurrentScrollPos()
+	local ele_pos = ele:GetWndPos().y
+	if (ele_pos < curr_pos) or (ele_pos >= curr_pos + h) then
+		self.scroll_par:SetScrollPos( clamp(ele_pos, self.scroll_par:GetMinScrollPos(), self.scroll_par:GetMaxScrollPos()) )
+	end
+end
+
+-- Final
+function WeatherEditor:PauseEngine(state)
+-- When we want to work on Weather Editor, then engine must stop calculating weather changes by time
+
+	if (state == true) and (not weather.is_paused()) then
+		weather.pause(true)
+		
+	elseif (state == false) and (weather.is_paused()) then
+		weather.pause(false) 
+	end
+end
+
+function WeatherEditor:Close()
+	self:HideDialog()
+	self:Show(false)
+	
+	Unregister_UI("WeatherEditor")
+	
+	if (level.present()) then
+		printf("- main_menu off")
+		exec_console_cmd("main_menu off")
+	end
+end
+
+function WeatherEditor:SetHint(text,cl)
+	if (text == "") then
+		return
+	end
+	self.hint_wnd:Show(true)
+	self.hint_wnd_text:SetText(text)
+	self.hint_wnd_text:AdjustHeightToText()
+	self.hint_wnd_text:SetTextColor( (cl == true and clr_list["saved"]) or (cl == false and clr_list["temp"]) or clr_list["def"] )
+	
+	local w = self.hint_wnd:GetWidth()
+	w = w >= 96 and w or 96
+	local h = self.hint_wnd_text:GetHeight()+44
+	h = h >= 96 and h or 96
+	self.hint_wnd:SetWndSize(vector2():set(w,h))
+	
+	local pos = GetCursorPosition()
+	pos.y = pos.y - self.hint_wnd:GetHeight()
+	pos.x = pos.x - self.hint_wnd:GetWidth()
+	self.hint_wnd:SetWndPos(pos)
+	
+	FitInRect(self.hint_wnd,Frect():set(0,0,1024,768),0,100)
+end
+
+function WeatherEditor:MSG(fmt,...)
+	local str = strformat(fmt,...)
+	
+	self.msg_wnd:Show(true)
+	self.msg_wnd_text:SetText(str)
+	self.msg_wnd_text:AdjustHeightToText()
+	self.msg_wnd_text:SetWndSize(vector2():set(self.msg_width, self.msg_wnd_text:GetHeight()+10))
+	self.msg_wnd_text:SetWndPos(vector2():set(0,20))
+	
+	self.msg_wnd:SetWndSize(vector2():set(self.msg_width, self.msg_wnd_text:GetHeight()+44))
+	self.msg_wnd:SetWndPos(vector2():set( self.dialog:GetWidth() , (self.hight - self.msg_wnd:GetHeight()) ))
+	
+	self.msg_wnd_timer = time_global() + 4000
+end
+
+function WeatherEditor:Print(fmt, ...)
+	if self.debug then
+		printf("WeatherEditor | " .. fmt, ...)
+	end
+end

@@ -1,0 +1,124 @@
+-- @ Version: SCREEN SPACE SHADERS - UPDATE 18
+-- @ Description: Gloss & Wet Surfaces
+-- @ Author: https://www.moddb.com/members/ascii1457
+-- @ Mod: https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders
+
+-- Settings
+local ssfx_gloss_auto = true
+local ssfx_gloss_auto_max = 0
+
+local ssfx_gloss_min = 0
+local ssfx_gloss_max = 0
+
+local ssfx_spec_int = 0
+local ssfx_spec_color = 0
+
+-- Wet Surfaces
+local ssfx_wet_buildup = 0
+local ssfx_wet_drying = 0
+
+local ssfx_wet_ripples_size = 0
+local ssfx_wet_ripples_speed = 0
+local ssfx_wet_ripples_minspeed = 0
+local ssfx_wet_ripples_int = 0
+
+local ssfx_wet_waterfall_size = 0
+local ssfx_wet_waterfall_speed = 0
+local ssfx_wet_waterfall_minspeed = 0
+local ssfx_wet_waterfall_int = 0
+
+local ssfx_wet_res = 0
+local ssfx_wet_dist = 0
+
+-- Internal
+module_installed = true
+
+local function update_rain()
+
+	if ssfx_gloss_auto then
+		Wetness_gloss = ssfx_gloss_min + (math.max(ssfx_gloss_auto_max - ssfx_gloss_min, 0) * level.rain_wetness())
+
+		get_console():execute("ssfx_gloss_factor " .. ( Wetness_gloss * 0.96 ) )
+	end
+
+end
+
+local function apply_extra_settings()
+
+	-- Gloss
+	get_console():execute("ssfx_lightsetup_1 (".. ssfx_spec_int .. "," .. ssfx_spec_color .. ",0,0)" )
+	get_console():execute("ssfx_gloss_minmax (" .. ssfx_gloss_min .. "," .. ssfx_gloss_max .. ",0)" )
+
+	if not ssfx_gloss_auto then
+		get_console():execute("ssfx_gloss_factor 0")
+	end
+
+	-- Wet Surfaces
+	get_console():execute("ssfx_wetness_multiplier (" .. ssfx_wet_buildup .. "," .. ssfx_wet_drying .. ",0)" )
+
+	ripples_size = math.max(2.0 - ssfx_wet_ripples_size, 0.01) -- Change how the value works to be more intuitive ( < 1.0 smaller | > 1.0 bigger )
+	get_console():execute("ssfx_wetsurfaces_1 (" .. ripples_size .. "," .. ssfx_wet_ripples_speed .. "," .. ssfx_wet_ripples_minspeed .. "," .. ssfx_wet_ripples_int .. ")" )
+
+	waterfall_size = math.max(2.0 - ssfx_wet_waterfall_size, 0.01) -- Change how the value works to be more intuitive ( < 1.0 smaller | > 1.0 bigger )
+	get_console():execute("ssfx_wetsurfaces_2 (" .. waterfall_size .. "," .. ssfx_wet_waterfall_speed .. "," .. ssfx_wet_waterfall_minspeed .. "," .. ssfx_wet_waterfall_int .. ")" )
+
+	wet_resolution = math.pow(2, ssfx_wet_res + 6)
+	get_console():execute("r3_dynamic_wet_surfaces_sm_res " .. wet_resolution )
+	get_console():execute("r3_dynamic_wet_surfaces_far " .. ssfx_wet_dist )
+
+
+
+end
+
+function on_option_change()
+	
+	-- Get gloss settings
+	local module_id = "ssfx_wetness/ssfx_gloss"
+
+	ssfx_gloss_min = ssfx_001_mcm.ssfx_get_setting(module_id, "min_gloss", ssfx_wetness_settings)
+	ssfx_gloss_max = ssfx_001_mcm.ssfx_get_setting(module_id, "max_gloss", ssfx_wetness_settings)
+	
+	ssfx_gloss_auto = ssfx_001_mcm.ssfx_get_setting(module_id, "auto_gloss", ssfx_wetness_settings)
+	ssfx_gloss_auto_max = ssfx_001_mcm.ssfx_get_setting(module_id, "auto_gloss_max", ssfx_wetness_settings)
+	
+	ssfx_spec_int = ssfx_001_mcm.ssfx_get_setting(module_id, "specular_int", ssfx_wetness_settings)
+	ssfx_spec_color = ssfx_001_mcm.ssfx_get_setting(module_id, "specular_color", ssfx_wetness_settings)
+
+
+	local module_id_2 = "ssfx_wetness/ssfx_wet_surf"
+
+	ssfx_wet_buildup = ssfx_001_mcm.ssfx_get_setting(module_id_2, "buildup_speed", ssfx_wetness_settings)
+	ssfx_wet_drying = ssfx_001_mcm.ssfx_get_setting(module_id_2, "dry_speed", ssfx_wetness_settings)
+
+	ssfx_wet_ripples_size = ssfx_001_mcm.ssfx_get_setting(module_id_2, "ripples_size", ssfx_wetness_settings)
+	ssfx_wet_ripples_speed = ssfx_001_mcm.ssfx_get_setting(module_id_2, "ripples_speed", ssfx_wetness_settings)
+	ssfx_wet_ripples_minspeed = ssfx_001_mcm.ssfx_get_setting(module_id_2, "ripples_min_speed", ssfx_wetness_settings)
+	ssfx_wet_ripples_int = ssfx_001_mcm.ssfx_get_setting(module_id_2, "ripples_intensity", ssfx_wetness_settings)
+
+	ssfx_wet_waterfall_size = ssfx_001_mcm.ssfx_get_setting(module_id_2, "waterfall_size", ssfx_wetness_settings)
+	ssfx_wet_waterfall_speed = ssfx_001_mcm.ssfx_get_setting(module_id_2, "waterfall_speed", ssfx_wetness_settings)
+	ssfx_wet_waterfall_minspeed = ssfx_001_mcm.ssfx_get_setting(module_id_2, "waterfall_min_speed", ssfx_wetness_settings)
+	ssfx_wet_waterfall_int = ssfx_001_mcm.ssfx_get_setting(module_id_2, "waterfall_intensity", ssfx_wetness_settings)
+
+	ssfx_wet_res =  ssfx_001_mcm.ssfx_get_setting(module_id_2, "cover_res", ssfx_wetness_settings)
+	ssfx_wet_dist =  ssfx_001_mcm.ssfx_get_setting(module_id_2, "cover_distance", ssfx_wetness_settings)
+
+
+	if ssfx_gloss_auto then
+		RegisterScriptCallback("actor_on_update", update_rain)
+	else
+		UnregisterScriptCallback("actor_on_update", update_rain)
+	end
+
+	apply_extra_settings()
+
+end
+
+function on_game_start()
+
+	-- General Functions
+	RegisterScriptCallback("on_option_change", on_option_change)
+
+	-- Read and apply settigns
+	on_option_change()
+end
