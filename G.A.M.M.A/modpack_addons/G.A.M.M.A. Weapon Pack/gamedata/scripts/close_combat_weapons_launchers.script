@@ -79,16 +79,34 @@ local function npc_to_overide(npc)
 	return range and range < ccr2
 end
 
-
-
+-- orginal _g function includes wpn_lr300 for some reason
+local function IsPistol(o,c)
+	if not (c) then
+		c = o and o:clsid()
+	end
+	local pistol = {
+					[clsid.wpn_pm_s] = true,
+					[clsid.wpn_walther_s] = true,
+					[clsid.wpn_usp45_s] = true,
+					[clsid.wpn_hpsa_s] = true,
+					--[clsid.wpn_lr300_s] = true,
+					[clsid.wpn_pm] = true,
+					[clsid.wpn_walther] = true,
+					[clsid.wpn_usp45] = true,
+					[clsid.wpn_hpsa] = true,
+					--[clsid.wpn_lr300] = true
+	}
+	return c and pistol[c] or false
+end
 
 local function find_weapon(npc) --function we use to find the weapon we want the npc to use.
 	local best_cond = 0
 	local wpn_id = nil
 
-	local function find_not_launcher(obj) --simple inventory iterator to find something that isn't long range
+	local function find_not_launcher(obj) --simple inventory iterator to find something that isn't a launcher
 	local value_cond = ini_sys:r_float_ex(obj:section(), "cost") or 1
-	  	if IsWeapon(obj) and not IsLauncher(obj) and value_cond > best_cond then --if the item isn't a launcher and a better value than what we have found update:
+		if IsPistol(obj) then value_cond = value_cond / 5 end
+	  	if IsWeapon(obj) and not IsMelee(obj) and not IsLauncher(obj) and value_cond > best_cond then --if the item isn't a launcher and a better value than what we have found update:
 		   best_cond = value_cond
 		   wpn_id = obj:id() 
 		end
