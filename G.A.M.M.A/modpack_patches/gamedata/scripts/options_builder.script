@@ -1,0 +1,265 @@
+--- Smart constructor API for options menu data tables
+
+-- Type checking
+function is_table(arg)
+	return type(arg) == "table"
+end
+
+function is_string(arg)
+	return type(arg) == "string"
+end
+
+-- Divider line
+function line(args)
+	args.id = args.id or "divider"
+	args.type = "line"
+	return args
+end
+
+-- Image with text
+function slide(args)
+	assert(is_table(args), "Slide argument is not a table")
+	local id = args.id
+	assert(is_string(id), "Slide ID is not a string")
+	args.id = "slide_modded_exes_" .. id
+	args.type = "slide"
+	args.link = args.link or "ui_options_slider_other"
+	args.text = args.text or ("ui_mm_" .. id .. "_modded_exes")
+	args.size = args.size or { 512, 50 }
+	return args
+end
+
+-- Button
+function button(args)
+	args.type = "button"
+	args.functor_ui = {args.functor_ui}
+	args.precondition = {args.precondition}
+	return args
+end
+
+-- Boolean checkbox
+function check(args)
+	assert(is_table(args), "Checkbox argument is not a table")
+    args.type = "check"
+	args.val = 1
+	args.def = args.def or false
+	args.cmd = args.cmd or args.id
+	return args
+end
+
+-- Numeric slider
+function track(args)
+	assert(is_table(args), "Track argument is not a table")
+
+	-- Populate typing information
+	args.type = "track"
+	args.val = 2
+
+	-- Use ID as command unless specified explicitly
+	if args.cmd == nil then
+		args.cmd = args.id
+	end
+
+	-- If a valid command is specified...
+	if type(args.cmd) == "string" then
+	-- Get bounds of console variable
+	local bounds = get_console():get_variable_bounds(args.cmd)
+	if bounds.min and bounds.max then
+		args.min = args.min or bounds.min
+		args.max = args.max or bounds.max
+	end
+	else
+		-- Otherwise, nil it to ensure data sanity
+		args.cmd = nil
+	end
+
+	-- Ensure provided range is valid
+	if args.min > args.max then
+		args.min, args.max = args.max, args.min
+	end
+
+	return args
+end
+
+-- RGBA color sliders
+function curr_crosshair_clr(id, n)
+	-- printf_me("curr_crosshair_clr(%s, %s)", id, n)
+	local curr = get_console_cmd(nil, id)
+	curr = tostring(curr)
+	-- printf_me("  curr: %s", curr)
+	local r,g,b,a = string.match(curr,"(%d+), (%d+), (%d+), (%d+)")
+	if n == "a" then
+		return tonumber(a)
+	elseif n == "r" then
+		return tonumber(r)
+	elseif n == "g" then
+		return tonumber(g)
+	elseif n == "b" then
+		return tonumber(b)
+	end
+	return 255
+end
+
+function func_crosshair_clr(id, n)
+	printf_me("func_crosshair_clr(%s, %s)", id, n)
+	local val = ui_options.opt_temp["modded_exes/visual/crosshair/" .. id .. "_" .. n]
+	printf_me("val: %s", val)
+	if (val == nil) then
+		return
+	end
+
+	local curr = get_console_cmd(nil, id)
+	curr = tostring(curr)
+	printf_me("curr: %s", curr)
+	local r,g,b,a = string.match(curr,"(%d+), (%d+), (%d+), (%d+)")
+	if n == "a" then
+		a = val
+	elseif n == "r" then
+		r = val
+	elseif n == "g" then
+		g = val
+	elseif n == "b" then
+		b = val
+	end
+	exec_console_cmd(strformat(id .. " (%s, %s, %s, %s)", r, g, b, a))
+end
+
+function crosshair_color(args)
+	return
+		track {
+			id = args.id .. "_r",
+			hint = "modded_exes_color_r",
+			min = 0,
+			max = 255,
+			def = 255,
+			step = 1,
+			curr = {curr_crosshair_clr, args.id, "r"},
+			functor = {func_crosshair_clr, args.id, "r"},
+			cmd = false
+		},
+		track {
+			id = args.id .. "_g",
+			hint = "modded_exes_color_g",
+			min = 0,
+			max = 255,
+			def = 255,
+			step = 1,
+			curr = {curr_crosshair_clr, args.id, "g"},
+			functor = {func_crosshair_clr, args.id, "g"},
+			cmd = false
+		},
+		track {
+			id = args.id .. "_b",
+			hint = "modded_exes_color_b",
+			min = 0,
+			max = 255,
+			def = 255,
+			step = 1,
+			curr = {curr_crosshair_clr, args.id, "b"},
+			functor = {func_crosshair_clr, args.id, "b"},
+			cmd = false
+		},
+		track {
+			id = args.id .. "_a",
+			hint = "modded_exes_color_a",
+			min = 0,
+			max = 255,
+			def = 255,
+			step = 1,
+			curr = {curr_crosshair_clr, args.id, "a"},
+			functor = {func_crosshair_clr, args.id, "a"},
+			cmd = false
+		}
+end
+
+-- String input
+function input(args)
+	assert(is_table(args), "Input argument is not a table")
+	args.type = "input"
+	args.val = 0
+	args.cmd = args.cmd or args.id
+	return args
+end
+
+-- Multiple-choice key-value list
+function list(args)
+	assert(is_table(args), "List argument is not a table")
+	args.type = "list"
+	args.curr = (args.curr and {args.curr}) or
+		{function()
+			return get_console_cmd(0, args.id)
+		end}
+	local content = args.content
+	args.content = {function()
+		return content
+	end}
+	args.cmd = args.cmd or args.id
+	args.restart = args.restart or false
+	return args
+end
+
+-- Integer-indexed key list
+function list_enum(args)
+	assert(is_table(args), "Enum List argument is not a table")
+	args.val = 0
+	local content = args.content
+	assert(is_table(content), "Enum List content is not a table")
+	args.content = {}
+	for i,c in ipairs(content) do
+		args.content[i] = {tostring(i - 1), c}
+	end
+	return list(args)
+end
+
+-- Binary choice list
+function list_bool(args)
+	assert(is_table(args), "Boolean List argument is not a table")
+	args.val = 0
+	args.content = {
+		{"1", "ON"},
+		{"0", "OFF"}
+	}
+	return list(args)
+end
+
+-- Settings page
+-- Takes a list; expects the first element to be a table of page settings,
+-- and subsequent elements to be child controls
+function page(args)
+	assert(is_table(args), "Page argument is not a table")
+	local head = table.remove(args, 1)
+	assert(is_table(head), "Page header is not a table")
+	head.sh = head.sh or true
+	head.gr = args
+	table.insert(head.gr, 1, slide { id = head.id })
+	return head
+end
+
+-- Page group
+-- Takes a list; expects the first element to be a table of group settings,
+-- and subsequent elements to be child controls
+function group(args)
+	assert(is_table(args), "Group argument is not a table")
+	local head = table.remove(args, 1)
+	assert(is_table(head), "Group header is not a table")
+	head.gr = args
+	return head
+end
+
+-- Import this script into another
+function import_into(dest)
+	-- Import smart constructors from settings builder
+	local mt = getmetatable(dest)
+	local __index_old = mt.__index
+	mt.__index = function(tbl, key)
+		local v = this[key]
+		if v then
+			return v
+		end
+		if type(__index_old) == "function" then
+			return __index_old(tbl, key)
+		elseif type(__index_old) == "table" then
+			return __index_old[key]
+		end
+	end
+end
