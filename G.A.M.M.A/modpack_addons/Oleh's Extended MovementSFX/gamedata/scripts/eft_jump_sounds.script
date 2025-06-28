@@ -48,7 +48,8 @@ local enabled = true
 function actor_on_jump()
     if not enabled then return end
 
-    local material = available_materials[ray_cast()] or "dirt_"
+    local material = available_materials[get_material()]
+    if not material then return false end
     jump_sound = sound_object("jump\\jump_" .. material .. math.random(3))
     jump_sound:play(db.actor, 0, sound_object.s2d)
     jump_sound.volume = volume
@@ -58,47 +59,88 @@ function actor_on_land(landing_speed)
     if not enabled then return end
     print_dbg("landing_speed: %s", landing_speed)
 
-    -- patch for speed set to 0 by fake geometry
+    -- hack for speed set to 0 by fake geometry
     if landing_speed == 0 then landing_speed = 5 end
-	if landing_speed > 3 then
-        local material = available_materials[ray_cast()] or "dirt_"
+	if landing_speed > 2 then
+        local material = available_materials[get_material()]
+        if not material then return false end
         land_sound = sound_object("landing\\landing_" .. material .. math.random(3))
         land_sound:play(db.actor, 0, sound_object.s2d)
         land_sound.volume = volume * (landing_speed / 5)
     end
 end
 
-function ray_cast()
-    actor_position = vector():set(db.actor:position())
-    position = vector():set(actor_position.x, actor_position.y + 1, actor_position.z)
-    direction = vector():set(0, -1, 0)
-    ray = demonized_geometry_ray.geometry_ray({
-        ray_range = 1.25,
+local function get_highest_value(tbl)
+    local max_key = tbl[1]
+    local max_value = 0
+    for k,v in pairs(tbl) do
+        if v and v > max_value then
+            max_value = v
+            max_key = k
+        end
+    end
+    return max_key
+end
+
+-- x-shaped raycast pattern
+-- radius is slightly smaller than player collision box (bubble?)
+-- when editing y-offset, edit inversed ray offset too
+ray_cast_offsets = {
+    [1] = {0, 0.25, 0},
+    [2] = {0.225, 0.3, 0.225},
+    [3] = {0.225, 0.3, -0.225},
+    [4] = {-0.225, 0.3, 0.225},
+    [5] = {-0.225, 0.3, -0.225},
+}
+
+function get_material()
+    local pos = db.actor:position()
+    local dir = vector():set(0, -1, 0)
+    local material_table = {}
+
+    for k,v in pairs(ray_cast_offsets) do
+        local material = ray_cast(vector():set(pos.x + v[1], pos.y + v[2], pos.z + v[3]), dir)
+
+        if material then
+            if not material_table[material] then
+                material_table[material] = 1
+            else
+                material_table[material] = material_table[material] + 1
+            end
+        end
+    end
+
+    -- for k,v in pairs(material_table) do
+    --     print_dbg("raycast result: %s %s", k,v)
+    -- end
+    print_dbg("selected material: %s", get_highest_value(material_table))
+    return get_highest_value(material_table)
+end
+
+function ray_cast(pos, dir)
+    local ray = demonized_geometry_ray.geometry_ray({
+        -- longer ray range helps with sloped surfaces
+        ray_range = 0.5,
         flags = 1 + 2 + 4 + 8,
         visualize = debug
     })
-    material = ray:get(position ,direction).result.material_name
+    local material = ray:get(pos, dir).result.material_name
     material = material and string.gsub(material, "materials\\" , "")
 
+    -- inversed ray cast to hit surfaces covered by fake geometry
     if available_materials[material] == "fake" then
-        print_dbg("!Fake material!")
-        position = vector():set(actor_position.x, actor_position.y - 0.5, actor_position.z)
-        direction = vector():set(0, 1, 0)
-        ray = demonized_geometry_ray.geometry_ray({
-            ray_range = 1,
-            flags = 1 + 2 + 4 + 8,
-            visualize = debug
-        })
-        material = ray:get(position ,direction).result.material_name
+        --print_dbg("!Fake material!")
+        pos = vector():set(pos.x, pos.y - 0.8, pos.z)
+        dir = vector():set(0, 1, 0)
+        material = ray:get(pos, dir).result.material_name
         material = material and string.gsub(material, "materials\\" , "")
     end
 
     if material and available_materials[material] ~= "fake" then
-        print_dbg("!material name: %s", material)
+        --print_dbg("!material name: %s", material)
         return material
     else
-        print_dbg("!No valid material!")
-        return
+        --print_dbg("!No valid material!")
     end
 end
 
@@ -122,8 +164,8 @@ function actor_on_footstep(material, power, hud_view, flags)
     flags.ret_value = false
 end
 
-function print_dbg(...)
+function print_dbg(txt, ...)
 	if debug then
-		printf(...)
+		printf("[eft_jump_sounds] " .. txt, ...)
 	end
 end
