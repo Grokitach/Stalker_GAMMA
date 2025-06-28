@@ -1,0 +1,127 @@
+--[[
+GhenTuong:
+
+These are beh overriding options. You can use these to make beh running your customized logic.
+Add a "init" line in [beh@section] to call your function on init.
+Add a "main" line in [beh@section] to call your function on action_beh:execute().
+Add a "finalize" line in [beh@section] to call your function on action_beh:finalize().
+
+Optional: You may want to disable the original logic in action_beh:execute() so that beh only runs your customized logic.
+Configure "target" and "behavior_state" as nil in [beh@section] to disable the original logic:
+target			= nil
+behavior_state	= nil
+
+Example:
+[beh@section]
+init			= file_name:function_init
+main			= file_name:function_main
+finalize		= file_name:function_finalize
+target			= nil
+behavior_state	= nil
+
+file_name.script:
+```
+function function_init(npc,ini,section,st,scheme)
+	...
+end
+
+function function_main(self)
+	...
+end
+
+function function_finalize(self)
+	...
+end
+```
+--]]
+
+function GHENTUONG_scheme_init(npc,ini,section,st,scheme)
+	do
+		local str = ini:r_string_ex(section,"main")
+		if (str and (str ~= "") and (str ~= "nil")) then
+			local p = str_explode(str,"%.")
+			local str_s = p and p[1]
+			local str_f = p and p[2]
+			
+			if (str_s and str_f and _G[str_s] and _G[str_s][str_f]) then
+				st.main_s = str_s
+				st.main_f = str_f
+			else
+				local k = db.storage[npc:id()]
+				printf("axr_beh: %s [%s] | function invalid: %s %s",k and k.ini_filename,section,str_s,str_f)
+			end
+		end
+	end
+	
+	do
+		local str = ini:r_string_ex(section,"finalize")
+		if (str and (str ~= "") and (str ~= "nil")) then
+			local p = str_explode(str,"%.")
+			local str_s = p and p[1]
+			local str_f = p and p[2]
+			
+			if (str_s and str_f and _G[str_s] and _G[str_s][str_f]) then
+				st.finalize_s = str_s
+				st.finalize_f = str_f
+			else
+				local k = db.storage[npc:id()]
+				printf("axr_beh: %s [%s] | function invalid: %s %s",k and k.ini_filename,section,str_s,str_f)
+			end
+		end
+	end
+	
+	do
+		local str = ini:r_string_ex(section,"init")
+		if (str and (str ~= "") and (str ~= "nil")) then
+			local p = str_explode(str,"%.")
+			local str_s = p and p[1]
+			local str_f = p and p[2]
+			if (str_s and str_f and _G[str_s] and _G[str_s][str_f]) then
+				_G[str_s][str_f](npc,ini,section,st,scheme)
+			else
+				local k = db.storage[npc:id()]
+				printf("axr_beh: %s [%s] | function invalid: %s %s",k and k.ini_filename,section,str_s,str_f)
+			end
+		end
+	end
+end
+
+--[[----------------------------------------------------------------------------------------------------
+	Overrides
+------------------------------------------------------------------------------------------------------]]
+org_set_scheme = nil
+function set_scheme(npc,ini,scheme,section,gulag_name)
+	org_set_scheme(npc,ini,scheme,section,gulag_name)
+	GHENTUONG_scheme_init(npc,ini,section,db.storage[npc:id()][scheme],"beh")
+end
+
+org_action_beh_execute = nil
+function action_beh_execute(self)
+	org_action_beh_execute(self)
+	if (self.st.main_s and self.st.main_f) then
+		_G[self.st.main_s][self.st.main_f](self)
+	end
+end
+
+org_action_beh_finalize = nil
+function action_beh_finalize(self)
+	org_action_beh_finalize(self)
+	if (self.st.finalize_s and self.st.finalize_f) then
+		_G[self.st.finalize_s][self.st.finalize_f](self)
+	end
+end
+
+function on_game_start()
+	if (_G._AXR_BEH_EX_LOADED == nil) then
+		_G._AXR_BEH_EX_LOADED = true
+		
+		org_set_scheme = axr_beh.set_scheme
+		axr_beh.set_scheme = set_scheme
+		
+		org_action_beh_execute = axr_beh.action_beh.execute
+		axr_beh.action_beh.execute = action_beh_execute
+		
+		org_action_beh_finalize = axr_beh.action_beh.finalize
+		axr_beh.action_beh.finalize = action_beh_finalize
+	end
+end
