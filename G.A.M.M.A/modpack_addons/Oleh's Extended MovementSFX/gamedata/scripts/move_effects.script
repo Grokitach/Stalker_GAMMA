@@ -50,7 +50,9 @@ function on_key_press(key)
     local body_st = get_body_state()
     if body_st == "blocked" then return end
 
-    if bind == key_bindings.kCROUCH and IsMoveState('mcAccel') then volume = 1.7 end
+    if bind == key_bindings.kCROUCH and IsMoveState('mcAccel') then
+        volume = 1.5
+    end
 
     if bind == key_bindings.kCROUCH then
         if body_st == "stand" then
@@ -65,6 +67,10 @@ function on_key_press(key)
         else
             play_sound("stand", volume)
         end
+
+    elseif (bind == key_bindings.kSPRINT_TOGGLE and IsMoveState('mcCrouch')) and crouch_toggle then
+        if IsMoveState('mcAccel') then volume = 1.5 end
+        play_sound("stand", volume)
 
     elseif (bind == key_bindings.kR_LOOKOUT or bind == key_bindings.kL_LOOKOUT) and not freelook_state.FreelookActive then
         play_sound("lookout", volume)
@@ -93,13 +99,27 @@ end
 function play_sound(movement, volume)
     if not toggle_settings[movement] then return end
 
-    sound = sound_object(movement .. "\\" .. movement .. "_" .. count[movement])
+    local sound = sound_object(movement .. "\\" .. movement .. "_" .. count[movement])
     sound:play(db.actor, 0, sound_object.s2d)
     sound.volume = volume * volume_settings[movement]
 
     count[movement] = count[movement] + 1
     if count[movement] > limit[movement] then count[movement] = 1 end
     --print_dbg("movement_sounds // movement: %s volume: %s", movement, volume)
+
+    -- Exo servo sounds
+    if exo_servo_sounds then
+        if exo_servo_sounds.exo_flag or
+        -- Powered Exos patch
+        exo_servo_sounds.exo_flag == nil and exo_servo_sounds:check_exo_suit() then
+            local num = movement == "stand" and 2 or movement == "crouch" and 1 or nil
+            if num then
+                sound = sound_object("exo-servo\\" .. exo_servo_sounds.exo_type .. "_servo_exo_walk" .. num)
+                sound:play(db.actor, 0, sound_object.s2d)
+                sound.volume = volume * exo_servo_sounds.volume_walk * 0.5
+            end
+        end
+    end
 end
 
 function is_hud_free()
