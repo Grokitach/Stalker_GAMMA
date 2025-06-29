@@ -1,0 +1,308 @@
+--- Crosshair options tree
+
+-- Import smart constructors
+options_builder.import_into(this)
+
+function append(dest, ...)
+	for _,v in ipairs({...}) do
+		table.insert(dest, v)
+	end
+end
+
+function crosshair_base_commands(args)
+	local out = {}
+	append(
+		out,
+		slide {
+			id = args.prefix,
+			text = args.text,
+		},
+		check {
+			id = "g_crosshair_" .. args.prefix,
+			hint = "modded_exes_visual_crosshair_g_crosshair_show",
+			def = args.defs.show or false,
+		},
+		check {
+			id = "g_crosshair_" .. args.prefix .. "_recon",
+			hint = "modded_exes_visual_crosshair_g_crosshair_recon",
+			def = args.defs.recon or false,
+		},
+		track {
+			id = "g_crosshair_" .. args.prefix .. "_recon_max_opacity",
+			def = 0.5,
+			step = 0.05,
+			hint = "modded_exes_visual_crosshair_g_crosshair_recon_max_opacity",
+			def = args.defs.recon_max_opacity or 0.5,
+		},
+		check {
+			id = "g_crosshair_" .. args.prefix .. "_use_shader",
+			hint = "modded_exes_visual_crosshair_g_crosshair_use_shader",
+			def = args.defs.use_shader or false,
+		},
+		input {
+			id = "g_crosshair_" .. args.prefix .. "_shader",
+			hint = "modded_exes_visual_crosshair_g_crosshair_shader",
+			def = args.defs.shader or "hud\\cursor",
+		},
+		input {
+			id = "g_crosshair_" .. args.prefix .. "_texture",
+			hint = "modded_exes_visual_crosshair_g_crosshair_texture",
+			def = args.defs.texture or "ui\\cursor_dot",
+		},
+		track {
+			id = "g_crosshair_" .. args.prefix .. "_size",
+			def = 1,
+			step = 1,
+			hint = "modded_exes_visual_crosshair_g_crosshair_size",
+			def = args.defs.size or 1,
+		},
+		track {
+			id = "g_crosshair_" .. args.prefix .. "_depth",
+			def = 0,
+			step = 1,
+			hint = "modded_exes_visual_crosshair_g_crosshair_depth",
+			def = args.defs.depth or 0,
+		}
+	)
+	
+	append(
+		out,
+		crosshair_color {
+			id = "g_crosshair_" .. args.prefix .. "_color"
+		}
+	)
+
+	return unpack(out)
+end
+
+function crosshair_distance_commands(args)
+	return
+		check {
+			id = "g_crosshair_" .. args.prefix .. "_distance_lerp",
+			hint = "modded_exes_visual_crosshair_g_crosshair_distance_lerp",
+			def = args.defs.distance_lerp or false,
+		},
+		track {
+			id = "g_crosshair_" .. args.prefix .. "_distance_lerp_rate",
+			def = 40,
+			step = 1,
+			hint = "modded_exes_visual_crosshair_g_crosshair_distance_lerp_rate",
+			def = args.defs.distance_lerp_rate or 40,
+		}
+end
+
+function crosshair_opacity_commands(args)
+	return
+		track {
+			id = "g_crosshair_" .. args.prefix .. "_occluded_opacity",
+			def = 0.6,
+			step = 0.05,
+			hint = "modded_exes_visual_crosshair_g_crosshair_occluded_opacity",
+			def = args.defs.occluded_opacity or 0.5,
+		},
+		track {
+			id = "g_crosshair_" .. args.prefix .. "_occlusion_fade_rate",
+			def = 20,
+			step = 1,
+			hint = "modded_exes_visual_crosshair_g_crosshair_occlusion_fade_rate",
+			def = args.defs.occlusion_fade_rate or 40,
+		}
+end
+
+function crosshair_line_commands(args)
+	return
+		check {
+			id = "g_crosshair_" .. args.prefix .. "_line",
+			hint = "modded_exes_visual_crosshair_g_crosshair_line",
+			def = args.defs.line or false,
+		}
+end
+
+function crosshair_camera_far_commands(args)
+	return crosshair_base_commands(args)
+end
+
+function crosshair_camera_near_commands(args)
+	local out = {}
+	append(out, crosshair_base_commands(args))
+	append(out, crosshair_distance_commands(args))
+	return unpack(out)
+end
+
+function crosshair_far_commands(args)
+	local out = {}
+	append(out, crosshair_base_commands(args))
+	append(out, crosshair_line_commands(args))
+	return unpack(out)
+end
+
+function crosshair_near_commands(args)
+	local out = {}
+	append(out, crosshair_base_commands(args))
+	append(out, crosshair_distance_commands(args))
+	append(out, crosshair_opacity_commands(args))
+	append(out, crosshair_line_commands(args))
+	return unpack(out)
+end
+
+function crosshair_pair_commands(args)
+	local out = {
+		slide { id = args.prefix }
+	}
+
+	append(
+		out,
+		crosshair_far_commands {
+			prefix = args.prefix .. "_far",
+			text = "ui_mm_far_modded_exes",
+			defs = args.defs.far,
+		}
+	)
+
+	append(
+		out,
+		crosshair_near_commands {
+			prefix = args.prefix .. "_near",
+			text = "ui_mm_near_modded_exes",
+			defs = args.defs.near,
+		}
+	)
+
+	return unpack(out)
+end
+
+local commands = {
+	slide { id = "camera" }
+}
+append(
+	commands,
+	crosshair_camera_far_commands {
+		prefix = "camera_far",
+		text = "ui_mm_far_modded_exes",
+		defs = {
+			show = true,
+			use_shader = false,
+			recon = true,
+
+			shader = "hud\\cursor",
+			texture = "ui\\cursor_dot",
+
+			size = 1,
+			depth = 25,
+		},
+	}
+)
+append(
+	commands,
+	crosshair_camera_near_commands {
+		prefix = "camera_near",
+		text = "ui_mm_near_modded_exes",
+		defs = {
+			show = false,
+			use_shader = true,
+			distance_lerp = false,
+			recon = false,
+
+			shader = "hud\\cursor",
+			texture = "ui\\cursor_cross",
+
+			distance_lerp_rate = 40,
+
+			size = 16,
+			depth = 0,
+
+			recon_max_opacity = 0.5,
+		},
+	}
+)
+append(
+	commands,
+	crosshair_pair_commands {
+		prefix = "weapon",
+		defs = {
+			far = {
+				show = true,
+				use_shader = false,
+				recon = true,
+				line = false,
+
+				shader = "hud\\cursor",
+				texture = "ui\\cursor_plus",
+
+				distance_lerp_rate = 40,
+
+				size = 1,
+				depth = 25,
+			},
+			near = {
+				show = false,
+				use_shader = true,
+				distance_lerp = false,
+				recon = true,
+				line = false,
+
+				shader = "hud\\cursor",
+				texture = "ui\\cursor_cross",
+
+				distance_lerp_rate = 40,
+
+				size = 16,
+				depth = 0,
+
+				occluded_opacity = 0.25,
+				occlusion_fade_rate = 40,
+				recon_max_opacity = 0.5,
+			},
+		},
+	}
+)
+append(
+	commands,
+	crosshair_pair_commands {
+		prefix = "device",
+		defs = {
+			far = {
+				show = false,
+				use_shader = false,
+				recon = true,
+				line = false,
+
+				shader = "hud\\cursor",
+				texture = "ui\\cursor_plus",
+
+				distance_lerp_rate = 40,
+
+				size = 1,
+				depth = 25,
+			},
+			near = {
+				show = false,
+				use_shader = true,
+				distance_lerp = false,
+				recon = true,
+				line = false,
+
+				shader = "hud\\cursor",
+				texture = "ui\\cursor_cross",
+
+				distance_lerp_rate = 40,
+
+				size = 16,
+				depth = 0,
+
+				occluded_opacity = 0.25,
+				occlusion_fade_rate = 40,
+				recon_max_opacity = 0.5,
+			},
+		},
+	}
+)
+
+-- Options page
+PAGE = page {
+	{ id = "crosshair" },
+
+	check { id = "g_crosshair_show_always" },
+	check { id = "g_crosshair_independent" },
+	unpack(commands)
+}
