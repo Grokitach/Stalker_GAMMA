@@ -26,11 +26,23 @@ end
 
 -- Game objects registry
 gameobjects_registry = {}
+_G.gameobjects_registry = gameobjects_registry -- backwards compatibility
 function game_object_on_net_spawn(obj)
 	gameobjects_registry[obj:id()] = obj
 end
 function game_object_on_net_destroy(obj)
 	gameobjects_registry[obj:id()] = nil
+
+	-- Fix dynamic_news_manager loot table
+	local instance = dynamic_news_manager and dynamic_news_manager.get_dynamic_news and dynamic_news_manager.get_dynamic_news()
+	if instance and instance.loot then
+		for i = #instance.loot, 1, -1 do
+			local item = instance.loot[i]
+			if type(item) == "userdata" and item:id() == obj:id() then
+				table.remove(instance.loot, i)
+			end
+		end
+	end
 end
 
 -- Game objects iterator
@@ -50,18 +62,15 @@ AddScriptCallback("pseudogiant_on_stomp")
 
 _G.CPseudoGigant__OnStartStompAnimation = function(victim, who)
 	SendScriptCallback("pseudogiant_on_start_stomp_animation", victim, who)
-	-- printf("pseudogiant_on_start_stomp_animation: %s, %s", victim:name(), who:name())
 end
 
 _G.CPseudoGigant__BeforeHitCallback = function(victim, who, shit, boneId)
 	local flags = { ret_value = true }
 	SendScriptCallback("pseudogiant_before_stomp", victim, who, shit, boneId, flags)
-	-- printf("pseudogiant_before_stomp: %s, %s, %s, %s", victim:name(), who:name(), shit.power, flags.ret_value)
 	return flags.ret_value
 end
 
 _G.CPseudoGigant__HitCallback = function(victim, who, shit, boneId)
-	-- printf("pseudogiant_on_stomp: %s, %s, %s", victim:name(), who:name(), shit.power)
 	SendScriptCallback("pseudogiant_on_stomp", victim, who, shit, boneId)
 end
 
@@ -106,8 +115,6 @@ end
 
 -- Weapons callbacks
 AddScriptCallback("actor_on_weapon_zoom_type_changed")
-
-
 _G.CWeapon_OnSwitchZoomType = function(obj, previous, current)
 	SendScriptCallback("actor_on_weapon_zoom_type_changed", obj, previous, current)
 end
@@ -122,9 +129,9 @@ end
 
 -- function on_game_start()
 -- 	RegisterScriptCallback("rocket_on_update", function(rocket)
--- 		printf("rocket is flying")
+-- 		printf_me("rocket is flying")
 -- 		local speed = rocket.speed
--- 		printf("speed %s", speed)
+-- 		printf_me("speed %s", speed)
 -- 		-- rocket.engine_active = true
 -- 		if rocket.engine_active then
 -- 			rocket.speed = 15
@@ -139,6 +146,28 @@ end
 -- 	end)
 -- end
 
+-- HUD item callbacks
+
+-- Near-wall transform callback
+-- Intercepts the transforms applied to the HUD when near a wall
+-- Receives the following table:
+-- {
+--   target: int
+--   offset: float
+--   direction: vector
+--   matrix: matrix
+--   override: bool
+-- }
+-- `target` corresponds to the Weapon and Camera variants of ETraceTarget in lua_help_ex.script
+-- `offset` is the signed distance from the barrel to the wall
+-- `direction` is the vector along which the offset is applied
+-- `matrix` is the mutable offset transform
+-- `override` is a mutable flag for suppressing the built-in position offset
+AddScriptCallback("actor_hud_on_nearwall")
+_G.CActorHudOnNearWall = function(arg)
+	SendScriptCallback("actor_hud_on_nearwall", arg)
+end
+
 -- Mouse callbacks
 -- Scroll wheel callback, sends mouse wheel direction as a number
 -- 1 is up, 0 is down
@@ -149,11 +178,19 @@ end
 		printf("mousewheel %s", dir == 1 and "up" or "down")
 	end)
 ]] 
+
 AddScriptCallback("on_mouse_wheel")
 _G.COnMouseWheel = function(dir)
 	local d = dir > 0 and 1 or 0
 	local flags = { ret_value = true }
 	SendScriptCallback("on_mouse_wheel", d, flags)
+	return flags.ret_value
+end
+
+AddScriptCallback("on_before_mouse_move")
+level_input.on_mouse_move = function(x, y, disabled)
+	local flags = { ret_value = false }
+	SendScriptCallback("on_before_mouse_move", x, y, disabled, flags)
 	return flags.ret_value
 end
 
@@ -202,6 +239,7 @@ map_table contains:
 	gvid - game vertex id by position on the hovered map
 
 --]]
+
 AddScriptCallback("on_map_right_click")
 _G.COnRightClickMap = function(property_ui, map_table)
 	pda.map_spot_property.id = map_table.object_id
@@ -211,9 +249,9 @@ end
 
 -- On receive game news callback
 AddScriptCallback("on_news_received")
-_G.CUIMessagesWindow__AddIconedPdaMessage = function(UIWindow, UITimeText, UICaptionText, UIMsgText, UIIconStatic)
+_G.CUIMessagesWindow__AddIconedPdaMessage = function(UIMessageView, UITimeText, UICaptionText, UIMsgText, UIIconStatic, UIMessagesScrollView)
 	local tags = {}
-	SendScriptCallback("on_news_received", UIWindow, UITimeText, UICaptionText, UIMsgText, UIIconStatic, tags)
+	SendScriptCallback("on_news_received", UIMessageView, UITimeText, UICaptionText, UIMsgText, UIIconStatic, UIMessagesScrollView, tags)
 end
 
 -- NPC on item before pickup callback
@@ -222,6 +260,42 @@ _G.CAI_Stalker__OnBeforeOwnershipTake = function(npc, item)
 	local flags = { ret_value = true }
 	SendScriptCallback("npc_on_item_before_pickup", npc, item, flags)
 	return flags.ret_value
+end
+
+AddScriptCallback("npc_set_body_state")
+function _G.CAI_Stalker__SetBodyState(npc, state)
+	local flags = {ret_value = state}
+	SendScriptCallback("npc_set_body_state",npc, state, flags)
+	return flags.ret_value
+end
+
+--[[
+GhenTuong:
+Force stalkers to play a body state during combat by changing csbs_flags.body_state.
+world_operator = {
+	stalker_ids.action_get_item_to_kill,
+	stalker_ids.action_make_item_killing,
+	stalker_ids.action_retreat_from_enemy,
+	stalker_ids.action_get_ready_to_kill,
+	stalker_ids.action_take_cover,
+	stalker_ids.action_look_out,
+	stalker_ids.action_hold_position,
+	stalker_ids.action_detour_enemy,
+	stalker_ids.action_hide_from_grenade,
+	stalker_ids.action_sudden_attack,
+	stalker_ids.action_throw_grenade,
+}
+body_state = {
+	move.crouch,
+	move.stand,
+}
+--]]
+local csbs_flags = {}
+AddScriptCallback("npc_on_combat_set_body_state")
+function _G.CAI_Stalker__CombatSetBodyState(npc,world_operator,body_state)
+	csbs_flags.body_state = body_state
+	SendScriptCallback("npc_on_combat_set_body_state",npc,world_operator,body_state,csbs_flags)
+	return csbs_flags.body_state
 end
 
 -- actor_on_task_callback
@@ -244,7 +318,114 @@ end
 AddScriptCallback("explosive_item_on_explode")
 _G.CExplosiveItem__OnExplode = function(obj)
 	SendScriptCallback("explosive_item_on_explode", obj)
-	--printf("barrel exploded")
+end
+
+-- nearest item to pickup callback
+-- obj can be nil
+AddScriptCallback("actor_on_update_pickup")
+_G.CPickupModeUpdate_COD = function(obj)
+	SendScriptCallback("actor_on_update_pickup", obj)
+end
+
+--[[
+on_before_play_hud_sound callback, possibility to override sound with another one
+Callback returns a table which must contain "section" and "line" fields, which refer to section and line to load new sounds from
+
+Arguments
+	Alias: internal sound type in the engine
+	Parent: Parent object of an object that initiated the sound (`actor` when shooting a weapon for example), might be nil
+
+Example
+	if alias == "sndShot" and parent and parent:id() == AC_ID then
+		result.section = "wpn_l96a1_sounds"
+		result.line = "snd_shoot"
+	end
+
+Possible aliases:
+	"catch_snd"
+	"found_snd"
+	"NightVisionBrokenSnd"
+	"NightVisionIdleSnd"
+	"NightVisionOffSnd"
+	"NightVisionOnSnd"
+	"sndAddCartridge"
+	"sndBore"
+	"sndButtonPress"
+	"sndButtonRelease"
+	"sndCheckout"
+	"sndClickMisfire"
+	"sndClickMisfireActor"
+	"sndClose"
+	"sndCloseEmpty"
+	"sndEmptyBattery"
+	"sndEmptyClick"
+	"sndEmptyClickActor"
+	"sndExplode"
+	"sndHide"
+	"sndHideActor"
+	"sndHideEmpty"
+	"sndOpen"
+	"sndReload"
+	"sndReload1"
+	"sndReloadActor"
+	"sndReloadEmpty"
+	"sndReloadEmptyActor"
+	"sndReloadG"
+	"sndReloadMisfire"
+	"sndReloadMisfireActor"
+	"sndRocket"
+	"sndShoot"
+	"sndShootL"
+	"sndShot"
+	"sndShotActor"
+	"sndShotActorFirst"
+	"sndShotG"
+	"sndShotIndoor"
+	"sndShotMisfire"
+	"sndShotMisfireActor"
+	"sndShow"
+	"sndShowActor"
+	"sndShowEmpty"
+	"sndSilencerShot"
+	"sndSilencerShotActor"
+	"sndSilencerShotActorFirst"
+	"sndSilencerShotIndoor"
+	"sndSilencerShotMisfire"
+	"sndSilencerShotMisfireActor"
+	"sndSwitch"
+	"sndSwitchMode"
+	"sndThrow"
+	"sndTurnOff"
+	"sndTurnOn"
+	"sndZoomIn"
+	"sndZoomOut"
+--]]
+AddScriptCallback("on_before_play_hud_sound")
+_G.COnBeforePlayHudSound = function(alias, parent)
+	local result = {
+		section = nil,
+		line = nil
+	}
+
+	SendScriptCallback("on_before_play_hud_sound", alias, parent, result)
+
+	if result.section and result.line then
+		return result
+	end
+end
+
+-- NLTP_ASHES & demonized : Actor on death callback
+AddScriptCallback("actor_on_death")
+function actor_on_first_update()
+	db.actor:set_callback(callback.death, function()
+		SendScriptCallback("actor_on_death")
+	end)
+end
+
+-- ImGui callback (can be used to inject your own tabs into the menu bar and for drawing your UIs)
+AddScriptCallback("imgui_on_render")
+function on_imgui_render(name)
+	SendScriptCallback("imgui_on_render", name)
 end
 
 -- Improve NPCs pathfinding by reducing actual anomaly damage radius
@@ -265,7 +446,6 @@ function is_outside_damage_radius(zone, obj)
 	local damage_radius_sqr = damage_radius * damage_radius
 	local dist_sqr = zone:position():distance_to_sqr(obj:position())
 	local res = dist_sqr > damage_radius_sqr
-	-- printf("obj %s anomaly %s, dist_sqr %s, damage_radius_sqr %s, damaging %s", obj:name(), zone:name(), dist_sqr, damage_radius_sqr, res)
 	return res
 end
 
@@ -275,7 +455,6 @@ function anomaly_on_before_activate(zone, obj, flags)
 	and obj:alive()
 	and is_outside_damage_radius(zone, obj)
 	then
-		-- printf("obj %s in anomaly %s and is_outside_damage_radius", obj:name(), zone:name())
 		flags.ret_value = false
 	end
 end
@@ -288,7 +467,42 @@ function ActorMenu_on_item_after_move(npc_id, obj, mode, bag_from)
     end
 end
 
+-- Prefetch HUD visual when moving item to slot
+function actor_item_to_slot_prefetch(item)
+	local hudSec = SYS_GetParam(0, item:section(), "hud")
+	if hudSec then
+		local visual = SYS_GetParam(0, hudSec, "item_visual")
+		if visual then
+			game.prefetch_model(visual)
+		end
+	end
+end
+
+-- Prefetch current items
+function actor_on_first_update_prefetch()
+	db.actor:iterate_inventory(function(npc, item)
+		local ui_texture = SYS_GetParam(0, item:section(), "icons_texture", "ui\\ui_icon_equipment")
+		game.prefetch_texture(ui_texture)
+
+		if item_backpack.is_in_slot(item) then
+			local hudSec = SYS_GetParam(0, item:section(), "hud")
+			if hudSec then
+				local visual = SYS_GetParam(0, hudSec, "item_visual")
+				if visual then
+					game.prefetch_model(visual)
+				end
+			end
+		end
+	end, db.actor)
+end
+
 function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+
+	-- Prefetch callbacks. Disabled for now, conflict with SSS
+	-- RegisterScriptCallback("actor_item_to_slot", actor_item_to_slot_prefetch)
+	-- RegisterScriptCallback("actor_on_first_update", actor_on_first_update_prefetch)
+
 	RegisterScriptCallback("ActorMenu_on_item_after_move", ActorMenu_on_item_after_move)
 	RegisterScriptCallback("anomaly_on_before_activate", anomaly_on_before_activate)
 	RegisterScriptCallback("game_object_on_net_spawn", game_object_on_net_spawn)

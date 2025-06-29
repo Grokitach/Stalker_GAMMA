@@ -1,0 +1,19 @@
+function on_game_start()
+	local modded_exes_operations_per_version = {
+		[20250622] = function()
+			exec_console_cmd("lua_gcstep 160")
+		end,
+	}
+
+	local saved_modded_exes_version = axr_main.config:r_value("modded_exes", "version", 2, 0)
+
+	for version, func in spairs(modded_exes_operations_per_version, sort_func_keys_ascend) do
+		if version > saved_modded_exes_version then
+			printf_me("Execute migration function of version %s", version)
+			func()
+		end
+	end
+
+	axr_main.config:w_value("modded_exes", "version", MODDED_EXES_VERSION)
+	axr_main.config:save()
+end
