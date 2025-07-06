@@ -1,0 +1,365 @@
+--- TODO:
+--- add mcm options to enable and disable animations
+--- find a way to get rid of dummy object solution
+--- add mcm option to set highlight color
+
+local mcm_enable_animations = true
+local mcm_unequip_helmet = false
+local mcm_strict_mode_enabled = false
+local mcm_allow_skip_abuse = false
+local mcm_strict_sprinting = false
+local ini_eff = {}
+local opt_enable_animations = false
+-- local b_allow_item_use = false
+local bags = { actor_bag = true }
+local ready_color = GetARGB(100, 255, 159, 82)
+local items_in_use = {}
+
+--- ------------------------------------------
+--- init
+--- ------------------------------------------
+
+function on_game_start()
+    RegisterScriptCallback("on_game_load", initialize)
+    RegisterScriptCallback("on_option_change", initialize)
+    RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+    RegisterScriptCallback("on_before_key_press", on_before_key_press)
+    -- RegisterScriptCallback("actor_on_item_drop", actor_on_item_drop)
+	rax_persistent_highlight.register("liz_fdda", check_ready)
+end
+
+
+function initialize()
+    ini_eff = ini_file("items\\items\\animations_settings.ltx")
+    opt_enable_animations = ui_options.get("video/player/animations")
+    mcm_enable_animations = liz_fdda_redone_mcm.get_config("consumables/enable")
+    mcm_unequip_helmet = liz_fdda_redone_mcm.get_config("consumables/unequip_helmet")
+    mcm_strict_mode_enabled = liz_fdda_redone_mcm.get_config("headgear_anm/strict_helmets")
+    mcm_allow_skip_abuse = liz_fdda_redone_mcm.get_config("consumables/allow_skip_abuse")
+    mcm_strict_sprinting = liz_fdda_redone_mcm.get_config("consumables/strict_sprinting")
+end
+
+
+-- if game saved or loaded during animation there might be leftover dummy object. delete it
+function actor_on_first_update()
+    local obj_dummy = db.actor:object("items_anm_dummy")
+    if obj_dummy then alife_release(obj_dummy) end
+end
+
+
+-- temp solution. Should find a way to find specific action whit this item and stop it
+-- eating item triggers item drop for some reason
+-- function actor_on_item_drop(obj)
+--     lam2.stop_all_actions()
+-- end
+
+--- ------------------------------------------
+--- monkey patches
+--- ------------------------------------------
+
+function on_before_key_press(dik, bind, dis, flags)
+    local bind = dik_to_bind(dik)
+
+    -- Detector keybind
+    if bind == key_bindings.kSHOW_DETECTOR or bind == key_bindings.kSHOWDETECTOR or bind == key_bindings.kDETECTOR then
+		printf("detector pressed")
+		if check_anim.anim_playing then
+			flags.ret_value = false
+		end
+	end
+end
+
+--override default anomaly animation if FDDA animation for it exists
+local originalPIF = actor_effects.play_item_fx
+function actor_effects.play_item_fx(item)
+    lam2.log("[CONSUMABLES] Item play fx fucntion called: %s", item)
+    if
+        mcm_enable_animations
+        and ini_eff:section_exist(item)
+    then
+        return
+    end
+    -- don't do anything if consuming dummy item that should hide default item use sound. probably not needed
+    if item == "items_anm_dummy" then
+        return
+    end
+    -- disassemble animation
+    if
+        (item == "disassemble_metal_fast" or item == "disassemble_cloth_fast")
+        and opt_enable_animations
+    then
+        perform_vanilla_animation(item)
+        return
+    end
+    -- or pay vanilla animation
+    originalPIF(item)
+end
+
+--override default item use behaviour (made it public for western goods patch)
+originalAOIBU = itms_manager.actor_on_item_before_use
+modifiedAOIBU = function (obj, flags)
+    -- can't use items while on ladder
+    if IsMoveState("mcClimb") then
+		actor_menu.set_msg(1, game.translate_string("st_EA_ladder_item_not_allowed"),3)
+		flags.ret_value = false
+		return
+	end
+    -- can't use items if strict mode is enabled
+    if mcm_strict_sprinting then
+        if IsMoveState("mcSprint") then
+            flags.ret_value = false
+            return
+        end
+    end
+    -- delay item use to play fdda animation
+    if
+        mcm_enable_animations
+        and ini_eff:section_exist(obj:section())
+        and flags.ret_value
+    then
+        perform_item_use(obj)
+        flags.ret_value = false
+        return
+    end
+    -- delay item use to play vanilla animation
+    if
+        opt_enable_animations
+        and flags.ret_value
+        -- and not b_allow_item_use
+    then
+        perform_vanilla_item_use(obj)
+        flags.ret_value = false
+        return
+    end
+    lam2.log("[CONSUMABLES] actor on item before use EOF. flag state is: %s", flags.ret_value)
+end
+itms_manager.actor_on_item_before_use = function (obj, flags)
+    originalAOIBU(obj,flags)
+    modifiedAOIBU(obj,flags)
+end
+
+-- hide dummy object
+local originalIP = ui_inventory.UIInventory.ParseInventory
+ui_inventory.UIInventory.ParseInventory = function (self, npc, all, id_list, ignore_kind)
+    local inv = originalIP(self, npc, all, id_list, ignore_kind)
+    local filtered = {}
+    for i, o in pairs(inv) do
+        local obj_id = o:id()
+        local obj_sec = o:section()
+        if obj_sec ~= "items_anm_dummy" then
+            filtered[obj_id] = o
+        end
+    end
+    return filtered
+end
+
+
+--- ------------------------------------------
+--- main
+--- ------------------------------------------
+
+-- highlight items in use (doesn't work with vanilla 'animations')
+function check_ready(cell)
+    if bags[cell.container.ID] then
+        return items_in_use[cell.ID] and ready_color
+    end
+end
+
+
+function perform_item_use(obj)
+    local obj_id = obj:id()
+
+    if items_in_use[obj_id] then return end
+
+    items_in_use[obj_id] = obj
+
+    --create action for item use
+    local animation_action = get_template_action_play_animation_fdda_config(obj:section())
+    animation_action.item = obj
+    animation_action.on_enter = function (self)
+        alife_create_item("items_anm_dummy", db.actor)
+    end
+    animation_action.on_execute = function (self, time)
+        lam2.log("[CONSUMABLES] Self.tm: %s | duration: %s", self.tm, self.duration)
+        -- skip item use if strict mode is enabled
+        if mcm_strict_sprinting then
+            if IsMoveState("mcSprint") and self.can_skip then lam2.stop_all_actions() end
+        end
+        -- consume item
+        if not self.is_consumed and (time > self.tm or time > self.duration) then
+            self.is_consumed = true
+            items_in_use[self.item:id()] = nil --remove from hidden items list
+            db.actor:eat(self.item)
+            db.actor:eat(db.actor:object("items_anm_dummy"))
+            if not mcm_allow_skip_abuse then
+                self.can_skip = false
+            end
+        end
+    end
+    animation_action.on_skip = function (self)
+        if not self.is_consumed then
+            --- if item was not consumed it means that we interrupted item usage
+            items_in_use[self.item:id()] = nil
+            db.actor:eat(db.actor:object("items_anm_dummy"))
+        end
+    end
+
+    --auto unequip
+    if mcm_unequip_helmet and mcm_strict_mode_enabled then
+        if ini_eff:r_bool_ex(obj:section(), "helm") == false then
+            if zz_liz_fdda_redone_headgear_animations_strict_helmets.is_have_helmet() then
+                local helmet = db.actor:item_in_slot(12)
+                if helmet then
+                    if not lam2.get_action_with_tag("headgear_animation") then
+                        liz_fdda_redone_headgear_animations_hotkey.set_last_helmet(helmet)
+                        liz_fdda_redone_headgear_animations.on_toggle_unequip(helmet)
+                    end
+                else
+                    items_in_use[obj_id] = nil
+                    hide_hud_inventory()
+                    actor_menu.set_msg(1, game.translate_string("liz_ha_text_cant_consume_item"), 3)
+                    return
+                end
+            end
+        end
+    end
+
+    --feed item use actioin to the lam2
+    lam2.add_action(animation_action)
+end
+
+
+function perform_vanilla_item_use(obj)
+    local obj_sec = obj:section()
+    if items_in_use[obj_sec] then return end
+    items_in_use[obj_sec] = true
+
+    local animation_action = {
+        tag = "vanilla_item_use",   -- for debug
+        hands = 2,                  -- works without it, but just in case
+        item = obj,
+        item_sec = obj_sec,
+        enter = function (self)
+            db.actor:eat(self.item)
+        end,
+        execute = function (self, time)
+            if actor_effects.item_not_in_use then
+                return lam2.states.success
+            end
+            if time > 15 then
+                return lam2.states.fail
+            end
+            return lam2.states.running
+        end,
+        exit = function (self)
+            items_in_use[self.item_sec] = nil
+        end,
+    }
+
+    lam2.add_action(animation_action)
+    lam2.add_action(lam2.get_template_action_wait_for_seconds(1))
+end
+
+
+function perform_vanilla_animation(section)
+    local a = {
+        tag = "vanilla_animation",
+        sec = section,
+        hands = 2,
+        enter = function (self)
+            originalPIF(self.sec)
+        end,
+        execute = function (self, time)
+            if actor_effects.item_not_in_use then
+                return lam2.states.success
+            end
+            if time > 15 then
+                return lam2.states.fail
+            end
+            return lam2.states.running
+        end,
+    }
+
+    lam2.add_action(a)
+    lam2.add_action(lam2.get_template_action_wait_for_seconds(1))
+end
+
+--- ------------------------------------------
+--- fdda action templates
+--- ------------------------------------------
+
+-- had to basically copy default template for playing animation from lam2 cuz of how FDDA handles animation configs
+function get_template_action_play_animation_fdda_config(item_section)
+    local a = {
+        duration = 0,
+        name = "fdda_anim_" .. item_section,
+        sec = ini_eff:r_string_ex(item_section, "anm") .. "_hud",
+        anm = "anm_ea_show",
+        cam = ini_eff:r_string_ex(item_section, "cam"),
+        snd = ini_eff:r_string_ex(item_section, "snd"),
+        tm = (ini_eff:r_float_ex(item_section, "tm") / 1000) * 0.367, --this formula is from origila fdda
+        speed = ini_eff:r_float_ex(item_section, "speed") or 1,
+        hands = 2,
+        can_skip = true,
+        only_allow_movekeys = true,
+        disable_input = false,
+
+        enter = function(self)
+            --animation
+            self.duration = game.get_motion_length(self.sec, self.anm, self.speed) / 1000
+            game.play_hud_motion(self.hands, self.sec, self.anm, false, self.speed)
+            lam2.log("[CONSUMABLES] FDDA item speed is: %s", self.speed)
+            --camera
+            if self.cam then level.add_cam_effector(self.cam, 2190, false, "", 0, false) end
+            --sound
+            if self.snd then
+                lam2.snd_obj = sound_object(self.snd)
+                lam2.snd_obj:play(db.actor, 0, sound_object.s2d)
+            end
+            --fov
+            local fov = ini_sys:r_float_ex(self.sec, "hud_fov")
+            if fov then lam_fov_manager.set_fov(fov) else lam_fov_manager.set_fov(0.45) end
+            --movement
+            if self.disable_input then level.disable_input() end
+            if self.only_allow_movekeys then
+                liz_fdda_input_manager.is_input_disabled = true
+                -- liz_fdda_input_manager.disable()
+                game.set_actor_allow_ladder(false)
+            end
+            --smoke (took as is from fdda. probably sould redo it with use of motion marks on an animation)
+            if ciga_effects and ini_eff:line_exist(item_section, "smoke") then
+                ciga_effects.ciga_start(item_section)
+            end
+            --callback
+            if self.on_enter then self:on_enter() end
+        end,
+
+        execute = function(self, time)
+            local result = lam2.states.running
+            if time > self.duration then
+                lam2.log("[CONSUMABLES] Animation time: %s | duration: %s", time, self.duration)
+                result = lam2.states.success
+            end
+            --callback
+            if self.on_execute then
+                callback_result = self:on_execute(time)
+                if callback_result then result = callback_result end
+            end
+            return result
+        end,
+
+        exit = function(self)
+            lam_fov_manager.restore_fov()
+            --movement
+            if self.disable_input then level.enable_input() end
+            if self.only_allow_movekeys then
+                liz_fdda_input_manager.is_input_disabled = false
+                -- liz_fdda_input_manager.enable()
+                game.set_actor_allow_ladder(true)
+            end
+            --callback
+            if self.on_exit then self:on_exit() end
+        end
+    }
+    return a
+end
