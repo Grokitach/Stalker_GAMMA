@@ -9,6 +9,13 @@ function monster_on_before_hit(npc,shit,bone_id,flags)
 	if shit.draftsman:id() == db.actor:id() then
 		if IsMonster(npc) and character_community(shit.draftsman) == "actor_greh" then
 			void_pact[npc:id()] = true
+			
+			local squad = get_object_squad(npc) or false
+			if squad then
+				for k in squad:squad_members() do
+					void_pact[k.id] = true
+				end
+			end
 		end
 	end
 end
@@ -16,12 +23,12 @@ end
 function on_enemy_eval(npc,ene,flags)
 	if npc and ene then
 		local npc_com = npc and character_community(npc)
-		local ene_com = npc and character_community(ene)
+		local ene_com = ene and character_community(ene)
 		if IsStalker(npc) and IsMonster(ene) and compatible_coms[npc_com] or IsMonster(npc) and IsStalker(ene) and compatible_coms[ene_com] then
-			printf("checking")
+
 			if void_pact[ene:id()] or void_pact[npc:id()] then
-				flags.override = true
-				flags.result = true
+				flags.override = false
+				return
 			else
 				flags.override = true
 				flags.result = false
