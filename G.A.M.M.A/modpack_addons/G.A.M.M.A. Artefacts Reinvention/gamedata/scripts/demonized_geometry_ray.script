@@ -1,0 +1,386 @@
+local enable_debug = false
+local print_tip = function(s, ...)
+    local f = print_tip or printf
+    if enable_debug then
+        return f("Geometry Ray: " .. s, ...)
+    end
+end
+
+local function throttle(func, tg_throttle)
+    local tg = 0
+    if not tg_throttle or tg_throttle == 0 then
+        return function(...)
+            local t = time_global()
+            if t ~= tg then
+                tg = t
+                return func(...)
+            end
+        end
+    else
+        return function(...)
+            local t = time_global()
+            if t < tg then return end
+            tg = t + tg_throttle
+            return func(...)
+        end
+    end
+end
+
+-- Check for material (engine edit required)
+function lshift(x, by)
+    return x * 2 ^ by
+end
+
+function test(x, mask)
+    return bit_and(x, mask) == mask
+end
+
+local flags_test = {
+    ["flBreakable"] = lshift(1, 0),
+    ["flBounceable"] = lshift(1, 2),
+    ["flSkidmark"] = lshift(1, 3),
+    ["flBloodmark"] = lshift(1, 4),
+    ["flClimable"] = lshift(1, 5),
+    ["flPassable"] = lshift(1, 7),
+    ["flDynamic"] = lshift(1, 8),
+    ["flLiquid"] = lshift(1, 9),
+    ["flSuppressShadows"] = lshift(1, 10),
+    ["flSuppressWallmarks"] = lshift(1, 11),
+    ["flActorObstacle"] = lshift(1, 12),
+    ["flNoRicoshet"] = lshift(1, 13),
+    ["flInjurious"] = lshift(1, 28),
+    ["flShootable"] = lshift(1, 29),
+    ["flTransparent"] = lshift(1, 30),
+    ["flSlowDown"] = lshift(1, 31),
+}
+
+--[[
+
+// material exports
+.def_readonly( "material_name"                    , &script_rq_result::pMaterialName )
+.def_readonly( "material_flags"                   , &script_rq_result::pMaterialFlags )
+.def_readonly( "material_phfriction"              , &script_rq_result::fPHFriction )
+.def_readonly( "material_phdamping"               , &script_rq_result::fPHDamping )
+.def_readonly( "material_phspring"                , &script_rq_result::fPHSpring )
+.def_readonly( "material_phbounce_start_velocity" , &script_rq_result::fPHBounceStartVelocity )
+.def_readonly( "material_phbouncing"              , &script_rq_result::fPHBouncing )
+.def_readonly( "material_flotation_factor"        , &script_rq_result::fFlotationFactor )
+.def_readonly( "material_shoot_factor"            , &script_rq_result::fShootFactor )
+.def_readonly( "material_shoot_factor_mp"         , &script_rq_result::fShootFactorMP )
+.def_readonly( "material_bounce_damage_factor"    , &script_rq_result::fBounceDamageFactor )
+.def_readonly( "material_injurious_speed"         , &script_rq_result::fInjuriousSpeed )
+.def_readonly( "material_vis_transparency_factor" , &script_rq_result::fVisTransparencyFactor )
+.def_readonly( "material_snd_occlusion_factor"    , &script_rq_result::fSndOcclusionFactor )
+.def_readonly( "material_density_factor"          , &script_rq_result::fDensityFactor )
+
+]]
+
+-- Geometry Ray class by Thial, edited by demonized
+class "geometry_ray"
+
+--[[
+(At least one range parameter should be specified)
+ray_range:
+    Defines the total range of the ray. If you want to attach the ray to
+    a fast moving object it is good to extend the ray so that you can reduce
+    the polling rate by using the get function.
+contact_range:
+    Defines the distance at which the result will report being in contact.
+    You can skip it or set it to a value lower than the ray_range to
+    still be able to get the intersection position from the result while
+    marking the ray as not being in contact yet
+distance_offset:
+    Defines how much the intersection position is offset.
+    You can use both positive and negative values or you can leave it blank.
+flags (bit map = values can be added together for combined effect):
+    0 : None
+    1 : Objects
+    2 : Statics
+    4 : Shapes
+    8 : Obstacles
+]]--
+function geometry_ray:__init(args)
+    local args = args or {}
+    if args.ray_range == nil and args.contact_range == nil then
+        return nil
+    end
+
+    self.ray_range = args.ray_range or args.contact_range
+    self.contact_range = args.contact_range or args.ray_range
+    self.distance_offset = args.distance_offset ~= nil and args.distance_offset or 0
+    self.ray = ray_pick()
+    self.ray:set_flags(args.flags or 2)
+    self.ray:set_range(self.ray_range)
+    self.visualize = args.visualize
+    self.visualize_end_pos_only = args.visualize_end_pos_only
+    if args.ignore_object then
+        self.ray:set_ignore_object(args.ignore_object)
+    end
+end
+
+--[[
+position:
+    position from which the ray will start
+direction:
+    direction in which the ray will be fired
+]]--
+function geometry_ray:get(position, direction)    
+    if position == nil or direction == nil then
+        return nil
+    end
+
+    local position = vector():set(position)
+    local direction = vector():set(direction)
+
+    self.ray:set_position(position)
+    self.ray:set_direction(direction)
+    local res = self.ray:query()
+    local distance = res and self.ray:get_distance() or self.ray_range
+    local result = {}
+    if self.visualize then
+        local init_pos = vector():set(position)
+        local end_pos = vector():mad(init_pos, direction, distance)
+        VisualizeRay(init_pos, end_pos, nil, nil, nil, self.visualize_end_pos_only)
+    end
+    result.in_contact = distance <= self.contact_range
+    result.position = position:add(direction:mul(distance + self.distance_offset))
+    result.distance = distance
+    result.raw_distance = self.ray:get_distance()
+    result.success = res
+    result.object = self.ray:get_object()
+    result.element = self.ray:get_element()
+    result.result = self.ray:get_result()
+
+    -- Cast to Lua table
+    -- if result.result then
+    --     local r = {}
+    --     r.material_name = result.result.material_name
+    --     r.material_flags = result.result.material_flags
+    --     r.material_phfriction = result.result.material_phfriction
+    --     r.material_phdamping = result.result.material_phdamping
+    --     r.material_phspring = result.result.material_phspring
+    --     r.material_phbounce_start_velocity = result.result.material_phbounce_start_velocity
+    --     r.material_phbouncing = result.result.material_phbouncing
+    --     r.material_flotation_factor = result.result.material_flotation_factor
+    --     r.material_shoot_factor = result.result.material_shoot_factor
+    --     r.material_shoot_factor_mp = result.result.material_shoot_factor_mp
+    --     r.material_bounce_damage_factor = result.result.material_bounce_damage_factor
+    --     r.material_injurious_speed = result.result.material_injurious_speed
+    --     r.material_vis_transparency_factor = result.result.material_vis_transparency_factor
+    --     r.material_snd_occlusion_factor = result.result.material_snd_occlusion_factor
+    --     r.material_density_factor = result.result.material_density_factor
+
+    --     result.result = r
+    -- end
+
+    return result
+end
+
+-- Engine edit required for testing materials
+-- If not possible to get material - return nil
+function geometry_ray:isMaterialFlag(flag)
+    local result = self.ray:get_result()
+    if not result then
+        return
+    end
+
+    if not result.material_flags then
+        return
+    end
+
+    if not flags_test[flag] then
+        return
+    end
+
+    return test(result.material_flags, flags_test[flag])
+end
+
+function geometry_ray:getMaterialFlags()
+    local result = self.ray:get_result()
+    if not result then
+        return
+    end
+
+    if not result.material_flags then
+        return
+    end
+
+    local res = {}
+    for k, v in pairs(flags_test) do
+        res[k] = test(result.material_flags, v)
+    end
+
+    return res
+end
+
+-- Utils
+-- Check if values are similar to a precision
+function similar(float1, float2, epsilon)
+    return math.abs(float1 - float2) <= (epsilon or 0.0001)
+end
+
+function vec_similar(vec1, vec2, epsilon)
+    return similar(vec1.x, vec2.x, epsilon) and similar(vec1.y, vec2.y, epsilon) and similar(vec1.z, vec2.z, epsilon)
+end
+
+-- Linear inter/extrapolation
+function lerp(a, b, f)
+    if a and b and f then
+        return a + f * (b - a)
+    else
+        return a or b or 0
+    end
+end
+
+-- Visualize ray from one point to other with particles playing at setted step
+class "VisualizeRay"
+local lineId = 70000
+function VisualizeRay:__init(init_pos, end_pos, particle_step, visualize_time, force_stop, draw_end_only, color)
+    self.init_pos = init_pos
+    self.end_pos = end_pos
+    self.visualize_time = visualize_time or 3000
+    self.particle_step = particle_step or 0.02
+    self.force_stop = force_stop
+    self.force_stop_default = force_stop
+    self.time = 0
+    self.draw_end_only = draw_end_only
+    self.color = color or fcolor():set(0,1,0,1)
+
+    self.start = function()
+        lineId = lineId + 1
+        local id = lineId
+        local line = debug_render.add_object(id, DBG_ScriptObject.line):cast_dbg_line()
+        line.point_a = init_pos
+        line.point_b = end_pos
+        line.visible = true
+        line.color = self.color
+        CreateTimeEvent("geometry_ray_stop", id, self.visualize_time / 1000, function()
+            debug_render.remove_object(id)
+            lineId = lineId - 1
+            return true
+        end)
+    end
+    self.start()
+
+    self.reset_time = function()
+        self.time = 0
+    end
+
+    self.reset = function()
+        self.time = 0
+        self.force_stop = self.force_stop_default
+        self.start()
+    end
+
+    self.stop = function()
+        self.time = self.visualize_time + 1
+        self.force_stop = true
+    end
+end
+
+local EPS = 0.0000100
+local function fsimilar(value, to, eps)
+    return math.abs(value - to) < eps
+end
+
+local function generate_orthonormal_basis_normalized(d)
+    local dir = vector():set(d):normalize()
+    local up = vector():set(0,0,0)
+    local right = vector():set(0,0,0)
+    local fInvLength
+    if (fsimilar(dir.y, 1.0, EPS)) then
+        up:set(0, 0, 1)
+        fInvLength = 1 / math.sqrt(dir.x * dir.x + dir.y * dir.y)
+        right.x = -dir.y * fInvLength
+        right.y = dir.x * fInvLength
+        right.z = 0
+        up.x = -dir.z * right.y
+        up.y = dir.z * right.x
+        up.z = dir.x * right.y - dir.y * right.x
+    else
+        up:set(0, 1, 0)
+        fInvLength = 1 / math.sqrt(dir.x * dir.x + dir.z * dir.z)
+        right.x = dir.z * fInvLength
+        right.y = 0
+        right.z = -dir.x * fInvLength
+        up.x = dir.y * right.z
+        up.y = dir.z * right.x - dir.x * right.z
+        up.z = -dir.y * right.x
+    end
+    return dir, up, right
+end
+
+-- Get surface normals by Aoldri, edited by demonized
+function get_surface_normal(pos, dir, ray_props, visualize_props, initial_ray)
+    local function get_geometry_ray()
+        return geometry_ray({
+            ray_range = ray_props and ray_props.ray_range or 1000,
+            visualize = ray_props and ray_props.visualize,
+            flags = ray_props and ray_props.flags or (1+2),
+            ignore_object = db.actor,
+        })
+    end
+
+    -- Get player's camera position and direction in world space
+    local pos0 = pos and vector():set(pos) or device().cam_pos
+    local angle1 = dir and vector():set(dir) or device().cam_dir
+
+    -- Generate two positions orthogonal to camera direction and each other
+    local angle1, pos01, pos02 = generate_orthonormal_basis_normalized(angle1)
+    pos01 = pos01:mul(0.01)
+    pos02 = pos02:mul(0.01)
+
+    pos01 = pos01:add(pos0)
+    pos02 = pos02:add(pos0)
+
+    -- Get positions of intersections of rays around pos0
+    local pos1
+    local res
+    if initial_ray then
+        pos1 = initial_ray.position
+        res = initial_ray
+    else
+        local ray = get_geometry_ray()
+        res = ray:get(pos0, angle1)
+        pos1 = res.position
+    end
+
+    local ray = get_geometry_ray()
+    local pos2 = ray:get(pos01, angle1).position
+
+    local ray = get_geometry_ray()
+    local pos3 = ray:get(pos02, angle1).position
+
+    if not res.success then
+        -- print_tip("cant get normal by pos %s, dir %s", pos0, angle1)
+        return
+    end
+
+    -- VisualizeRay(pos0, pos1, nil, 300)
+    -- VisualizeRay(pos01, pos2, nil, 300)
+    -- VisualizeRay(pos02, pos3, nil, 300)
+
+    -- Get vectors from intersection points from pos1
+    local vec2 = vec_sub(pos1, pos2)
+    local vec3 = vec_sub(pos1, pos3)
+
+    -- Find normal vector of surface by taking cross product of intersection vectors
+    local cross = (vector_cross(vec2, vec3)):normalize()   
+
+    -- If the direction and normal vectors heading in similar direction - invert normal
+    local deg = angle1:dotproduct(cross)
+    if deg > 0 then
+        cross:invert()
+    end
+
+    cross.x = clamp(cross.x, -1, 1)
+    cross.y = clamp(cross.y, -1, 1)
+    cross.z = clamp(cross.z, -1, 1)
+
+    if visualize_props then
+        local time = visualize_props.visualize_time or 300
+        local color = visualize_props.color or fcolor():set(0,1,0,1)
+        VisualizeRay(pos1, vector():set(pos1):add(cross), nil, time, nil, nil, color)
+    end
+    return cross
+end

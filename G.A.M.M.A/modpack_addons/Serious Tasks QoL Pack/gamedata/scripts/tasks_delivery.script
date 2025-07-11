@@ -1,0 +1,369 @@
+
+local delivery_task_id -- stores id of talking npc
+local delivery_tasks = {} -- collect delivery task sections
+local faction_list = { -- List of factions that can be delivered for
+	"stalker",
+	"dolg",
+	"freedom",
+	"csky",
+	"ecolog",
+	"killer",
+	"army",
+	"bandit",
+	"monolith",
+	"isg",
+	"renegade",
+}
+
+function on_game_start()
+
+	-- Collect delivery tasks
+	task_manager.task_ini:section_for_each(function(section)
+		local status_functor = task_manager.task_ini:r_string_ex(section,"status_functor")
+		if (status_functor == "delivery_task") then
+			delivery_tasks[#delivery_tasks + 1] = section
+			--printdbg("- Found delivery task: %s", section)
+		end
+	end)
+end
+
+function is_delivery_task(section)
+	for i=1,#delivery_tasks do
+		if delivery_tasks[i] == section then
+			return true
+		end
+	end
+	return false
+end
+
+
+--==========================================< Effects >==========================================--
+-- p[1]: task id
+-- p[2]: true = targeted npc must be from the same task giver faction
+-- p[3]: true = target an anomaly in far location
+-- p[+4]: quest items section (package)
+local delivery_cache = {}
+xr_effects.on_init_delivery_task = function(actor,npc,p)
+	if (not p) or (p and (#p < 4)) then
+		return
+	end
+	local var = p[1]
+	local same_faction = (p[2] == "true")
+	local far_location = (p[3] == "true")
+	local item_1_sec = p[math.random(4,#p)]
+	if (not ini_sys:section_exist(item_1_sec)) then
+		printe("! %s TASK ERROR: xr_effects.create_delivery_quest - can't find item section [%s]", var, tostring(item_1_sec))
+		--return
+	end
+	
+	local task_giver = mob_trade.GetTalkingNpc()
+	local task_giver_id = task_giver:id()
+	local task_giver_comm = character_community(task_giver)
+	local task_giver_name = task_giver:character_name()
+	local target_id
+	
+	-- Get target
+	local sim = alife()
+	if delivery_cache[var] and delivery_cache[var][task_giver_id] then
+		target_id = delivery_cache[var][task_giver_id]
+	else
+		local blacklisted_maps = xr_effects.blacklisted_maps
+
+		--[[
+			SERIOUS NO NORTH TASKS BEFORE BS
+			AND THE NORTHERN JOB
+		--]]
+		local additionalBlacklist = {}
+		local northernMaps = blacklist_helper.GetNorthernMaps()
+	
+		if blacklist_helper.ShouldBlacklistNorth() then
+			additionalBlacklist = northernMaps
+		elseif northernMaps[level.name()] then -- Player is in the Northern region and rightfully so
+			additionalBlacklist = blacklist_helper.GetSouthernMaps()
+		end
+		--[[
+			SERIOUS NO NORTH TASKS BEFORE BS
+			AND THE NORTHERN JOB
+		--]]
+
+
+		local faction_lookup = {}
+		faction_lookup[task_giver_comm] = true
+		if (not same_faction) then
+			for i=1,#faction_list do
+				if (faction_list[i] ~= task_giver_comm) and (not game_relations.is_factions_enemies(task_giver_comm, faction_list[i])) and (not game_relations.is_factions_enemies(character_community(db.actor), faction_list[i])) then
+					faction_lookup[faction_list[i]] = true
+				end
+			end
+		end
+		
+		local targets = {}
+		local gg = game_graph()
+		local sfind = string.find
+		for i=1,65534 do 
+			local se_obj = sim:object(i)
+			-- Search for common npcs
+			if (se_obj and IsStalker(nil,se_obj:clsid()) and se_obj:alive() and sfind(se_obj:section_name(),"sim_default") and get_object_story_id(i) == nil) then
+				-- Search in natural factions
+				local comm = alife_character_community(se_obj)
+				if (faction_lookup[comm] == true) then
+					-- Search for squad commanders
+					local squad = se_obj.group_id and se_obj.group_id ~= 65535 and alife_object(se_obj.group_id)
+					if squad and (squad:commander_id() == se_obj.id) and sfind(squad:section_name(),"sim_squad") and (squad.current_action == 1) then
+						-- Search in far/nearby locations. Exclude same level, blacklisted areas and undergrounds
+						local lvl_name = sim:level_name( gg:vertex(se_obj.m_game_vertex_id):level_id())
+						if not blacklisted_maps[lvl_name] and not additionalBlacklist[lvl_name] and not simulation_objects.is_on_the_same_level(sim:actor(), se_obj) then
+							if far_location and (not simulation_objects.is_on_the_linked_level(sim:actor(), se_obj)) then 
+								targets[#targets + 1] = i
+							elseif (not far_location) then
+								targets[#targets + 1] = i
+							end
+						end
+					end
+				end
+			end
+		end
+		if (#targets == 0) then
+			printf("! %s TASK ERROR: xr_effects.create_delivery_quest - no target found!", var)
+			blacklist_helper.TaskBlacklist[p[1]] = true
+			return
+		end
+
+		blacklist_helper.TaskBlacklist[p[1]] = false
+		target_id = targets[math.random(#targets)]
+		
+		if (not delivery_cache[var]) then
+			delivery_cache[var] = {}
+		end
+		delivery_cache[var][task_giver_id] = target_id -- cache
+	end
+	
+	-- Save var
+	local se_target = alife_object(target_id)
+	if (not se_target) then
+		return
+	end
+	local target_comm = alife_character_community(se_target)
+	local level_target = sim:level_name(game_graph():vertex(se_target.m_game_vertex_id):level_id())
+	local level_task = level.name()
+	local tbl = {
+		lvl_task = level_task,
+		lvl_target = level_target,
+		task_giver_comm = task_giver_comm,
+		task_giver_name = task_giver_name,
+		target_id = target_id,
+		target_comm = target_comm,
+		item_1_sec = item_1_sec 
+	}
+	save_var(db.actor, var, tbl)
+	printdbg("- %s | on_init_delivery_task | giver_comm: %s - target_id: %s - item_1_sec: %s - lvl_task: %s - lvl_target: %s", var, task_giver_comm, target_id, item_1_sec, level_task, level_target)
+	-- Show info
+	local function postpone_for_next_frame(target_id)
+		local news_caption = game.translate_string(task_manager.task_ini:r_string_ex(p[1], "title")) or "error"
+		local news_text = game.translate_string("st_mm_new_game_name") .. " " .. se_target:character_name() .. "\\n " .. game.translate_string("st_mm_new_game_faction_2") .. " " .. game.translate_string(se_target:community()) .. "\\n " .. game.translate_string("st_location") .. " " .. game.translate_string(level_target)
+		db.actor:give_talk_message2(news_caption, news_text, se_target:character_icon(), "iconed_answer_item", p[1])
+		return true
+	end
+	CreateTimeEvent(0,"on_init_delivery_task",0,postpone_for_next_frame,target_id)
+end
+
+
+--==========================================< Task functors >==========================================--
+task_functor.general_delivery = function(task_id,field,p,tsk)
+	if (not db.actor) or (not tsk) then
+		return
+	end
+	
+	if (field == "target") then
+		local var = load_var(db.actor, task_id)
+		if (not var) then
+			return
+		end
+	
+		if (tsk.stage == 0) then
+			return var.item_1_id
+		end
+		
+		if (tsk.stage == 1) then
+			return var.target_id
+		end
+	end
+end
+
+task_functor.general_delivery_desc = function(task_id,field,p,tsk)
+	if not db.actor then return '' end
+	local var = load_var(db.actor, task_id)
+	local str = ""
+	if tsk and tsk.stage and var then
+		local task_giver_comm = game.translate_string("st_dyn_news_comm_" .. var.task_giver_comm .. "_1")
+		local item_1_sec = var.item_1_sec and ui_item.get_sec_name(var.item_1_sec)
+		str = game.translate_string(task_id .. "_text_" .. tostring(tsk.stage))
+		str = utils_data.parse_string_keys(str, {["comm"]=task_giver_comm , ["item_1"]=item_1_sec} )
+	end
+	return str
+end
+
+task_status_functor.delivery_task = function(tsk,task_id)
+	if (not db.actor) or (not tsk) then
+		return
+	end
+	
+	local var = load_var(db.actor, task_id)
+	if (not var) then return end
+	local stage = tsk.stage
+	
+	-- Give quest item upon accepting the quest
+	if (not has_alife_info(task_id .. "_quest_item_received")) and (var.item_1_sec) then
+		local se_item_1 = alife_create_item(var.item_1_sec, db.actor)
+		if not (se_item_1 and se_item_1.id) then return end
+		
+		printdbg("- %s | quest_item_received: %s",task_id, var.item_1_sec)
+		local t = var
+		t.item_1_id = se_item_1.id
+		save_var(db.actor, task_id, t)
+		
+		db.actor:give_info_portion(task_id .. "_quest_item_received")
+		news_manager.relocate_item(db.actor, "in", var.item_1_sec, 1)
+		return
+	end
+	
+	local item_1_obj = var.item_1_id and alife_object(var.item_1_id)
+	
+	local se_target = var.target_id and alife_object(var.target_id) -- server object
+	local target = se_target and db.storage[se_target.id] and db.storage[se_target.id].object or nil -- game object
+	local is_enemy = false --game_relations.is_factions_enemies(get_actor_true_community(), var.target_comm)
+	
+	-- if the target has vanished or dead or become an enemy, complete the quest
+	if (not se_target) or (target and (not target:alive())) or is_enemy then
+		return "fail"
+	end
+	
+	-- Save task giver squad id
+	if (not var.target_squad_id) then
+		local target_squad = se_target and se_target.group_id and se_target.group_id ~= 65535 and alife_object(se_target.group_id)
+		if target_squad then
+			sim_offline_combat.task_squads[target_squad.id] = true
+			var.target_squad_id = target_squad.id
+			save_var(db.actor, task_id, var)
+			
+			-- Reset stay time once
+			if (not target_squad:get_script_target()) and (target_squad.current_action == 1) then
+				target_squad.stay_time = game.get_game_time() 
+			end
+		end
+	end
+	
+
+	-- stage: 0
+	-- status: player accepted the quest
+	-- objective: take the quest item
+	-- marker: quest item
+	if stage == 0 then
+		-- if actor retrieved item 1
+		if utils_item.has_item_by_id(nil, var.item_1_id , var.item_1_sec) then
+			tsk.stage = 1
+			
+		-- if item 1 vanished, fail the quest
+		else 
+			if (not item_1_obj) or (item_1_obj and (item_1_obj:section_name() ~= var.item_1_sec)) then
+				return "fail"
+			end
+		end
+	end
+	
+	-- stage: 1
+	-- status: player has the quest item
+	-- objective: deliver it to the target
+	-- marker: target npc
+	if stage == 1 then
+		-- if actor lost item 1 recently
+		if (not utils_item.has_item_by_id(nil, var.item_1_id , var.item_1_sec)) then
+			tsk.stage = 0
+		end
+	end
+	
+	-- stage: 2 (not used, this quest is completed via dialog)
+	-- status: player has delivered the quest item
+	if stage == 2 then
+		return "complete"
+	end
+end
+
+
+--==========================================< Target dialog >==========================================--
+
+dialogs.check_delivery_task_npc = function(actor,npc,p) -- must be called first -- precondition: Check if the talking npc is our target
+	for i=1,#delivery_tasks do
+		--printf("-check_delivery_task_npc | scan %s",delivery_tasks[i])
+		local var = load_var(db.actor, delivery_tasks[i])
+		if var and (var.target_id == npc:id()) then
+			printdbg("/ check_delivery_task_npc | found for %s", delivery_tasks[i])
+			delivery_task_id = delivery_tasks[i]
+			break
+		end
+	end
+	if (not delivery_task_id) then
+		return false
+	end
+	return true
+end
+
+dialogs.actor_has_package = function(actor,npc,p) -- precondition: Check if actor has item 1
+	local var = load_var(db.actor, delivery_task_id)
+	if var and (utils_item.has_item_by_id(nil, var.item_1_id , var.item_1_sec)) then
+		return true
+	end
+	return false
+end
+
+dialogs.complete_simulation_task = function(actor,npc,p) -- action: Complete the task
+	local var = load_var(db.actor, delivery_task_id)
+	if var then
+		local target_squad_id = var.target_squad_id
+		if target_squad_id then
+			sim_offline_combat.task_squads[target_squad_id] = nil -- clear
+		end
+	
+		task_manager.get_task_manager():set_task_completed(delivery_task_id)
+		--dialogs.relocate_item_section_from_actor(actor, npc, var.item_1_sec,1)
+	end
+end
+
+xr_effects.remove_delivery_item = function(actor,npc,p) -- action: remove package from actor inventory
+	local task_id = p and p[1]
+	local var = task_id and load_var(db.actor, task_id)
+	if not (var and var.item_1_sec) then	
+		printe("! remove_delivery_item - no var found")
+		return
+	end
+	
+	local npc = mob_trade.GetTalkingNpc()
+	if npc then
+		dialogs.relocate_item_section_from_actor(db.actor, npc, var.item_1_sec,1)
+	else
+		local item = db.actor:object(var.item_1_sec)
+		local se_item = item and alife_object(item:id())
+		if se_item then
+			alife_release(se_item)
+		end
+	end
+end
+
+-- script_text: Script text to show task giver name
+dialogs.st_simulation_task_stext_0 = function(actor,npc,p)
+	local var = load_var(db.actor, delivery_task_id)
+	local str = game.translate_string("st_" .. delivery_task_id .. "_0")
+	if var then
+		str = utils_data.parse_string_keys(str, {["name"]=var.task_giver_name} )
+	end
+	return str
+end
+
+dialogs.st_simulation_task_stext_1 = function(actor,npc,p)
+	local var = load_var(db.actor, delivery_task_id)
+	local str = game.translate_string("st_" .. delivery_task_id .. "_1")
+	if var then
+		str = utils_data.parse_string_keys(str, {["name"]=var.task_giver_name} )
+	end
+	return str
+end

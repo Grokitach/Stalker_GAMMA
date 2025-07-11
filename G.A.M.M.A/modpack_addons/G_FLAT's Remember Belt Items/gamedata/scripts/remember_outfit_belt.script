@@ -1,0 +1,129 @@
+-- Remember Outfit Belt v1.0, by G_FLAT
+-- Creates a save-persistent registry of the equipped belt items on an outfit.
+-- Outfits and belt items are identified and remembered by their object ID number, not by their section names.
+-- An outfit's belt memory is only created when equipping or unequipping belt items.
+-- By default, the belt items on just 5 outfits may be saved to the registry.
+-- When that number is exceeded the belt memory of the outfit with the earliest last worn time is deleted.
+
+local belt_memory = {}
+local ignore_item_to_belt = false
+local memory_limit = 5
+
+-- create or update the belt memory of the outfit you're wearing when you add items to its belt 
+function actor_item_to_belt(obj)
+	if ignore_item_to_belt then return end
+	local outfit = db.actor:item_in_slot(7)
+	if outfit then
+		if not belt_memory[outfit:id()] then
+			memory_size_control()
+		end
+		save_belt(outfit)
+	end
+end
+
+-- create or update the belt memory of the outfit you're wearing
+function save_belt(outfit)
+	local belt_items = {}
+	db.actor:iterate_belt(function(owner, belt_obj)
+		belt_items[belt_obj:id()] = true
+	end)
+	belt_memory[outfit:id()] = {
+		items = belt_items,
+		date = get_date()
+	}
+end
+
+-- delete the oldest outfit belt memory to keep it from exceeding the memory limit number
+function memory_size_control()
+	local memory_size = 0
+	for outfit_id, outfit_memory in pairs(belt_memory) do
+		memory_size = memory_size + 1
+	end
+	if memory_size >= memory_limit then
+		local oldest_memory_id = nil
+		local oldest_memory_date = nil
+		for outfit_id, outfit_memory in pairs(belt_memory) do
+			if not oldest_memory_date or oldest_memory_date > outfit_memory.date then
+				oldest_memory_id = outfit_id
+				oldest_memory_date = outfit_memory.date
+			end
+		end
+		belt_memory[oldest_memory_id] = nil
+	end
+end
+
+-- populate outfit's belt with its items when you wear it if the outfit exists in the memory
+function actor_item_to_slot(obj)
+	local id = obj:id()
+	if belt_memory[id] then
+		ignore_item_to_belt = true
+		belt_memory[id].date = get_date()
+		CreateTimeEvent("populate_" .. id, "populate_" .. id, 0.1, populate_belt, id)
+	end
+end
+
+-- populate outfit's belt with its items
+function populate_belt(outfit_id)
+	for item_id, v in pairs(belt_memory[outfit_id].items) do
+		local belt_item = db.actor:object_id(item_id)
+		if belt_item then
+			db.actor:move_to_belt(belt_item)
+		end
+	end
+	CreateTimeEvent("keep_ignoring", "keep_ignoring", 0.1, function()
+		ignore_item_to_belt = false
+		return true
+	end)
+	return true
+end
+
+-- update the belt memory of the outfit you're wearing when you unequip one of its saved belt items
+-- sdjksakjfs
+function actor_item_to_ruck(obj)
+	if ignore_item_to_belt then return end
+	if IsArtefact(obj) then
+		local outfit = db.actor:item_in_slot(7)
+		local outfit_id = outfit and outfit:id()
+		if belt_memory[outfit_id] then
+			if belt_memory[outfit_id].items[obj:id()] then
+				save_belt(outfit)
+			end
+		end
+	end
+end
+
+-- get the time since the start of the playthrough in seconds with one decimal
+function get_date()
+	local s_time = level.get_start_time()
+	local seconds = tonumber(game.get_game_time():diffSec(s_time))
+	return round_idp(seconds, 1)
+end
+
+function on_save_state(m_data)
+	m_data.beltMemory = belt_memory
+end
+
+function on_load_state(m_data)
+	belt_memory = m_data.beltMemory or {}
+end
+
+function on_option_change()
+	if ui_mcm then
+		memory_limit = ui_mcm.get("remember_outfit_belt/memory_limit")
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("load_state", on_load_state)
+	RegisterScriptCallback("save_state", on_save_state)
+	RegisterScriptCallback("on_option_change", on_option_change)
+
+	CreateTimeEvent("delay_regists", "delay_regists", 0.1, function()
+		RegisterScriptCallback("actor_item_to_belt", actor_item_to_belt)
+		RegisterScriptCallback("actor_item_to_slot", actor_item_to_slot)
+		RegisterScriptCallback("actor_item_to_ruck", actor_item_to_ruck)
+		return true
+	end)
+
+	on_option_change()
+end

@@ -1,0 +1,141 @@
+local house_smart_name = "lim_smart_terrain_5"
+local bunkers_smart_name = "lim_smart_terrain_4"
+-- This will mark the house, but it's not available when offline
+local limansk_house_before_bridge = "lim_smart_terrain_5_surge_hide_a1"
+
+local spawn_points = {{
+    vector = vector():set(34.5144,1.0422,47.3793),
+    lvid = 44759,
+    gvid = 2475
+},{
+    vector = vector():set(19.2646,1.0424,47.2270),
+    lvid = 36831,
+    gvid = 2475
+}}
+local middle_of_battleground = vector():set(25.7198,-7.0140,1.8403)
+
+local state = {
+    killed_squads = 0,
+    task_failed = false,
+}
+function save_state(mdata)
+	mdata.no_step_back_task_data = state
+end
+
+function load_state(mdata)
+	if mdata.no_step_back_task_data then
+		state = mdata.no_step_back_task_data
+	end
+end
+
+task_status_functor.no_step_back_task_status_functor = function(tsk,task_id)
+	if not (db.actor and tsk) then return end
+	local stage = tsk.stage
+    local zone = db.zone_by_name[limansk_house_before_bridge]
+
+	if (stage == 0) then
+        if
+            is_limansk()
+            and zone
+            and db.actor:position():distance_to(zone:position()) < 5
+        then
+            -- Spawn two squads at distant points
+            spawn(1, spawn_points[1])
+            spawn(2, spawn_points[2])
+            dynamic_news_helper.send_tip(game.translate_string('no_step_back_on_position_message'), game.translate_string("cit_killers_merc_trader_stalker_name"), nil,nil, 'ui_inGame2_merc_trade', nil, 'npc')
+            tsk.stage = 1
+        end
+    end
+
+    if (stage == 1) then
+        if not is_limansk() or db.actor:position():distance_to(middle_of_battleground) > 91 then return 'fail' end
+
+        if state.killed_squads == 10 then
+            -- Delay the message to make it more natural
+            CreateTimeEvent(0,"no_step_back_defended_position_message",2, function ()
+                dynamic_news_helper.send_tip(game.translate_string('no_step_back_defended_position_message'), game.translate_string("cit_killers_merc_trader_stalker_name"), nil,nil, 'ui_inGame2_merc_trade', nil, 'npc')
+                return true
+            end)
+            tsk.stage = 2
+        end
+    end
+end
+
+task_functor.no_step_back_task_target_functor = function(task_id,field,p,tsk)
+	if not (db.actor and tsk) then return nil end
+	local stage = tsk.stage
+    local zone = db.zone_by_name[limansk_house_before_bridge]
+
+    if tsk.stage == 0 then
+        if is_limansk() and zone then
+            return zone:id()
+        end
+    end
+    -- Do not show markers on squad members to not spoil the fun - they'll rush the target anyway
+    if (stage == 2) then
+        return tsk.task_giver_id
+    end
+end
+
+xr_effects.no_step_back_cleanup = function()
+    state = {
+        killed_squads = 0,
+        task_failed = false,
+    }
+end
+
+xr_effects.no_step_back_fail_message = function ()
+    state.task_failed = true
+    dynamic_news_helper.send_tip(game.translate_string('no_step_back_run_fail_message'), game.translate_string("cit_killers_merc_trader_stalker_name"), nil,nil, 'ui_inGame2_merc_trade', nil, 'npc')
+end
+
+local house_smart_name = "lim_smart_terrain_5"
+local bunkers_smart_name = "lim_smart_terrain_4"
+-- At first I wanted to purge the squads that are staying on point, but that doesn't make sense, as new ones might come anyway
+-- Spawning advanced mono squads instead that'll target the respective smarts
+xr_effects.no_step_back_init = function()
+    local house_smart = SIMBOARD:get_smart_by_name(house_smart_name)
+    local bunkers_smart = SIMBOARD:get_smart_by_name(bunkers_smart_name)
+
+    SIMBOARD:create_squad(house_smart, "monolith_defence_squad_advanced_init_spawn_house")
+    SIMBOARD:create_squad(bunkers_smart, "monolith_defence_squad_advanced_init_spawn_bunkers")
+end
+
+-- Leaving it out of persistent state, as it's not that important on reloads
+local last_spawn_point = nil
+xr_effects.on_no_step_back_squad_death = function()
+    state.killed_squads = state.killed_squads + 1
+    if state.killed_squads <= 8 and not state.task_failed then
+        local next_spawn_index = last_spawn_point == 1 and 2 or 1
+        spawn(next_spawn_index, spawn_points[next_spawn_index])
+    end
+end
+
+function is_limansk()
+    return level.name() == "l10_limansk"
+end
+
+function spawn(index, spawn_config)
+    local squad_section
+    -- Will spawn 5 squads as novice
+    if state.killed_squads < 4 then
+        squad_section = "monolith_defence_squad_novice"
+    -- 2 as advanced
+    elseif state.killed_squads < 6 then
+        squad_section = "monolith_defence_squad_advanced"
+    -- 2 as veteran
+    elseif state.killed_squads < 8 then
+        squad_section = "monolith_defence_squad_veteran"
+    -- and one as alpha
+    else
+        squad_section = "monolith_defence_squad_alpha"
+    end
+    last_spawn_point = index
+    local se_id = new_tasks_addon_tasks_utils.spawn_at_position(squad_section, spawn_config.vector, spawn_config.lvid, spawn_config.gvid, true)
+    alife_object(se_id).rush_to_target = true
+end
+
+function on_game_start()
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+end

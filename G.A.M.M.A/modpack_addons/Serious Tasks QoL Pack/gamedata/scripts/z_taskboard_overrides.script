@@ -1,0 +1,96 @@
+tasks_info = {}
+fallback_tasks_info = {}
+original_tasks_info = {}
+
+function create_overrides()
+    local original_give_talk_message2 = db.actor.give_talk_message2
+    db.actor.give_talk_message2 = function (...)
+        if ActorMenu.get_pda_menu():IsShown() then
+            local _, task_title, task_details, task_icon = ...
+
+            local task_id = select(-1, ...) -- Last parameter
+
+            if task_id then
+                tasks_info[task_id] =
+                {
+                    task_title = task_title,
+                    task_details = task_details,
+                    task_icon = task_icon
+                }
+            end
+    
+            table.insert(original_tasks_info, {
+                task_title = task_title,
+                task_details = task_details,
+                task_icon = task_icon,
+                faulty = true
+            })
+        else
+            original_give_talk_message2(...)
+        end
+
+    end
+
+    local original_GetTalkingNpc = mob_trade.GetTalkingNpc
+    mob_trade.GetTalkingNpc = function (...)
+        if ui_pda_taskboard_tab.currently_processed_npc_id then
+            return level.object_by_id(ui_pda_taskboard_tab.currently_processed_npc_id)
+        else
+            return original_GetTalkingNpc(...)
+        end
+    end
+
+    local original_is_talking = db.actor.is_talking
+    db.actor.is_talking = function (...)
+        if ui_pda_taskboard_tab.currently_processed_npc_id then
+            return true
+        else
+            return original_is_talking(...)
+        end
+    end
+
+    local original_get_speaker = _G.get_speaker
+    _G.get_speaker = function (...)
+        if ui_pda_taskboard_tab.currently_processed_npc_id then
+            return level.object_by_id(ui_pda_taskboard_tab.currently_processed_npc_id)
+        else
+            return original_get_speaker(...)
+        end
+    end
+
+    local original_set_active_subdialog = pda.set_active_subdialog
+    pda.set_active_subdialog = function (section)
+        if (section == "eptTaskboard") then
+            return ui_pda_taskboard_tab.get_ui()
+        else
+            return original_set_active_subdialog(section)
+        end
+    end
+end
+
+function clear_tasks_info()
+    tasks_info = {}
+end
+
+function push_task_info(task_info)
+    table.insert(tasks_info, task_info)
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_game_load", create_overrides)
+end
+
+-- Basically monkey patches the nta_utils monkey patch
+xr_effects.dispatch_nta_task_details = function(actor, npc, p)
+    local task_id = p[1]
+    CreateTimeEvent(0,"nta_task_details_" .. task_id,0, function ()
+        -- Build News
+        local news_caption = game.translate_string(task_manager.task_ini:r_string_ex(task_id, "title")) or "error"
+
+        local news_text = game.translate_string(task_manager.task_ini:r_string_ex(task_id, "nta_task_details")) or ""
+        local news_ico = task_manager.task_ini:r_string_ex(task_id, "icon")
+        
+        db.actor:give_talk_message2(news_caption, news_text, news_ico, "iconed_answer_item", task_id)
+        return true
+    end)
+end

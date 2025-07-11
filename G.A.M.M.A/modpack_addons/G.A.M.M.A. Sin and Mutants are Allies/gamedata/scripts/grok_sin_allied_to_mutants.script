@@ -1,0 +1,55 @@
+local compatible_coms = {
+	greh       = true,
+	actor_greh = true
+}
+
+local void_pact = {}
+
+function monster_on_before_hit(npc,shit,bone_id,flags)
+	if shit.draftsman:id() == db.actor:id() then
+		if IsMonster(npc) and character_community(shit.draftsman) == "actor_greh" then
+			void_pact[npc:id()] = true
+			
+			local squad = get_object_squad(npc) or false
+			if squad then
+				for k in squad:squad_members() do
+					void_pact[k.id] = true
+				end
+			end
+		end
+	end
+end
+
+function on_enemy_eval(npc,ene,flags)
+	if npc and ene then
+		local npc_com = npc and character_community(npc)
+		local ene_com = ene and character_community(ene)
+		if IsStalker(npc) and IsMonster(ene) and compatible_coms[npc_com] or IsMonster(npc) and IsStalker(ene) and compatible_coms[ene_com] then
+
+			if void_pact[ene:id()] or void_pact[npc:id()] then
+				flags.override = false
+				return
+			else
+				flags.override = true
+				flags.result = false
+			end
+		end
+	end
+end
+
+function save_state(mdata)
+	mdata.grok_sin_allied_to_mutants = void_pact
+end
+
+function load_state(mdata)
+	if mdata.grok_sin_allied_to_mutants then
+		void_pact = mdata.grok_sin_allied_to_mutants
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_enemy_eval", on_enemy_eval)
+	RegisterScriptCallback("monster_on_before_hit", monster_on_before_hit)
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+end

@@ -1,0 +1,91 @@
+local axr_companions_set_companion_to_loot_items_and_corpses = axr_companions.set_companion_to_loot_items_and_corpses
+function axr_companions.set_companion_to_loot_items_and_corpses(npc)
+    axr_companions_set_companion_to_loot_items_and_corpses(npc)
+    npc:give_info_portion("npcx_beh_gather_items")
+end
+
+local axr_companions_set_companion_to_loot_items_only = axr_companions.set_companion_to_loot_items_only
+function axr_companions.set_companion_to_loot_items_only(npc)
+    axr_companions_set_companion_to_loot_items_only(npc)
+    npc:give_info_portion("npcx_beh_gather_items")
+end
+
+local axr_companions_switch_companion_gather_items = axr_companions.switch_companion_gather_items
+function axr_companions.switch_companion_gather_items(npc)
+    axr_companions_switch_companion_gather_items(npc)
+    if not npc:has_info("npcx_beh_gather_items") then
+        npc:give_info_portion("npcx_beh_gather_items")
+    end
+end
+
+local UIWheelCompanion_Order = axr_companions.UIWheelCompanion.Order
+
+function axr_companions.UIWheelCompanion.Order(self, cmd)
+    local obj
+    if self.id then
+        obj = db.storage[self.id] and db.storage[self.id].object or level.object_by_id(self.id)
+    end
+    local state = axr_companions.cw_commands[cmd].get(obj)
+    self:PlayVoiceOver(cmd, state)
+    UIWheelCompanion_Order(self, cmd)
+end
+
+function playVoiceOver(cmd, state, ui)
+    if (ui.file_to_say and ui.file_to_say:playing()) then
+        return
+    end
+
+    if (cmd == "movement") then
+        if (state == 2) then
+            ui:PlaySoundFile("characters_voice\\player\\command_holdposition_" .. math.random(4), 1.0)
+        else
+            ui:PlaySoundFile("characters_voice\\player\\command_follow_" .. math.random(3), 1.0)
+        end
+    end
+
+    if (cmd == "combat") then
+        if (state == 1) then
+            ui:PlaySoundFile("characters_voice\\player\\command_holdfire_" .. math.random(3), 1.0)
+        else
+            ui:PlaySoundFile("characters_voice\\player\\command_fireatwill_" .. math.random(3), 1.0)
+        end
+    end
+
+    if (cmd == "loot") then
+        if (state == 1) then
+            ui:PlaySoundFile("characters_voice\\player\\command_loot_stop_1", 1.0)
+        else
+            ui:PlaySoundFile("characters_voice\\player\\command_loot_" .. math.random(3), 1.0)
+        end
+    end
+
+    if (cmd == "distance") then
+        if (state == 1) then
+            ui:PlaySoundFile("characters_voice\\player\\command_follow_far_" .. math.random(3), 1.0)
+        else
+            ui:PlaySoundFile("characters_voice\\player\\command_follow_close_" .. math.random(3), 1.0)
+        end
+    end
+
+    if (cmd == "stealth") then
+        if (state == 1) then
+            ui:PlaySoundFile("characters_voice\\player\\command_stealth_stop_" .. math.random(3), 1.0)
+        else
+            ui:PlaySoundFile("characters_voice\\player\\command_stealth_" .. math.random(3), 1.0)
+        end
+    end
+end
+
+function axr_companions.UIWheelCompanion:PlayVoiceOver(cmd, state)
+    playVoiceOver(cmd, state, self)
+end
+
+function playSoundFile(file, sound_volume, ui)
+    ui.file_to_say = xr_sound.get_safe_sound_object( file ) --sets the file to play
+    ui.file_to_say:play(db.actor,0,sound_object.s2d) --plays it
+    ui.file_to_say.volume = sound_volume --sets how loud the sound should be
+end
+
+function axr_companions.UIWheelCompanion:PlaySoundFile(file, sound_volume)
+    playSoundFile(file, sound_volume, self)
+end
