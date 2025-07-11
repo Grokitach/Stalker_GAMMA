@@ -1,0 +1,48 @@
+local snd
+local strings = {}
+local toplay = nil
+local amount = {}
+
+if zzzzzz_mm_music then 
+	printf("![RMM] EGUI detected on load. Shutting down")
+	return 
+end
+
+function main_menu_on_init()
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_mm_main_16.xml")
+	xml:NavigateToNode("menu_sound", 0)
+	
+	amount = xml:GetNodesNum("", 0, "menu_music")
+	if amount>0 then
+		printf("![RMM] %s track(s) indexed: ", amount)
+	end
+	for i=1, amount do
+		strings[i] = xml:ReadValue("menu_music", i-1)
+		printf("%s", strings[i])
+	end
+	
+	toplay = strings[math.random(1, #strings)]
+	printf("![RMM] Track picked: %s", toplay)
+	if not toplay then return end
+	if snd then return end
+
+	snd = sound_object(toplay)
+	if not snd then return end
+
+	snd:play(db.actor,0,sound_object.s2d)
+	local vol = get_console_cmd(2,"snd_volume_music")
+	snd.volume = vol or 1
+end
+
+function main_menu_on_quit()
+	if not snd then return end
+
+	snd:stop()
+	snd = nil
+end
+
+function on_game_start()
+	RegisterScriptCallback("main_menu_on_init", main_menu_on_init)
+	RegisterScriptCallback("main_menu_on_quit", main_menu_on_quit)
+end

@@ -1,0 +1,198 @@
+-- Animation: Append with '_quick' for detectors if:
+--               - weapon in main hand is reloading or unjamming
+--               - player is climbing
+--               - switching to PDA
+--               - quick throwing grenades
+--               - wiping mask
+--               - toggling headlamp
+--               - playing an FDDA animation
+
+local common = animation_common
+common.add_flag("QUICK_DETECTOR")
+
+-- Flag to force _quick when hiding detectors
+force_quick = false
+
+-- Compatibility for FDDA: Use '_quick' if an FDDA animation is about to play
+if enhanced_animations then
+    fdda_anim_prepare = enhanced_animations.anim_prepare
+    function enhanced_animations.anim_prepare()
+        force_quick = true
+        fdda_anim_prepare()
+    end
+
+    fdda_call_my_slot_back = enhanced_animations.call_my_slot_back
+    function enhanced_animations.call_my_slot_back()
+        local result = fdda_call_my_slot_back()
+        if result == true then
+            force_quick = false
+        end
+        return result
+    end
+
+    fdda_bp_call_my_slot_back = zzz_ea_addon_backpack.call_my_slot_back
+    function zzz_ea_addon_backpack.call_my_slot_back()
+        local result = fdda_bp_call_my_slot_back()
+        if result == true then
+            force_quick = false
+        end
+        return result
+    end
+end
+
+-- Switching to PDA (PDA keybind)
+-- Beefs nvg switch
+function on_key_press(dik)
+    local bind = dik_to_bind(dik)
+
+    -- Quickhide detector when switching on beefs nvgs
+    if z_beefs_nvgs and bind == key_bindings.kNIGHT_VISION and db.actor:active_detector() then
+        force_quick = true
+        return
+    end
+
+    -- PDA keybind
+    if bind ~= key_bindings.kACTIVE_JOBS then return end
+    
+    -- Detector drawn
+    if not db.actor:active_detector() then return end
+
+    -- PDA equipped
+    if not db.actor:item_in_slot(8) then return end
+
+    force_quick = true
+end
+
+-- Switching to PDA (Map keybind)
+function actor_on_first_update()
+    local activate_slot = db.actor.activate_slot
+    db.actor.activate_slot = function(self, slot_num)
+        if slot_num == 8 and db.actor:active_detector() then
+            force_quick = true
+        end
+        activate_slot(self, slot_num)
+    end
+end
+
+-- Toggling headlamp
+local Hit_TorchToggle = actor_effects.Hit_TorchToggle
+function actor_effects.Hit_TorchToggle()
+    -- Check if headlamp is equipped. No need for battery check
+	if (not actor_effects.allow_animation()) or (not item_device.can_toggle_torch()) then
+		return
+	end
+
+    force_quick = true
+
+    Hit_TorchToggle()
+end
+
+-- Wiping Mask
+local Hit_MaskCleaning = actor_effects.Hit_MaskCleaning
+function actor_effects.Hit_MaskCleaning()
+    -- Check if mask overlay is ON
+	if (not actor_effects.allow_animation()) or (not actor_effects.is_mask_on()) then
+		return
+	end
+
+    force_quick = true
+
+    Hit_MaskCleaning()
+end
+
+-- Quick throw grenade
+local Hit_GrenadeQuickthrow = actor_effects.Hit_GrenadeQuickthrow
+function actor_effects.Hit_GrenadeQuickthrow()
+    if (not actor_effects.allow_animation())
+	or (not db.actor:item_in_slot(4))
+	or db.actor:get_current_holder() ~= nil
+	then
+		return
+	end
+
+    force_quick = true
+
+    Hit_GrenadeQuickthrow()
+end
+
+---@param item game_object
+local function is_item_valid(item)
+    -- valid if item is equipped detector
+    local player_detector = db.actor:active_detector()
+    if player_detector and item:id() == player_detector:id() then
+        return true
+    end
+
+    return false
+end
+
+---@param anm_table any
+---@param item game_object
+local function anm_quick_detector(anm_table, item)
+    -- cancel if parent is not player
+    local parent = item:parent()
+    if not parent then return end
+    if parent:id() ~= AC_ID then return end
+
+    -- cancel if not valid item
+    if not is_item_valid(item) then return end
+
+    -- Add 'quick' if previous anim was also quick (intended for holster-draw pairs)
+    if common.get_flag("QUICK_DETECTOR") then
+        if string.find(anm_table.anm_name, "show") then
+            common.mutate_anim(anm_table, "_quick", item:section())
+        end
+        common.remove_flag("QUICK_DETECTOR")
+        return
+    end
+
+    local is_state_valid = {
+        [4] = true, -- inspect
+        [7] = true, -- reload
+        [8] = true, -- misfire
+    }
+
+    -- Add 'quick' suffix if above conditions are fulfilled
+    local player_wpn = db.actor:active_item()
+    if (
+        string.find(anm_table.anm_name, "hide")
+        and (
+            player_wpn and is_state_valid[player_wpn:get_state()]
+            or IsMoveState("mcClimb")
+            or force_quick
+        )
+    ) then
+        common.mutate_anim(anm_table, "_quick", item:section())
+        common.set_flag("QUICK_DETECTOR")
+        force_quick = false
+    end
+end
+common.add_anim_mutator(anm_quick_detector, 5)
+
+-- Use anim mutator to hide detector during inspect animations (added by Utjan)
+local inspected_wpn
+---@param anm_table any
+---@param item game_object
+local function inspect_hides_detector(anm_table, item)
+    -- cancel if parent is not player
+    local parent = item:parent()
+    if not parent then return end
+    if parent:id() ~= AC_ID then return end
+
+    if string.find(anm_table.anm_name, "bore") then
+        local active_det = db.actor:active_detector()
+        if active_det then
+            active_det:switch_state(2)
+            inspected_wpn = item
+        end
+    elseif inspected_wpn and inspected_wpn:id() == item:id() then
+        inspected_wpn = nil
+        db.actor:show_detector(true)
+    end
+end
+common.add_anim_mutator(inspect_hides_detector, 6)
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+    RegisterScriptCallback("on_key_press", on_key_press)
+end

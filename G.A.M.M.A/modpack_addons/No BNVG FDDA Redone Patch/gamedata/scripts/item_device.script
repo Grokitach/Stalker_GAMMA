@@ -1,0 +1,954 @@
+--[[
+	Tronex
+	2019/12/7
+	Device binder
+	
+	This script manage devices power consumption, by binding online devices to the device_binder below. Providing consistant check/management
+	Engine handles turning devices functionality off when their power go below a certain point (power_critical), while some are script conrtrolled
+	See "items\settings\devices.ltx" for configurations
+--]]
+
+
+local enable_debug = false
+
+
+--------------------------------------------------------------------------------
+-- Controls
+--------------------------------------------------------------------------------
+dev_consumption      = {} 	-- [sec] = {...} | Power consumption of device per stage
+dev_consumption_act  = {} 	-- [sec] = {...} | Power consumption of device per action (stage 2)
+dev_consumption_tot  = {}		-- [sec] = num   | Total power consumption of a device
+dev_critical         = {}	 	-- [sec] = num   | Power limit, devices go off when their power go below this value
+local dev_condition        = {}		-- [id] = con    | Table to store/reload condition of online devices
+local dev_event_loss       = {}     -- [id] = num    | Table to trace power lost on device event activity
+local dev_inv		       = {}     -- [id] = bool   | Table to trace devices in inventory
+local dev_slot		       = {}     -- [id] = bool   | Table to trace devices in slots
+local dev_type		       = {
+	["D_PDA"]    = "PDA",
+	["DET_SIMP"] = "DET",
+	["DET_ADVA"] = "DET",
+	["DET_ELIT"] = "DET",
+	["DET_SCIE"] = "DET",
+	["D_DSMETR"] = "DET",
+	["D_CUSTOM"] = "DET",
+	["D_FLALIT"] = "FLASH",
+	["TORCH_S"]  = "TORCH",
+	["II_ATTCH"] = "OTHR",
+}
+
+-- device sections
+devices = {}
+device_battery = nil
+device_geiger = nil
+device_npc_pda = {}
+
+local amper_factor
+
+
+-- Condition States
+local c_limit
+local c_zero
+local c_full
+local temp_con = {}
+
+-- PDA
+local pda_active = false
+
+-- Torch
+local torch_active = false
+
+-- unlocalize this way. since we replace this script anyway
+nv_state = false
+
+-- Night-visions
+local w_multi = 1024/(device().width)
+local h_multi = 768/(device().height)
+local nv_eff = {}
+local nv_hud = { x = 0, y = 0, height = (device().height * h_multi), weight = (device().width * w_multi) }	-- HUD dimensions/position
+local ppe_effects = { -- PPE effects used for each NV. lum and id used for their ppe effects
+	["nightvision_1"] = { id = 3301, lum = 0.2 , ui = "wpn\\hud_nvg_gen1" },
+	["nightvision_2"] = { id = 3302, lum = 0.5 , ui = "wpn\\hud_nvg_gen2" },
+	["nightvision_3"] = { id = 3303, lum = 1.0 , ui = "wpn\\hud_nvg_gen3" },
+	--["nightvision_bluer"] = { id = 3304, lum = 1.0 , ui = "wpn\\hud_nvg_gen1_test" },
+}
+
+-- Dosimeter
+local rad_unit = game.translate_string("st_msv")
+local holding_shift = false
+dosimeter_env_rads_mode = false
+local rad_zones = {
+	["zone_field_radioactive"] = true,
+	["zone_field_radioactive_weak"] = true,
+	["zone_field_radioactive_average"] = true,
+	["zone_field_radioactive_strong"] = true,
+	["zone_radioactive"] = true,
+	["zone_radioactive_weak"] = true,
+	["zone_radioactive_average"] = true,
+	["zone_radioactive_strong"] = true,
+}
+
+function initialize()
+	local ini_device = ini_file("items\\settings\\devices.ltx")
+
+	device_battery = ini_device:r_sec_ex("settings","battery","batteries_dead")
+	device_geiger = ini_device:r_sec_ex("settings","geiger","detector_geiger")
+
+	-- We clear battery from devices list, and put it in its own category
+	_ITM["battery"] = {}
+	_ITM["battery"][device_battery] = true
+	if _ITM["device"][device_battery] then
+		_ITM["device"][device_battery] = nil 
+	end
+
+	c_limit = ini_device:r_float_ex("settings","condition_limit") or 0.05
+	c_zero = ini_device:r_float_ex("settings","condition_zero") or 0.0001
+	c_full = ini_device:r_float_ex("settings","condition_full") or 0.9999
+	amper_factor = ini_device:r_float_ex("settings","amper_factor") or 1000
+	
+	local n = ini_device:line_count("power_consumption")
+	for i=0,n-1 do
+		local result, sec, value = ini_device:r_line_ex("power_consumption",i,"","")
+		if ini_sys:section_exist(sec) and value then
+			dev_critical[sec] = ini_sys:r_float_ex(sec,"power_critical") or c_limit
+			
+			dev_consumption[sec] = {}
+			local t = str_explode(value,",")
+			for j=1,#t do
+				local cons = tonumber(t[j]) or 0
+				if (t[j] == "p") or (cons > 0) then
+					dev_consumption[sec][j] = cons
+					dev_consumption_tot[sec] = dev_consumption_tot[sec] and (dev_consumption_tot[sec] + cons) or cons
+					print_dbg("dev_consumption [%s][%s] = %s", sec, j, cons)
+				end
+			end
+			
+			dev_consumption_act[sec] = {}
+			local value_e = ini_device:r_string_ex("power_consumption_event",sec)
+			if value_e then
+				t = str_explode(value_e,",")
+				for j=1,#t do
+					local cons = tonumber(t[j]) or 0
+					if cons > 0 then
+						dev_consumption_act[sec][j] = cons
+						dev_consumption_tot[sec] = dev_consumption_tot[sec] and (dev_consumption_tot[sec] + cons) or cons
+						print_dbg("dev_consumption_act [%s][%s] = %s", sec, j, cons)
+					end
+				end
+			end
+		else
+			printe("!ERROR item_device | reading from items\\settings\\devices.ltx | section [%s] or power consumption values don't exist", sec)
+		end
+	end
+	
+	n = ini_device:line_count("npc_pda")
+	for i=0,n-1 do
+		local result, sec, value = ini_device:r_line_ex("npc_pda",i,"","")
+		if ini_sys:section_exist(sec) then
+			device_npc_pda[sec] = true
+		end
+	end
+end
+
+function print_dbg(txt, ...)
+	if enable_debug then
+		printf("item_device | %s | " .. txt, time_global(), ...)
+	end
+end
+
+
+--------------------------------------------------------------------------------
+-- Callbacks
+--------------------------------------------------------------------------------
+local function process_pda_info(npc,info_id)
+-- add this function to bind_stalker info_callback function
+-- battery.process_pda_infoportion(info_id)
+	local actor = db.actor
+	if actor then
+		if info_id == "ui_pda" then
+			-- PDA opened
+			-- set flag to indicate PDA is open
+			pda_active = true
+			hide_hud_inventory()
+			--news_manager.send_tip(actor, "Opening PDA", nil, nil, 5000)
+			actor:disable_info_portion("ui_pda_hide")
+		elseif info_id == "ui_pda_hide" then
+			-- PDA closed
+			-- remove flag to indicate PDA is closed
+			pda_active = false
+			--news_manager.send_tip(actor, "Closing PDA", nil, nil, 5000)
+			actor:disable_info_portion("ui_pda")
+		end
+	end
+end
+
+local function on_item_drag_dropped(obj_b, obj_d, slot_from, slot_to)
+	
+	-- Check capability
+	if not (slot_from == EDDListType.iActorBag and (slot_to == EDDListType.iActorBag or slot_to == EDDListType.iActorSlot)) then
+        return
+    end
+	
+	local sec_b = obj_b:section() -- battery
+	local sec_d = obj_d:section() -- device
+	if (sec_b == device_battery) and dev_consumption[sec_d] then
+		local con_b = obj_b:condition()
+		local con_d = obj_d:condition()
+		
+		if (con_d > con_b) then
+			actor_menu.set_msg(1, game.translate_string("ui_st_battery_more_power"))
+			return
+		end
+
+		if (con_d > dev_critical[sec_d]) then
+			alife_create_item(device_battery, db.actor, {cond = con_d})
+		end
+		
+		alife_release(obj_b)
+		obj_d:set_condition(con_b)
+		
+		actor_effects.play_item_fx(device_battery)
+		utils_obj.play_sound("interface\\inv_batt")
+	end
+end
+
+local function on_key_hold(key)
+	if (key == DIK_keys["DIK_LSHIFT"]) then
+		holding_shift = true
+	end
+end
+
+local function on_key_release(key)
+
+	if (key == DIK_keys["DIK_LSHIFT"]) then
+		holding_shift = false
+		return
+	end
+
+	local bind = dik_to_bind(key)
+
+	-- Night-Vision
+	if (bind == key_bindings.kNIGHT_VISION) then
+		local torch = db.actor:item_in_slot(10)
+		z_vanilla_nvgs.play_animation = true
+		set_nightvision(torch and torch:section(), not nv_state)
+
+	-- Dosimeter keybind
+	elseif (bind == key_bindings.kCUSTOM14) then
+		local obj_geiger = db.actor:object(device_geiger)
+		if obj_geiger and drain_device_on_event(obj_geiger, device_geiger, 2) then
+
+			if (holding_shift) then
+				dosimeter_env_rads_mode = not dosimeter_env_rads_mode
+				dosimeter_mode_string = dosimeter_env_rads_mode and game.translate_string("st_environment_rads") or game.translate_string("st_actor_rads")
+				actor_menu.set_msg(1, game.translate_string("st_dosimeter_mode")..": "..dosimeter_mode_string , 3)
+				return
+			end
+
+			local rads = dosimeter_env_rads_mode and math.floor(level.get_env_rads()*2500) or math.floor(db.actor.radiation*10000*0.387)
+			actor_menu.set_msg(1,  tostring(rads) .. " " .. rad_unit , 2 )
+			utils_obj.play_sound("detectors\\geiger_1")
+		end
+	end
+end
+
+local function on_anomaly_touch(obj, flags)
+	if obj then
+		
+		-- Don't play gieger sound if player don't have a geiger counter
+		if rad_zones[obj:section()] then
+			if game_difficulties.get_game_factor("notify_geiger") then
+				local obj_geiger = device_geiger and db.actor:object(device_geiger)
+				if not (obj_geiger and drain_device_on_event(obj_geiger, device_geiger, 1)) then
+					flags.ret_value = false
+					return
+				end
+			end
+			
+		-- Anomaly detector
+		elseif (not game_difficulties.get_game_factor("notify_anomaly")) then
+			flags.ret_value = false
+			return
+		end
+	end
+	
+	flags.ret_value = true
+end
+
+local function on_trade_opened()
+	local function search(temp , item)
+		if IsItem("device",item:section()) then
+			temp_con[item:id()] = item:condition()
+			item:set_condition(c_full)
+		end
+	end
+	db.actor:iterate_inventory(search,nil)
+	
+	local pda = db.actor:item_in_slot(8)
+	if pda and (not temp_con[pda:id()]) then
+		temp_con[pda:id()] = pda:condition()
+		pda:set_condition(c_full)
+	end
+	
+	local det = db.actor:item_in_slot(9)
+	if det and (not temp_con[det:id()]) then
+		temp_con[det:id()] = det:condition()
+		det:set_condition(c_full)
+	end
+	
+	local torch = db.actor:item_in_slot(10)
+	if torch and (not temp_con[torch:id()]) then
+		temp_con[torch:id()] = torch:condition()
+		torch:set_condition(c_full)
+	end
+end
+
+local function on_trade_closed()
+	for k,v in pairs(temp_con) do
+		local obj = level.object_by_id(k)
+		if obj then
+			local p = obj:parent()
+			if (p and p:id() == AC_ID) then
+				alife_process_item(obj:section(),k, {cond = v})
+			end
+		end
+	end
+	temp_con = empty_table(temp_con)
+end
+
+local function item_rack(obj)
+	local sec = obj:section()
+	if dev_consumption[sec] then
+		local id = obj:id()
+		dev_inv[id] = true
+		dev_slot[id] = nil
+		print_dbg("[%s] moved to inv", obj:name())
+	end
+end
+
+local function item_slot(obj)
+	local sec = obj:section()
+	if dev_consumption[sec] then
+		local id = obj:id()
+		dev_inv[id] = nil
+		dev_slot[id] = true
+		print_dbg("[%s] moved to slot", obj:name())
+	end
+end
+
+local function item_out(obj)
+	local sec = obj:section()
+	if dev_consumption[sec] then
+		local id = obj:id()
+		
+		-- Hack to turn off dropped NV device. TODO: adjust the device process function to overcome this hack
+		if dev_slot[id] and nv_state then
+			local cls = ini_sys:r_string_ex(sec,"class")
+			if (dev_type[cls] == "TORCH") then
+				set_nightvision(sec,false)
+			end
+		end
+			
+		dev_inv[id] = nil
+		dev_slot[id] = nil
+		print_dbg("[%s] moved out", obj:name())
+	end
+end
+
+local function actor_on_first_update()
+	for i=1,13 do
+		local obj = db.actor:item_in_slot(i)
+		if obj and IsItem("device",obj:section()) then
+			item_slot(obj)
+		end
+	end
+	
+	-- Restore torch state
+	local torch = db.actor:item_in_slot(10)
+	if torch and torch:torch_enabled() then
+		torch_active = torch:id()
+	end
+end
+
+local function se_device_on_unregister(se_obj, typ)
+	--local sec = se_obj:section_name()
+	--if ini_sys:r_string_ex(sec,"script_binding") == "item_device.bind" then
+		local id = se_obj.id
+		dev_condition[id] = nil
+		dev_inv[id] = nil
+		dev_slot[id] = nil
+	--end
+end
+
+local function save_state(mdata) 
+	mdata.device_condition = dev_condition
+end
+
+local function load_state(mdata) 
+	dev_condition = mdata.device_condition or {}
+end
+
+function on_game_start()
+	if (USE_MARSHAL) then 
+		RegisterScriptCallback("save_state",save_state)
+		RegisterScriptCallback("load_state",load_state)
+	end
+	
+	RegisterScriptCallback("server_entity_on_unregister",se_device_on_unregister)
+	RegisterScriptCallback("actor_on_feeling_anomaly",on_anomaly_touch)
+	RegisterScriptCallback("on_key_release",on_key_release)
+	RegisterScriptCallback("on_key_hold",on_key_hold)
+	
+	RegisterScriptCallback("ActorMenu_on_item_drag_drop",on_item_drag_dropped)
+	RegisterScriptCallback("actor_on_info_callback",process_pda_info)
+	RegisterScriptCallback("ActorMenu_on_trade_started",on_trade_opened)
+	RegisterScriptCallback("ActorMenu_on_trade_closed",on_trade_closed)
+	
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
+	RegisterScriptCallback("actor_on_item_take",item_rack)
+	RegisterScriptCallback("actor_item_to_ruck",item_rack)
+	RegisterScriptCallback("actor_on_item_drop",item_out)
+	RegisterScriptCallback("actor_item_to_slot",item_slot)
+	
+	initialize()
+end
+
+
+--------------------------------------------------------------------------------
+-- Item property
+--------------------------------------------------------------------------------
+function menu_battery(obj)
+	local p = obj:parent()
+	if not (p and p:id() == AC_ID) then return end
+	
+	local sec = obj:section()
+	local con = obj:condition()
+	if (sec ~= device_battery) and dev_critical[sec] and (con > dev_critical[sec]) then
+		return game.translate_string("st_item_unpack_battery")
+	end
+end
+
+function func_battery(obj)
+	local p = obj:parent()
+	if not (p and p:id() == AC_ID) then
+		return
+	end
+	
+	local sec = obj:section()
+	local con = obj:condition()
+
+	if ini_sys:section_exist(device_battery) then
+		alife_create_item(device_battery, db.actor, {cond = con})
+		alife_process_item(sec, obj:id(), {cond = c_zero})
+		
+		-- Play effect
+		actor_effects.play_item_fx(device_battery)
+		utils_obj.play_sound("interface\\inv_batt")
+	end
+end
+
+
+--------------------------------------------------------------------------------
+-- Utilities
+--------------------------------------------------------------------------------
+function drain_device_on_event(obj, sec, idx, custom_loss)
+	if (not obj) then
+		--callstack()
+		--printe("! bind device.drain_device_on_event | no object pass")
+		return
+	end
+	
+	sec = sec or obj:section()
+	if (not dev_critical[sec]) then
+		return
+	end
+
+	-- Device goes off on critical power, no draining
+	local cond = obj:condition()
+	if cond < dev_critical[sec] then
+		return false
+	end
+	
+	local loss = dev_consumption_act[sec] and dev_consumption_act[sec][idx] or 0
+	if custom_loss then
+		loss = custom_loss
+	end
+	
+	local id = obj:id()
+	if dev_event_loss[id] then
+		dev_event_loss[id] = dev_event_loss[id] + loss
+	else
+		dev_event_loss[id] = loss
+	end
+	
+	return true -- if drain happened
+end
+
+function drain_device(obj, sec, loss, loss_add)
+	if not (obj and loss and loss ~= 0) then
+		return
+	end
+	
+	sec = sec or obj:section()
+	
+	-- Device goes off on critical power, no draining
+	local cond = obj:condition()
+	if cond < dev_critical[sec] then
+		--print_dbg("[%s] power is too low: %s", obj:name(), cond)
+		return false
+	end
+	
+	if loss_add then
+		loss = loss + loss_add
+	end
+	
+	-- Set up new power
+	local factor = game_difficulties.get_eco_factor("battery_consumption")
+	loss = loss * factor
+	loss = loss / amper_factor
+	
+	local cond_n = cond - loss
+	cond_n = clamp(cond_n, c_zero, c_full)
+	
+	obj:set_condition(cond_n)
+	--print_dbg("[%s] | power loss: %s | remaining power: %s", obj:name(), loss, cond_n)
+	
+	return true -- if drain happened
+end
+
+
+function can_toggle_torch()
+	return db.actor:item_in_slot(10) and true or false
+end
+
+function toggle_torch()
+	local torch = db.actor:item_in_slot(10)
+	local id = torch and torch:id()
+	if id then
+		if torch_active == id then
+			torch_active = false
+		else
+			torch_active = id
+		end
+	else
+		torch_active = false
+	end
+end
+
+function is_torch_active()
+	return torch_active
+end
+
+
+function set_nightvision_HUD(bShow)
+	local hud = get_hud()
+	local drk = hud:GetCustomStatic("nv_tunnel")
+	local wnd
+	
+	if (bShow == false) or (db.actor:is_talking()) then
+		if (drk ~= nil) then
+			hud:RemoveCustomStatic("nv_tunnel")
+			drk = nil
+		end
+		return
+	end
+	
+	if (drk == nil) then
+		hud:AddCustomStatic("nv_tunnel",true)
+		drk = hud:GetCustomStatic("nv_tunnel")
+		wnd = drk:wnd()
+		if (wnd ~= nil) then
+			wnd:SetWndPos(vector2():set(nv_hud.x , nv_hud.y))
+			wnd:SetWndSize(vector2():set(nv_hud.weight , nv_hud.height))
+			wnd:SetAutoDelete(true)
+		end
+	end
+	
+	if (drk ~= nil) then
+		wnd = drk:wnd()
+		local torch = db.actor:item_in_slot(10)
+		local torch_sec = torch and torch:section()
+		if torch_sec then
+			nv_eff[torch_sec] = nv_eff[torch_sec] or ini_sys:r_string_ex(torch_sec,"nv_effect")
+			local ppe = ppe_effects[nv_eff[torch_sec]]
+			if ppe then
+				wnd:InitTexture(ppe.ui)
+			end
+		end
+	end
+end
+
+function set_nightvision(section,state)
+	if (not section) then
+		return
+	end
+	
+	nv_eff[section] = nv_eff[section] or ini_sys:r_string_ex(section,"nv_effect")
+	
+	if ppe_effects[nv_eff[section]] then
+		
+		if state and (not nv_state) then
+			local ppe = ppe_effects[nv_eff[section]]
+			level.add_pp_effector(nv_eff[section] .. ".ppe", ppe.id, true)
+			utils_obj.play_sound("interface\\inv_nv_start")
+			nv_state = true
+			game.set_nv_lumfactor(ppe.lum)
+		elseif (not state) and nv_state then
+			local ppe = ppe_effects[nv_eff[section]]
+			level.remove_pp_effector(ppe.id)
+			utils_obj.play_sound("interface\\inv_nv_off")
+			nv_state = false
+			game.set_nv_lumfactor(0)
+		end
+		
+		set_nightvision_HUD(nv_state)
+	end
+end
+
+function is_nv_active()
+	return nv_state
+end
+
+
+function set_pda_glitch(obj, val)
+	if (not obj) then
+		return
+	end
+	
+	local curr_val = obj:psy_factor()
+	obj:set_psy_factor( clamp( (curr_val + val), 0, 1 ) )
+
+end
+
+function is_pda_active()
+	return pda_active
+end
+
+function is_pda_charged(actor_only)
+	local pda = db.actor:item_in_slot(8)
+	if (not pda) then
+		return false
+	end
+	
+	if actor_only and device_npc_pda[pda:section()] then
+		return false
+	end
+	
+	return is_device_charged( pda )
+end
+
+
+function is_device_charged(obj, sec, cond)
+	sec = obj and obj:section() or sec
+	cond = obj and obj:condition() or cond
+	return sec and cond and dev_critical[sec] and cond > dev_critical[sec]
+end
+
+function get_power_critical(sec)
+	return dev_critical[sec]
+end
+
+function get_power_consumption(sec)
+	return dev_consumption[sec] and dev_consumption[sec][1]
+end
+
+function pda_warning()
+	--Return true if PDA is equipped and works
+	if (is_pda_charged() or is_pda_active()) then return true end
+	
+	--Show not equipped or battery empty message
+	local obj = db.actor:item_in_slot(8)
+	if (obj) then
+		actor_menu.set_msg(1,  game.translate_string("st_pda_no_power") , 3 )
+	else
+		actor_menu.set_msg(1,  game.translate_string("st_pda_no_active") , 3 )
+	end
+	
+	return false
+end
+
+
+--------------------------------------------------------------------------------
+-- Class "device_binder"
+--------------------------------------------------------------------------------
+function bind(obj)
+    obj:bind_object(device_binder(obj))
+end
+
+class "device_binder" (object_binder)
+
+function device_binder:__init(obj) super(obj)
+	self.first_update = nil
+end
+
+function device_binder:update(delta)
+    object_binder.update(self, delta)
+	
+	local obj = self.object
+	local id = obj:id()
+	local sec = obj:section()
+	local parent = obj:parent()
+	
+	if not self.first_update then
+		self.first_update = true
+
+		-- Process devices belongs to others
+		if parent and (parent:id() ~= AC_ID) then
+			
+			-- Process devices belongs to stalkers
+			if IsStalker(parent) then
+				
+				-- Set up profiles of spawned PDA 
+				if device_npc_pda[sec] and (not se_load_var(id, obj:name(), "info")) then
+					ui_pda_npc_tab.register_pda(parent, sec, id)
+				end
+				
+				--[[ if stalker is not a trader, set custom power
+				if utils_obj.is_trader(parent) then
+					local cond_set = (math.random(30,70)/100)
+					alife_process_item( sec , id , {cond = cond_set} )
+				end
+				--]]
+			end
+		end
+		
+		-- set up stored power for device on first update
+		if dev_condition[id] then
+			obj:set_condition(dev_condition[id])
+			--print_dbg("[%s] power restored from save: %s", obj:name(), dev_condition[id])
+		end
+		
+		return
+	end
+	
+	-- store updated device power
+	local cond = obj:condition()
+	dev_condition[id] = cond
+	
+	-- only process device power if it belongs to actor
+	if (parent and (parent:id() == AC_ID) and (self.type ~= false)) then
+
+		-- set type
+		if (self.type == nil) then
+			local cls = ini_sys:r_string_ex(sec,"class")
+			if dev_type[cls] then
+				self.type = dev_type[cls]
+				--print_dbg("[%s] type detected: %s", obj:name(), dev_type[cls])
+			else
+				self.type = false
+				--print_dbg("[%s] type not found", obj:name())
+			end
+		end
+		
+		-- night-vision/light management
+		if (self.type == "TORCH") then
+			self:process_torch(id, sec, cond)
+		end
+	
+		if dev_consumption[sec] and (cond > dev_critical[sec]) then
+			
+			-- No need to process unequipped devices
+			if dev_slot[id] then
+				
+				-- Light flicker on event for flashlights
+				if (self.type == "FLASH") then
+					self:process_flicker()
+				end
+				
+				-- Glitch effect on event for PDA
+				if (self.type == "PDA") then
+					self:process_glitch(id, sec, cond)
+				end
+			end
+		
+			-- drain device power if its active
+			self:process_power(id, sec, cond)
+		end
+	end
+end
+
+function device_binder:process_power(id, section, condition)
+	local power_loss = 0
+	local in_hand = false
+
+	for num, consumption in pairs(dev_consumption[section]) do
+	
+		-- Device active in hand
+		if num == 1 then
+			local obj = db.actor:active_detector() or db.actor:active_item()
+			if obj and obj:id() == id then
+				power_loss = power_loss + consumption
+				in_hand = true
+			end
+
+		-- Device active in slot
+		elseif num == 2 and dev_slot[id] and (not in_hand) then
+			power_loss = power_loss + consumption
+			
+			-- Device is emitting light
+			if dev_consumption_act[section] and (self.type == "TORCH") and self.object:torch_enabled() then
+				power_loss = power_loss + (dev_consumption_act[section][1] or 0)
+			end
+			
+			-- Device has night vision active
+			if dev_consumption_act[section] and self.N_V and nv_state then
+				power_loss = power_loss + (dev_consumption_act[section][2] or 0)
+			end
+			
+		-- Device active in inventory
+		elseif num == 3 and dev_inv[id] and (not in_hand) then
+			power_loss = power_loss + consumption
+
+		end
+	end
+	
+	-- Power loss on event
+	if dev_event_loss[id] and (dev_event_loss[id] > 0) then
+		power_loss = power_loss + dev_event_loss[id]
+		dev_event_loss[id] = 0
+	end
+	
+	-- Consume power
+	drain_device(self.object, section, power_loss)
+end
+
+function device_binder:process_torch(id, section, condition)
+
+-- Night-Vision state management
+	if nv_state then
+		if dev_slot[id] then
+			self.N_V = true -- indicator for device having active NV
+		else
+			-- if NV device moved out of slot, turn NV off
+			if self.N_V then
+				set_nightvision(section,false)
+			end
+			self.N_V = nil
+		end
+		
+		-- if NV device ran out of power, turn NV off
+		if (self.N_V and (condition <= dev_critical[section])) then
+			set_nightvision(section,false)
+			self.N_V = nil
+		end
+		
+	-- disable NV info if NV is off
+	elseif self.N_V and (not nv_state) then
+		set_nightvision(section,false)
+		self.N_V = nil
+	end
+	
+-- Torch state management
+	if torch_active == id then
+		if dev_slot[id] and (condition > dev_critical[section]) then
+			if (not self.object:torch_enabled()) then
+				self.object:enable_torch(true)
+			end
+		else
+			if (self.object:torch_enabled()) then 
+				self.object:enable_torch(false)
+			end
+			torch_active = false
+			--actor_menu.set_notification(nil, "ui_inGame2_notify_low_battery", 10)
+		end
+	else
+		if (self.object:torch_enabled()) then 
+			self.object:enable_torch(false)
+		end
+	end
+	
+-- Torch light flicker on event
+	if self.object:torch_enabled() then
+		self:process_flicker()
+	end
+end
+
+function device_binder:process_glitch(id, section, condition)
+
+	-- Emissions: the closer the wave, the higher the psi influnces
+	if GetEvent("surge", "state") then
+		local surge_time = GetEvent("surge", "time") or 0
+		local val_glitch = (surge_time > 168) and normalize(surge_time, 220, 168) or normalize(surge_time, 20, 168)
+		self.object:set_psy_factor( clamp(val_glitch,0,1) )
+		
+	-- Psi-storms: huge spike when a vortex hits the ground
+	elseif GetEvent("psi_storm", "state") then
+		if GetEvent("psi_storm", "vortex") then
+			self.object:set_psy_factor(1)
+		else
+			self.object:set_psy_factor(0.2)
+		end
+		
+	-- PDA doesn't get affected in normal cases
+	else
+		self.object:set_psy_factor(0)
+	end
+	
+	
+end
+
+function device_binder:process_flicker(force)
+	local flicker = level_environment.get_light_flicker()
+	if force then
+		flicker = force
+	end
+	if (self.flicker == nil) then
+		self.flicker = false
+	end
+	if (self.flicker ~= flicker) then
+		--print_dbg("[%s] flicker: %s", self.object:name(), flicker)
+		if flicker then
+			local ca = "light_flicker"
+			local on_off_chance = math.random(25,50)
+			local on_off_time 	= math.random(0.3,0.9)
+			local fps = math.random(20,30)
+			self.object:set_color_animator(ca,true,on_off_chance,on_off_time,fps)
+			--printf("~ Torch set anim")
+		else
+			--printf("~ Torch reset anim")
+			self.object:reset_color_animator() 
+		end
+	end
+	self.flicker = flicker
+end
+
+function device_binder:reload(section)
+    object_binder.reload(self, section)
+end
+
+function device_binder:reinit()
+    object_binder.reinit(self)
+end
+
+function device_binder:net_spawn(se_abstract)
+    if not(object_binder.net_spawn(self, se_abstract)) then
+        return false
+    end
+    return true
+end
+
+function device_binder:net_destroy()
+	-- if NV device disappear, turn off NV. duh?
+	if self.N_V then
+		self.N_V = nil
+		set_nightvision(self.object:section(),false)
+	end
+	
+	-- if working torch device disappear, clear id
+	if torch_active == self.object:id() then
+		torch_active = false
+	end
+	
+	-- if light source is flickering, turn it off
+	if self.flicker then
+		self:process_flicker(false)
+	end
+	
+	--print_dbg("[%s] destroyed: %s", self.object:name())
+	object_binder.net_destroy(self)
+end
+
+function device_binder:save(stpk)
+end
+
+function device_binder:load(stpk)
+end

@@ -1,0 +1,73 @@
+local state = {
+    monster_registry = {}, -- [k: number]: boolean (pair of id and whether a bloodsucker has been damaged by anything other than player before death)
+    succeeded = false,
+}
+function save_state(mdata)
+	mdata.gambling_with_life_task_data = state
+end
+
+function load_state(mdata)
+	if mdata.gambling_with_life_task_data then
+		state = mdata.gambling_with_life_task_data
+	end
+end
+
+task_status_functor.gambling_with_life_status_functor = function(tsk,task_id)
+	if not (db.actor and tsk) then return end
+	local stage = tsk.stage
+
+	if (stage == 0) then
+        if state.succeeded then
+            tsk.stage = 1
+        end
+    end
+end
+
+task_functor.gambling_with_life_target_functor = function(task_id,field,p,tsk)
+    if not (db.actor and tsk) then return end
+	local stage = tsk.stage
+
+    if (stage == 1) then
+        return tsk.task_giver_id
+    end
+end
+
+xr_effects.gambling_with_life_cleanup = function()
+    state = {
+        monster_registry = {},
+        succeeded = false,
+    }
+end
+
+function clear_registry()
+    state.monster_registry = {}
+end
+
+function is_bloodsucker(monster)
+    return string.find(monster:section(), "bloodsucker")
+end
+
+function monster_on_before_hit(monster,shit)
+    if is_bloodsucker(monster) then
+        if shit.draftsman:id() ~= AC_ID or not new_tasks_addon_tasks_utils.is_strike(shit) or new_tasks_addon_tasks_utils.is_axe() then
+            state.monster_registry[monster:id()] = true
+        end
+    end
+end
+
+function monster_on_death(monster, killer)
+    -- During testing I had a case where a bloodsucker died without any prior hits and this made the
+    -- the quest progress. Checking for killer here as well now
+    if is_bloodsucker(monster) and not state.monster_registry[monster:id()] and (killer and killer:id() == AC_ID) then
+        state.succeeded = true
+    end
+end
+
+function on_game_start()
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+
+    RegisterScriptCallback("on_before_level_changing",clear_registry)
+    RegisterScriptCallback("monster_on_before_hit",monster_on_before_hit)
+    RegisterScriptCallback("monster_on_death_callback",monster_on_death)
+end

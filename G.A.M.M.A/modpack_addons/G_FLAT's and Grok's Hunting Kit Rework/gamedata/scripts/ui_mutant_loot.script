@@ -1,0 +1,579 @@
+
+--[[
+	-----------------------------------
+	Copyright (C) 2012 Alundaio
+	
+	This program is free software; you can redistribute and/or modify
+	it under the terms of the Open S.T.A.L.K.E.R. Mod License version 1.0.
+
+	-----------------------------------
+	ponney68
+	
+	-----------------------------------
+	Tronex
+	Last edit: 2019/12/17
+	Added Loot all button, organized script, inventory cell system, alife spawn handlers
+	-----------------------------------
+-]]
+
+
+local ini_mutant = ini_file("items\\settings\\mutant_loot.ltx")
+
+local sec_kit_hunt = "kit_hunt"
+local bonus_part_chance = ini_sys:r_float_ex("kit_hunt","bonus_mutant_part_chance") or 0
+local item_prop_table = { cond_r = {30,70} , cond_ct = "part" , cond_cr = {0.5,0.75,1} }
+
+-- Loot Mutant
+local MutantLootDecayTime = ini_mutant:r_float_ex("mutant_loot_mod","decay_time") or 7200
+
+local kind_to_section = {
+	["SM_KARLIK"] 	 = "karlik",
+	["SM_PSYSUCKER"] = "psysucker",
+	["SM_LURKER"] 	 = "lurker"
+}
+local clsid_to_section = {
+	[clsid.bloodsucker_s] 	= "bloodsucker",
+	[clsid.boar_s] 			= "boar",
+	[clsid.burer_s] 		= "burer",
+	[clsid.chimera_s]		= "chimera",
+	[clsid.controller_s]	= "controller",
+	[clsid.dog_s]			= "dog",
+	[clsid.flesh_s]			= "flesh",
+	[clsid.gigant_s]		= "gigant",
+	[clsid.poltergeist_s]	= "poltergeist",
+	[clsid.psy_dog_s]		= "psy_dog",
+	[clsid.psy_dog_phantom_s] = "psy_dog",
+	[clsid.pseudodog_s]		= "pseudodog",
+	[clsid.snork_s]			= "snork",
+	[clsid.tushkano_s]		= "tushkano",
+	[clsid.cat_s]			= "cat",
+	[clsid.fracture_s]		= "fracture",
+	[clsid.zombie_s]		= "zombie",
+	[clsid.crow]			= "crow",
+	[clsid.rat_s]			= "rat"
+}
+local clsdbg_to_section = {
+		["SM_KARLIK"] 	 = "karlik",
+		["SM_PSYSUCKER"] = "psysucker",
+		["SM_LURKER"] 	 = "lurker"
+}
+
+local killed_mutant_tbl = { -- ponney68: This table based on "species" of mutants
+
+-- TRX: A-Life Revamp
+    psysucker			= {file="ui\\ui_actor_monsters_pda_3",x="393",y="0",type="small"},
+   	lurker				= {file="ui\\ui_actor_monsters_pda_3",x="0",y="0",type="small"},
+    karlik				= {file="ui\\ui_actor_monsters_pda_3",x="0",y="200",type="small"},
+
+    snork				= {file="ui\\ui_actor_monsters_pda",x="393",y="0",type="small"},
+	dog					= {file="ui\\ui_actor_monsters_pda",x="0",y="800",type="small"},
+	pseudodog			= {file="ui\\ui_actor_monsters_pda",x="393",y="200",type="small"},
+	psy_dog				= {file="ui\\ui_actor_monsters_pda",x="393",y="200",type="small"},
+	poltergeist			= {file="ui\\ui_actor_monsters_pda",x="0",y="400",type="small"},
+	bloodsucker			= {file="ui\\ui_actor_monsters_pda",x="393",y="400",type="human"},
+	controller			= {file="ui\\ui_actor_monsters_pda",x="393",y="800",type="human"},
+	chimera				= {file="ui\\ui_actor_monsters_pda",x="0",y="600",type="large"},
+	tushkano			= {file="ui\\ui_actor_monsters_pda",x="0",y="0",type="small"},
+	rat					= {file="ui\\ui_actor_monsters_pda",x="0",y="0",type="small"},
+	flesh				= {file="ui\\ui_actor_monsters_pda",x="393",y="600",type="large"},
+	tark				= {file="ui\\ui_actor_monsters_pda_2",x="0",y="0",type="human"},
+	rotan				= {file="ui\\ui_actor_monsters_pda",x="0",y="0",type="human"},
+	burer				= {file="ui\\ui_actor_monsters_pda_1",x="0",y="0",type="large"},
+	boar				= {file="ui\\ui_actor_monsters_pda_1",x="393",y="0",type="large"},
+	giant				= {file="ui\\ui_actor_monsters_pda_1",x="0",y="200",type="large"},
+	cat					= {file="ui\\ui_actor_monsters_pda_2",x="0",y="0",type="small"},
+	fracture			= {file="ui\\ui_actor_monsters_pda_2",x="393",y="200",type="human"},
+	bird				= {file="ui\\ui_actor_monsters_pda_2",x="393",y="0",type="small"},
+	zombie				= {file="ui\\ui_actor_monsters_pda_2",x="0",y="200",type="human"},
+	bloodsucker_arena	= {file="ui\\ui_actor_monsters_pda",x="393",y="400",type="human"},
+	burer_arena			= {file="ui\\ui_actor_monsters_pda_1",x="0",y="0",type="large"},
+	pseudodog_arena		= {file="ui\\ui_actor_monsters_pda",x="393",y="200",type="small"},
+	snork_arena			= {file="ui\\ui_actor_monsters_pda",x="393",y="0",type="human"},
+}
+
+
+function loot_mutant(section, clsid, loot_table, npc, dont_create, victim) -- Prepare mutant loot
+
+	npc = npc or db.actor
+	local clsid = clsid or obj and obj:clsid()
+	local kind = section and ini_sys:r_string_ex(section,"kind") or "unknown"
+	if not (clsid) then
+		return
+	end
+
+	local loot, sec, count, chance
+	local str_explode = str_explode
+	local mutant = clsdbg_to_section[kind] or clsid_to_section[clsid]
+	
+	if victim:section() == "gigant_jumper" then
+		mutant = "gigant"
+	end
+	
+	local possible_items = utils_data.collect_section(ini_mutant, mutant)
+	
+	local sim = alife()
+	local npc_id = npc and npc:id()
+	local npc_pos = npc and npc:position()
+	local npc_lvl_id = npc and npc:level_vertex_id()
+	local npc_game_id = npc and npc:game_vertex_id()
+
+	local actor = db.actor
+	local backpack = actor:item_in_slot(13)
+	local is_huntkit
+	local needs_equipped_hk = ui_options.get("gameplay/general/need_equipped_hkit")
+
+	if (needs_equipped_hk and (backpack and (backpack:section() == sec_kit_hunt))) or (not needs_equipped_hk and db.actor:object(sec_kit_hunt)) then
+		is_huntkit = true
+	end
+
+	-- Spawn items on NPC if he looted the mutant
+	for i=1,#possible_items do
+		loot = str_explode(possible_items[i],",")
+		if (loot and loot[1] and loot[2]) then
+			if (not loot[3]) then
+				loot[3] = 1
+			end
+			
+			sec = loot[1]
+			count = tonumber(loot[2])
+			chance = loot[3] or 1
+			-- local old_chance = chance
+
+			if is_huntkit then
+				chance = chance + chance * (bonus_part_chance/100)
+			end
+			
+			for i=1,count do
+				if (math.random() <= tonumber(chance)) then
+					-- printf(sec .. " chance = " .. old_chance .. " to " .. chance)
+					
+					-- In case we don't want to bother with loot table
+					local se_obj
+					if (not dont_create) then
+						se_obj = alife_create_item(sec, npc, item_prop_table)
+					end
+					
+					-- Fill loot table if needed
+					if (loot_table) then
+						local sec_d, uses = utils_item.get_defined_uses(sec)
+						if (not loot_table[sec_d]) then
+							loot_table[sec_d] = {}
+						end
+						local c = loot_table[sec_d].count
+						c = c and (c + 1) or 1
+						loot_table[sec_d].count = c
+						if se_obj then
+							loot_table[sec_d][c] = se_obj.id
+						end
+						--printf("loot_mutant")
+
+						--[[
+						if npc and npc:id() ~= AC_ID then
+							se_obj = alife_create_item(sec, npc, item_prop_table)
+						end
+						--]]
+					end
+					
+				end
+			end
+		end
+	end
+	
+	-- Unlock relevant mutant article in guide.
+	if mutant and npc and (npc:id() == AC_ID) then
+		SendScriptCallback("actor_on_interaction", "mutants", nil, mutant)
+	end
+	
+	SendScriptCallback("monster_on_loot_init",victim,loot_table)
+end
+
+----------------------------------------------------------------------
+GUI = nil -- instance, don't touch
+function start(obj, for_bug1, for_bug2)
+	if (not obj) then
+		printf("!ERROR ui_mutant_loot | no game object passed!")
+		return
+	end
+	
+	if (not GUI) then
+		GUI = UIMutantLoot()
+	end
+	
+	if (GUI) and (not GUI:IsShown()) then
+		local can_show = GUI:Reset(obj, for_bug1, for_bug2)
+		if can_show then
+			GUI:ShowDialog(true)
+			Register_UI("UIMutantLoot","ui_mutant_loot")
+		end
+	end
+end
+
+
+----------------------------------------------------------------------
+-- 	CALLBACKS
+----------------------------------------------------------------------
+local function monster_on_actor_use_callback(obj,who) -- Open mutant loot UI
+
+	-- Return if mutant is already looted
+	local looted = se_load_var(obj:id(),obj:name(),"looted")
+	if (looted) then
+		return
+	end
+
+	-- This is important so NPCs don't try to loot the corpse the player is looting
+	if (obj:clsid() == clsid.crow) then
+		save_var(obj, "looted", true)
+	else
+		se_save_var(obj:id(),obj:name(),"looted",true)
+	end
+	xr_corpse_detection.set_valuable_loot(obj:id(),false)
+
+	-- if mutant corpse is lefted for long time, body is decayed
+	local st = db.storage[obj:id()]
+	if (st and st.death_time and game.get_game_time():diffSec(st.death_time) > MutantLootDecayTime) then
+		actor_menu.set_msg(1, game.translate_string("st_body_decayed"),4)
+		
+	-- Start the Mutant Loot UI
+	else
+		start(obj, obj:id(), obj:section(), obj:clsid())
+	end
+end
+
+function monster_on_loot_init(obj,t)
+	-- t['conserva'] = {
+		-- count = 3
+	-- }
+	-- utils_data.print_table(t,obj and obj:name() or "no_obj")
+end
+
+function on_game_start()
+	RegisterScriptCallback("monster_on_actor_use_callback",monster_on_actor_use_callback)
+	RegisterScriptCallback("monster_on_loot_init",monster_on_loot_init)
+end
+
+
+
+----------------------------------------------------------------------
+-- UI
+----------------------------------------------------------------------
+class "UIMutantLoot" (CUIScriptWnd)
+
+function UIMutantLoot:__init() super()
+	self:InitControls()
+	self:InitCallBacks()
+end
+
+function UIMutantLoot:__finalize()
+end
+
+function UIMutantLoot:InitControls()
+	self:SetWndRect			(Frect():set(0,0,1024,768))
+	self:SetAutoDelete(true)
+
+	self.xml				= CScriptXmlInit()
+	self.xml:ParseFile			("ui_mutant_loot.xml")
+	local xml = self.xml
+	
+	self.dialog				= xml:InitStatic("mutant_loot:background",self)
+
+	-- Mutant image
+	self.image			= self.xml:InitStatic("mutant_loot:image",self.dialog)
+
+	-- Loot
+	self.frame 			= xml:InitStatic("mutant_loot:frame",self.dialog)
+	self.CC = utils_ui.UICellContainer("loot", self, nil, "mutant_loot:cont_loot", self.dialog)
+	self.CC.showcase      = true
+--	self.CC.can_select	  = true
+	self.CC.disable_drag  = true
+	self.CC.disable_stack = true
+	self.CC:SetGridSpecs(35, 2)
+
+	self.item_info = utils_ui.UIInfoItem(self, 1000)
+
+	-- Button Loot one
+	self.btn_loot_one = xml:Init3tButton("mutant_loot:btn_loot",self.dialog)
+	self:Register(self.btn_loot_one, "button_loot")
+	
+	-- Button Loot all
+	self.btn_loot_all = xml:Init3tButton("mutant_loot:btn_loot_all",self.dialog)
+	self:Register(self.btn_loot_all, "button_loot_all")
+	
+	-- Button Cancel
+	self.btn_cancel = xml:Init3tButton("mutant_loot:btn_cancel",self.dialog)
+	self:Register(self.btn_cancel, "button_cancel")
+end
+
+function UIMutantLoot:InitCallBacks()
+	self:AddCallback("button_loot",ui_events.BUTTON_CLICKED,self.OnButton_LootSelected,self)
+	self:AddCallback("button_loot_all",ui_events.BUTTON_CLICKED,self.OnButton_LootAll,self)
+	self:AddCallback("button_cancel",ui_events.BUTTON_CLICKED,self.Close,self)
+end
+
+function UIMutantLoot:Reset(obj, for_bug1, for_bug2)
+	local function is_number(var)
+		local function lets_try(var)
+			var = tonumber(var)
+			return (var > 0) or (var < 0) or var or -var
+		end
+		if pcall(function() lets_try(var) end) then
+			return true
+		else
+			return false
+		end
+	end
+
+	if not (is_number(obj)) then 
+		self.section = obj:section()	
+		self.clsid = obj:clsid()
+		self.id = obj:id()
+		self.obj = obj
+	else 	
+		self.id = obj		
+		self.section=for_bug1
+		self.clsid = for_bug2
+		self.obj = nil		
+	end
+	
+	self:SetMutantImage()
+	return self:FillList()
+end
+
+function UIMutantLoot:Update()
+	CUIScriptWnd.Update(self)
+	
+	-- Highlight selected items
+	for idx,ci in pairs(self.CC.cell) do
+		if (not ci:IsCursorOverWindow()) then
+			if ci.flags.selected then
+				ci:Highlight(true,"green")
+			else
+				ci:Highlight(false)
+			end
+		end
+	end
+	
+	-- Updating item info box and item cell containers
+	local found_cell = self.CC:Update(self.item_info)
+	if (not found_cell) then
+		self.item_info:Update()
+	end
+end 
+
+-- Utility
+function UIMutantLoot:SetMutantImage()
+	local mutant_id = game.translate_string(ini_sys:r_string_ex(self.section,"species") or "")
+	
+	local kind = ini_sys:r_string_ex(self.section,"kind") or "unknown"
+	mutant_id = kind_to_section[kind] or mutant_id
+	
+	--printf("-MUTANT:"..mutant_id)
+
+	local mutant_f = "ui\\ui_actor_monsters_pda_1"
+	local mutant_x = 0
+	local mutant_y = 0
+
+	mutant_f = tostring(killed_mutant_tbl[mutant_id].file)
+	mutant_x = tostring(killed_mutant_tbl[mutant_id].x)
+	mutant_y = tostring(killed_mutant_tbl[mutant_id].y)
+
+	local x1 = mutant_x
+	local y1 = mutant_y
+	local mutant_width = 393
+	local mutant_height = 200
+
+	local x2 = x1 + mutant_width
+	local y2 = y1 + mutant_height
+
+	self.image:InitTexture(tostring(mutant_f))
+	self.image:SetTextureRect(Frect():set(x1,y1,x2,y2))
+	self.image:SetStretchTexture(true)
+end
+
+function UIMutantLoot:Loot(loot_all)
+	local obj_mutant = level.object_by_id(self.id)
+	if (not obj_mutant) then
+		self:Close()
+		return
+	end
+	
+	local is_looted
+	local sim = alife()
+	local actor = db.actor
+	local backpack = actor:item_in_slot(13)
+	local is_huntkit
+	local needs_equipped_hk = ui_options.get("gameplay/general/need_equipped_hkit")
+
+	if (needs_equipped_hk and (backpack and (backpack:section() == sec_kit_hunt))) or (not needs_equipped_hk and db.actor:object(sec_kit_hunt)) then
+		is_huntkit = true
+	end
+	
+	-- Spawn selected items, clean from loot table
+	if loot_all then
+		local tbl = self.loot -- temp
+		for sec,t in pairs(tbl) do
+			for i=1,t.count do
+				is_looted = true
+				item_knife.degradate()
+				
+				alife_create_item(sec, db.actor, item_prop_table)
+
+				-- if is_huntkit and (math.random(100) < bonus_part_chance) then
+					-- alife_create_item(sec, db.actor, item_prop_table)
+				-- end
+				self.loot[sec].count = self.loot[sec].count - 1
+				if (self.loot[sec].count == 0) then
+					self.loot[sec] = nil
+				end
+			end
+		end
+	else
+		for idx,ci in pairs(self.CC.cell) do
+			if ci.flags.selected then
+				local sec = ci.section
+				is_looted = true
+				item_knife.degradate()
+				
+				alife_create_item(sec, db.actor, item_prop_table)
+
+				-- if is_huntkit and (math.random(100) < bonus_part_chance) then
+					-- alife_create_item(sec, db.actor, item_prop_table)
+				-- end
+				
+				self.loot[sec].count = self.loot[sec].count - 1
+				if self.loot[sec].count == 0 then
+					self.loot[sec] = nil
+				end
+			end
+		end
+	end
+	
+	-- If no item is looted, don't proceed
+	if (not is_looted) then
+		return
+	end
+	
+	-- Animation boost if player has Hunter Kit or Well Dressed Achievement
+	if (actor_effects) then
+		local boost = (game_achievements.has_achievement("well_dressed") and 1 or 0) + (is_huntkit and 1 or 0)
+		if (boost == 2) then
+			actor_effects.play_item_fx("mutant_looting_boost_2")
+		elseif (boost == 1) then
+			actor_effects.play_item_fx("mutant_looting_boost_1")
+		else
+			actor_effects.play_item_fx("mutant_looting")
+		end
+	end
+	xr_sound.set_sound_play(AC_ID,"inv_mutant_loot_animal")
+	
+	-- Increat field dressings stat
+	game_statistics.increment_statistic("field_dressings")
+	
+	-- Mutant post-state
+	save_var(obj_mutant,"loot",self.loot)
+	local is_more_loot = not is_empty(self.loot)
+	
+	-- Refill loot list if there's loot left
+	if ((not actor_effects.is_animations_on()) and is_more_loot) then
+		self:FillList()
+	else
+		self:Close()
+	end
+end
+
+function UIMutantLoot:FillList()
+
+	--developed by Dimeyne, copied by Wafel
+	self.loot = load_var(self.obj,"loot",nil)
+	if not self.loot then
+		self.loot = {}
+		loot_mutant(self.section, self.clsid, self.loot, nil, true, self.obj)
+		save_var(self.obj,"loot",self.loot)
+	end
+	
+	local is_there_loot
+	local inv = {}
+	for sec,t in pairs(self.loot) do
+		for i=1,t.count do
+			inv[#inv + 1] = sec
+		end
+		is_there_loot = true
+	end
+	
+	if (self.obj:clsid() ~= clsid.crow) and load_var(self.obj,"looted",nil) then
+		is_there_loot = false
+	end
+
+	if is_there_loot then
+		self:ShowDialog(true)
+		self.CC:Reinit(inv)
+		return true
+	else
+		actor_menu.set_msg(1, "st_body_useless",3)
+	end
+end
+
+function UIMutantLoot:SetMutantState(is_more_loot, obj_mutant)
+
+	obj_mutant = obj_mutant or level.object_by_id(self.id)
+	if (is_more_loot == nil) then
+		is_more_loot = not is_empty(self.loot)
+	end
+	
+	-- We set mutant state to looted or not if there's loot left, so other NPCs can decide what to do with the corpse
+	if obj_mutant then
+		if is_more_loot then
+			--save_var(obj_mutant,"looted",false)
+			se_save_var(obj_mutant:id(),obj_mutant:name(),"looted",false)
+			xr_corpse_detection.set_valuable_loot(self.id,true)
+		else
+			--save_var(obj_mutant,"looted",true)
+			se_save_var(obj_mutant:id(),obj_mutant:name(),"looted",true)
+			xr_corpse_detection.set_valuable_loot(self.id,false)
+		end
+	else
+		printe("!ERROR ui_mutant_loot | can't retrieve online object of mutant [%s](%s)", self.section, self.id)
+	end
+end
+
+-- Callbacks
+function UIMutantLoot:On_CC_Mouse1(cont, idx)
+	local ci = self.CC.cell[idx]
+	if (not ci) then
+		return
+	end
+
+	if (not ci.flags.selected) then
+		ci.flags.selected = true
+	else
+		ci.flags.selected = nil
+	end
+end
+
+function UIMutantLoot:OnButton_LootSelected()
+	self:Loot(false)
+end
+
+function UIMutantLoot:OnButton_LootAll()
+	self:Loot(true)
+end
+
+function UIMutantLoot:Close()
+	self:SetMutantState()
+	self:HideDialog()	
+	Unregister_UI("UIMutantLoot")
+end
+
+function UIMutantLoot:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (res == false) then
+		self.CC:OnKeyboard(dik, keyboard_action)
+	
+		if (dik == DIK_keys.DIK_RETURN) then 
+			self:OnButton_LootAll()
+			
+		elseif (dik == DIK_keys.DIK_ESCAPE) then 
+			self:Close()
+		end
+	end
+	return res
+end

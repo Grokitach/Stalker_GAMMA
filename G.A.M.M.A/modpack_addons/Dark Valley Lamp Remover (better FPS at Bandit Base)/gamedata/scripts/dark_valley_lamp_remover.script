@@ -1,0 +1,24 @@
+-- despawns Dark Valley lamp light sources for performance optimisation
+-- oleh5230, 04.06.25
+
+function actor_on_first_update()
+	if has_alife_info("dark_valley_lamp_despawned") or level.name() ~= "l04_darkvalley" then return end
+		printf("[dark_valley_lamp_remover] Initialization...")
+		for id = 1, 65534 do
+		obj = db.storage[id] and db.storage[id].object or level.object_by_id(id)
+		if obj and obj:clsid() and obj:clsid() == clsid.hlamp_s then
+			if string.find(obj:name(), "placeable") then
+				printf("[dark_valley_lamp_remover] Skipped placeable object: %s %s %s %s", id, obj:name(), obj:position().x, obj:position().z)
+			else
+				printf("[dark_valley_lamp_remover] Object released: %s %s %s %s", id, obj:name(), obj:position().x, obj:position().z)
+				--obj:get_hanging_lamp():turn_off(id)
+				alife_release_id(id)
+				db.actor:give_info_portion("dark_valley_lamp_despawned")
+			end
+		end
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+end
