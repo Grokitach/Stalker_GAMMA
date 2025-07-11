@@ -1,0 +1,71 @@
+-- this is just pathetic
+if zzzz_arti_jamming_repairs and zzzz_arti_jamming_repairs.process_jam_chance then
+	local pjc = zzzz_arti_jamming_repairs.process_jam_chance
+	local clamp = _g.clamp
+	local gc                  = game.translate_string
+	local clr_r  = utils_xml.get_color("d_red")
+	local clr_o  = utils_xml.get_color("d_orange")
+	local clr_y  = utils_xml.get_color("yellow")
+	local clr_g  = utils_xml.get_color("d_green")
+	local clr_p  = utils_xml.get_color("d_purple")
+	local clr_w	 = utils_xml.get_color("d_white")
+	function zzzz_arti_jamming_repairs.process_jam_chance(wpn)
+		if arti_jamming then
+			if arti_jamming.get_jam_chance then
+				if wpn then 
+					jam_prob = arti_jamming.get_jam_chance(wpn)
+					
+					-- momopate: calc the in-engine's jam chance. not all of this shit is accessible via traditional methods so it needs to be this ugly.
+					start_prob = SYS_GetParam(2, wpn:section(), "misfire_start_prob") or 0
+					start_cond = SYS_GetParam(2, wpn:section(), "misfire_start_condition") or 0
+					end_prob = SYS_GetParam(2, wpn:section(), "misfire_end_prob") or 0
+					end_cond = SYS_GetParam(2, wpn:section(), "misfire_end_condition") or 0
+					wpn:iterate_installed_upgrades(
+						function(upgr_sec)
+							local section = SYS_GetParam(0, upgr_sec, "section")
+							if not section then return end
+							start_prob = start_prob + SYS_GetParam(2, section, "misfire_start_prob", 0)
+							start_cond = start_cond + SYS_GetParam(2, section, "misfire_start_condition", 0)
+							end_prob = end_prob + SYS_GetParam(2, section, "misfire_end_prob", 0)
+							end_cond = end_cond + SYS_GetParam(2, section, "misfire_end_condition", 0)
+						end)
+					vanilla_jam_chance = 0
+					if wpn:condition() > start_cond then 
+						vanilla_jam_chance = 0 
+					elseif wpn:condition() < end_cond then 
+						vanilla_jam_chance = end_prob 
+					else
+						divisor = 1
+						if start_cond == end_cond then
+							divisor = start_cond
+						else
+							divisor = start_cond - end_cond
+						end
+						-- that's the vanilla jam chance formula, straight from the source code
+						vanilla_jam_chance = clamp(start_prob + ((start_cond - wpn:condition()) * (end_prob - start_prob) / divisor), 0, 0.99)
+					end
+
+					-- oleh5230
+					silencer_status = wpn:weapon_is_silencer() and 1 or SYS_GetParam(2, wpn:section(), "silencer_status") == 1 and 1 or 0
+					silencer_jam_chance = SYS_GetParam(2, wpn:section(), "misfire_start_prob") * 50 * silencer_status
+					-- oleh5230 end
+
+					vanilla_jam_chance = vanilla_jam_chance * 100
+					jam_prob = jam_prob + vanilla_jam_chance + silencer_jam_chance
+					--printf("asdf: %s", vanilla_jam_chance)
+					
+					if jam_prob <= 5 then clr = clr_g
+					elseif jam_prob <= 10 then clr = clr_y
+					elseif jam_prob <= 20 then clr = clr_o
+					else clr = clr_r end
+					
+					jam_prob = tonumber(string.format("%.2f", jam_prob))
+					
+					return " " .. clr_w .. gc("st_dot") .. " " .. clr .. gc("st_jam") .. "" .. clr_w .. " " .. jam_prob .. "%" .. "\\n"
+				else
+					return "\\n"
+				end
+			end
+		end
+	end
+end

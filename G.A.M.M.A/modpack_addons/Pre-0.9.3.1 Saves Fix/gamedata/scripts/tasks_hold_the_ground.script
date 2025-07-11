@@ -1,0 +1,124 @@
+local flea_market = "gar_smart_terrain_6_3"
+local spawn_points = {{
+    vector = vector():set(280.9568,0.6242,173.0680),
+    lvid = 354854,
+    gvid = 769
+    },{
+    vector = vector():set(251.9964,1.5907,121.3438),
+    lvid = 346391,
+    gvid = 752,
+    },{
+    vector = vector():set(238.2425,-0.1541,163.4095),
+    lvid = 341149,
+    gvid = 682
+}}
+local middle_of_battleground = vector():set(188.9683,0.4104,153.6230)
+
+local state = {
+    killed_squads = 0,
+    task_failed = false
+}
+function save_state(mdata)
+	mdata.hold_the_ground_task_data = state
+end
+
+function load_state(mdata)
+	if mdata.hold_the_ground_task_data then
+		state = mdata.hold_the_ground_task_data
+	end
+end
+
+task_status_functor.hold_the_ground_task_status_functor = function(tsk,task_id)
+	if not (db.actor and tsk) then return end
+	local stage = tsk.stage
+    local se_smart = SIMBOARD:get_smart_by_name(flea_market)
+    local smart = level.object_by_id(se_smart.id)
+
+	if (stage == 0) then
+        if
+            is_garbage()
+            and smart
+            and db.actor:position():distance_to(smart:position()) < 15
+        then
+            -- Spawn two squads at distant points
+            spawn(1, spawn_points[1])
+            spawn(3, spawn_points[3])
+            dynamic_news_helper.send_tip(game.translate_string('hold_the_ground_on_position_message'), game.translate_string("bar_petrenko_name"), nil,nil, 'ui_inGame2_petrenko', nil, 'npc')
+            tsk.stage = 1
+        end
+    end
+
+    if (stage == 1) then
+        if not is_garbage() or db.actor:position():distance_to(middle_of_battleground) > 200 then return 'fail' end
+
+        if state.killed_squads == 10 then
+            -- Delay the message to make it more natural
+            CreateTimeEvent(0,"hold_the_ground_defended_position_message",2, function ()
+                dynamic_news_helper.send_tip(game.translate_string('hold_the_ground_defended_position_message'), game.translate_string("bar_petrenko_name"), nil,nil, 'ui_inGame2_petrenko', nil, 'npc')
+                return true
+            end)
+            tsk.stage = 2
+        end
+    end
+end
+
+task_functor.hold_the_ground_task_target_functor = function(task_id,field,p,tsk)
+	if not (db.actor and tsk) then return nil end
+	local stage = tsk.stage
+
+    if tsk.stage == 0 then
+        return SIMBOARD:get_smart_by_name(flea_market).id
+    end
+    -- Do not show markers on squad members to not spoil the fun - they'll rush the target anyway
+    if (stage == 2) then
+        return tsk.task_giver_id
+    end
+end
+
+xr_effects.hold_the_ground_cleanup = function()
+    state = {
+        killed_squads = 0,
+        task_failed = false
+    }
+end
+
+xr_effects.hold_the_ground_fail_message = function ()
+    state.task_failed = true
+    dynamic_news_helper.send_tip(game.translate_string('hold_the_ground_run_fail_message'), game.translate_string("bar_petrenko_name"), nil,nil, 'ui_inGame2_petrenko', nil, 'npc')
+end
+
+-- Leaving it out of persistent state, as it's not that important on reloads
+local last_spawn_point = nil
+xr_effects.on_flea_market_defense_squad_death = function()
+    state.killed_squads = state.killed_squads + 1
+    if state.killed_squads <= 8 and not state.task_failed then
+        local rand_spawn_point_index = new_tasks_addon_tasks_utils.rand_with_exclusion(1, #spawn_points, last_spawn_point)
+        spawn(rand_spawn_point_index, spawn_points[rand_spawn_point_index])
+    end
+end
+
+function is_garbage()
+    return level.name() == "l02_garbage"
+end
+
+function spawn(index, spawn_config)
+    local squad_section
+    -- Will spawn 7 squads as novice
+    if state.killed_squads < 6 then
+        squad_section = "bandit_defence_squad_novice"
+    -- 2 as advanced
+    elseif state.killed_squads < 8 then
+        squad_section = "bandit_defence_squad_advanced"
+    -- and one as alpha
+    else
+        squad_section = "bandit_defence_squad_alpha"
+    end
+    last_spawn_point = index
+    local se_id = new_tasks_addon_tasks_utils.spawn_at_position(squad_section, spawn_config.vector, spawn_config.lvid, spawn_config.gvid, true)
+    alife_object(se_id).rush_to_target = true
+end
+
+function on_game_start()
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+end

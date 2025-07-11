@@ -1,0 +1,254 @@
+local TARGET_FUNCTOR_NAME = 'chimera_scan_target'
+local STATUS_FUNCTOR_NAME = 'chimera_scan_status'
+local DESCR_FUNCTOR_NAME =  'chimera_scan_descr'
+local MDATA_KEY = 'task_chimera_scan'
+local TASK_ID		= 'yan_stalker_sakharov_task_chimera_scan'
+
+local stage_tgt_f = {}
+local stage_f = {}
+local _m = {}
+
+local object = level.object_by_id
+local create_squad = utils_obj.create_squad
+local parse_ini = utils_data.parse_ini_section_to_array
+
+_cmd = debug_cmd_list.command_get_list()
+
+function on_game_start()
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+end
+
+function save_state(m)
+	m[MDATA_KEY] = _m
+end
+
+function load_state(m)
+	_m = m[MDATA_KEY] or {}
+end
+
+task_status_functor[STATUS_FUNCTOR_NAME] = function(tsk,task_id)
+	if not (db.actor and tsk) then return end
+	local stage = tsk.stage
+	local ret = stage_f[stage] and stage_f[stage](tsk,task_id) or stage
+	if tonumber(ret) then tsk.stage = ret else return ret end
+end
+
+task_functor[TARGET_FUNCTOR_NAME] = function(task_id,field,p,tsk)
+	if not (db.actor and tsk) then return end
+	return stage_tgt_f[tsk.stage] and safe_target(stage_tgt_f[tsk.stage](tsk,task_id)) or nil
+end
+
+task_functor[DESCR_FUNCTOR_NAME] = function(task_id,field,p,tsk)
+	if not (db.actor and tsk) then return end
+	return task_id..'_stage_'..tsk.stage
+end
+
+function has_item(sec)
+	return db.actor:object(sec)
+end
+
+function send_update(task_id)
+	news_manager.send_task(db.actor, "updated", db.actor:get_task(task_id, true))
+end
+
+function has_id(id)
+	local x = alife_object(id)
+	return x and x.parent_id == 0
+end
+
+function id_is_alive(id)
+	local x = alife_object(id)
+	return (IsStalker(x) or IsMonster(x)) and x:alive()
+end
+
+function safe_target(id)
+	if not id then return end
+	local x = alife_object(id)
+	if x then return x.parent_id == 65535 and id or x.parent_id end
+end
+
+function spawn_on_id(sec,id)
+	return alife_create_item(sec, alife_object(id))
+end
+
+function message_by_id(id,txt)
+	local se_obj = id and alife_object(id)
+	_ = txt and dynamic_news_helper.send_tip(game.translate_string(tostring(txt)),se_obj and game.translate_string(se_obj:character_name()),nil,nil, se_obj and se_obj:character_icon(), nil, 'npc')
+end
+
+function set_val(a,b,c)
+	_m[c[1]] = c[2]
+end
+
+function val_eq(a,b,c)
+	return _m[c[1]] and tostring(_m[c[1]]) == c[2]
+end
+
+function pick_random_array(t)
+	return t[math.random(#t)]
+end
+
+function combat_with_squad(id)
+	local se = alife_object(id)
+	if not se then return end
+	for k in se:squad_members() do 
+		local o = object(k.id)
+		if o and o:alive() and o:best_enemy() and o:best_enemy():id() == 0 then
+			return true
+		end
+	end
+end
+
+function spawn_on_squad_member(sec,id)
+	local se = alife_object(id)
+	if not se then return end
+	
+	local sei
+	while (not sei) do
+		for k in se:squad_members() do 
+			if not sei and math.random() > 0.6 then
+				-- printf('created %s on %s',sec, k.id)
+				sei = spawn_on_id(sec,k.id)
+			end
+		end
+	end
+	return sei
+end
+
+local ITEM = 'chimera_scan_device'
+
+function remove_scanner(tid)
+	if _m[tid] and _m[tid].scanner_id then
+		alife_release_id(_m[tid].scanner_id)
+	end
+end
+function release_chimera(tid)
+	if _m[tid] and _m[tid].chimera_id then
+		alife_release_id(_m[tid].chimera_id)
+	end
+end
+
+function in_range(chid)
+	local o = object(chid)
+	return o and db.actor:position():distance_to(o:position()) < 20
+end
+
+local pool = {
+	"pol_sim_1",
+	"pol_smart_terrain_1_1",
+	"pol_smart_terrain_1_2",
+	"pol_smart_terrain_1_3",
+	"agr_smart_terrain_2_2",
+	"agr_smart_terrain_5_2",
+	"agr_smart_terrain_7_5",
+	"red_smart_terrain_6_6",
+	"red_smart_terrain_5_6",
+	"red_smart_terrain_5_5",
+	"trc_sim_9",
+	"trc_sim_1",
+	"trc_sim_4",
+}
+
+function on_descr(a,b,p)
+	if not _m[p[1]] then
+		_m[p[1]] = {}
+	end
+	if not _m[p[1]].smart_name then
+		_m[p[1]].smart_name = pick_random_array(pool)
+		_m[p[1]].level_name = alife():level_name(game_graph():vertex(SIMBOARD.smarts_by_names[_m[p[1]].smart_name].m_game_vertex_id):level_id())
+		
+	end
+	CreateTimeEvent(0,"chimera_scan",0,function()
+		local news_caption = game.translate_string(task_manager.task_ini:r_string_ex(p[1], "title")) or "error"
+		local news_icon = task_manager.task_ini:r_string_ex(p[1], "icon") or "ui_inGame2_Poslednie_razrabotki"
+		local news_text = game.translate_string("st_location") .. " " .. game.translate_string(_m[p[1]].level_name)
+		db.actor:give_talk_message2(news_caption, news_text, news_icon, "iconed_answer_item", p[1])
+		return true
+	end)
+end
+
+function task_cleanup(a,b,c)
+	remove_scanner(c[1])
+	release_chimera(c[1])
+	sim_offline_combat.task_squads[_m[task_id].squad_id] = nil
+	_m[c[1]] = nil
+end
+function reward(a,b,c)
+
+end
+
+stage_tgt_f[0] = function(tsk, task_id)
+	return _m[task_id].chimera_id
+end
+stage_tgt_f[1] = function(tsk, task_id)
+	return _m[task_id].scanner_id
+end
+stage_tgt_f[2] = function(tsk, task_id)
+	return tsk.task_giver_id
+end
+
+stage_f[0] = function(tsk, task_id)	
+	_m[task_id].old_stage = 0
+	
+	
+	if not _m[task_id].scanner_id then
+		local se = spawn_on_id(ITEM, 0)
+		_m[task_id].scanner_id = se and se.id
+	end
+	if not _m[task_id].chimera_id then
+		local se = create_squad('simulation_chimera', _m[task_id].smart_name)
+		for k in se:squad_members() do
+			_m[task_id].chimera_id = k.id
+			_m[task_id].squad_id = se.id
+		end
+		sim_offline_combat.task_squads[se.id] = true
+	end
+	if not _m[task_id].scan_time then _m[task_id].scan_time = 0 end
+	
+	if not id_is_alive(_m[task_id].chimera_id) then
+		return "fail"
+	end
+	
+	if has_id(_m[task_id].scanner_id) then
+		printf('%s -> %s',_m[task_id].scan_time, _m[task_id].previous_time)
+		if _m[task_id].scan_time > 20000 then
+			return 2
+		end
+		
+		if _m[task_id].previous_time == 0 and _m[task_id].scan_time > 0 then
+			dynamic_news_helper.send_tip(game.translate_string('yan_stalker_sakharov_task_chimera_scan_start'))
+		end
+		if _m[task_id].previous_time > 0 and _m[task_id].scan_time == 0 then
+			dynamic_news_helper.send_tip(game.translate_string('yan_stalker_sakharov_task_chimera_scan_error'))
+		end
+		
+		if in_range(_m[task_id].chimera_id) then
+			_m[task_id].previous_time = _m[task_id].scan_time
+			_m[task_id].scan_time = _m[task_id].scan_time + time_global() - _m[task_id].last_update
+		else
+			_m[task_id].previous_time = _m[task_id].scan_time
+			_m[task_id].scan_time = 0
+		end
+	else
+		return 1
+	end
+	_m[task_id].last_update = time_global()
+end
+
+stage_f[1] = function(tsk, task_id)	
+	if not id_is_alive(_m[task_id].chimera_id) and _m[task_id].old_stage == 0 then
+		return "fail"
+	end
+	
+	if has_id(_m[task_id].scanner_id) then
+		return _m[task_id].old_stage
+	end
+end
+
+stage_f[2] = function(tsk, task_id)	
+	_m[task_id].old_stage = 2
+	if not has_id(_m[task_id].scanner_id) then
+		return 1
+	end
+end

@@ -1,0 +1,88 @@
+local nta_utils = new_tasks_addon_tasks_utils
+local tunnel_smart_terrain = "jup_sim_2"
+
+local state = {
+    small_giants_ids = {},
+    big_giant_id = nil
+}
+function save_state(mdata)
+	mdata.big_game_task_data = state
+end
+
+function load_state(mdata)
+	if mdata.big_game_task_data then
+		state = mdata.big_game_task_data
+	end
+end
+
+task_status_functor.big_game_task_status_functor = function(tsk,task_id)
+	if not (db.actor and tsk) then return end
+	local stage = tsk.stage
+
+	if stage == 0 then
+        if
+            is_jupiter()
+            and db.actor:position():distance_to(SIMBOARD.smarts_by_names[tunnel_smart_terrain].position) < 35
+        then
+            spawn_small_giants()
+            tsk.stage = 1
+        end
+    end
+
+    if stage == 1 then
+        local alive = false
+        for _, id in ipairs(state.small_giants_ids) do
+            local giant = level.object_by_id(id)
+            if giant and giant:alive() then
+                alive = true
+            end
+        end
+
+        if not alive then
+            spawn_big_giant()
+            tsk.stage = 2
+        end
+    end
+
+    if stage == 2 then
+        local giant = level.object_by_id(state.big_giant_id)
+        if giant and not giant:alive() then
+            tsk.stage = 3
+        end
+    end
+end
+
+function spawn_small_giants()
+    for _, spawn_config in pairs(big_game_configs.small_giants_spots) do
+        table.insert(state.small_giants_ids, nta_utils.spawn_helper(spawn_config, "gigant_weak"))
+    end
+end
+
+function spawn_big_giant()
+    state.big_giant_id = nta_utils.spawn_helper(big_game_configs.big_giant_spot)
+end
+
+function is_jupiter()
+    return level.name() == "jupiter"
+end
+
+task_functor.big_game_task_target_functor = function(task_id,field,p,tsk)
+	if not (db.actor and tsk) then return nil end
+
+    if tsk.stage == 3 then
+        return tsk.task_giver_id
+    end
+    return SIMBOARD:get_smart_by_name(tunnel_smart_terrain).id
+end
+
+xr_effects.big_game_cleanup = function()
+    state = {
+        small_giants_ids = {},
+        big_giant_id = nil
+    }
+end
+
+function on_game_start()
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+end

@@ -1,0 +1,58 @@
+common = animation_common
+
+function block_shotgun_reload(anm_table, item)
+    -- Ignore weapons without unjam animation
+    if not common.has_animation(item:section(), "anm_reload_misfire") then
+        return
+    end
+
+    -- Exit early 
+    if not (IsShotgun(item)
+    and anm_table.anm_name == "anm_open"
+    and item:cast_Weapon():IsMisfire()) then
+        return
+    end
+
+    -- Cancel shotgun reload
+    anm_table.anm_name = "$cancel"
+    
+    -- Play unjam animation and sound
+    CreateTimeEvent("shotgun_unjam_fix", "start_unjam", 0.001, function(wpn)
+        wpn:play_hud_motion("anm_reload_misfire", true, 0, 1, 0)
+        
+        -- Allow sound cancel if animation is interrupted
+        local sound_path = SYS_GetParam(0, wpn:section(), "snd_reload_misfire")
+        if sound_path then
+            local sound = common.get_safe_sound_object(sound_path, wpn:section())
+            sound:play(db.actor, 0, sound_object.s2d)
+        end
+        
+        common.set_flag("SHOTGUN_UNJAM")
+        return true
+    end, item)
+
+    -- Stop checks for variants
+    return true
+end
+common.add_anim_mutator(block_shotgun_reload, -9999)
+
+function actor_on_hud_animation_end(item,section,motion,state,slot)
+    -- Clear jam when unjam anim ends
+    if common.get_flag("SHOTGUN_UNJAM") then
+        item:cast_Weapon():SetMisfire(false)
+        common.remove_flag("SHOTGUN_UNJAM")
+    end
+end
+
+-- Stop unjam spam
+function on_before_key_press(dik, bind, dis, flags)
+    if bind == key_bindings.kWPN_RELOAD
+    and common.get_flag("SHOTGUN_UNJAM") then
+        flags.ret_value = false
+    end
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_hud_animation_end",actor_on_hud_animation_end)
+    RegisterScriptCallback("on_before_key_press",on_before_key_press)
+end
