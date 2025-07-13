@@ -1,0 +1,127 @@
+--[[
+    
+    /-------------------------< NPE example for G.A.M.M.A. >--------------------------\
+    |   Creator:     Grok                                                             |
+    |   Mod:         G.A.M.M.A. TUTORIALS                                             |
+    |   File:        npe_gamma_tutorial_repair_gun_mcm.script                         |
+    |   Description: Example implementation of a G.A.M.M.A. specific tutorial in NPE  |
+    |   Created:     13.07.2025                                                       |
+    |                                                                                 |
+    \---------------------------------------------------------------------------------/
+--]]
+
+local artefact_detector_equipped = false
+
+local GRS_EVENTS = 
+{
+    ARTEFACT_DETECTOR_EQUIPPED_EVENT = 
+    {
+        name = "artefact System",
+        handler = 
+        {
+            name        = "on_actor_attack", -- Whatever. Just be unique.
+            functors    = 
+            {
+                {
+                    "npe_gamma_tutorial_artefact_mcm", -- Name of the `.script` file that contains the function below.
+                    "should_trigger_artefact_tutorial" -- Function that handles the ARTEFACT_DETECTOR_EQUIPPED_EVENT event. If this returns true then the tutorial will trigger.
+                }
+            }
+        }
+    }
+}
+
+-- This is basically what's ran every couple of seconds by NPE. When this returns true the tutorial associated will trigger.
+function should_trigger_artefact_tutorial()
+	if artefact_detector_equipped then
+		return true
+	end
+end
+
+-- This isn't necessarily needed. The code here could be contained inside `should_trigger_gun_repair_tutorial` (or whatever method will become trigger for tutorial).
+-- It is a good idea though to have 2 methods: 1 light that runs very quick. Another one that's tied to a callback that only runs when something happens.
+function is_artefact_item_used(obj)
+	local sec = obj and obj:section()
+	if sec then
+		if string.find(sec,"detector") then
+			artefact_detector_equipped = true
+		end
+	end
+end
+
+-- This is basically what's ran every couple of seconds by NPE. When this returns true the tutorial associated will trigger.
+function should_trigger_artefact_tutorial()
+	if artefact_detector_equipped then
+		return true
+	end
+end
+
+
+
+local deck = 
+{
+    title   = "Damage System Tutorial",
+    module  = "gamma_tutorial_artefact",
+    id      = "gamma_tutorial_artefact",
+    mcm_menu_name = "ui_mcm_npe_module_gamma_tutorial_artefact", -- must match the string in the localization file "ui_st_npe_modulename.xml"
+    mcm_menu_title = "ui_mcm_npe_module_gamma_tutorial_artefact_title", -- must match the string in the localization file "ui_st_npe_modulename.xml"
+    mcm_menu_desc = "ui_mcm_npe_module_gamma_tutorial_artefact_desc", -- must match the string in the localization file "ui_st_npe_modulename.xml"
+    dialog  = npe.DIALOG.UI_TUTORIAL,
+    sets    =
+    {
+        {
+            id      = "artefact", -- Should be the same as the checkbox id in `on_mcm_load()`
+            title   = "ui_mcm_npe_module_gamma_tutorial_artefact_title",
+            override_cards_count = 5,
+            cards   = -- These are the pages of a tutorial. All properties below are required. Otherwise NPE glitches out.
+            {
+                [1] =
+                {
+                    title       = "ui_gamma_tutorial_artefact_card_01_title",
+                    description = "ui_gamma_tutorial_artefact_card_01_description",
+                    image       = "artefact_1"
+                },
+                [2] =
+                {
+                    title       = "ui_gamma_tutorial_artefact_card_02_title",
+                    description = "ui_gamma_tutorial_artefact_card_02_description",
+                    image       = "artefact_2"
+                },
+                [3] =
+                {
+                    title       = "ui_gamma_tutorial_artefact_card_03_title",
+                    description = "ui_gamma_tutorial_artefact_card_03_description",
+                    image       = "artefact_3"
+                },
+                [4] =
+                {
+                    title       = "ui_gamma_tutorial_artefact_card_04_title",
+                    description = "ui_gamma_tutorial_artefact_card_04_description",
+                    image       = "artefact_4"
+                },
+                [5] =
+                {
+                    title       = "ui_gamma_tutorial_artefact_card_05_title",
+                    description = "ui_gamma_tutorial_artefact_card_05_description",
+                    image       = "artefact_5"
+                },
+            },
+            context = {
+                event = GRS_EVENTS.ARTEFACT_DETECTOR_EQUIPPED_EVENT,
+                pause_game = true,
+            },
+        },
+    },
+}
+
+function on_mcm_load()
+    op = { id = deck.id, sh = true, text = deck.mcm_menu_name, gr = npe_mcm.get_module_menu(deck) }
+    return op, "npe_module"
+end
+
+function on_game_start()
+    if npe then
+        npe_director.Register_npe_module(deck)
+    end
+	RegisterScriptCallback("actor_item_to_slot",is_artefact_item_used)
+end
