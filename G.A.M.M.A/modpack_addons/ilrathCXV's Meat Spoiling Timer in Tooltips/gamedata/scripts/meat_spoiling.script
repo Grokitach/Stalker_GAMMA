@@ -1,0 +1,235 @@
+--[[
+    Full rewrite of Rotten Meat addon by HarukaSai for EFP (visit at: https://discord.com/invite/stalker-efp)
+
+    Created: 13-11-2022
+
+    Credits for original addon: Arszi
+
+    Features:
+        - Rewritten logic
+        - Refrigiration
+        - MCM configuration
+]]
+
+local mcm_id = "meat_spoiling"
+
+local expiration_time = nil
+local expiration_table = {}
+
+local ini_meat = ini_file_ex("plugins\\meat_spoiling_settings.ltx")
+meats = utils_data.collect_section(ini_meat.ini, "meats", true)
+
+local function t2c(t)
+	if not t then return nil end
+	local ct = game.CTime()
+	ct:set(t.Y,t.M,t.D,t.h,t.m,t.s,t.ms)
+	return ct
+end
+
+local function c2t(ct)
+	if not ct then return nil end
+	local Y, M, D, h, m, s, ms = 0, 0, 0, 0, 0, 0, 0
+	Y, M, D, h, m, s, ms = ct:get(Y, M, D, h, m, s, ms)
+	return { Y=Y, M=M, D=D, h=h, m=m, s=s, ms=ms }
+end
+
+local previous_time = nil
+
+function actor_on_update()
+    local curr_time = game.get_game_time()
+
+    if (previous_time == nil) then previous_time = curr_time end
+  
+    if not (curr_time:diffSec(previous_time) > 1) then
+        return
+    end
+
+    previous_time = curr_time
+
+    tick_expiration()
+end
+
+function actor_on_item_take(item)
+    local id = item:id()
+    local sec = item:section()
+
+    if not (meats[sec] and (not expiration_table[id])) then
+        return
+    end
+
+    expiration_table[id] = {
+        duration = string.match(sec, "meat_") and expiration_time.cooked or expiration_time.raw,
+        last_update = c2t(game.get_game_time())
+    }
+end
+
+function actor_on_item_use(obj)
+    if (obj and expiration_table[obj:id()]) then
+        expiration_table[obj:id()] = nil
+    end
+end
+
+function get_meat_is_frozen(se_obj)
+    if (not se_obj) then return false end
+
+    local se_parent = se_obj.parent_id and se_obj.parent_id < 65535 and alife_object(se_obj.parent_id)
+    
+    if (not se_parent) or (se_parent:section_name() ~= "placeable_fridge") then
+        return false
+    end
+
+    return true
+end
+
+function tick_expiration()
+    local curr_time = game.get_game_time()
+
+    for id, data in pairs(expiration_table) do
+        repeat
+            local se_obj = alife_object(id)
+            
+            if (not se_obj) or (not meats[se_obj:section_name()]) then
+                expiration_table[id] = nil
+                do break end
+            end
+
+            if (not get_meat_is_frozen(se_obj)) then
+                data.duration = data.duration - curr_time:diffSec(t2c(data.last_update))
+            end
+
+            data.last_update = c2t(curr_time)
+            
+            if (data.duration <= 0) then
+                expire_food(se_obj)
+                expiration_table[id] = nil
+            end
+        until true
+    end
+end
+
+function expire_food(se_obj)
+    if (not se_obj.parent_id) or se_obj.parent_id >= 65535 then
+        alife_release(se_obj)
+        return
+    end
+
+    local se_parent = alife_object(se_obj.parent_id)
+    
+    alife_release(se_obj)
+
+    if se_parent and (IsInvbox(se_parent) or se_parent.id == AC_ID) then
+        alife_create_item("rotten_meat", se_parent)
+    end
+end
+
+-- show spoiling timer in hours
+local gt = game.translate_string
+build_footer_base = ui_item.build_desc_footer
+function ui_item.build_desc_footer(obj, sec, str)
+	str = str or gt(ini_sys:r_string_ex(sec, "description"))
+	if (not str) then return "" end
+	
+	local id = obj and obj:id()
+	
+	if id and expiration_table[id] and expiration_table[id].duration then
+		
+		local expiration_hours =  round_idp(expiration_table[id].duration / 3600, 1)
+		
+		local p_clr = utils_xml.get_color("d_purple")
+		local timer_clr = ((expiration_hours < 8) and utils_xml.get_color("d_red")) or ((expiration_hours < 12) and utils_xml.get_color("d_orange")) or ((expiration_hours < 24) and utils_xml.get_color("yellow")) or utils_xml.get_color("pda_white")
+		local def_clr = utils_xml.get_color("ui_gray_1")
+		
+		local sec_str = "\\n " .. p_clr .. gt("cxv_tooltip_dot") .. " " .. def_clr .. gt("cxv_rotting_timer_title") .. " " .. timer_clr .. expiration_hours .. " " .. gt("cxv_rotting_hrs") .. "\\n \\n" .. def_clr
+		
+		if sec_str then
+			return build_footer_base(obj, sec, str) .. sec_str
+		end
+		
+	end
+
+	return build_footer_base(obj, sec, str)
+end
+
+function save_state(m_data)
+	m_data.expiration_table = expiration_table
+end
+
+function load_state(m_data)
+	expiration_table = m_data.expiration_table or {}
+end
+
+function on_option_change()
+    expiration_time = {
+        raw = ui_mcm and ui_mcm.get(mcm_id .. "/expiration_hours_raw") * 60 * 60 or 48 * 60 * 60,
+        cooked = ui_mcm and ui_mcm.get(mcm_id .. "/expiration_hours_cooked")  * 60 * 60 or 120 * 60 * 60
+    }
+end
+
+local clr_frozen = GetARGB(40,0,197,255)
+
+function get_meat_is_frozen_cell(cell)
+    local se_obj = cell.ID and expiration_table[cell.ID] and alife_object(cell.ID)
+
+    if get_meat_is_frozen(se_obj) then
+        return true
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_item_use", actor_on_item_use)
+    RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+    RegisterScriptCallback("actor_on_item_take",actor_on_item_take)
+    RegisterScriptCallback("actor_on_update", actor_on_update)
+    RegisterScriptCallback("on_option_change", on_option_change)
+
+    rax_persistent_highlight.register("frozen_meat", function(cell)
+        return get_meat_is_frozen_cell(cell) and clr_frozen or false
+    end)
+    
+    local anchor_x = function(axis, margin, w)
+        return (axis.w - w) - margin
+    end
+
+    local anchor_y = function(axis, margin, h)
+        return margin
+    end
+
+    rax_icon_layers.register("frozen_meat", function(cell, obj, sec)
+        if get_meat_is_frozen_cell(cell) then
+            local axis = utils_xml.get_item_axis(sec)
+
+            return {
+                texture = "ui_icon_freeze", 
+                x = anchor_x(axis, 2, 13), 
+                y = anchor_y(axis, 2, 13), 
+                w = 13, 
+                h = 13
+            }
+        end
+    end)
+    
+    on_option_change()
+	
+	-- Credit to Utjan's "Tagged Patches" mod for allowing to see multiple items in a stack for items that don't usually allow it
+	_inv_SYS_GetParam = ui_inventory.SYS_GetParam
+	_Picker_Toggle = ui_inventory.UIInventory.Picker_Toggle
+	function ui_inventory.UIInventory:Picker_Toggle(bag, idx, update_mode, force_hide)
+		ui_inventory.SYS_GetParam = new_get_param
+		_Picker_Toggle(self, bag, idx, update_mode, force_hide)
+		ui_inventory.SYS_GetParam = nil
+	end
+end
+
+_inv_SYS_GetParam = nil
+function new_get_param(typ, sec, param, def)
+    if param == "use_condition" and (meats[sec] or (tagged_patches and tagged_patches.is_patch(nil, sec))) then
+        return true
+    else
+		if _inv_SYS_GetParam then
+        	return _inv_SYS_GetParam(typ, sec, param, def)
+		else
+			return SYS_GetParam(typ, sec, param, def)
+		end
+    end
+end
