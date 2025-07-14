@@ -1,0 +1,308 @@
+-- Unusable Parts Handler, script written by G_FLAT
+-- This mod automatically sells or deletes part items that are below a certain condition threshold 
+-- If delete_parts is true, any part item that is too damaged will be deleted when the player picks up or transfers it to his inventory
+-- If sell_parts is true, all parts that are too damaged inside the player's inventory will be automatically moved to the player's trade bag or donated if the condition is 0%
+-- If dump parts is true, unusable parts are dumped into dead bodies that can despawn
+
+local sell_parts 						= true
+local dump_parts						= false
+local delete_parts 						= false
+local weapon_part_condition_threshold 	= 60
+local outfit_part_condition_threshold 	= 50
+local ignore_recipe_materials 			= false
+local ignore_fabrics 					= true
+local handle_useless_ammo_parts 		= true
+local announce_handled_part 			= false
+local always_handle_junk				= true
+local never_handle_favorites			= true
+local important_npcs = {}
+
+function actor_on_item_take(item)
+	if delete_parts then
+		if is_unusable_part(item) then
+			if announce_handled_part then news_manager.send_tip(db.actor, "Discarded " .. ui_item.get_obj_name(item)) end
+			alife_release(item)
+		end
+	end
+end
+
+-- most of this function is stolen from Sorting Plus
+function GUI_on_show(name)
+	if (name ~= "UIInventory") then return end
+
+	if sell_parts and ui_inventory.GUI.mode == "trade" then
+		ui_inventory.GUI:SellUnusableParts()
+	elseif dump_parts and ui_inventory.GUI.mode == "loot" then
+		local obj = level.object_by_id(ui_inventory.GUI.npc_id)
+
+		if obj and IsStalker(obj) and not important_npcs[obj:section()] then
+			if obj:alive() then return end
+			ui_inventory.GUI:DumpUnusableParts()
+		end
+	end
+end
+
+-- most of this function is stolen from Sorting Plus
+function ui_inventory.UIInventory:SellUnusableParts()
+    function itr(_, item)
+        if is_unusable_part(item) then
+			if condition_is_0(item) then
+				if announce_handled_part then news_manager.send_tip(db.actor, "Donated " .. ui_item.get_obj_name(item)) end
+				self:Action_Donate(item, "actor_trade_bag")
+			else
+				-- news_manager.send_tip(db.actor, "Transfering " .. ui_item.get_obj_name(item))
+				self:Action_Move(item, "actor_trade_bag")
+			end
+        end
+    end
+	
+    local cc = self.CC["actor_trade_bag"]
+	
+    if cc:IsShown() then
+        db.actor:iterate_inventory(itr, db.actor)
+    end
+end
+
+-- most of this function is stolen from Sorting Plus
+function ui_inventory.UIInventory:DumpUnusableParts()
+    function itr2(_, item)
+        if is_unusable_part(item) then
+			-- news_manager.send_tip(db.actor, "Transfering " .. ui_item.get_obj_name(item))
+			self:Action_Move(item, "actor_bag")
+        end
+    end
+	
+    local cc = self.CC["actor_bag"]
+	
+    if cc:IsShown() then
+        db.actor:iterate_inventory(itr2, db.actor)
+    end
+end
+
+-- most conditions in this function are stolen from Auto Looter
+function is_unusable_part(item)
+	local sec = item:section()
+	if never_handle_favorites and zzz_rax_sortingplus_mcm.is_favorite(sec) then return false end
+	if IsItem("part", sec) then
+		if always_handle_junk and zzz_rax_sortingplus_mcm.is_junk(sec) then	return true end
+		local con = item:condition()
+		if string.find(sec, "prt_w_") then
+			if con < (weapon_part_condition_threshold / 100) then
+				return true
+			end
+		elseif string.find(sec, "prt_o_") 
+		and not (ignore_fabrics and string.find(sec, "prt_o_fabrics"))
+		and not (ignore_recipe_materials and zzz_craft_use_in_tooltip_mcm and is_not_empty(zzz_craft_use_in_tooltip_mcm.getCraftableItems(sec))) then
+			if con < (outfit_part_condition_threshold / 100) then
+				return true
+			end
+		elseif sec == "prt_i_ammo" and handle_useless_ammo_parts then
+			return true
+		end
+	end
+end
+
+function condition_is_0(item)
+	if item:condition() < 0.01 then
+		return true
+	end
+end
+
+function Set(t)
+	local s = {}
+	for _,v in pairs(t) do s[v] = true end
+	return s
+end
+
+important_npcs = Set {
+
+	--[[ CORDON ]]--
+"esc_m_trader",                                             -- Sidorovich
+"m_trader",                                                 -- Sidorovich
+"esc_2_12_stalker_nimble",									-- Nimble
+"esc_2_12_stalker_wolf",									-- Wolf
+"esc_2_12_stalker_fanat",									-- Fanatic
+"esc_2_12_stalker_trader", 									-- Sidorovich
+"esc_smart_terrain_5_7_loner_mechanic_stalker", 			-- Xenotech
+"devushka", 												-- Hip
+"esc_main_base_trader_mlr",									-- Loris
+"esc_3_16_military_trader",									-- Major Zhurov
+"army_south_mechan_mlr",									-- Seryoga
+
+	--[[ GREAT SWAMPS ]]--
+
+"mar_smart_terrain_doc_doctor",								-- Doctor
+"mar_smart_terrain_base_stalker_leader_marsh",				-- Cold
+"mar_base_stalker_tech",									-- Novikov
+"mar_base_owl_stalker_trader",								-- Spore
+"mar_smart_terrain_base_doctor",							-- Professor Kalancha
+"guid_marsh_mlr",											-- Ivan Trodnik
+"mar_base_stalker_barmen",									-- Librarian
+
+	--[[ DARKSCAPE ]]--
+
+"dasc_tech_mlr",											-- Polymer
+"dasc_trade_mlr",											-- Cutter
+"ds_domik_isg_leader",										-- Major Hernandez
+
+	--[[ GARBAGE ]]--
+
+"hunter_gar_trader",										-- Butcher
+
+	--[[ AGROPROM ]]--
+
+"agr_smart_terrain_1_6_near_2_military_colonel_kovalski",	-- Major Kuznetsov
+"agr_1_6_medic_army_mlr",									-- Rogovets
+"agr_smart_terrain_1_6_army_trader_stalker",				-- Sergeant Spooner
+"agr_1_6_barman_army_mlr",									-- Commander
+"agr_smart_terrain_1_6_army_mechanic_stalker",				-- Lieutenant Kirilov
+
+	--[[ AGROPROM UNDERGROUND ]]--
+
+"agr_u_bandit_boss",										-- Reefer
+
+	--[[ DARK VALLEY ]]--
+
+"zat_b7_bandit_boss_sultan",								-- Sultan
+"val_smart_terrain_7_3_bandit_mechanic_stalker",			-- Limpid
+"guid_dv_mal_mlr",											-- Pug
+"val_smart_terrain_7_4_bandit_trader_stalker",				-- Olivius
+
+	--[[ ROSTOK ]]--
+
+"bar_visitors_barman_stalker_trader",						-- Barkeep
+"bar_visitors_zhorik_stalker_guard2",						-- Zhorik
+"bar_visitors_garik_stalker_guard",							-- Garik
+"bar_informator_mlr",										-- Snitch
+"guid_bar_stalker_navigator",								-- Navigator
+"bar_arena_manager",										-- Arnie
+"bar_arena_guard",											-- Liolik
+"bar_dolg_leader",											-- General Voronin
+"bar_dolg_general_petrenko_stalker", 						-- Colonel Petrenko
+"bar_dolg_medic", 											-- Aspirin
+"bar_visitors_stalker_mechanic",							-- Mangun
+"bar_zastava_2_commander",									-- Sergeant Kitsenko
+"bar_duty_security_squad_leader",							-- Captain Gavrilenko
+
+	--[[ YANTAR ]]--
+
+"yan_stalker_sakharov", 									-- Professor Sakharov
+"mechanic_army_yan_mlr", 									-- Peregrine
+"yan_povar_army_mlr", 										-- Spirit
+"yan_ecolog_kruglov",										-- Professor Kruglov
+
+	--[[ ARMY WAREHOUSES ]]--
+
+"mil_smart_terrain_7_7_freedom_leader_stalker", 			-- Lukash
+"mil_freedom_medic", 										-- Solid
+"mil_smart_terrain_7_10_freedom_trader_stalker", 			-- Skinflint
+"mil_smart_terrain_7_7_freedom_mechanic_stalker", 			-- Screw
+"mil_freedom_guid", 										-- Leshiy
+"stalker_gatekeeper", 										-- Gatekeeper
+
+	--[[ DEAD CITY ]]--
+
+"cit_killers_merc_mechanic_stalker", 						-- Hog
+"cit_killers_merc_trader_stalker", 							-- Dushman
+"ds_killer_guide_main_base", 								-- Leopard
+"cit_killers_merc_barman_mlr", 								-- Aslan
+"cit_killers_merc_medic_stalker", 							-- Surgeon
+
+	--[[ RED FOREST ]]--
+
+"red_forester_tech", 										-- Forester
+"red_greh_trader",											-- Stribog
+"red_greh_tech",											-- Dazhbog
+
+	--[[ DESERTED HOSPITAL ]]--
+
+"kat_greh_sabaoth", 										-- Chernobog and variants
+"gen_greh_sabaoth",
+"sar_greh_sabaoth",
+
+	--[[ JUPITER ]]--
+
+"jup_b220_trapper", 										-- Trapper
+"jup_a6_stalker_barmen", 									-- Hawaiian
+"guid_jup_stalker_garik", 									-- Garry
+"jup_a6_stalker_medik", 									-- Bonesetter
+"zat_a2_stalker_mechanic", 									-- Cardan
+"jup_b217_stalker_tech", 									-- Nitro
+"jup_a6_freedom_trader_ashot", 								-- Ashot
+"jup_a6_freedom_leader", 									-- Loki
+"jup_b6_scientist_tech", 									-- Tukarev
+"jup_b6_scientist_nuclear_physicist", 						-- Professor Hermann
+"jup_b6_scientist_biochemist", 								-- Professor Ozersky
+"jup_depo_isg_leader",										-- Major Hernandez
+"jup_cont_mech_bandit",										-- Nile
+"jup_cont_trader_bandit",									-- Klenov
+"jup_depo_isg_tech",										-- Lieutenant Maus
+
+	--[[ ZATON ]]--
+
+"zat_stancia_mech_merc", 									-- Kolin
+"zat_stancia_trader_merc", 									-- Vector
+"zat_a2_stalker_nimble", 									-- Nimble
+"zat_b30_owl_stalker_trader", 								-- Owl
+"zat_tech_mlr", 											-- Spleen
+"zat_b22_stalker_medic", 									-- Axel
+"zat_a2_stalker_barmen", 									-- Beard
+"zat_b18_noah", 											-- Noah
+"guid_zan_stalker_locman", 									-- Pilot
+"zat_b106_stalker_gonta",									-- Gonta
+"zat_b106_stalker_garmata", 								-- Garmata
+"zat_b106_stalker_crab", 									-- Crab
+"army_degtyarev_jup",                                      	-- Colonel Degtyarev and variants
+"army_degtyarev",
+"stalker_rogue",											-- Rogue and variants
+"stalker_rogue_ms",
+"stalker_rogue_oa",
+"zat_b7_stalker_victim_1",									-- Spartacus
+
+	--[[ OUTSKIRTS ]]--
+
+"pri_monolith_monolith_trader_stalker", 					-- Krolik
+"lider_monolith_haron", 									-- Charon
+"pri_monolith_monolith_mechanic_stalker", 					-- Cleric
+"monolith_eidolon", 										-- Eidolon
+"guid_pri_a15_mlr", 										-- Tourist
+"trader_pri_a15_mlr", 										-- Cashier
+"pri_medic_stalker", 										-- Yar
+"merc_pri_a18_mech_mlr", 									-- Trunk
+"pri_special_trader_mlr", 									-- Meeker
+"merc_pri_grifon_mlr", 										-- Griffin
+"mechanic_monolith_kbo", 									-- Bracer
+"trader_monolith_kbo", 										-- Olivar
+"stalker_stitch", 											-- Stitch and variants
+"stalker_stitch_ms",
+"stalker_stitch_oa",
+"lost_stalker_strelok", 									-- Strelok and variants
+"stalker_strelok_hb",
+"stalker_strelok_oa",
+"lazarus_stalker",
+
+}
+
+function on_option_change()
+	if ui_mcm then
+		outfit_part_condition_threshold = ui_mcm.get("unusable_parts_handler/outfit_part_condition_threshold")
+		weapon_part_condition_threshold = ui_mcm.get("unusable_parts_handler/weapon_part_condition_threshold")
+		delete_parts 					= ui_mcm.get("unusable_parts_handler/delete_parts")
+		sell_parts 						= ui_mcm.get("unusable_parts_handler/sell_parts")
+		dump_parts 						= ui_mcm.get("unusable_parts_handler/dump_parts")
+		always_handle_junk 				= ui_mcm.get("unusable_parts_handler/always_handle_junk")
+		never_handle_favorites 			= ui_mcm.get("unusable_parts_handler/never_handle_favorites")
+		ignore_recipe_materials 		= ui_mcm.get("unusable_parts_handler/ignore_recipe_materials")
+		ignore_fabrics 					= ui_mcm.get("unusable_parts_handler/ignore_fabrics")
+		handle_useless_ammo_parts 		= ui_mcm.get("unusable_parts_handler/handle_useless_ammo_parts")
+		announce_handled_part 			= ui_mcm.get("unusable_parts_handler/announce_handled_part")
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_item_take", actor_on_item_take)
+	RegisterScriptCallback("GUI_on_show", GUI_on_show)
+
+	on_option_change()
+end
