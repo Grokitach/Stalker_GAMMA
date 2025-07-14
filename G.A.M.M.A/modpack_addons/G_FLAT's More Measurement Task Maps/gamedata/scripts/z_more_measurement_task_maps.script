@@ -1,0 +1,81 @@
+-- More Measurement Task Maps, by G_FLAT
+-- This mod allows the current and adjacent maps to be used in measurement tasks.
+-- It also can allow specific maps that are blacklisted from being used at all.
+
+local override_eligible_map_distances_parameter = true
+local eligible_map_distances_parameter = 5
+local validate_measure_task_original = xr_conditions.validate_measure_task
+
+xr_conditions.validate_measure_task = function(actor, npc, p)
+	if override_eligible_map_distances_parameter then
+		if p and p[2] then
+			p[2] = eligible_map_distances_parameter
+		end
+	end
+	
+	return validate_measure_task_original(actor, npc, p)
+end
+
+
+local allow_more_southern_maps = true
+local allow_more_northern_maps = false
+local allow_very_northern_maps = false
+local allow_underground_maps = false
+
+function update_blacklist()
+	if allow_more_southern_maps then
+		tasks_measure.blacklisted_maps["l01_escape"]			= false
+		tasks_measure.blacklisted_maps["l05_bar"]				= false
+		tasks_measure.blacklisted_maps["l02_garbage"]			= false
+	end
+
+	if allow_more_northern_maps then
+		tasks_measure.blacklisted_maps["l11_pripyat"]			= false
+		tasks_measure.blacklisted_maps["l10_radar"]				= false
+		tasks_measure.blacklisted_maps["l11_hospital"]			= false
+	end
+
+	if allow_very_northern_maps then
+		tasks_measure.blacklisted_maps["l13_generators"]		= false
+		tasks_measure.blacklisted_maps["l12_stancia_2"]			= false
+		tasks_measure.blacklisted_maps["l12_stancia"]			= false
+	end
+
+	if allow_underground_maps then
+		if allow_more_southern_maps then
+			tasks_measure.blacklisted_maps["l03u_agr_underground"]	= false
+			tasks_measure.blacklisted_maps["l04u_labx18"]			= false
+			tasks_measure.blacklisted_maps["l08u_brainlab"]			= false
+		end
+
+		if allow_more_northern_maps then
+			tasks_measure.blacklisted_maps["jupiter_underground"]	= false
+			tasks_measure.blacklisted_maps["labx8"]					= false
+			tasks_measure.blacklisted_maps["l10u_bunker"]			= false
+		end
+
+		if allow_very_northern_maps then
+			tasks_measure.blacklisted_maps["l12u_control_monolith"] = false
+			tasks_measure.blacklisted_maps["l12u_sarcofag"]			= false
+			tasks_measure.blacklisted_maps["l13u_warlab"]			= false
+		end
+	end	
+end
+
+function on_option_change()
+	if ui_mcm then
+		override_eligible_map_distances_parameter	= ui_mcm.get("more_measurement_task_maps/override_eligible_map_distances_parameter")
+		eligible_map_distances_parameter			= ui_mcm.get("more_measurement_task_maps/eligible_map_distances_parameter")
+		allow_more_southern_maps					= ui_mcm.get("more_measurement_task_maps/allow_more_southern_maps")
+		allow_more_northern_maps					= ui_mcm.get("more_measurement_task_maps/allow_more_northern_maps")
+		allow_very_northern_maps					= ui_mcm.get("more_measurement_task_maps/allow_very_northern_maps")
+		allow_underground_maps						= ui_mcm.get("more_measurement_task_maps/allow_underground_maps")
+	end
+
+	update_blacklist()
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_option_change", on_option_change)
+	on_option_change()
+end
