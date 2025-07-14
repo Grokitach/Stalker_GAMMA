@@ -1,0 +1,49 @@
+local remove_name
+local is_part
+local act_fieldstrip
+
+local baseUICPII = utils_ui.UICellProperties_item.__init
+utils_ui.UICellProperties_item.__init = function(self)
+    baseUICPII(self)
+    self.textControl:SetTextComplexMode(true)
+end
+
+function on_game_start()
+    patch_methods()
+end
+
+function patch_methods()
+    remove_name = zzzz_arti_jamming_repairs.remove_name
+    is_part = zzzz_arti_jamming_repairs.is_part
+    act_fieldstrip = zzzz_arti_jamming_repairs.act_fieldstrip
+
+    zzzz_arti_jamming_repairs.init_fieldstrip_menu = patched_init
+end
+
+local fs_gui
+function patched_init(obj)
+    local context_str = {}
+    local context_action = {}
+    local context_params = {}
+
+    local parts = item_parts.get_parts_con(obj)
+    local num = 0
+    for k, v in spairs(parts, zzzz_arti_jamming_repairs.sort_parts) do
+        if is_part(k) and not arti_jamming.is_barrel(k) and v > 0 then
+            local clr = utils_xml.get_color_con(v)
+            table.insert(context_str, clr .. remove_name(k) .. " (" .. v .. "%)")
+            table.insert(context_action, "remove_part")
+            table.insert(context_params, { obj:id(), k, v })
+            num = num + 1
+        end
+    end
+    -- remove all
+    if num > 1 then
+        table.insert(context_str, remove_name(nil))
+        table.insert(context_action, "remove_part")
+        table.insert(context_params, { obj:id(), k, v })
+    end
+    if not fs_gui then fs_gui = utils_ui_custom.UICellPropertiesCustom(act_fieldstrip) end
+    fs_gui:Reset(GetCursorPosition(), context_action, context_str, context_params)
+    ui_inventory.GUI:PlaySND(sound_object([[interface\inv_properties_2]]))
+end
