@@ -35,6 +35,11 @@ available_materials = {
     ["materials\\water_radiation"]     = "water_", -- Вода
     ["materials\\wood"]                = "wood_", -- Деревянная поверхность, деревянный пол, деревянные ступеньки
     ["materials\\wooden_board"]        = "wood_", -- Деревянная доска (толщина 2-5см), деревянный вагон, ящик
+    ["materials\\occ"]                 = "dirt_", -- Материал для оклюжен геометрии
+    ["materials\\fake"]                = "dirt_", -- Материал для колижена (нет звука, следов от пуль, теней)
+    ["materials\\fake_ladders"]        = "dirt_", -- невидимая лестница
+    ["materials\\fake_ladders_woods"]  = "dirt_", -- невидимая деревянная лестница
+    ["materials\\fake_slide"]          = "dirt_", -- Материал для колижена (нет звука, следов от пуль, теней)
 }
 
 fake_materials = {
@@ -57,10 +62,8 @@ local enabled = true
 function actor_on_jump()
     if not enabled then return end
 
-    local material, fake_flag = get_material()
-    material = available_materials[material] or fake_flag and "dirt_"
+    local material = available_materials[get_material()]
     if not material then return false end
-
     jump_sound = sound_object("jump\\jump_" .. material .. math.random(3))
     jump_sound:play(db.actor, 0, sound_object.s2d)
     jump_sound.volume = volume
@@ -68,15 +71,13 @@ end
 
 function actor_on_land(landing_speed)
     if not enabled then return end
-    --print_dbg("landing_speed: %s", landing_speed)
+    print_dbg("landing_speed: %s", landing_speed)
 
     -- hack for speed set to 0 by fake geometry
     if landing_speed == 0 then landing_speed = 6.66 end
 	if landing_speed > 2 then
-        local material, fake_flag = get_material()
-        material = available_materials[material] or fake_flag and "dirt_"
+        local material = available_materials[get_material()]
         if not material then return false end
-
         land_sound = sound_object("landing\\landing_" .. material .. math.random(3))
         land_sound:play(db.actor, 0, sound_object.s2d)
         land_sound.volume = volume * (landing_speed / 5)
@@ -121,23 +122,20 @@ function get_material()
     local dir = vector():set(0, -1, 0)
     local material
     local material_table = {}
-    -- flag to play default material sound instead of no playback
-    local fake_flag = false
 
     for k,v in pairs(ray_cast_offsets) do
         material = ray_cast(vector():set(pos.x + v[1], pos.y + v[2], pos.z + v[3]), vector():set(0, -1, 0), v[4], debug)
 
         -- short circuit if centre ray hits water
-        if k == 1 and water_materials[material] then return material, fake_flag end
+        if k == 1 and water_materials[material] then return material end
 
         -- inversed ray cast to hit surfaces covered by fake geometry
         if fake_materials[material] then
-            fake_flag = true
             material = ray_cast(vector():set(pos.x, pos.y - 0.5, pos.z), vector():set(0, 1, 0), 0.5, debug)
         end
 
         -- select material with most hits
-        if material and not fake_materials[material] then
+        if material or fake_materials[material] then
             if not material_table[material] then
                 material_table[material] = 1
             else
@@ -146,21 +144,21 @@ function get_material()
         end
     end
     for k,v in pairs(material_table) do
-        --print_dbg("raycast result: %s %s", k,v)
+        print_dbg("raycast result: %s %s", k,v)
     end
 
     local final_material = get_highest_value(material_table)
     if final_material then
         --print_dbg("selected material: %s", final_material)
-        return final_material, fake_flag
+        return final_material
     else
         -- backup horizontal plus-shaped ray cast
         final_material = ray_cast(vector():set(pos.x + 0.225, pos.y - 0.001, pos.z), vector():set(-1, 0, 0), 0.45, debug)
         if not final_material then
             final_material = ray_cast(vector():set(pos.x, pos.y - 0.001, pos.z + 0.225), vector():set(0, 0, -1), 0.45, debug)
         end
-        --print_dbg("backup material: %s", final_material)
-        return final_material, fake_flag
+        print_dbg("backup material: %s", final_material)
+        return final_material
     end
 end
 
