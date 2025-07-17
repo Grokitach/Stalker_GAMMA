@@ -179,7 +179,9 @@
 
 
 ## **UI Changes and Fixes**
-- LeftCtrl full armor stat radiation display fix
+- New interaction UI by CatsPaw with Interaction Dot Marks, displaying interactable items from a distance with relevant actions. The looting is not done through holding F anymore.
+- Holding F now spawns the Quick Action Wheel made by HarukaSai. This allows you to use consummables or certain items fast. In the inventory, just right click items and left click on "add to wheel". Up to 10 items can be stored this way. To use an item from the wheel > Hold F and left click the hovered item. To remove an item from the wheel, hold F and left-click it.
+- LeftCtrl full armor stat radiation display fix in inventory
 - Removed 1.25 multiplier for negative health regen in display @bogdan318
 - Fixed health regen display magnitude @bogdan318
 - Actually Open Correct Crafting on tools double click @SaloEater
