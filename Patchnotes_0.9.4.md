@@ -1,44 +1,43 @@
 # **S.T.A.L.K.E.R. G.A.M.M.A. 0.9.4 Patch Notes**  
 
-## **Newly Added Addons or Updates**
+## **Engine update**
 - STALKER-Anomaly-modded-exes_2025.7.12 by Demonized
+
+## **Newly Added Addons or Updates**
 - Free Zoom update 4.32 by Kute
-- Serious Workshop optimization
-- Adds "Serious Tasks QoL Pack" @Serious
-- "Tasks QoL Pack" @Serious
-- Extended MovementSFX addon @oleh5230
-- M60 Texture Improved - Kryiron mod added
-- Momopate's Improved Pulses activation by default
-- Updated github links for Sights-and-Optics-retexture-by-Meowie
-- Norfair's Saiga12 Textures Improvements
-- Nullpath's KSG12 + 23x75 conversion by Grok, textures and model changes by Meowie, 3DSS compatibility by AndTheHeroIs, sounds by @oleh5230.
-- Screenspace shaders 23 update install instructions
-- Atmospherics 2.68 appdata files update
-- Lizzardman's Knife Reanimation
-- FDDA Redone added and setup for most animations
-- Quick Action Wheel added + balanced (1 tab, 10 slots, no weapons) - usage by long pressing F
-- Kutes FDDAR fixes.
-- ATHI Mags Redux Madness update 1.7.25
-- Strangerism's New Player Experience added through github auto-update
-- Updated Github mods (from ATHI, thanks ATHI !!!) (XXX ADD DETAIL XXX)
-- Dynamic Aspect Ratio Tweaks - bellyillish
-- Lizzardman's Field Strip Colors + SaloEater edits 
+- Workshop optimization by Serious
+- Tasks QoL Pack by Serious
+- Extended MovementSFX by oleh5230
+- M60 Texture Improved by Kryiron
+- Improved Pulses by Momopate, activation by default
+- Updated github links for Sights and Optics retexture by Meowie
+- Saiga12 Textures Improvements by Norfair
+- Nullpath's KSG12 + 23x75 conversion by Grok, textures and model changes by Meowie, 3DSS compatibility by AndTheHeroIs, sounds by @oleh5230
+- Screenspace shaders 23 update install instructions by Ascii
+- Atmospherics 2.68 appdata files update by Hippobot
+- New Knife Reanimation 
+- FDDA Redone by Lizzardman, all animations are enabled by default.
+- FDDA Redone fixes by Kute
+- Quick Action Wheel by HarukaSai + balanced (1 tab, 10 slots, no weapons) - usage by long pressing F
+- Mags Redux Madness update 1.7.25 by AndTheHeroIs
+- New Player Experience by Strangerism (Tutorial framework)
+- Updated 3DSS guns mods by AndTheHeroIs
+- Dynamic Aspect Ratio Tweaks by bellyillish
+- Lizzardman's Field Strip Colors + SaloEater edits (few issues right now, will fix later)
 - yaaargle's Lost to the Zone Ending DX11 Crash Fix (GAMMA) 
 - ilrathCXV fix for Thistle/Black Angel/Sandstone Crash with more than … 
 - G_FLAT's Individualy Recruitable Companions
 - G_FLAT's Msv Above Radiation Icon
 - G_FLAT's Status Icons Always Shown
 - G_FLAT's More Measurement Task Maps
-- Spawning Shenanigans Prevention - Kute
-- EFT RSH-12 - frostychun (disabled until sounds are fixed)
-- Bolt to 5 again, QAW to Hold F with Hold option
-- Disabled Dot Marks Heal stalker on long press F to avoid issue with QAW
-- G_FLAT's Unusable Parts Handler
+- G_FLAT's Unusable Parts Handler (poor parts are automatically sold unless favorited)
+- Spawning Shenanigans Prevention by Kute
+- EFT RSH-12 by frostychun
 - ilrathCXV's Meat Spoiling Timer in Tooltips
-- FDDA Redone Fixes - Kute
-- Items Model Drop After Usage
-- RETUNE Ambiant Sounds - Aphrodite_child
+- Items Model Drop After Usage by Kute
+- RETUNE Ambiant Sounds by Aphrodite_child
 - Interaction Dot Marks by Catspaw
+
 
 ## **Gameplay Changes & Fixes**  
 - **Health System Adjustments**  
@@ -66,6 +65,7 @@
   - Vehicles added to Jupiter, Zaton and CNPP
   - Vehicles explosions don't send you to the moon anymore
   - More tanky vehicles
+  - Improved vehicles lights (press L to activate)
 - **Less empty Zaton**
 - Replace Swamps Village Ruins rat spawn @oleh5230
 - Removal of Sin in MM + MM spawns changes
@@ -88,9 +88,9 @@
 - Bit more common vector and benelli @Grokitach
 - Bit more common Howa 20 @Grokitach
 - Even more rare USP TAC 45
-- @oleh5230 Fix PPSh-41 stash drops (T2 -> T3)
+- Fix PPSh-41 stash drops (T2 -> T3) @oleh5230 
 - Rebalanced Grenades spawn.
-- @oleh5230 Monolith Blade as rare monolith drop
+- Monolith Blade as rare monolith drop @oleh5230 
 - Added RPG7 to more NPCs categories, but at a much more rare rate.
 - **Artefact crafting rebalance**
   - Increased necessary mutant parts for artefacts crafting
@@ -107,10 +107,12 @@
   - Pssh starting cost increase (650) + limited to WP factions
   - Removal of UDP9 for Mercs starting loadouts
   - reduced k98 start loadout cost (1050 -> 750)
-  - @oleh5230 TT-33 starting loadout cost to 200
+  - TT-33 starting loadout cost to 200 @oleh5230 
+
 
 ## **Gunplay**
 - **KSG23 new gun added**: 23x75 pump action shotgun with 11 ammo
+- **RSH12 new gun added**: 12.7x55 revolver
 - **Jam probability and weapons degradation rework by @oleh5230**
   - All guns have a base jamming probability
   - Streamlined weapon jam probabilities
@@ -124,9 +126,9 @@
 - reduce AUG recoil camera dispersion @oleh5230
 - SVU/DVL-10 silencer status fix @oleh5230
 - Disable trail light for UBGL grenades @oleh5230
-- @oleh5230 Disable weapon collision with phantoms (cover tilt)
-- @oleh5230 ShAK-12 SUP recoil profile fix
-- @oleh5230 MP-433 Grach Cover Tilt fix
+- Disable weapon collision with phantoms (cover tilt) @oleh5230
+- ShAK-12 SUP recoil profile fix @oleh5230 
+- MP-433 Grach Cover Tilt fix @oleh5230 
 - **Some ammunition rebalance**
   - Slightly nerfed Hydroshock damage (64 -> 60) + Slightly increased hydroshock price
   - Same bullet speed and fire distance for all 9x39 rifles
@@ -136,6 +138,7 @@
   - Increased 5.45HP and 5.56HP damage, reduced penetration
   - Reduced 5.45 HP and 5.56 HP prices
   - Slight increase of 5.56 FMJ pen (27 -> 29)
+
 
 ## **Combat**
 - Fixed FMJ vs AP rounds distribution for NPC ranks and factions @Grokitach
@@ -152,6 +155,7 @@
 - Phantoms "turn around player" fix
 - Story NPCs are harder to kill for the player (avoiding killing them b… 
 
+
 ## **Audio**
 - G.A.M.M.A. No Copyrighted Music disabled by default (sorry streamers)
 - Weapon sounds tweaks 2.8.3 @oleh5230
@@ -159,19 +163,19 @@
 - Suppressed gunfire sounds tweaks (Pistols, 5.45) @oleh5230
 - FNP-45/vz.68 reload sounds @oleh5230
 - Yet another suppressed AR gunfire sound rework @oleh5230
-9x39 gunfire/AK reload sound tweaks @oleh5230
+- 9x39 gunfire/AK reload sound tweaks @oleh5230
 - AK Alfa missing NPC sounds fix @oleh5230
-- @oleh5230 Better dog, cat, boar and flesh step sounds
-- @oleh5230 Replaced 5,45/9x39 suppressed gunfire sounds
-- @oleh5230 Replaced SVD gunfire sound
-- @oleh5230 Bolt Impact Sounds addon
-- @oleh5230 Better melee hit sound effects
-- @oleh5230 Mutant step sounds rework
-- @oleh5230 Jump and Land sounds patch
-- @oleh5230 Improved vehicle sounds
-- @oleh5230 Enable helicopter sounds for "Skyfall" task
-- @oleh5230 Sounds Update (RSh-12 fix)
-- @oleh5230 No Tinnitus Sound Effect optional addon
+- Better dog, cat, boar and flesh step sounds @oleh5230 
+- Replaced 5,45/9x39 suppressed gunfire sounds @oleh5230 
+- Replaced SVD gunfire sound @oleh5230 
+- Bolt Impact Sounds addon @oleh5230 
+- Better melee hit sound effects @oleh5230 
+- Mutant step sounds rework @oleh5230 
+- Jump and Land sounds patch @oleh5230 
+- Improved vehicle sounds @oleh5230 
+- Enable helicopter sounds for "Skyfall" task @oleh5230 
+- Sounds Update (RSh-12 fix) @oleh5230 
+- No Tinnitus Sound Effect optional addon @oleh5230 
 
 
 ## **UI Changes and Fixes**
@@ -185,11 +189,10 @@
 - GBO/ADB settings disclaimers @oleh5230
 - Slightly higher jam chance precision @oleh5230
 - World Rendring Distance setting disclaimer @oleh5230
-- @veerserif Update Fanatic Jellyfish quest description 
-- @veerserif Update rus/st_quests_escape.xml 
-- @veerserif Fix encoding for rus/st_quests_escape.xml
-- @oleh5230 Lower bolt HUD position
-- @oleh5230 Move "Found nothing useful" as a displayed message instead of PDA notification
+- Update Fanatic Jellyfish quest description  @veerserif
+- Improved russian translations @veerserif
+- Lower bolt HUD position @oleh5230 
+- Move "Found nothing useful" as a displayed message instead of PDA notification @oleh5230 
 - Removed rogue and stitch repair and healing dialogues
 
 
