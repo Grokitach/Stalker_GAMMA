@@ -84,9 +84,9 @@
 - Blacklist ammo and attachments from specialised traders to avoid making a lot of money @oleh5230
 - Monolith traders sell both WP and NATO stuff
 - Fixed artefacts drop on NPC to avoid T3/T4 spawns on them
-- Bit less Shotguns, More SMGs on NPCs @Grokitach
-- Bit more common vector and benelli @Grokitach
-- Bit more common Howa 20 @Grokitach
+- Bit less Shotguns, More SMGs on NPCs 
+- Bit more common vector and benelli 
+- Bit more common Howa 20 
 - Even more rare USP TAC 45
 - Fix PPSh-41 stash drops (T2 -> T3) @oleh5230 
 - Rebalanced Grenades spawn.
@@ -102,7 +102,7 @@
   - lower dynamic field spawn chance
 - **Staring loadouts rebalance**
   - Update starting loadouts weapon lists (no more unique weapons that can only be found within the starting loadouts).
-  - TOZ106 replaced by 4 ammo mag variant in starting loadouts @Grokitach
+  - TOZ106 replaced by 4 ammo mag variant in starting loadouts 
   - Mosin cost reduced to 800 points in starting loadouts
   - Pssh starting cost increase (650) + limited to WP factions
   - Removal of UDP9 for Mercs starting loadouts
@@ -141,10 +141,10 @@
 
 
 ## **Combat**
-- Fixed FMJ vs AP rounds distribution for NPC ranks and factions @Grokitach
-- Merc npc now uses slug instead of buckshot @Grokitach
-- Duty masters use 5.45 AP instead of HP @Grokitach
-- Bandit masters use 5.45 AP instead of HP @Grokitach
+- Fixed FMJ vs AP rounds distribution for NPC ranks and factions 
+- Merc npc now uses slug instead of buckshot 
+- Duty masters use 5.45 AP instead of HP 
+- Bandit masters use 5.45 AP instead of HP 
 - Reduce RPG-7 missile speed @oleh5230
 - NPC don't use RPG at close quarters @oleh5230
 - Removal of small caliber weapons on master/legend stalkers
@@ -221,7 +221,7 @@
 - Unjam anim fix: motion marks support @oleh5230
 - Unjam anim fix: cancel unjam if gun is holstered @oleh5230
 - RF packages permanent freezes fix @oleh5230
-- BAS Saiga Reanimation installation fix @Grokitach
+- BAS Saiga Reanimation installation fix 
 - Once again hides the accept button for buggy tasks. @Serious
 - Dark Valley Bandit Base FPS optimisation as an optionnal addon (the boost isn't tremendous and the base becomes very dark) @oleh5230
 - Fixes Black Market crash @Serious
