@@ -1,0 +1,465 @@
+-- Quest controls (technical)
+local _task_id -- stores running fate task_id
+local is_dead_spawned   = {} -- make sure that dead squad spawnned once
+local is_item_2_created = {} -- make sure that quest pda spawned once
+local search_dist = 200 -- [meters]
+
+
+--==========================================< Utilities >==========================================--
+-- param 1: minimum allowed spawn distance to actor
+-- param 2: maximum allowed spawn distance to actor
+-- param 3: task id of the quest
+-- param 4: saved vars of the quest
+function get_suitable_smart(min_distance , max_distance, task_id, var)
+	--printf("-get_suitable_smart")
+	
+	-- Search for possible smart
+	local spawn_smrt
+	local spawn_smrts = {}
+	local function search(min_distance, max_distance, mode)
+		local sim = alife()
+		for name,smart in pairs( SIMBOARD.smarts_by_names ) do
+			local dist = smart.position:distance_to(db.actor:position())
+			if ( (mode == 3) or (simulation_objects.base_smarts[name] ~= true) )
+			and simulation_objects.is_on_the_same_level(sim:actor(), smart) 
+			and (dist > min_distance) and (dist < max_distance) 
+			then
+				local smrt = SIMBOARD.smarts[smart.id]
+				if ( smrt ) then
+					local pass = true
+					for k,v in pairs( smrt.squads ) do
+						local squad = alife_object(k)
+						if (squad and squad.current_target_id and squad.current_target_id == smart.id and not squad:get_script_target()) then
+							if (mode == 1) then
+								pass = false
+							elseif (mode == 2) and (not is_squad_monster[squad.player_id]) then
+								pass = false
+							end
+						end
+					end
+					if pass then
+						--printf("-get_suitable_smart / [%s] is a possible smart found on search mode(%s), distance: %s",name,mode,dist)
+						spawn_smrts[#spawn_smrts+1] = name
+					end
+				end
+			end
+		end
+	end
+	search(min_distance, max_distance, 1) -- mode 1: search for non-controlled smarts
+	if (#spawn_smrts == 0) then search(min_distance/2, max_distance, 1) end -- mode 1: search for non-controlled smarts (smaller range)
+	if (#spawn_smrts == 0) then search(min_distance, max_distance, 2) end -- mode 2: search for non-controlled smarts or controlled by mutants
+	if (#spawn_smrts == 0) then search(min_distance, max_distance, 3) end -- mode 3: search for all smarts
+	if (#spawn_smrts == 0) then return end
+	
+	spawn_smrt = spawn_smrts[math.random(#spawn_smrts)]
+	printdbg("-%s get_suitable_smart / [%s] is the chosen smart", task_id, spawn_smrt)
+
+	local t = var
+	t.smart_name = spawn_smrt
+	save_var(db.actor, task_id, t)
+end
+
+-- param 1: dead squad section
+-- param 2: smart to spawn the dead squad
+-- param 3: task id of the quest
+-- param 4: saved vars of the quest
+function prepare_dead_squad(squad_section, spawn_smrt, task_id, var)
+	--printf("-spawn_squad_dynamic")
+	
+	-- Kill squad npcs and insert the quest pda in one of them
+	local function kill_npc(id)
+		--printf("-prepare_dead_squad / timer called for id: %s",id)
+		local npc = db.storage[id] and db.storage[id].object
+		if npc then
+			local t = var
+			
+			-- Pick one npc target to spawn the quest item in his inventory
+			if string.find(npc:section(),"dead") and (not t.target_id) then
+				t.target_id = id
+				db.actor:give_info_portion(task_id .. "_dead_spawned")
+			end
+			npc:kill(npc)
+			
+			-- save dead NPCs id 
+			if (not t.dead_npcs) then 
+				t.dead_npcs = {}
+			end
+			t.dead_npcs[#t.dead_npcs + 1] = id
+			save_var(db.actor, task_id, t)
+			se_save_var(id, npc:name(), "dont_release",task_id)
+			
+			--level.map_add_object_spot_ser(id, "secondary_task_location", "This is a dead NPC") -- add map markers
+			printdbg("-%s prepare_dead_squad | Kill npc: %s", task_id, npc:section())
+		end
+		return true
+	end
+	
+	-- Spawn dead squad on timer
+	local sq = sim_board.get_sim_board():create_squad(SIMBOARD.smarts_by_names[spawn_smrt],squad_section)
+	if sq then
+		for k in sq:squad_members() do
+			CreateTimeEvent(k.id,"kill_npc",3,kill_npc,k.id)
+		end
+	end
+end
+
+
+--==========================================< Effects >==========================================--
+-- p[1]: task id
+-- p[2]: quest item 1 section (tool used)
+-- p[3]: quest item 2 section (item to find)
+-- p[+4]: maps to spawn the dead squad
+local fate_cache = {}
+xr_effects.on_init_fate_task = function(actor,npc,p)
+	if (not p) or (p and (#p < 4)) then
+		return
+	end
+	local var = p[1]
+	local item_1_sec = ini_sys:section_exist(p[2]) and p[2] or nil
+	local item_2_sec = ini_sys:section_exist(p[3]) and p[3] or nil
+	local freq = item_radio.get_random_freq()
+	
+--[[
+	SERIOUS NO NORTH TASKS BEFORE BS
+	AND THE NORTHERN JOB
+--]]
+	local mapBlacklist = {}
+	local northernMaps = blacklist_helper.GetNorthernMaps()
+
+	if blacklist_helper.ShouldBlacklistNorth() then
+		mapBlacklist = northernMaps
+	elseif northernMaps[level.name()] then -- Player is in the Northern region and rightfully so
+		mapBlacklist = blacklist_helper.GetSouthernMaps()
+	end
+
+	if next(mapBlacklist) then
+		for i, map in pairs(p) do
+            if mapBlacklist[map] then
+                p[i] = nil
+            end
+        end
+	end
+
+	local map = p[math.random(4,#p)]
+	if map == nil then
+		return
+	end
+--[[
+	SERIOUS NO NORTH TASKS BEFORE BS
+	AND THE NORTHERN JOB
+--]]
+
+	if (not item_1_sec) or (not item_2_sec) then
+		printe("! TASK ERROR: %s | xr_effects.create_fate_quest - can't find item section!",var)
+		--return
+	end
+	
+	if (not db.actor:is_talking()) then
+		printe("! ERROR on_init_fate_task | actor is not talking")
+		return
+	end
+	
+	local task_giver = mob_trade.GetTalkingNpc()
+	local task_giver_id = task_giver:id()
+	local task_giver_comm = character_community(task_giver)
+	local task_giver_name = task_giver:character_name()
+	
+	-- Get target
+	if fate_cache[var] and fate_cache[var][task_giver_id] then
+		map = fate_cache[var][task_giver_id]
+	else
+		if (not fate_cache[var]) then
+			fate_cache[var] = {}
+		end
+		fate_cache[var][task_giver_id] = map
+	end
+	
+	-- Save var
+	local tbl = { 
+		task_giver_comm = task_giver_comm,
+		task_giver_name = task_giver_name,
+		map = map,
+		freq = freq,
+		item_1_sec = item_1_sec,
+		item_2_sec = item_2_sec
+	}
+	save_var(db.actor, var, tbl)
+	printdbg("-%s on_init_fate_task | task_giver_comm: %s - task_giver_name: %s map: %s - item_1_sec: %s - item_2_sec: %s - freq: %s", var, task_giver_comm, task_giver_name, map, item_1_sec, item_2_sec, freq)
+	
+	-- Show info
+	local function postpone_for_next_frame(map,freq)
+		local news_caption = game.translate_string(task_manager.task_ini:r_string_ex(p[1], "title")) or "error"
+		news_caption = utils_data.parse_string_keys(news_caption, { ["freq"]=freq } )
+		local news_text = game.translate_string("st_location") .. " " .. game.translate_string(map)
+		db.actor:give_talk_message2(news_caption, news_text, "ui_inGame2_PD_Torgovets_informatsiey", "iconed_answer_item", p[1])
+		return true
+	end
+	CreateTimeEvent(0,"on_init_fate_task",0,postpone_for_next_frame,map,freq)
+end
+
+xr_effects.forget_dead_npcs = function(actor,npc,p)
+	if (not p) or (p and #p == 0) then
+		return
+	end
+	
+	local var = load_var(db.actor, p[1])
+	if (not var) then 
+		return
+	end
+	
+	if var.dead_npcs then
+		for i=1,#var.dead_npcs do
+			if se_load_var(var.dead_npcs[i], "", "dont_release") then
+				se_save_var(var.dead_npcs[i], "", "dont_release",nil)
+			end
+		end
+	end
+	
+	--xr_effects.se_clear_var( actor, npc, {"dont_release", p[1]} )
+	
+	item_radio.clear_target(var.item_2_id)
+end
+
+
+--==========================================< Task functors >==========================================--
+task_functor.general_fate = function(task_id,field,p,tsk)
+	if (not db.actor) or (not tsk) then
+		return
+	end
+	
+	if (field == "target") then
+		local var = load_var(db.actor, task_id)
+		if (not var) then
+			return
+		end
+	
+		if (tsk.stage == 0) then
+			return nil
+		end
+		
+		if (tsk.stage == 1) then
+			return nil
+		end
+		
+		if (tsk.stage == 2) then
+			return nil
+		end
+		
+		if (tsk.stage == 3) then
+			return var.item_2_id
+		end
+
+		if (tsk.stage == 4) then
+			return tsk.task_giver_id
+		end
+	end
+end
+
+task_functor.general_fate_name = function(task_id,field,p,tsk)
+	if not db.actor then return '' end
+	local var = load_var(db.actor, task_id)
+	local str = ""
+	if tsk and tsk.stage and var then
+		local freq = tostring(var.freq)
+
+		str = utils_data.parse_string_keys(game.translate_string("simulation_task_52_name"), { ["freq"]=freq } )
+	end
+	return str
+end
+
+task_functor.general_fate_desc = function(task_id,field,p,tsk)
+	if not db.actor then return '' end
+	local var = load_var(db.actor, task_id)
+	local str = ""
+	if tsk and tsk.stage and var then
+		local task_giver_comm = game.translate_string("st_dyn_news_comm_" .. var.task_giver_comm .. "_1")
+		local map = game.translate_string(var.map)
+		local freq = tostring(var.freq)
+		local item_1_sec = var.item_1_sec and ui_item.get_sec_name(var.item_1_sec)
+		local item_2_sec = var.item_2_sec and ui_item.get_sec_name(var.item_2_sec)
+		
+		str = game.translate_string(task_id .. "_text_" .. tostring(tsk.stage))
+		str = utils_data.parse_string_keys(str, {["comm"]=task_giver_comm , ["map"]=map , ["freq"]=freq , ["item_1"]=item_1_sec , ["item_2"]=item_2_sec} )
+	end
+	return str
+end
+
+task_status_functor.fate_task = function(tsk,task_id)
+	if (not db.actor) or (not tsk) then
+		return
+	end
+	
+	local var = load_var(db.actor, task_id)
+	if (not var) then return end
+	_task_id = task_id
+	local stage = tsk.stage
+	local current_map = (var.map == level.name())
+	local flag_1 = has_alife_info(task_id .. "_dead_spawned")
+	local flag_2 = has_alife_info(task_id .. "_target_found")
+	local flag_3 = has_alife_info(task_id .. "_item_spawned")
+	
+	
+	-- stage: 0
+	-- status: actor accepted the quest
+	-- objective: get the quest item
+	-- marker: quest item
+	if stage == 0 then
+		
+		-- if actor retrieved item 1
+		if var.item_1_sec and db.actor:object(var.item_1_sec) then
+		
+			-- if actor found item 2 before
+			if flag_2 then
+				-- if actor lost item 2 recently
+				if var.item_2_id and (not utils_item.has_item_by_id(nil, var.item_2_id , var.item_2_sec)) then
+					tsk.stage = 3
+				else -- if actor has both quest items
+					tsk.stage = 4
+				end
+			else
+				-- if actor arrived to the targeted map
+				if current_map then
+					tsk.stage = 2
+				else
+					tsk.stage = 1
+				end
+			end
+			
+		end
+	end
+	
+	-- stage: 1
+	-- status: player has the quest item
+	-- objective: go to the map where the missing squad was last seen
+	-- marker: non
+	if stage == 1 then
+	
+		-- if actor arrived to the targeted map
+		if current_map then
+			tsk.stage = 2
+		end
+		
+		-- if actor found item 2 before
+		if flag_2 then
+			tsk.stage = 4
+		end
+		
+		-- if actor lost item 1 recently
+		if var.item_1_sec and (not db.actor:object(var.item_1_sec)) then
+			tsk.stage = 0
+		end
+	end
+	
+	-- stage: 2
+	-- status: player has made it to the map where the missing squad was last seen
+	-- objective: search for the missing squad
+	-- marker: none
+	if stage == 2 then
+	
+		-- if actor is not in the targeted map
+		if (not current_map) then
+			tsk.stage = 1
+		end
+		
+		-- Go to stage 4 + forget dead squad if: dead squad spawned + actor didn't find item 2 before + actor just found item 2
+		if flag_1 and (not flag_2) and (var.item_2_id and utils_item.has_item_by_id(nil, var.item_2_id , var.item_2_sec)) then
+			db.actor:give_info_portion(task_id .. "_target_found")
+			if var.dead_npcs then
+				for i=1,#var.dead_npcs do
+					if se_load_var(var.dead_npcs[i], "", "dont_release") then
+						se_save_var(var.dead_npcs[i], "", "dont_release",nil)
+					end
+				end
+			end
+			
+			tsk.stage = 4
+		end
+		
+		-- if actor lost item 1 recently
+		if var.item_1_sec and (not db.actor:object(var.item_1_sec)) then
+			tsk.stage = 0
+		end
+		
+		-- if actor arrived to the map + no smart is specific to spawn
+		if current_map and (not var.smart_name) then
+			get_suitable_smart(300 , 600, task_id , var)
+		end
+		
+		-- if actor arrived to the map + if actor got close enough to the dead body + item didnt spawn + dead squad spawned
+		if current_map and (flag_1) and (not flag_3) and var.target_id then
+			local se_target = alife_object(var.target_id)
+			if se_target and (se_target.position:distance_to(db.actor:position()) <= search_dist) then
+				local obj_target = db.storage[var.target_id] and db.storage[var.target_id].object or level.object_by_id(var.target_id)
+				if obj_target then
+				
+					local function iterate(go_owner, item)
+						if (item:section() == var.item_2_sec) then
+							var.item_2_id = item:id()
+						end
+					end
+					obj_target:iterate_inventory(iterate,obj_target)
+
+					if var.item_2_id then
+						save_var(db.actor, task_id, var)
+						
+						item_radio.add_target(var.item_2_id, var.freq, search_dist)
+						db.actor:give_info_portion(task_id .. "_item_spawned")
+						
+						--level.map_add_object_spot_ser(se_item_2.id, "secondary_task_location", "This is quest item")
+						printdbg("-%s | found quest item[%s] = %s at freq: %s", task_id, var.item_2_id, var.item_2_sec,var.freq)
+					end
+				end
+			end
+		end
+		
+		-- if actor arrived to the map + smart is specific to spawn + smart is online + dead squad is never created: spawn the dead squad and item 2
+		if current_map and (not flag_1) and var.smart_name then
+			local smrt = SIMBOARD.smarts_by_names[var.smart_name]
+			if (not is_dead_spawned[task_id]) and smrt and smrt.online then
+				is_dead_spawned[task_id] = true
+				prepare_dead_squad(var.task_giver_comm .. "_sim_squad_dead", var.smart_name, task_id , var)
+			end
+		end
+	end
+	
+	-- stage: 3
+	-- status: player has lost item 2
+	-- objective: retrieve item 2
+	-- marker: item 2
+	if stage == 3 then
+		
+		-- if player retrieved item 2
+		if var.item_2_id and utils_item.has_item_by_id(nil, var.item_2_id , var.item_2_sec) then
+			tsk.stage = 4
+			
+		-- if item 2 has vanished, fail the quest
+		else
+			local item_2_obj = var.item_2_id and level.object_by_id(var.item_2_id)
+			if (not item_2_obj) or (item_2_obj and (item_2_obj:section() ~= var.item_2_sec)) then
+				return "fail"
+			end
+		end
+		
+		-- if actor lost item 1 recently
+		if var.item_1_sec and (not db.actor:object(var.item_1_sec)) then
+			tsk.stage = 0
+		end
+	end
+	
+	-- stage: 4
+	-- status: player has got the quest pda
+	-- objective: return to the task giver
+	-- marker: task giver
+	if stage == 4 then
+		
+		-- if actor lost item 1 recently
+		if var.item_1_sec and (not db.actor:object(var.item_1_sec)) then
+			tsk.stage = 0
+		end
+		
+		-- if actor lost item 2 recently
+		if var.item_2_id and (not utils_item.has_item_by_id(nil, var.item_2_id , var.item_2_sec)) then
+			tsk.stage = 3
+		end
+	end
+end

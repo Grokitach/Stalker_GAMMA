@@ -1,0 +1,1822 @@
+--[[
+    Quick Action Wheel
+    Author: HarukaSai
+    04/01/2024
+]]
+
+local XMLOP = CScriptXmlInit()
+XMLOP:ParseFile("ui_haru_wheel_option.xml")
+wheel_states = haru_arm.States
+GUI = nil
+TAB_MANAGER = nil
+MCM_SETTINGS = {}
+
+override_quick_keys = {
+    [61] = 4,
+    [62] = 5
+}
+
+function tablelength(T)
+	local count = 0
+	if T then
+		for i,item in ipairs(T) do count = count + 1 end
+	end
+	return count
+end
+
+add_to_qaw_functor = {
+    "add_to_qaw", 
+    function(obj, bag, mode) -- cond
+        return (not TAB_MANAGER.dynamic_tabs[TAB_MANAGER.current_tab] and TAB_MANAGER:CanAddItem(obj, obj:section()) and tablelength(TAB_MANAGER.tabs[TAB_MANAGER.current_tab]) <= MCM_SETTINGS.tab_slot)
+    end, 
+    function(obj, bag, mode) -- name
+        return "ui_haru_add_item_to_qaw"
+    end, 
+    nil, 
+    function(obj) -- function
+        TAB_MANAGER:AddItem(TAB_MANAGER.current_tab, obj, obj:section())
+    end
+}
+
+-- defaults for dynamic item tabs
+tab_categories = {[2] = "devices", [3] = "attachments", [4] = "food", [5] = "meds", [6] = "grenades", [7] = "ammo", [8] = "slots"}
+
+-- cache sound objects
+local snd_attach_addon = sound_object([[interface\inv_attach_addon]])
+local snd_detach_addon = sound_object([[interface\inv_detach_addon]])
+
+-- HarukaSai: special function to init elements with proper scaling automatically
+function InitEx(xml, type, path, parent, scale, offset)
+    local element = xml["Init" .. type](xml, path, parent)
+
+    local pos = element:GetWndPos()
+
+    scale = scale or {["w"] = 1, ["h"] = 1}
+    offset = offset or {["x"] = 0, ["y"] = 0}
+	
+    local ratio = (device().height / device().width) / 0.75
+
+    element:SetWndSize(vector2():set(
+		element:GetWidth() * ratio * scale.w, 
+		element:GetHeight() * scale.h
+	))
+
+    element:SetWndPos(vector2():set(
+		pos.x * ratio * scale.w + offset.x, 
+		pos.y * scale.h + offset.y
+	))
+
+    return element
+end
+
+function get_max_key(t)
+    local keys = {}
+    for k in pairs(t) do keys[#keys+1] = k end
+    return math.max(unpack(keys))
+end
+
+function get_empty_tab()
+    return {__sections = {}, __ids = {}}
+end
+
+-- taken from ui_inventory
+local K_Timer   = false
+function keybind_pass()
+	if (K_Timer and (time_global() > K_Timer + 200)) or (not K_Timer) then
+		K_Timer = time_global()
+		return true
+	end
+	return false
+end
+
+-- wrappers for mags functions
+is_magazine = magazine_binder and magazine_binder.is_magazine and function(obj)
+    return magazine_binder.is_magazine(obj)
+end or function(obj) return false end
+
+supports_magazines = magazine_binder and magazine_binder.is_supported_weapon and function(obj)
+    return magazine_binder.is_supported_weapon(obj)
+end or function(obj) return false end
+
+
+class "DynamicTab"
+
+function DynamicTab:__init(manager, category)
+    self.category = category
+    self.ui_texture = "ui_qaw_category_" .. self.category
+end
+
+function DynamicTab:GetItemTable()
+    return {}
+end
+
+function DynamicTab:GetUITexture()
+    return self.ui_texture
+end
+
+
+class "DynamicItemTab" (DynamicTab)
+
+function DynamicItemTab:__init(manager, category, spawn_tables, classes) -- reuse debug spawn tables, since they already parse everything we need usually
+    super(manager, category)
+
+    self.valid_sections = {}
+
+    for _, table in ipairs(spawn_tables) do
+        local spawn_table = ui_debug_main.get_spawn_table(table)
+        for _, sec in ipairs(spawn_table) do
+            for _, class in ipairs(classes) do
+                if manager:CanAddItem(nil, sec) == class then
+                    self.valid_sections[sec] = true
+                end
+            end
+        end
+    end
+end
+
+function DynamicItemTab:GetItemTable()
+    local t = {}
+
+    for sec, _ in pairs(self.valid_sections) do
+        local obj = db.actor:object(sec)
+        if obj then
+            t[#t + 1] = {sec = sec, obj = obj}
+        end
+    end
+    
+    return t
+end
+
+
+class "DynamicFoodTab" (DynamicItemTab)
+
+function DynamicFoodTab:__init(manager, category, spawn_tables, classes)
+    super(manager, category, spawn_tables, classes)
+
+    for sec, _ in pairs(self.valid_sections) do
+        if ini_sys:r_string_ex(sec, "kind") == "i_mutant_raw" then -- don't want that on quick access
+            self.valid_sections[sec] = nil
+        end
+    end
+end
+
+
+class "DynamicAttachmentTab" (DynamicTab)
+
+function DynamicAttachmentTab:__init(manager, category)
+    super(manager, category)
+
+    self.addon_params = {
+        ["scopes_sect"] = true,
+        ["silencer_name"] = true,
+        ["grenade_launcher_name"] = true
+    }
+
+    self.attachment_getters = {
+        ["sil"] = utils_item.get_attached_silencer,
+        ["gl"] = utils_item.get_attached_gl,
+        ["scope"] = utils_item.get_attached_scope
+    }
+end
+
+function DynamicAttachmentTab:GetItemTable()
+    local wpn = db.actor:active_item()
+
+    if (not wpn) or (not IsWeapon(wpn)) or IsItem("fake_ammo_wpn",wpn:section()) then
+        return {}
+    end
+    
+    local t = {}
+    local sec = wpn:section()
+
+    local scopes = {}
+    local scopes = ini_sys:r_string_ex(sec, "scopes")
+
+    if (scopes) then
+        scopes = str_explode(scopes, ",")
+
+        for _, scope in pairs(scopes) do
+            if scope ~= "none" then
+                local obj = db.actor:object(scope)
+                if obj then
+                    t[#t + 1] = {sec = scope, obj = obj}
+                end
+            end
+        end
+    end
+
+    for param, _ in pairs(self.addon_params) do
+        local addon = utils_item.get_wpn_param(wpn, sec, param)
+        if addon then
+            local obj = db.actor:object(addon)
+            if obj then
+                t[#t + 1] = {sec = addon, obj = obj}
+            end
+        end
+    end
+
+    for name, getter in pairs(self.attachment_getters) do
+        local attachment = getter(wpn)
+
+        if attachment then
+            t[#t + 1] = {sec = attachment}
+        end
+    end
+    
+    return t
+end
+
+
+class "DynamicAmmoTab" (DynamicTab)
+
+function DynamicAmmoTab:__init(manager, category)
+    super(manager, category)
+end
+
+function DynamicAmmoTab:GetItemTable()
+    local wpn = db.actor:active_item()
+
+    if (not wpn) or (not IsWeapon(wpn)) or IsItem("fake_ammo_wpn",wpn:section()) then
+        return {}
+    end
+
+    local t = {}
+
+    if (supports_magazines(wpn)) and (not wpn:weapon_in_grenade_mode()) then
+        local carried_mags = {}
+        
+        magazine_binder.get_carried_mags(carried_mags)
+
+        for id, data in pairs(carried_mags) do
+            if magazine_binder.is_compatible(wpn, data.section) then
+                local obj = level.object_by_id(id)
+                local p = obj and obj:parent()
+
+                if p and p:id() == AC_ID then -- I'd rather not need to check this, but we all want something in life
+                    t[#t + 1] = {obj = obj, sec = data.section}
+                end
+            end
+        end
+    else
+        local cwpn = wpn:cast_Weapon()
+
+        cwpn:AmmoTypeForEach(function(i, ammo_sec)
+            local obj = db.actor:object(ammo_sec)
+
+            if obj then
+                t[#t + 1] = {obj = obj, sec = ammo_sec}
+            end
+        end)
+    end
+    
+    return t
+end
+
+class "DynamicSlotsTab" (DynamicTab)
+
+function DynamicSlotsTab:__init(manager, category)
+    super(manager, category)
+
+    self.valid_slots = {
+		[1] = true, -- knife
+		[2] = true, -- pistol
+		[3] = true, -- rifle
+        [4] = true, -- grenade
+		[5] = true, -- binoc
+		[6] = true, -- bolt
+		[8] = true, -- PDA
+        [9] = true -- device
+	}
+end
+
+function DynamicSlotsTab:GetItemTable()
+    local t = {}
+
+    for slot, _ in pairs(self.valid_slots) do
+        local obj = db.actor:item_in_slot(slot)
+        if obj then
+            t[#t + 1] = {obj = obj, sec = obj:section()}
+        end
+    end
+
+    return t
+end
+
+
+class "TabManager"
+
+function TabManager:__init()
+    self.current_tab = 1
+    self.temp_tab = false
+    self.tab_count = get_max_key(tab_categories)
+    self.tabs = {}
+    for i = 1, self.tab_count do self.tabs[i] = get_empty_tab() end
+    
+    self:UpdateTabs()
+
+    RegisterScriptCallback("load_state", self)
+    RegisterScriptCallback("save_state", self)
+    
+    self:InitClasses()
+end
+
+function TabManager:InitClasses()
+    self.classes = {}
+    
+    --self.classes.QSlotWheelOption            = QSlotWheelOption
+    self.classes.QGrenadeWheelOption         = QGrenadeWheelOption
+    self.classes.QDetectorWheelOption        = QDetectorWheelOption
+    self.classes.QConsumableWheelOption      = QConsumableWheelOption
+
+    self.classes.QGrenadeLauncherWheelOption = QGrenadeLauncherWheelOption
+    self.classes.QSilencerWheelOption        = QSilencerWheelOption
+    self.classes.QScopeWheelOption           = QScopeWheelOption
+    
+    self.classes.QMagazineWheelOption        = QMagazineWheelOption
+    self.classes.QAmmoWheelOption            = QAmmoWheelOption
+
+    self.classes.QEquipWheelOption           = QEquipWheelOption
+
+    self.cache                               = {} -- [sec] = class
+
+    self.dynamic_tabs                        = dup_table(tab_categories)
+
+    self.dynamic_tab_handlers                = {}
+
+    self.dynamic_tab_handlers.devices        = DynamicItemTab(self, "devices", {"Items (Device)"}, {"QDetectorWheelOption"})
+    self.dynamic_tab_handlers.grenades       = DynamicItemTab(self, "grenades", {"Weapons (Explosive)"}, {"QGrenadeWheelOption"})
+    self.dynamic_tab_handlers.meds           = DynamicItemTab(self, "meds", {"Items (Medical)"}, {"QConsumableWheelOption"})
+
+    self.dynamic_tab_handlers.food           = DynamicFoodTab(self, "food", {"Items (Drink)", "Items (Food)"}, {"QConsumableWheelOption"})
+
+    self.dynamic_tab_handlers.attachments    = DynamicAttachmentTab(self, "attachments")
+    self.dynamic_tab_handlers.ammo           = DynamicAmmoTab(self, "ammo")
+
+    self.dynamic_tab_handlers.slots          = DynamicSlotsTab(self, "slots")
+
+    self.tab_by_handler                      = invert_table(self.dynamic_tabs) -- used for shortcuts
+end
+
+function TabManager:GetDynamicTabHandler(tab)
+    return self.dynamic_tab_handlers[self.dynamic_tabs[tab]]
+end
+
+function TabManager:SetTabCount(i)
+    self.tab_count = i
+    self:UpdateTabs()
+end
+
+function TabManager:UpdateTabs()
+    -- mrrrmewmewmewm
+    if #self.tabs > self.tab_count then
+        for i = #self.tabs, self.tab_count + 1, -1 do
+            table.remove(self.tabs, i)
+        end
+    elseif #self.tabs < self.tab_count then
+        for i = #self.tabs + 1, self.tab_count do
+            table.insert(self.tabs, i, get_empty_tab())
+        end
+    end
+end
+
+function TabManager:CanAddItem(obj, sec)
+    if self.cache[sec] then
+        return self.cache[sec]
+    end
+	
+	if IsWeapon(obj) then return end
+
+    for name, class in pairs(self.classes) do
+        if class.CanAddToTab(obj, sec) then
+            if (not class.is_obj) then
+                self.cache[sec] = name
+            end
+
+            return name
+        end 
+    end
+    
+    return false
+end
+
+function TabManager:AddItem(tab, obj, sec)
+    local name = self:CanAddItem(obj, sec)
+
+    if (not name) then
+        return
+    end
+
+    if self.tabs[tab].__sections[sec] or (obj and self.tabs[tab].__ids[obj:id()]) then
+        return
+    end
+
+    if self.classes[name].is_obj then
+        self.tabs[tab].__ids[obj:id()] = true
+    else
+        self.tabs[tab].__sections[sec] = true
+    end
+
+    table.insert(self.tabs[tab], {
+        class = name, 
+        args = self.classes[name].GetTabParams(obj, sec),
+        section = sec,
+        id = obj and obj:id()
+    })
+end
+
+function TabManager:RemoveItem(tab, i)
+    local item =  self.tabs[tab][i]
+    
+    if item.section then
+        self.tabs[tab].__sections[item.section] = nil
+    end
+
+    if item.id then
+        self.tabs[tab].__ids[item.id] = nil
+    end
+
+    table.remove(self.tabs[tab], i)
+end
+
+function TabManager:LoadDynamicTab(tab)
+    local to_add = self:GetDynamicTabHandler(tab):GetItemTable()
+
+    for i = #self.tabs[tab], 1, -1 do
+        self:RemoveItem(tab, i)
+    end
+    
+    for i = 1, #to_add do
+        self:AddItem(tab, to_add[i].obj, to_add[i].sec)
+    end
+end
+
+function TabManager:SetCurrentTab(tab, temp)
+    if (not self.tabs[tab]) then -- something went wrong
+        self:SetTabCount(self.tab_count)
+        return
+    end
+
+    if (temp) then
+        self.temp_tab = tab
+    else
+        self.current_tab = tab
+        self.temp_tab = false
+    end
+    
+    if self.dynamic_tabs[tab] then
+        self:LoadDynamicTab(tab)
+    end
+
+    if GUI then
+        GUI:UpdateItems()
+    end
+end
+
+function TabManager:save_state(m_data)
+    m_data.haru_qaw = {
+        current_tab = self.current_tab,
+        tabs = self.tabs
+    }
+end
+
+function TabManager:load_state(m_data)
+    if (not m_data.haru_qaw) then
+        return
+    end
+    
+    self.tabs = m_data.haru_qaw.tabs
+
+    for idx, tab in pairs(self.tabs) do
+        if (not tab.__sections) then -- something went wrong
+            self.tabs[idx] = get_empty_tab()
+        else
+            for i = #tab, 1, -1 do
+                -- pop if class or section like that no longer exists
+                if (not self.classes[tab[i].class]) or (not ini_sys:section_exist(tab[i].section)) then
+                    self:RemoveItem(idx, i)
+                end
+            end
+        end
+
+        if (not tab.__ids) then -- update
+            tab.__ids = {}
+        end
+    end
+    
+    self.current_tab = m_data.haru_qaw.current_tab
+end
+
+
+-- Generic Inventory Item Wheel Option
+class "ItemWheelOption" (haru_arm.WheelOption)
+
+function ItemWheelOption:__init(xml, parent, section)
+    super(xml, parent)
+    
+    self.section = section
+    self.count = 0
+
+    self.count_itr = false
+end
+
+function ItemWheelOption:Draw(x, y)
+    haru_arm.WheelOption.Draw(self, x, y)
+
+    self.hover_bg = InitEx(self.xml, "Static", "hover_bg", self.container)
+    self:CenterElement(self.hover_bg)
+    self.hover_bg:Show(false)
+
+    self.selected_bg = InitEx(self.xml, "Static", "selected_bg", self.container)
+    self:CenterElement(self.selected_bg)
+    self.selected_bg:Show(false)
+
+    -- his name is item_cont and he is a single celled organism
+    self.item_cont = utils_ui.UICellContainer("item_wheel_option_" .. self.section, self, "cont_item", "cont_item", self.container, true)
+
+    function self.item_cont:Callback() -- disable all callbacks, don't need them
+        return
+    end
+    
+    self.item_cont.disable_drag                      = true
+	self.item_cont.disable_info                      = true
+    self.item_cont.showcase                          = true
+
+    self.item_cont:AddItemManual(nil, nil, 1)
+    self:CenterElement(self.item_cont.prof)
+    
+    self:ResizeAndCenterCell()
+    
+    if self.count_itr then -- only do this once
+        db.actor:iterate_inventory(self.count_itr, db.actor)
+    end
+
+    self:UpdateItemCell()
+end
+
+function ItemWheelOption:GetCellItem()
+    return self.item_cont.cell[1]
+end
+
+function ItemWheelOption:UpdateItemCell()
+    self.item_cont:AddItemManual(nil, self.section, 1)
+
+    if self.count_itr then
+        local ci =  self:GetCellItem()
+        
+        if (not ci.cnt) then
+            ci.cnt = InitEx(XMLOP, "Static", "cont_item:cell:cnt", ci.cell)
+            ci.cnt:Show(false)
+        end
+
+        self:UpdateCounter()
+    end
+end
+
+function ItemWheelOption:UpdateCounter()
+    local ci = self:GetCellItem()
+
+    if (self.count <= 0) then
+        ci.cnt:Show(false)
+        return
+    end
+    
+    ci.cnt:Show(true)
+    ci.cnt:TextControl():SetText("x" .. self.count)
+end
+
+function ItemWheelOption:OnState(prev_state, state)
+    self.hover_bg:Show(state == wheel_states.TOUCHED)
+    
+    if state == wheel_states.TOUCHED then
+        GUI:SetTitle(ui_item.get_sec_name(self.section))
+        self:AnimateCell(100, 41, 11)
+    else
+        self:AnimateCell(100, 52, -11)
+    end
+end
+
+function ItemWheelOption:AnimateCell(duration, num, add)
+    local anim_state = 0
+    local start_time = time_global()
+    local end_time = time_global() + (duration * (MCM_SETTINGS.slowmo and MCM_SETTINGS.slowmo_factor or 1))
+
+    RemoveTimeEvent(script_name(), "animate_cell_" .. self.section .. self.idx)
+
+    CreateTimeEvent(script_name(), "animate_cell_" .. self.section .. self.idx, 0, function()
+        local scale = num + (add * anim_state)
+
+        self:GetCellItem().grid_size = scale
+        self:UpdateItemCell()
+
+        if anim_state == 1 then
+            return true
+        end
+        
+        anim_state = math.min(1, normalize(time_global(), start_time, end_time))
+    end)
+end
+
+function ItemWheelOption:ResizeAndCenterCell()
+    self:UpdateItemCell()
+    local ci =  self:GetCellItem()
+    
+    ci.cell:SetWndSize(vector2():set(ci.W * utils_xml.screen_ratio(), ci.H))
+    local st_x = (self.item_cont.prof:GetWidth() /2) - (ci.cell:GetWidth() /2)
+    local st_y = (self.item_cont.prof:GetHeight() /2) - (ci.cell:GetHeight() /2)
+    ci.cell:SetWndPos(vector2():set(st_x , st_y))
+end
+
+function ItemWheelOption:Destroy()
+    haru_arm.WheelOption.Destroy(self)
+    RemoveTimeEvent(script_name(), "animate_cell_" .. self.section .. self.idx)
+end
+
+function ItemWheelOption:Update()
+    local obj = db.actor:object(self.section)
+    self:GetCellItem():Colorize(obj and "def" or "hide")
+
+    return obj
+end
+
+function ItemWheelOption:OnClick()
+    local obj = db.actor:object(self.section)
+
+    if (not obj) then
+        return
+    end
+
+    return obj
+end
+
+function ItemWheelOption:OnRightClick()
+    local current_tab = TAB_MANAGER.temp_tab or TAB_MANAGER.current_tab
+
+    if (not TAB_MANAGER.dynamic_tabs[current_tab]) then
+        TAB_MANAGER:RemoveItem(current_tab, self.idx)
+        GUI:UpdateItems()
+    end
+end
+
+-- sorta like static methods (don't use the instance)
+function ItemWheelOption.CanAddToTab(obj, sec)
+    return false
+end
+
+function ItemWheelOption.GetTabParams(obj, sec)
+    return {sec}
+end
+
+
+-- Like item wheel option, but works with objects
+class "ObjectWheelOption" (ItemWheelOption)
+ObjectWheelOption.is_obj = true -- flag for classes that work specifically with objects (ignore cache and section dupes)
+function ObjectWheelOption:__init(xml, parent, section, id)
+    super(xml, parent, section)    
+    self.item_id = id
+end
+
+function ObjectWheelOption:Draw(x, y)
+    ItemWheelOption.Draw(self, x, y)
+    self.item_cont.showcase = false
+
+    -- make progress bar act like it's not manual
+    local ci = self:GetCellItem()
+    _add_progress = ci.Add_ProgressBar
+    ci.Add_ProgressBar = function(_ci, xml, obj, sec, clsid)
+        _ci.manual = false
+        _add_progress(_ci, xml, obj, sec, clsid)
+        _ci.manual = true
+    end
+
+    self:UpdateItemCell()
+end
+
+function ObjectWheelOption:Update()
+    local obj = self:GetObject()
+    self:GetCellItem():Colorize(obj and "def" or "hide")
+    return obj
+end
+
+function ObjectWheelOption:UpdateItemCell()
+    local obj = self:GetObject()
+    local ci = self:GetCellItem()
+    ci.showcase = obj and 0 or 1
+    self.item_cont:AddItemManual(obj, self.section, 1)
+end
+
+function ObjectWheelOption:OnClick()
+    local obj = self:GetObject()
+
+    if (not obj) then
+        return
+    end
+
+    return obj
+end
+
+function ObjectWheelOption:GetObject()
+    local obj = level.object_by_id(self.item_id)
+
+    if (not obj) then
+        return
+    end
+
+    local p = obj:parent()
+
+    if p and p:id() == AC_ID then
+        return obj
+    end
+end
+
+function ObjectWheelOption.GetTabParams(obj, sec)
+    return {sec, obj:id()}
+end
+
+-- Quick Consumable
+class "QConsumableWheelOption" (ItemWheelOption)
+
+function QConsumableWheelOption:__init(xml, parent, section)
+    super(xml, parent, section)
+
+    self.is_multiuse = IsItem("multiuse", self.section)
+    
+    self.count_itr = self.is_multiuse and function(_, obj)
+        if (obj:section() == self.section) then
+            self.count = self.count + obj:get_remaining_uses()
+        end
+    end or function(_, obj)
+        if (obj:section() == self.section) then
+            self.count = self.count + 1
+        end
+    end
+end
+
+function QConsumableWheelOption:OnClick()
+    local obj = ItemWheelOption.OnClick(self)
+
+    if (not obj) then
+        return
+    end
+
+    GUI:Close()
+
+    if (CInventory__eat(obj) == false) then
+		return
+	end
+    
+	db.actor:eat(obj)
+end
+
+function QConsumableWheelOption.CanAddToTab(obj, sec)
+    return IsItem("consumable", sec) and (not IsItem("scope", sec))
+end
+
+function get_obj_inv_slot(obj)
+    if (not obj) then
+        return false
+    end
+
+    local id = obj:id()
+
+    for slot, _ in pairs(SCANNED_SLOTS) do
+        local item_in_slot = db.actor:item_in_slot(slot)
+
+        if item_in_slot and item_in_slot:id() == id then
+            return slot
+        end
+    end
+
+    return false
+end
+
+-- Quick Slot
+class "QSlotWheelOption" (ItemWheelOption)
+
+function QSlotWheelOption:__init(xml, parent, section, slot)
+    super(xml, parent, section)
+
+    self.slot = slot
+end
+
+function QSlotWheelOption:Update()
+    local obj = ItemWheelOption.Update(self)
+
+    local item_in_slot = db.actor:item_in_slot(self.slot)
+    self.selected_bg:Show(item_in_slot and item_in_slot:section() == self.section)
+
+    return obj
+end
+
+function QSlotWheelOption:OnClick()
+    local obj = ItemWheelOption.OnClick(self)
+
+    if (not obj) then
+        return
+    end
+
+    local item_in_slot = db.actor:item_in_slot(self.slot)
+    
+    if item_in_slot and item_in_slot:section() == self.section then
+        return obj
+    end
+    
+    db.actor:move_to_slot(obj, self.slot)
+
+    return obj
+end
+
+function QSlotWheelOption.CanAddToTab(obj, sec)
+    return false
+end
+
+function QSlotWheelOption.GetTabParams(obj, sec)
+    local t = ItemWheelOption.GetTabParams(obj, sec)
+    t[#t + 1] = ini_sys:r_float_ex(sec, "slot") + 1
+    return t
+end
+
+class "QGrenadeWheelOption" (QSlotWheelOption)
+
+function QGrenadeWheelOption:__init(xml, parent, section, slot) 
+    super(xml, parent, section, slot)
+
+    self.count_itr = function(_, obj)
+        if (obj:section() == self.section) then
+            self.count = self.count + 1
+        end
+    end
+end
+
+function QGrenadeWheelOption:OnClick()
+    local obj = QSlotWheelOption.OnClick(self)
+
+    if (not obj) then
+        return
+    end
+
+    if self.selected_bg:IsShown() then
+        db.actor:activate_slot(self.slot)
+    end
+end
+
+function QGrenadeWheelOption.CanAddToTab(obj, sec)
+    if ini_sys:r_float_ex(sec, "slot") == 3 then
+        return true
+    end
+    return false
+end
+
+-- Quick Device
+class "QDetectorWheelOption" (QSlotWheelOption)
+
+function QDetectorWheelOption:__init(xml, parent, section, slot) 
+    super(xml, parent, section, slot)
+end
+
+function QDetectorWheelOption:OnClick()
+    local device = ItemWheelOption.OnClick(self)
+
+    if (not device) then
+        return
+    end
+
+    local is_fast = is_fast_anim()
+    local device_in_slot = db.actor:item_in_slot(self.slot)
+    local active_device = db.actor:active_detector()
+
+    if device_in_slot and device_in_slot:section() == self.section then
+        if active_device then
+            db.actor:hide_detector(is_fast)
+        else
+            db.actor:show_detector(is_fast)
+        end
+
+        GUI:Close()
+        return device
+    end
+    
+    if active_device then
+        cycle_detector(active_device, device, is_fast)
+    else
+        equip_and_show_detector(device)
+    end
+
+    GUI:Close()
+    return device
+end
+
+function QDetectorWheelOption.CanAddToTab(obj, sec)
+    if ini_sys:r_float_ex(sec, "slot") == 8 then
+        return true
+    end
+
+    return false
+end
+
+function is_fast_anim()
+    return db.actor:active_item() and true or false
+end
+
+function cycle_detector(prev, next, is_fast)
+    db.actor:hide_detector(is_fast)
+
+    CreateTimeEvent(script_name(), "hide_device", 0, function()
+        if prev:get_state() == 3 then
+            equip_and_show_detector(next)
+            return true
+        end
+
+        return false
+    end)
+end
+
+function equip_and_show_detector(obj)
+    db.actor:move_to_slot(obj, 9)
+
+    CreateTimeEvent(script_name(), "show_device", 0.1, function()
+        db.actor:show_detector(is_fast_anim())
+        return true
+    end)
+end
+
+
+-- Generic Weapon Attachment
+class "AttachmentWheelOption" (ItemWheelOption)
+
+function AttachmentWheelOption:__init(xml, parent, section)
+    super(xml, parent, section)
+end
+
+function AttachmentWheelOption:IsAttached()
+    -- do something to check if attachment is attached
+    return false
+end
+
+function AttachmentWheelOption:Attach(obj, wpn)
+    snd_attach_addon:play(db.actor,0,sound_object.s2d)
+    -- do something to attach the attachment
+end
+
+function AttachmentWheelOption:Detach(wpn)
+    snd_detach_addon:play(db.actor,0,sound_object.s2d)
+    -- do something to detach the attachment
+end
+
+function AttachmentWheelOption:CanAttach(obj, wpn)
+    -- do something to check if we can attach
+end
+
+function AttachmentWheelOption:Update()
+    local obj = ItemWheelOption.Update(self)
+    local wpn = db.actor:active_item()
+
+    self.selected_bg:Show(false)
+    local ci = self:GetCellItem()
+    if wpn then
+        if self:IsAttached(wpn) then
+            ci:Colorize("def")
+            self.selected_bg:Show(true)
+        elseif obj and (not self:CanAttach(obj, wpn)) then
+            ci:Colorize("red")
+        end
+    else
+        if obj then
+            ci:Colorize("red")
+        end
+    end
+end
+
+function AttachmentWheelOption:OnClick()
+    local wpn = db.actor:active_item()
+
+    if (not wpn) then
+        return
+    end
+    
+    if self:IsAttached(wpn) then
+        self:Detach(wpn)
+    else
+        local obj = db.actor:object(self.section)
+
+        if obj then
+            if self:CanAttach(obj, wpn) then
+                self:Attach(obj, wpn)
+            end
+        end
+    end
+end
+
+
+-- Quick Underbarrel Grenade Launcher
+class "QGrenadeLauncherWheelOption" (AttachmentWheelOption)
+
+function QGrenadeLauncherWheelOption:__init(xml, parent, section)
+    super(xml, parent, section)
+end
+
+function QGrenadeLauncherWheelOption:IsAttached(wpn)
+    return utils_item.get_attached_gl(wpn) == self.section
+end
+
+function QGrenadeLauncherWheelOption:CanAttach(obj, wpn)
+    return utils_item.can_attach_gl(wpn, obj)
+end
+
+function QGrenadeLauncherWheelOption:Attach(obj, wpn)
+    AttachmentWheelOption.Attach(self, obj, wpn)
+
+    utils_item.attach_addon(wpn, obj, "gl", true)
+end
+
+function QGrenadeLauncherWheelOption:Detach(wpn)
+    AttachmentWheelOption.Detach(self, wpn)
+
+    utils_item.detach_addon(wpn, nil, "gl")
+end
+
+function QGrenadeLauncherWheelOption.CanAddToTab(obj, sec)
+    return IsItem("gl", sec)
+end
+
+
+-- Quick Silencer Attach
+class "QSilencerWheelOption" (AttachmentWheelOption)
+
+function QSilencerWheelOption:__init(xml, parent, section)
+    super(xml, parent, section)
+end
+
+function QSilencerWheelOption:IsAttached(wpn)
+    return utils_item.get_attached_silencer(wpn) == self.section
+end
+
+function QSilencerWheelOption:CanAttach(obj, wpn)
+    return utils_item.can_attach_silencer(wpn, obj)
+end
+
+function QSilencerWheelOption:Attach(obj, wpn)
+    AttachmentWheelOption.Attach(self, obj, wpn)
+
+    utils_item.attach_addon(wpn, obj, "sil", true)
+end
+
+function QSilencerWheelOption:Detach(wpn)
+    AttachmentWheelOption.Detach(self, wpn)
+
+    utils_item.detach_addon(wpn, nil, "sil")
+end
+
+function QSilencerWheelOption.CanAddToTab(obj, sec)
+    return IsItem("sil", sec)
+end
+
+
+-- Quick Scope Switch
+class "QScopeWheelOption" (AttachmentWheelOption)
+
+function QScopeWheelOption:__init(xml, parent, section)
+    super(xml, parent, section)
+end
+
+function QScopeWheelOption:IsAttached(wpn)
+    return utils_item.get_attached_scope(wpn) == self.section
+end
+
+function QScopeWheelOption:CanAttach(obj, wpn)
+    local scopes = parse_list(ini_sys, wpn:section(), "scopes", true)
+
+    return scopes[obj:section()] or utils_item.can_attach_scope(wpn, obj)
+end
+
+function QScopeWheelOption:ReturnWeaponToSlot(slot)
+    local fun = nil
+
+    fun = function(item)
+        if IsWeapon(item) then
+            db.actor:move_to_slot(item, slot)
+            UnregisterScriptCallback("actor_on_item_take", fun)
+        end
+    end
+    
+    RegisterScriptCallback("actor_on_item_take", fun)
+end
+
+function QScopeWheelOption:Attach(obj, wpn)
+    if wpn:get_state() ~= 0 then 
+        return
+    end
+
+    AttachmentWheelOption.Attach(self, obj, wpn)
+    local cwpn = wpn:cast_Weapon()
+
+    if cwpn:GetScopeName() then
+        utils_item.attach_addon(wpn, obj, "scope", true)
+        return
+    end
+
+    -- attach function for DRX scopes is buggy + we can't cycle to new scope with it, so we write our own
+    local parent_section = ini_sys:r_string_ex(wpn:section(),"parent_section")
+    local sec = wpn:section()
+
+    if (sec ~= parent_section) then
+        local scope_sec = sec:gsub(parent_section .. "_", "")
+
+        if ini_sys:section_exist(scope_sec) then
+            alife_create_item(scope_sec, db.actor)
+        end
+    end
+    
+    local child_section = (parent_section .. "_" .. obj:section())
+
+    if not (ini_sys:section_exist(child_section)) then 
+        return 
+    end
+    
+    local slot = get_obj_inv_slot(wpn)
+
+    local old_wpn = alife_object(wpn:id())
+    local new_wpn = old_wpn and alife_clone_weapon(old_wpn, child_section)
+
+    if (not new_wpn) then
+        return
+    end
+
+    alife_release(obj)
+
+    if slot then
+        self:ReturnWeaponToSlot(slot)
+    end
+
+    return new_wpn
+end
+
+function QScopeWheelOption:Detach(wpn)
+    if wpn:get_state() ~= 0 then 
+        return
+    end
+
+    AttachmentWheelOption.Detach(self, wpn)
+
+    local cwpn = wpn:cast_Weapon()
+
+    if cwpn:GetScopeName() then
+        utils_item.detach_addon(wpn, self.section, "scope")
+        return
+    end
+
+    -- detach function is also buggy, so we write this too
+    local parent_section = ini_sys:r_string_ex(wpn:section(),"parent_section")
+    local sec = wpn:section()
+
+    if (parent_section == sec) then -- something is not right
+        return
+    end
+
+    alife_create_item(self.section, db.actor)
+    
+    local slot = get_obj_inv_slot(wpn)
+
+    local old_wpn = alife_object(wpn:id())
+    local new_wpn = old_wpn and alife_clone_weapon(old_wpn, parent_section)
+    
+    if (not new_wpn) then
+        return
+    end
+
+    if slot then
+        self:ReturnWeaponToSlot(slot)
+    end
+
+    return new_wpn
+end
+
+function QScopeWheelOption.CanAddToTab(obj, sec)
+    return IsItem("scope", sec)
+end
+
+
+class "QMagazineWheelOption" (ObjectWheelOption)
+
+function QMagazineWheelOption:__init(xml, parent, section, id)
+    super(xml, parent, section, id)
+end
+
+function QMagazineWheelOption:OnClick()
+    local obj = ObjectWheelOption.OnClick(self)
+
+    if (not self:CanLoadInActiveWeapon(obj)) then
+        return
+    end
+
+    GUI:Close()
+    
+    self:LoadInActiveWeapon(obj)
+end
+
+function QMagazineWheelOption:Update()
+    local obj = ObjectWheelOption.Update(self)
+
+    if (not obj) then
+        return
+    end
+
+    self:GetCellItem():Colorize(self:CanLoadInActiveWeapon(obj) and "def" or "red")
+end
+
+function QMagazineWheelOption:CanLoadInActiveWeapon(obj)
+    return magazine_binder.is_carried_mag(self.item_id) and magazine_binder.is_compatible(db.actor:active_item(), obj)
+end
+
+function QMagazineWheelOption:LoadInActiveWeapon(obj)
+    local wpn = db.actor:active_item()
+    local pre_table = magazines.count_ammo(wpn)
+
+    wpn:switch_state(7)
+
+	local first_round = nil
+
+    if magazines_mcm.get_config("retain_round") and wpn:get_ammo_in_magazine() > 0 then
+        first_round = magazines.get_sec_chambered(wpn)
+    end
+    
+    magazines.action_start_reload()
+    
+    magazines.create_time_event(
+        "Mag_redux", 
+        "delay_weapon"..wpn:id(), 
+        0.1, 
+        magazines.delay_load_weapon, 
+        MCM_SETTINGS.old_mags_compat and wpn or wpn:id(), 
+        obj, 
+        pre_table, 
+        first_round
+    )
+end
+
+function QMagazineWheelOption.CanAddToTab(obj, sec)
+    return is_magazine(obj)
+end
+
+
+class "QAmmoWheelOption" (ItemWheelOption)
+
+function QAmmoWheelOption:__init(xml, parent, section)
+    super(xml, parent, section)
+
+    self.can_load_in_weapon = false
+    self.ammo_type = false
+    self.is_loaded = false
+
+    self.count_itr = function(_, obj)
+        if obj:section() == self.section then
+            self.count = self.count + obj:ammo_get_count()
+        end
+    end
+end
+
+function QAmmoWheelOption:Draw(x, y)
+    ItemWheelOption.Draw(self, x, y)
+    self:UpdateCounter()
+end
+
+function QAmmoWheelOption:Update()
+    local obj = ItemWheelOption.Update(self)
+    local ci = self:GetCellItem()
+
+    self:UpdateCanLoad()
+
+    self.selected_bg:Show(self.is_loaded)
+
+    ci:Colorize(self.can_load_in_weapon and "def" or "red")
+end
+
+function QAmmoWheelOption:OnClick()
+    local obj = ItemWheelOption.OnClick(self)
+
+    if (not self.can_load_in_weapon) or self.is_loaded then
+        return
+    end
+
+    GUI:Close()
+    
+    self:LoadInActiveWeapon()
+end
+
+function QAmmoWheelOption:UpdateCanLoad()
+    local wpn = db.actor:active_item()
+    
+    if (not wpn) or (not IsWeapon(wpn)) or IsItem("fake_ammo_wpn",wpn:section()) then
+        self:ResetCanLoad()
+        return
+    end
+    
+    local cwpn = wpn:cast_Weapon()
+    
+    if supports_magazines(wpn) and (not wpn:weapon_in_grenade_mode()) then
+        self:ResetCanLoad()
+        return
+    end
+    
+    local ammos = {}
+    
+    cwpn:AmmoTypeForEach(function(i, ammo_sec)
+        ammos[ammo_sec] = i
+    end)
+
+    if ammos[self.section] then
+        self.can_load_in_weapon = true
+        self.ammo_type = ammos[self.section]
+        self.is_loaded = self.ammo_type == cwpn:GetAmmoType()
+    else
+        self:ResetCanLoad()
+    end
+end
+
+function QAmmoWheelOption:ResetCanLoad()
+    self.can_load_in_weapon = false
+    self.ammo_type = false
+    self.is_loaded = false
+end
+
+function QAmmoWheelOption:LoadInActiveWeapon()
+    local wpn = db.actor:active_item()
+    wpn:unload_magazine(true)
+    wpn:set_ammo_type(self.ammo_type)
+    db.actor:reload_weapon()
+end
+
+function QAmmoWheelOption.CanAddToTab(obj, sec)
+    return IsItem("ammo", sec) or IsItem("grenade_ammo", sec)
+end
+
+
+class "QEquipWheelOption" (ObjectWheelOption)
+
+function QEquipWheelOption:__init(xml, parent, section, id, slot)
+    super(xml, parent, section, id)
+    self.slot = slot
+end
+
+function QEquipWheelOption:OnClick()
+    local obj = ObjectWheelOption.OnClick(self)
+
+    if (not obj) then
+        return
+    end
+
+    if db.actor:active_slot() ~= self.slot then
+        db.actor:activate_slot(self.slot)
+    end
+
+    local item_in_slot = db.actor:item_in_slot(self.slot)
+
+    if (not item_in_slot) or item_in_slot:id() ~= self.item_id then
+        db.actor:move_to_slot(obj, self.slot)
+    end
+
+    CreateTimeEvent(script_name(), "close_gui_delay_" .. self.slot, 0.1, function()
+        if GUI then
+            GUI:Close()
+        end
+        return true
+    end)
+
+    return obj
+end
+
+function QEquipWheelOption:Update()
+    local obj = ObjectWheelOption.Update(self)
+
+    if (not obj) then
+        return
+    end
+
+    if self:IsEquipped() then
+        self:GetCellItem():Colorize("def")
+        self.selected_bg:Show(db.actor:active_slot() == self.slot)
+    end
+    
+    self.selected_bg:Show(false)
+end
+
+function QEquipWheelOption:IsEquipped()
+    local item_in_slot = db.actor:item_in_slot(self.slot)
+    return item_in_slot and item_in_slot:id() == self.item_id
+end
+
+function QEquipWheelOption.GetTabParams(obj, sec)
+    local t = ObjectWheelOption.GetTabParams(obj, sec)
+    table.insert(t, get_obj_inv_slot(obj))
+    return t
+end
+
+function QEquipWheelOption.CanAddToTab(obj, sec)
+    if (not obj) then
+        return
+    end
+
+    local slot = get_obj_inv_slot(obj)
+    
+    return slot and slot ~= 4
+end
+
+function patch_GUI(GUI)
+    GUI.stay_open = false
+    GUI.tab_category = InitEx(GUI.xml, "Static", "tab_category", GUI.bg)
+    GUI.title = InitEx(GUI.xml, "TextWnd", "title", GUI.bg)
+    GUI.tab_icons = {}
+    GUI.tab_colors = {
+        def = GetARGB(127, 0, 0, 0),
+        cur = GetARGB(255, 0, 0, 0)
+    }
+
+    for i = 1, TAB_MANAGER.tab_count do
+        GUI.tab_icons[i] = InitEx(GUI.xml, "Static", "tab_icon", GUI.bg)
+
+        local pos = GUI.tab_icons[i]:GetWndPos()
+        local w = GUI.tab_icons[i]:GetWidth()
+
+        GUI.tab_icons[i]:SetWndPos(vector2():set(pos.x + ((w + 5) * (i - 1)), pos.y))
+    end
+
+    function GUI:UpdateCallback()
+        if MCM_SETTINGS.hold and key_state(MCM_SETTINGS.keybind) == 0 and (not self.stay_open) then
+            self:Close()
+        end
+    end
+    
+    local num_keys = {}
+    for i = 0, 9 do num_keys[DIK_keys["DIK_" .. i]] = i end
+
+    function GUI:OnKeyboardCallback(dik, keyboard_action)
+        if keyboard_action ~= ui_events.WINDOW_KEY_PRESSED then
+            return false
+        end
+        local bind = dik_to_bind(dik)
+        if num_keys[dik] then
+            local i = num_keys[dik]
+
+            if TAB_MANAGER.tabs[i] then
+                TAB_MANAGER:SetCurrentTab(i)
+            end
+            
+            return true
+        elseif dik == DIK_keys.MOUSE_2 then
+            if is_not_empty(self.options) and self.options[self.hovered_idx] then 
+                self.options[self.hovered_idx]:OnRightClick()
+                
+                return true
+            end
+        elseif (
+                (dik == MCM_SETTINGS.keybind and (not MCM_SETTINGS.hold)) or 
+                (MCM_SETTINGS.override_ammo_wheel and bind == key_bindings.kWPN_NEXT) or 
+                override_quick_keys[bind]
+            ) and keybind_pass() then
+            self:Close()
+
+            return true
+        end
+
+        return false
+    end
+    
+    function GUI:SetTitle(str)
+        self.title:SetText(str)
+        self.title:AdjustHeightToText()
+    end
+    
+    function GUI:UpdateItems()
+        self:Reset()
+
+        local current_tab = TAB_MANAGER.temp_tab or TAB_MANAGER.current_tab
+        
+        for i, item in ipairs(TAB_MANAGER.tabs[current_tab]) do
+            self:AddOption(TAB_MANAGER.classes[item.class](XMLOP, self, unpack(item.args)))
+        end
+
+        if TAB_MANAGER.dynamic_tabs[current_tab] then
+            self.tab_category:Show(true)
+            self.tab_category:InitTexture(TAB_MANAGER:GetDynamicTabHandler(current_tab):GetUITexture())
+        else
+            self.tab_category:Show(false)
+        end
+
+        for i, tab in ipairs(self.tab_icons) do
+            tab:SetTextureColor(i == current_tab and self.tab_colors.cur or self.tab_colors.def)
+        end
+        
+        self:DrawOptions()
+    end
+    
+    local _Reset = GUI.Reset
+    function GUI:Reset()
+        _Reset(self)
+        self.title:SetText("")
+    end
+
+    function GUI:Close()
+        self.stay_open = false
+
+        self:HideDialog()
+
+        if MCM_SETTINGS.slowmo then
+            exec_console_cmd("time_factor 1")
+        end
+
+        Unregister_UI("UIHaruQAW")
+    end
+
+    return GUI
+end
+
+function create_GUI()
+    GUI = patch_GUI(haru_arm.UIAdvancedRadialMenu("ui_haru_radial_menu.xml"))
+    
+    GUI:UpdateItems()
+end
+
+function open_radial_menu(temp_tab)
+	hide_hud_inventory()
+    
+	if (not GUI) then
+        create_GUI()
+	end
+    
+	if (GUI) and (not GUI:IsShown()) and (((not temp_tab) and MCM_SETTINGS.hold) or keybind_pass()) then
+        GUI.stay_open = temp_tab
+
+        TAB_MANAGER.temp_tab = temp_tab or false
+
+        TAB_MANAGER:SetCurrentTab(TAB_MANAGER.temp_tab or TAB_MANAGER.current_tab, TAB_MANAGER.temp_tab)
+		GUI:ShowDialog(true)
+
+        if MCM_SETTINGS.slowmo then
+            exec_console_cmd("time_factor " .. MCM_SETTINGS.slowmo_factor)
+        end
+
+        _GUIs_keyfree["UIHaruQAW"] = true
+		Register_UI("UIHaruQAW", script_name())
+	end
+end
+
+-- even GUIs need to be cleaned up like this, not just HUDs
+function actor_on_net_destroy()
+    if GUI and GUI:IsShown() then
+        GUI:Close()
+    end
+    
+    GUI = nil
+end
+
+local mcm_keybinds = ui_mcm and ui_mcm.key_hold
+
+function get_options_for_category(category, default)
+    return {
+        { id = "divider", type = "line" },
+        { id = "desc" .. category, type = "desc", text = "ui_mcm_qaw_" .. category},
+        { id = category .. "_enabled", type = "check", hint = "qaw_enabled", val = 1, def = true },
+        { id = category .. "_tab", type = "input", hint = "qaw_tab", val = 2, min = 1, max = 9, def = default}
+    }
+end
+
+function get_options_for_quick_use_key(key, def_enabled, def_val)
+    return {
+        { id = "divider", type = "line" },
+        { id = "desc" .. key, type = "desc", text = game.translate_string("ui_haru_qaw_override") .. " " .. game.translate_string("kb_quick_use_" .. key)},
+        { id = "quck_use_" .. key .. "_enabled", type = "check", hint = "qaw_enabled", val = 1, def = def_enabled },
+        { id = "quck_use_" .. key .. "_tab", type = "input", hint = "qaw_tab", val = 2, min = 1, max = 9, def = def_val}
+    }
+end
+
+local options = {id = script_name(), gr = {
+    {id = "controls", text="ui_mcm_qaw_controls", sh = true, gr = {
+        { id = "title", type= "slide", link= "ui_qaw_mcm_banner", text= "", spacing = 20 },
+        { id = "keybind", type = "key_bind", val = 2, def = DIK_keys.DIK_B },
+        { id = "modifier", type = ui_mcm.kb_mod_radio, val = 2, def = 0, hint = "mcm_kb_mode",
+            content = {
+                -- excluded double tap
+                { 0, "mcm_kb_mode_press"},
+                { 1, "mcm_kb_mode_hold"} 
+            }
+        },
+        { id = "second_key", type = ui_mcm.kb_mod_radio, val = 2, def = 0, hint = "mcm_kb_modifier", 
+            content = { 
+                {0,"mcm_kb_mod_none"}, 
+                {1,"mcm_kb_mod_shift"} , 
+                {2,"mcm_kb_mod_ctrl"},
+                {3,"mcm_kb_mod_alt"}
+            }
+        },
+        { id = "hold", type = "check", val = 1, def = true },
+        { id = "divider", type = "line" },
+        { id = "override_ammo_wheel", type = "check", val = 1, def = true},
+    }},
+
+    {id = "tabs", text="ui_mcm_qaw_tabs", sh = true, gr = {
+        { id = "title", type= "slide", link= "ui_qaw_mcm_banner", text= "", spacing = 20 },
+        { id = "tab_count", type = "track", val = 2, min = 1, max = 9, step = 1, def = 1 },
+		{ id = "tab_slot", type = "track", val = 2, min = 1, max = 20, step = 1, def = 10 },
+    }},
+
+    {id ="misc", text="ui_mcm_qaw_misc", sh = true, gr = {
+        { id = "title", type= "slide", link= "ui_qaw_mcm_banner", text= "", spacing = 20 },
+        { id = "slowmo", type = "check", val = 1, def = false},
+        { id = "slowmo_factor",  type = "track", val = 2, step = 0.05, def = 0.5, max = 1, min = 0.1},
+        { id = "old_mags_compat", type = "check", val = 1, def = false}
+    }}
+}}
+for default, category in pairs(tab_categories) do
+    local category_options = get_options_for_category(category, default)
+    for i = 1, #category_options do
+        table.insert(options.gr[2].gr, category_options[i])
+    end
+end
+for key = 1, 4 do
+    local quick_keys = get_options_for_quick_use_key(key, override_quick_keys[key + 60] and true or false ,override_quick_keys[key + 60] or 1)
+    for i = 1, #quick_keys do
+        table.insert(options.gr[1].gr, quick_keys[i])
+    end
+end
+
+function load_defaults()
+    for _, subtab in pairs(options.gr) do
+        for _, option in pairs(subtab.gr) do
+            MCM_SETTINGS[option.id] = option.def
+        end
+    end
+end
+
+function on_mcm_load()
+    return options
+end
+
+function on_mouse_wheel(dir)
+    if GUI and GUI:IsShown() then
+        local res = TAB_MANAGER.current_tab + (dir == 0 and 1 or -1)
+
+        TAB_MANAGER:SetCurrentTab(
+            (res < 1 and TAB_MANAGER.tab_count) or 
+            (res > TAB_MANAGER.tab_count and 1) 
+            or res
+        )
+    end
+end
+
+function on_key_press(key)
+	if key ~= MCM_SETTINGS.keybind then return end
+
+    if (not mcm_keybinds) then 
+        open_radial_menu() 
+        return 
+    end
+
+    if ui_mcm.get_mod_key(MCM_SETTINGS.second_key) then
+        open_radial_menu()
+    end
+end
+
+function on_key_release(key)
+    if key ~= MCM_SETTINGS.keybind then return end
+
+    if ui_mcm.get_mod_key(MCM_SETTINGS.second_key) then
+        open_radial_menu() 
+    end
+end
+
+function on_key_hold(key)
+    if key ~= MCM_SETTINGS.keybind then return end
+
+    if ui_mcm.get_mod_key(MCM_SETTINGS.second_key) then
+        if ui_mcm.key_hold(script_name(), key) then 
+            open_radial_menu() 
+        end 
+    end
+end
+
+function on_before_key_press(key, bind, dis, flags)
+    if bind == key_bindings.kWPN_NEXT and (MCM_SETTINGS.override_ammo_wheel) and (TAB_MANAGER.tab_by_handler.grenades) then
+        local active_item = db.actor:active_item()
+
+        if active_item and IsGrenade(active_item) then
+            flags.ret_value = false -- disable engine grenade switch
+        end
+    elseif override_quick_keys[bind] then
+        if TAB_MANAGER.tabs[override_quick_keys[bind]] then
+            open_radial_menu(override_quick_keys[bind])
+        end
+    end
+end
+
+function start_ammo_wheel_override()
+    local wpn = db.actor:active_item()
+
+    local tbh = TAB_MANAGER.tab_by_handler
+
+    if (not wpn) then
+        if db.actor:active_detector() and tbh.devices then
+            open_radial_menu(tbh.devices)
+        elseif tbh.slots then
+            open_radial_menu(tbh.slots)
+        end
+
+        return
+    end
+    
+    if IsWeapon(wpn) and (not IsItem("fake_ammo_wpn",wpn:section())) then
+        if key_state(DIK_keys.DIK_LSHIFT) ~= 0 and tbh.attachments then
+            open_radial_menu(tbh.attachments)
+        elseif key_state(DIK_keys.DIK_LMENU) ~= 0 and tbh.devices then
+            open_radial_menu(tbh.devices)
+        elseif tbh.ammo then
+            open_radial_menu(tbh.ammo)
+        end
+    elseif (IsBolt(wpn) or db.actor:active_detector()) and tbh.devices then
+        open_radial_menu(tbh.devices)
+    elseif IsGrenade(wpn) and tbh.grenades then
+        open_radial_menu(tbh.grenades)
+    elseif ((IsWeapon(wpn) and IsItem("fake_ammo_wpn",wpn:section())) or (IsItem("device", nil, wpn))) and tbh.slots then
+        open_radial_menu(tbh.slots)
+    end
+end
+
+function on_option_change(mcm)
+    if (not mcm) then return end
+
+    for _, subtab in pairs(options.gr) do
+        for _, option in pairs(subtab.gr) do
+            if option.val then
+                MCM_SETTINGS[option.id] = ui_mcm.get(strformat("%s/%s/%s", script_name(), subtab.id, option.id))
+            end
+        end
+    end
+
+    local simple_press = MCM_SETTINGS.hold and "on_key_press" or "on_key_release"
+    
+    local to_register = MCM_SETTINGS.modifier == 0 and simple_press or "on_key_hold"
+    local to_unregister =  MCM_SETTINGS.modifier == 0 and "on_key_hold" or simple_press
+
+    RegisterScriptCallback(to_register, this[to_register])
+    UnregisterScriptCallback(to_unregister, this[to_unregister])
+
+    if MCM_SETTINGS.hold then
+        UnregisterScriptCallback("on_key_release", on_key_release)
+    else
+        UnregisterScriptCallback("on_key_press", on_key_press)
+    end
+
+    TAB_MANAGER:SetTabCount(MCM_SETTINGS.tab_count)
+
+    TAB_MANAGER.dynamic_tabs = {}
+
+    for _, category in pairs(tab_categories) do
+        if MCM_SETTINGS[category .. "_enabled"] then
+            local tab = MCM_SETTINGS[category .. "_tab"]
+
+            if TAB_MANAGER.tabs[tab] then
+                TAB_MANAGER.dynamic_tabs[tab] = category
+            end
+        end
+    end
+
+    for i = 1, 4 do
+        if MCM_SETTINGS["quck_use_" .. i .. "_enabled"] then
+            override_quick_keys[60 + i] = MCM_SETTINGS["quck_use_" .. i .. "_tab"]
+        else
+            override_quick_keys[60 + i] = nil
+        end
+    end
+
+    TAB_MANAGER.tab_by_handler = invert_table(TAB_MANAGER.dynamic_tabs)
+    
+    GUI = nil -- refresh GUI
+end
+
+function on_game_start()
+    load_defaults()
+    TAB_MANAGER = TabManager()
+    
+    RegisterScriptCallback("on_key_press", on_key_press)
+    RegisterScriptCallback("on_before_key_press", on_before_key_press)
+
+    RegisterScriptCallback("on_option_change", on_option_change)
+
+    RegisterScriptCallback("actor_on_net_destroy", actor_on_net_destroy)
+
+    if MODDED_EXES_VERSION and (MODDED_EXES_VERSION >= 20231209) then
+        RegisterScriptCallback("on_mouse_wheel", throttle(on_mouse_wheel, 50))
+    end
+
+    custom_functor_autoinject.add_functor(unpack(add_to_qaw_functor))
+
+    _start_ammo_wheel = item_weapon.start_ammo_wheel
+
+    function item_weapon.start_ammo_wheel()
+        if (not MCM_SETTINGS.override_ammo_wheel) then
+            _start_ammo_wheel()
+            return
+        end
+        start_ammo_wheel_override()
+    end
+    
+    on_option_change(mcm_keybinds)
+end

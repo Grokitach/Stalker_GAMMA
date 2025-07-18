@@ -1,0 +1,195 @@
+play_animation = false
+local mcm_enable_nvg_animation = true
+
+--- -------------------------------------------------
+--- init
+--- -------------------------------------------------
+
+function on_game_start()
+    RegisterScriptCallback("on_game_load", initialize)
+    RegisterScriptCallback("on_option_change", initialize)
+end
+
+function initialize()
+    mcm_enable_nvg_animation = liz_fdda_redone_mcm.get_config("nvg/enable")
+end
+
+--- -------------------------------------------------
+--- monkey patches
+--- -------------------------------------------------
+
+local baseIDSN = item_device.set_nightvision
+item_device.set_nightvision = function (section, state)
+    if mcm_enable_nvg_animation and play_animation then
+        play_animation = false
+        set_nightvision_animated(section, state)
+        return
+    end
+    baseIDSN(section, state)
+end
+
+--- -------------------------------------------------
+--- main
+--- -------------------------------------------------
+
+function allow_animation()
+	return (not game.only_movekeys_allowed()) and (not IsMoveState("mcClimb"))
+end
+
+
+function set_nightvision_animated(section, state)
+    if (not section) then return end
+    if not ini_sys:r_string_ex(section, "nv_effect") then return end
+	if (not allow_animation()) or (not item_device.can_toggle_torch()) then return end
+    if lam2.get_action_with_tag("nvg_animation") then return end
+
+    local weapon_zoomed = axr_main.weapon_is_zoomed and (not (IsPistol(db.actor:active_item(), nil)) or db.actor:active_detector())
+	local det_active = db.actor:active_detector() or nil
+
+    -- if holding weapon and aiming disable ADS
+	if (db.actor:active_item()) then
+        if not det_active and weapon_zoomed then
+            if (get_console():get_bool("wpn_aim_toggle")) then
+                level.press_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+            else
+                level.release_action(bind_to_dik(key_bindings.kWPN_ZOOM))
+            end
+        end
+    end
+
+	if state then
+		--enable nvg
+		lam2.add_action(lam2.get_template_action_wait_for_seconds(0.05)) --anim bug? small delay to prevent ctd
+        lam2.add_action(get_template_action_nvg_enable_start())     --enter hand motion
+        lam2.add_action(get_template_action_nvg_enable(section))    --equip nvg motion
+	else
+		--disable nvg
+        lam2.add_action(get_template_action_nvg_disable_start())    --fade in
+        lam2.add_action(get_template_action_nvg_disable(section))   --unequip nvg motion
+        lam2.add_action(get_template_action_nvg_disable_end())      --exit hand motion
+	end
+end
+
+--- ----------------------------------------------------
+--- action templates
+--- ----------------------------------------------------
+
+function get_template_action_nvg_enable_start()
+	local a = lam2.get_template_action_play_animation()
+	a.tag = "nvg_animation"
+    a.sec = "anim_nvg_transition_hud"
+    a.anm = "anm_show_start"
+	a.cam = "cam_show_start"
+    a.hands = 1
+    a.anm_blend = true
+    a.on_enter = function (self)
+        -- game.play_hud_anm("script\\headlamp.anm", 0, 0.25, 1, false)
+        game.play_hud_anm("liz\\headlamp\\liz_headlamp_toggle_weapon_sway.anm", 0, 1, 1, false)
+        -- weapon inertia expanded patch
+        if liz_inertia_expanded then
+            liz_inertia_expanded.set_mask_flag(liz_inertia_expanded.mask_layers.anm_plays, true)
+        end
+    end
+    return a
+end
+
+function get_template_action_nvg_enable(section)
+	local a = lam2.get_template_action_play_animation()
+	a.tag = "nvg_animation"
+	a.sec = "anim_nvg_hud"
+    a.anm = "anm_show"
+    a.hands = 1
+    a.anm_blend = true
+    a.target = section
+    a.fade_start = false
+    a.fade_end = false
+    a.on_execute = function (self, time)
+        if time > self.duration - 0.35 and not self.fade_start then
+            self.fade_start = true
+            level.add_pp_effector("deimos_short.ppe", 4233, false)
+        end
+        if time > self.duration - 0.25 and not self.fade_end then
+            self.fade_end = true
+            level.remove_pp_effector(4233)
+        end
+    end
+    a.on_exit = function (self)
+        baseIDSN(self.target, true)
+        -- weapon inertia expanded patch
+        if liz_inertia_expanded then
+            liz_inertia_expanded.set_mask_flag(liz_inertia_expanded.mask_layers.anm_plays, false)
+        end
+    end
+    return a
+end
+
+function get_template_action_nvg_disable_start()
+    local a = {
+		tag = "nvg_animation",
+        hands = 1,
+        fade_enabled = false,
+        fade_disabled = false,
+        enter = function (self)
+            level.remove_pp_effector(3301)
+            level.remove_pp_effector(3302)
+            level.remove_pp_effector(3303)
+        end,
+        execute = function (self,time)
+            if not self.fade_enabled then
+                self.fade_enabled = true
+                level.add_pp_effector("deimos_short.ppe", 4233, false)
+                return lam2.states.running
+            end
+            if not self.fade_disabled then
+                self.fade_disabled = true
+                level.remove_pp_effector(4233)
+                return lam2.states.running
+            end
+            if time > 0.4 then
+                return lam2.states.success
+            end
+            return lam2.states.running
+        end
+    }
+    return a
+end
+
+function get_template_action_nvg_disable(section)
+	local a = lam2.get_template_action_play_animation()
+	a.tag = "nvg_animation"
+	a.sec = "anim_nvg_hud"
+    a.anm = "anm_hide"
+	a.cam = "cam_hide"
+    a.hands = 1
+    a.anm_blend = true
+    a.target = section
+    a.on_enter = function (self)
+        game.play_hud_anm("liz\\headlamp\\liz_headlamp_toggle_weapon_sway.anm", 0, 1, 1, false)
+        baseIDSN(self.target, false)
+        -- something wonky with animation length and next state starts too early leading to ctd
+        -- artificially make state a bit longer (TODO: check animation files)
+        self.duration = self.duration + 0.05
+        -- weapon inertia expanded patch
+        if liz_inertia_expanded then
+            liz_inertia_expanded.set_mask_flag(liz_inertia_expanded.mask_layers.anm_plays, true)
+        end
+    end
+    return a
+end
+
+function get_template_action_nvg_disable_end()
+	local a = lam2.get_template_action_play_animation()
+	a.tag = "nvg_animation"
+	a.sec = "anim_nvg_transition_hud"
+    a.anm = "anm_hide_end"
+    a.hands = 1
+    a.anm_blend = true
+    a.on_exit = function (self)
+        torch_anm_state = 0
+        -- weapon inertia expanded patch
+        if liz_inertia_expanded then
+            liz_inertia_expanded.set_mask_flag(liz_inertia_expanded.mask_layers.anm_plays, false)
+        end
+    end
+    return a
+end

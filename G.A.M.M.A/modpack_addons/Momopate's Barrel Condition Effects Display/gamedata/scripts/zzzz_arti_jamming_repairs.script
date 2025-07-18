@@ -31,7 +31,7 @@ SetTip = ui_workshop.SetTip
 -- 		local cond_remaining = cleaning_table[toolkit_section]
 -- 		local str = gc("st_news_cleaned")
 -- 		local parts_cleaned = false
--- 		for k,v in pairs(parts) do
+-- 		for k,v in spairs(parts, sort_parts) do
 -- 			if is_part(k) and v > 59 and v < 98 and cond_remaining > 0 then
 -- 				local to_restore = 99 - v
 -- 				if to_restore > cond_remaining then to_restore = cond_remaining end
@@ -122,7 +122,7 @@ local temp_con = {}
 -- 		-- print_dbg("Evaluating item %s", wpn:id())
 -- 		if has_parts(wpn) then
 -- 			local parts = item_parts.get_parts_con(wpn, nil, true)
--- 			for k,v in pairs(parts) do
+-- 			for k,v in spairs(parts, sort_parts) do
 -- 				local minpart = get_config("minpart") or 51
 -- 				if is_part(k) and v <= minpart then
 -- 					print_dbg("Weapon %s (%s) has low quality part. Blacklisting for sale.", wpn:section(), wpn:id())
@@ -274,7 +274,7 @@ function custom_disassembly_weapon(obj, obj_d)
 	obj:force_unload_magazine(true)
 	
 	-- Collect weapon parts
-	for k,v in pairs(parts) do
+	for k,v in spairs(parts, sort_parts) do
 		if (k ~= sec_p) and v > 0 and (math.random(100) <= (disassembly_chance + con*100)) then
 			local index = #result_details
 			result_details[index + 1] = k
@@ -543,10 +543,7 @@ local clr_w	 = utils_xml.get_color("d_white")
 
 function process_part(name, condition)
 	local severity = condition == -1 and "missing" or math.floor(condition / 20)
-	local clr = clr_r
-	if condition >= 60 then clr = clr_g
-	elseif condition > 20 then clr = clr_o 
-	elseif condition == -1 then clr = clr_r end
+	local clr = utils_xml.get_color_con(condition)
 	local part_name = ""
 	if unique_mapping[name] then
 		part_name = unique_mapping[name]
@@ -596,6 +593,11 @@ function process_jam_chance(wpn)
 	end
 end
 
+function sort_parts(t, a, b)
+	local fake_table = {[a] = a, [b] = b}
+	return utils_ui.sort_by_sizekind(fake_table, a, b) --because UICellContainer:Reinit has local sort_order = self:GetSortMethod()
+end
+
 original_build_desc_header = ui_item.build_desc_header
 function ui_item.build_desc_header(obj, sec, str)
 	local _str = ""
@@ -608,8 +610,8 @@ function ui_item.build_desc_header(obj, sec, str)
 		if obj then
 			display_str = display_str .. process_jam_chance(obj)
 		end
-		
-		for k,v in pairs(parts) do
+
+		for k,v in spairs(parts, sort_parts) do
 			display_str = display_str .. process_part(k, v)
 		end
 
@@ -641,7 +643,7 @@ function has_suitable_kit(obj)
 	if not (has_clean or has_repair) then return false end
 	local parts = item_parts.get_parts_con(obj)
 	local allow = false
-	for k,v in pairs(parts) do
+	for k,v in spairs(parts, sort_parts) do
 		if is_part(k) then
 			-- allow for repair
 			if has_repair and v < 98 then
@@ -724,19 +726,20 @@ function init_maintenance_menu(obj)
 	local parts = item_parts.get_parts_con(obj)
 	local clean_kit = get_suitable_kit(obj, true)
 	local repair_kit = get_suitable_kit(obj, false)
-	for k,v in pairs(parts) do
+	for k,v in spairs(parts, sort_parts) do
 		if is_part(k) then
+			local clr = utils_xml.get_color_con(v)
 			if  v < 60 and repair_kit then
-				table.insert(context_str, replace_name(k, false))
+				table.insert(context_str, clr .. replace_name(k,false))
 				table.insert(context_action,  "replace_part")
 				table.insert(context_params, {obj:id(), k, repair_kit:section(), false})
 			elseif v >= 60 and v < 98 then
 				if clean_kit then
-					table.insert(context_str, replace_name(k, true))
+					table.insert(context_str, clr .. replace_name(k, true))
 					table.insert(context_action,  "clean_part")
 					table.insert(context_params, {obj:id(), k, clean_kit:section(), true})
 				else
-					table.insert(context_str, replace_name(k, true))
+					table.insert(context_str, clr .. replace_name(k, true))
 					table.insert(context_action,  "replace_part")
 					table.insert(context_params, {obj:id(), k, repair_kit:section(), true})
 				end
@@ -767,21 +770,25 @@ function name_fieldstrip(obj, bag, mode)
 end
 
 function has_parts_fieldstrip(wpn, bag, mode)
-	local mode = {
+	local allowedMode = {
 		["inventory"] = true,
 		["loot"] = true,
 	}
-	local bag = {
+	local allowedBag = {
 		["actor_equ"] = true,
 		["actor_belt"] = true,
 		["actor_bag"] = true,
 		["npc_bag"] = true,
 	}
+
+	--SERIOUS: Prevents field stripping in trade windows. (Black Market and some gun mods include weapons on traders)
+	if not allowedBag[bag] or not allowedMode[mode] then return false end
+
 	if not has_parts(wpn) then return false end
-	local parts = item_parts.get_parts_con(wpn, nil, true)
-	local has_parts = false
-	for k,v in pairs(parts) do
-		if v > 0 and is_part(k) and not arti_jamming.is_barrel(k) then has_parts = true end
+		local parts = item_parts.get_parts_con(wpn, nil, true)
+		local has_parts = false
+		for k,v in spairs(parts, sort_parts) do
+			if v > 0 and is_part(k) and not arti_jamming.is_barrel(k) then has_parts = true end
 	end
 	return has_parts
 end
@@ -827,7 +834,7 @@ function init_fieldstrip_menu(obj, bag, mode)
 
 	local parts = item_parts.get_parts_con(obj)
 	local num = 0
-	for k,v in pairs(parts) do
+	for k,v in spairs(parts, sort_parts) do
 		if is_part(k) and not arti_jamming.is_barrel(k) and v > 0 then
 			table.insert(context_str, remove_name(k))
 			table.insert(context_action,  "remove_part")
@@ -866,7 +873,7 @@ function act_fieldstrip(id, part_name)
 		remove_part(part_name, parts)
 		parts_removed = true
 	else
-		for k,v in pairs(parts) do
+		for k,v in spairs(parts, sort_parts) do
 			if is_part(k) and v ~= -1 and not arti_jamming.is_barrel(k) then
 				str_msg = str_msg .. "\\n -" .. ui_item.get_sec_name(k)
 				remove_part(k, parts)

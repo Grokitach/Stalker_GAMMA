@@ -1,0 +1,606 @@
+local xml = CScriptXmlInit()
+xml:ParseFile("pda_taskboard.xml")
+
+local SINGLETON = nil
+function get_ui()
+	SINGLETON = SINGLETON or pda_taskboard_tab()
+	return SINGLETON
+end
+-- Constructor.
+class "pda_taskboard_tab" (CUIScriptWnd)
+function pda_taskboard_tab:__init() super()
+	self.rows = {}
+	self:InitControls()
+end
+
+-- Initialise the interface.
+function pda_taskboard_tab:InitControls()
+	self:SetWndRect(Frect():set(0, 0, 1024, 768))
+	
+	-- Main frame.
+	xml:ParseFile("pda_taskboard.xml")
+	xml:InitFrame("frame1", self)
+	xml:InitFrame("frame2", self)
+
+	-- Refresh tasks button
+	self.refresh_tasks_btn = xml:Init3tButton("btn_refresh_tasks", self)
+	self:Register(self.refresh_tasks_btn, "refresh_tasks_btn")
+	self:AddCallback("refresh_tasks_btn", ui_events.BUTTON_CLICKED, refresh_tasks_factory(self), self)
+
+	-- Taskboard
+	self.list = xml:InitScrollView("list", self)
+	self:Register(self.list, "list")
+end
+
+
+------------------- TASKBOARD
+class "ui_taskboard_row" (CUIWindow)
+function ui_taskboard_row:__init(parent, row) super(parent, row)
+	self.frame = xml:InitFrame("frame2", self)
+
+	-- Subcomponents
+	self.task_category = xml:InitTextWnd("task_category", self)
+	self.icon_field = xml:InitStatic("icon_field", self)
+	self.stalker_info = xml:InitTextWnd("stalker_info", self)
+	self.task_icon_field = xml:InitStatic("task_icon_field", self)
+	self.task_details_field = xml:InitTextWnd("task_details_field", self)
+	self.task_full_description_field = xml:InitTextWnd("task_full_description_field", self)
+	self.task_accept_btn = xml:Init3tButton("btn_accept_task", self)
+	self.task_next_btn = xml:Init3tButton("btn_next_task", self)
+	self.task_previous_btn = xml:Init3tButton("btn_previous_task", self)
+
+	self.task_limit_reached_btn = xml:Init3tButton("btn_task_limit_reached", self)
+	self.task_limit_reached_btn:Show(false);
+	self.task_limit_reached_btn:TextControl():SetTextColor(utils_xml.get_color("red",true));
+
+	parent.rows[row] = self
+
+	parent:Register(self.task_accept_btn, "task_accept_btn_" .. row)
+	parent:AddCallback("task_accept_btn_" .. row, ui_events.BUTTON_CLICKED, accept_task_callback_factory(parent, row), self)
+
+	parent:Register(self.task_next_btn, "task_next_btn_" .. row)
+	parent:AddCallback("task_next_btn_" .. row, ui_events.BUTTON_CLICKED, next_task_in_category_callback_factory(parent, row), self)
+	
+	parent:Register(self.task_previous_btn, "task_previous_btn_" .. row)
+    parent:AddCallback("task_previous_btn_" .. row, ui_events.BUTTON_CLICKED, previous_task_in_category_callback_factory(parent, row), self)
+end
+
+local prepared_tasks_data = {}
+local current_board_state = {}
+function reset_taskboard(pda_tab)
+	clear_taskboard_ui(pda_tab)
+	local npc_list = get_nearby_npcs()
+	trigger_generate_available_tasks(npc_list)
+	prepared_tasks_data = get_prepared_task_data(npc_list)
+
+	local sorted_keys = get_sorted_keys(prepared_tasks_data)
+	-- Basically let XRay do its stuff with setting up logic
+	for _, task_effect in ipairs(sorted_keys) do
+		local task_data = prepared_tasks_data[task_effect][1]
+		if task_data then prepare_task( task_data ) end
+	end
+
+	-- Delay required for task details from actor message to be properly collected
+	CreateTimeEvent("taskboard_delay_render", "taskboard_delay_render", 0.05, function ()
+		-- Generate taskboard entries
+		local i = 1
+		for _, task_effect in ipairs(sorted_keys) do
+			-- Save the order of the rows and currently viewed item from the category to be able to update a single row later
+			current_board_state[i] = {
+				task_effect = task_effect,
+				current_index = 1
+			}
+			local columnIndex = 1
+			local stopColumnIteration = false
+			local deleteRow = true
+
+			while not stopColumnIteration do
+				local columnData = prepared_tasks_data[task_effect][columnIndex]
+				if columnData then
+	
+					if not blacklist_helper.TaskBlacklist[columnData.task_id] then
+						update_task_entry(pda_tab, i, columnData)
+						stopColumnIteration = true
+						deleteRow = false
+					else
+						columnIndex = columnIndex + 1
+					end
+				else
+					stopColumnIteration = true
+				end
+			end
+
+			if deleteRow then
+				current_board_state[i] = nil
+			else
+				i = i + 1
+			end
+		end
+		a_taskboard_utils.adjust_rows(pda_tab)
+		return true
+	end)
+end
+
+currently_processed_npc_id = nil -- required for fetch quest override
+function prepare_task(task_data)
+	currently_processed_npc_id = task_data.npc_id
+	local on_job_descr = task_data.task_id and task_manager.task_ini:r_string_ex(task_data.task_id,"on_job_descr")
+	if (on_job_descr) then
+		local cond = xr_logic.parse_condlist(db.actor,"task_manager","condlist",on_job_descr)
+		if (cond) then
+			xr_logic.pick_section_from_condlist(db.actor,db.actor,cond)
+		end
+	end
+
+	local fetch = task_data.task_id and task_manager.task_ini:r_string_ex(task_data.task_id,"fetch_descr")
+	if (fetch) then
+		axr_task_manager.trigger_fetch_func(task_data.task_id)
+	end
+	task_data.task_description = get_long_task_description(task_data)
+
+	currently_processed_npc_id = nil
+end
+
+function get_long_task_description(task_data) 
+	-- Mechanic quests are using standard "job_descr" in the dialog manager instead of the fetch one, even though they're
+	-- technically a fetch task. This requires a small exception
+	local is_mechanic_task = string.find(task_data.task_id, "mechanic_task")
+	local base_desc = game.translate_string(
+		(not is_mechanic_task and axr_task_manager.get_fetch_task_description( task_data.task_id )) or
+		axr_task_manager.get_task_job_description( task_data.task_id )
+	)
+	return strformat( base_desc, dialogs._FETCH_TEXT or "" )
+end
+
+function accept_task_callback_factory(pda_tab, row_index)
+	return function() 
+		accept_task(pda_tab, row_index)
+	end
+end
+
+function accept_task(pda_tab, row_index)
+	local entry_info = current_board_state[row_index]
+	local task_details = prepared_tasks_data[entry_info.task_effect][entry_info.current_index]
+	currently_processed_npc_id = task_details.npc_id
+	task_manager.get_task_manager():give_task(task_details.task_id, task_details.npc_id)
+	currently_processed_npc_id = nil
+	clear_cached_data()
+	reset_taskboard(pda_tab)
+end
+
+function next_task_in_category_callback_factory(pda_tab, row_index)
+	return function() 
+		next_task_in_category(pda_tab, row_index)
+	end
+end
+
+function next_task_in_category(pda_tab, row_index)
+	local entry_info = current_board_state[row_index]
+	local next_task = prepared_tasks_data[entry_info.task_effect][entry_info.current_index + 1]
+
+	if next_task then
+		local stalker = level.object_by_id(next_task.npc_id)
+		if stalker then
+			prepare_task( next_task )
+
+			CreateTimeEvent("next_task_delay", "next_task_delay", 0.05, function () 
+				entry_info.current_index = entry_info.current_index + 1
+				update_task_entry(pda_tab, row_index, next_task)
+				a_taskboard_utils.adjust_rows(pda_tab)
+				return true
+			end)
+		else 
+			-- In case the taskgiver has been deleted by the engine, reset the whole taskboard. Creating workaround
+			-- for deleted stalkers generates several edge cases and adds unnecessary complexity to the code - resetting is easier.
+			reset_taskboard(pda_tab)
+		end
+	end
+end
+
+function previous_task_in_category_callback_factory(pda_tab, row_index)
+    return function() 
+        previous_task_in_category(pda_tab, row_index)
+    end
+end
+
+function previous_task_in_category(pda_tab, row_index)
+    local entry_info = current_board_state[row_index]
+	if not entry_info then
+        print("Warning: entry_info is nil for row_index:", row_index)
+        return
+    end
+    local prev_task = prepared_tasks_data[entry_info.task_effect][entry_info.current_index - 1]
+	if not prev_task then
+        print("Warning: prev_task is nil for row_index:", row_index)
+        return
+    end
+
+    if prev_task then
+		local stalker = level.object_by_id(prev_task.npc_id)
+        if stalker then
+            prepare_task(prev_task)
+
+            CreateTimeEvent("previous_task_delay", "previous_task_delay", 0.05, function()
+                entry_info.current_index = entry_info.current_index - 1
+                update_task_entry(pda_tab, row_index, prev_task)
+                a_taskboard_utils.adjust_rows(pda_tab)
+                return true
+			end)
+        else
+            reset_taskboard(pda_tab)
+        end
+    end
+end
+
+function refresh_tasks_factory(pda_tab) 
+	local refresh_disabled = false
+	local function temporary_disable_refresh() 
+		local delay = 2
+		refresh_disabled = true
+		CreateTimeEvent("reenable_refresh", "reenable_refresh", delay, function () 
+			refresh_disabled = false
+			return true
+		end)
+	end
+	return function () 
+		if (not refresh_disabled) then
+			temporary_disable_refresh()
+			clear_cached_data()
+			reset_taskboard(pda_tab)
+		end
+	end
+end
+
+function clear_cached_data()
+	z_taskboard_overrides.clear_tasks_info()
+	prepared_tasks_data = {}
+	current_board_state = {}
+end
+
+function clear_taskboard_ui(pda_tab)
+	-- Erase all pre-existing information.
+	pda_tab.list:Clear()
+	pda_tab.rows = {}
+end
+
+local excluded_npc_sections = {"bar_duty_security_squad_leader"}
+function get_nearby_npcs()
+	local radius = config.scanning_range
+	local npc_list = {}
+	level.iterate_nearest(db.actor:position(), radius, function (obj)
+		local is_alive_friendly_stalker = IsStalker(obj) and obj:alive() and obj:relation(db.actor) ~= game_object.enemy
+		local is_excluded_npc = has_value(excluded_npc_sections, obj:section())
+		local is_companion = obj:has_info("npcx_is_companion")
+
+		if
+			is_alive_friendly_stalker
+			and not is_excluded_npc
+			and (is_companion and config.companions_give_tasks or not is_companion) then
+				table.insert(npc_list, obj)
+		end
+	end)
+	
+	-- Special case for Sidorovich and Forester.
+	local function add_by_sid(sid)
+		local id = story_objects.object_id_by_story_id[sid]
+		if (id) then 
+			local npc = db.storage[id] and db.storage[id].object 
+			if (npc and db.actor:position():distance_to(npc:position()) <= radius) then 
+				table.insert(npc_list, npc)
+			end
+		end
+	end
+	add_by_sid("esc_m_trader")
+	add_by_sid("red_tech_forester")
+
+	return npc_list
+end
+
+local actually_is_sim = {
+	"bar_visitors_garik_stalker_guard", 				-- Garik
+	"bar_visitors_zhorik_stalker_guard2", 				-- Zhorik
+	"bar_arena_guard",									-- Liolik
+	"bar_dolg_general_zoneguard_stalker",				-- "Get out of here stalker" guy
+	"mil_smart_terrain_7_7_freedom_bodyguard_stalker",	-- Lukash's bodyguards
+	"mil_smart_terrain_7_7_freedom_bodyguard2_stalker"	-- Lukash's bodyguards
+} 
+
+function trigger_generate_available_tasks(npc_list) 
+	for _,npc in pairs(npc_list) do 
+		-- Sim npcs are random roaming stalkers. Non sims are traders, mechanics, etc.
+		local is_sim = string.find(npc:section(), "sim_")
+		currently_processed_npc_id = npc:id()
+		if has_value(actually_is_sim, npc:section()) then
+			axr_task_manager.generate_available_tasks(npc, not is_sim)
+		else
+			axr_task_manager.generate_available_tasks(npc, is_sim)
+		end
+		currently_processed_npc_id = nil
+	end
+end
+
+-- Tasks that should not be picked by the taskboard (e. g. ones that are not accessible without it)
+local excluded_tasks = {
+	"jup_b19_freedom_yar_task_1", -- Yar's CoC task - bugged
+	"merc_pri_a18_mech_mlr_task_1", -- Outskirts merc mechanic task for tools - bugged 
+	"agr_u_bandit_boss_task_1" -- Reefer's task (Agro underground) - it doesn't use the standard setup functions and breaks the board logic
+}
+
+function get_prepared_task_data(npc_list) 
+	-- Split available tasks into categories based on their init effect
+	local result = {}
+	for _,stalker in pairs(npc_list) do 
+		local stalker_task_list = axr_task_manager.available_tasks[stalker:id()] or {}
+		for _, task_id in pairs(stalker_task_list) do
+			local task_effect, has_details = get_task_effect(task_id)
+			if not has_value(excluded_tasks, task_id) then
+				if not result[task_effect] then
+					result[task_effect] = {}
+				end
+
+				if not blacklist_helper.TaskBlacklist[task_id] then
+					table.insert(result[task_effect], {
+						npc_id = stalker:id(),
+						task_id = task_id,
+						has_details = has_details
+					})
+				end
+			end
+		end
+	end
+	return result
+end
+
+function get_task_effect(task_id) -- (task_id: string) => task_effect: string, has_details: boolean
+	-- Support for mods that add more tasks and dispatch effects of their own and can't be categorized using the base Anomaly task types
+	local task_category_override = task_manager.task_ini:r_string_ex(task_id,"task_category_override")
+	if task_category_override then return task_category_override end
+
+
+	local raw_task_effect = task_manager.task_ini:r_string_ex(task_id,"on_job_descr") or task_manager.task_ini:r_string_ex(task_id,"fetch_func")
+	local task_effect = string.gmatch(raw_task_effect or "", "=(.*)%(")() or "rest"
+	task_effect = normalize_task_effect(task_effect)
+
+	-- If there's no category string defined for a given effect/category override, default to `rest` to avoid ugly strings
+	-- Also makes it easy for modders to just dump all their tasks into `Other tasks` category by simply not defining category override in ini 
+	local has_invalid_category = string.find(game.translate_string('st_pda_caption_' .. task_effect), '_')
+	if has_invalid_category then 
+		return "rest", not not raw_task_effect
+	else
+		return task_effect, not not raw_task_effect
+	end
+end
+
+function update_task_entry(pda_tab, i, task_details) 
+	if (not pda_tab.rows[i]) then
+		pda_tab.list:AddWindow(ui_taskboard_row(pda_tab, i))
+	end
+	if not task_details then return end
+
+	local row = pda_tab.rows[i]
+	local effect = current_board_state[i].task_effect
+
+	local stalker = level.object_by_id(task_details.npc_id)
+	local stalker_comm = stalker:character_community()
+	local stalker_icon = stalker:character_icon()
+	local stalker_name = stalker:character_name()
+	stalker_icon = stalker_icon and stalker_icon ~= "" and stalker_icon or "ui\\ui_noise"
+	local stalker_info = stalker_name .. "\\n" ..
+	game.translate_string("ui_st_community") .. ": " .. game.translate_string(stalker_comm)
+
+	local more_task_details = get_more_task_details(i, task_details.task_id) or {}
+
+	local details =
+	(more_task_details.task_title or "") ..
+	"\\n" ..
+	(string.gsub(more_task_details.task_details or "", "\\n ", "\\n"))
+
+	local full_desc = task_details.task_description or ""
+
+	--Flavor stuff for buggy tasks
+	if more_task_details.faulty then
+		local red = utils_xml.get_color("red")
+		local white = utils_xml.get_color("white")
+		local glTxt = "GL finding me: "
+		local easterEggs =
+		{
+			"48 61 63 6B 65 64 20 62 79 20 53 65 72 69 6F 75 73",
+			"68 74 74 70 73 3A 2F 2F 77 77 77 2E 79 6F 75 74 75 62 65 2E 63 6F 6D 2F 77 61 74 63 68 3F 76 3D 78 76 46 5A 6A 6F 35 50 67 47 30"
+		}
+		local rndIndex = math.random(1, 2)
+
+		row.icon_field:InitTexture("ui\\ui_noise")
+		row.stalker_info:SetText(shuffle_string(stalker_info))
+		row.task_icon_field:InitTexture("ui\\ui_noise")
+		row.task_details_field:SetText(red .. "ERROR" .. white)
+		row.task_full_description_field:SetText(red .. "[PDAOpSys] - Critical Error\\n\\n" .. white .. glTxt .. easterEggs[rndIndex])
+	else
+		row.task_category:SetText(game.translate_string('st_pda_caption_' .. effect))
+		row.icon_field:InitTexture(stalker_icon)
+		row.stalker_info:SetText(stalker_info)
+		row.task_icon_field:InitTexture(more_task_details.task_icon or "ui\\ui_noise")
+		row.task_details_field:SetText(details)
+		row.task_full_description_field:SetText(full_desc)
+	end
+	
+	row.task_next_btn:Show(has_more_task_in_category(i))
+	pda_tab.rows[i].task_previous_btn:Show(has_previous_task_in_category(i))
+	manage_accept_button(stalker, row, more_task_details.faulty)
+end
+
+--Flavor stuff for buggy tasks
+function shuffle_string(str)
+    local chars = {}
+    for i = 1, #str do
+        chars[i] = str:sub(i, i)
+    end
+
+    -- Fisher-Yates shuffle
+    for i = #chars, 2, -1 do
+        local j = math.random(1, i)
+        chars[i], chars[j] = chars[j], chars[i]
+    end
+
+    return table.concat(chars)
+end
+
+function manage_accept_button(stalker, row, faulty)
+	local reached_limit = dialogs.has_tasks_by_npc(stalker)
+
+	if faulty then
+		row.task_accept_btn:Show(false)
+	elseif reached_limit then
+		row.task_limit_reached_btn:Show(true)
+		row.task_accept_btn:Show(false)
+	else
+		row.task_limit_reached_btn:Show(false)
+		row.task_accept_btn:Show(true)
+	end
+end
+
+function has_more_task_in_category(i) 
+	local entry_info = current_board_state[i]
+	local next_task = prepared_tasks_data[entry_info.task_effect][entry_info.current_index + 1]
+	return not not next_task
+end
+
+function has_previous_task_in_category(i)
+	local entry_info = current_board_state[i]
+    local prev_task = prepared_tasks_data[entry_info.task_effect][entry_info.current_index - 1]
+    return not not prev_task
+end
+
+function get_igi_task_details(i)
+	if not igi_generic_task then return end
+	if not (igi_description and igi_description.get_task_text_values) then return end
+
+	local task_id = prepared_tasks_data.rest[i] and prepared_tasks_data.rest[i].task_id
+	local CACHE = task_id and igi_generic_task.TASK_SETUP[task_id]
+	if CACHE then
+		local title, text, icon = igi_description.get_task_text_values(CACHE)
+		return {
+			task_title = title,
+			task_details = text,
+			task_icon = icon
+		}
+	end
+end
+
+-- This function is a pure fuckery and crime against the code, but there's literally no other way to couple the
+-- task data with the details received through overridden actor method.
+function get_more_task_details(i, task_id)
+	local overrides = z_taskboard_overrides
+
+	local entry_info = current_board_state[i]
+	local task_data = prepared_tasks_data[entry_info.task_effect][entry_info.current_index]
+	if entry_info.current_index == 1 then
+		-- If no new task has been requested for a given category, index of details will be the same as the index of row (or at least I didn't observe any
+		-- deviations from that rule for now)
+		if(task_data.has_details) then
+			return overrides.tasks_info[task_id] or overrides.original_tasks_info[i]-- - get_processed_tasks_with_no_info_count(i)]
+		elseif igi_generic_task then
+			return get_igi_task_details(entry_info.current_index)
+		else return false end
+	else
+		-- If new task has been requested, the details will be appended at the end of the array, so we can easily read them
+		if(task_data.has_details) then
+			return overrides.tasks_info[task_id] or overrides.original_tasks_info[#overrides.tasks_info]
+		elseif igi_generic_task then
+			return get_igi_task_details(entry_info.current_index)
+		else return false end
+	end
+end
+
+function get_processed_tasks_with_no_info_count(i) 
+	local count = 0
+	for index, entry_info in ipairs(current_board_state) do
+		local task_data = prepared_tasks_data[entry_info.task_effect][entry_info.current_index]
+		if index < i and not task_data.has_details then
+			count = count + 1
+		end
+	end
+
+	return count
+end
+
+function has_value(tab, val)
+    for index, value in ipairs(tab) do
+        if value == val then
+            return true
+        end
+    end
+
+    return false
+end
+
+function get_sorted_keys(tab) 
+	local result = {}
+	for key, _ in pairs(tab) do
+		table.insert(result, key)
+	end
+	table.sort(result)
+	return result
+end
+
+-- Some effects have different names even though they perform pretty much the same actions as the generic/simulation task effects
+-- Those should be pushed into the same category to prevent queued actor messages from being discarded
+normalizer = {
+	setup_supplies_fetch_task_lostzone_patch = "setup_fetch_task",
+	setup_generic_fetch_task = "setup_fetch_task",
+	drx_sl_create_quest_stash = "setup_bounty_task", -- The actor message in base vanilla files is sent to the wrong queue here
+	setup_dominance_task = "setup_assault_task", -- Same as above - this actually scraps the whole Dominance category and puts these tasks as assault tasks
+	multifetch_on_job_descr = "setup_fetch_task" -- Unnecessary thing, but there's only one task in this category
+}
+function normalize_task_effect(task_effect) 
+	return normalizer[task_effect] or task_effect
+end
+
+local function load_defaults()
+	local t = {}
+	local op = pda_taskboard_mcm.op
+	for i, v in ipairs(op.gr) do
+		if v.def ~= nil then
+			t[v.id] = v.def
+		end
+	end
+	return t
+end
+-- Default config
+config = load_defaults()
+
+local function load_settings()
+	config = load_defaults()
+	if ui_mcm then
+		for k, v in pairs(config) do
+			config[k] = ui_mcm.get("pda_taskboard/" .. k)
+		end
+	end
+end
+
+function on_key_release(key)
+    if key == config.taskboard_key then
+        local pda_menu = ActorMenu.get_pda_menu()
+        local pda3d = get_console_cmd(1,"g_3d_pda")
+        if not (pda_menu:IsShown()) and db.actor:item_in_slot(8) then
+            if (pda3d) then
+                db.actor:activate_slot(8)
+            else
+                pda_menu:ShowDialog(true)
+            end
+            
+            pda_menu:SetActiveSubdialog("eptTaskboard")
+        elseif (pda_menu:IsShown()) then
+            if (pda3d) then
+                db.actor:activate_slot(0)
+            else
+                pda_menu:HideDialog()
+            end
+        end
+    end
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_game_load", load_settings)
+	RegisterScriptCallback("on_option_change", load_settings)
+	RegisterScriptCallback("on_key_release",on_key_release)
+end

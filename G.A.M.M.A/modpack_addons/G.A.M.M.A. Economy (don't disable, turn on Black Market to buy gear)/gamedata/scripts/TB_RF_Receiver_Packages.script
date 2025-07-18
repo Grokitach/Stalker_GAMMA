@@ -204,7 +204,7 @@ tb_allmaps = {
 	["l13_generators"] = {"l12_stancia_2"},
 	["zaton"] = {"l12_stancia", "jupiter"},
 	["jupiter"] = {"zaton", "l10_red_forest", "l11_pripyat"},
-	["pripyat"] = {"l11_pripyat"}, --jupiter_underground
+	["pripyat"] = {"zaton", "l11_pripyat", "jupiter"}, --{"l11_pripyat"}, --jupiter_underground
 	["k02_trucks_cemetery"] = {"l05_bar", "l04_darkvalley", "l07_military"},
 	["y04_pole"] = {"l01_escape", "l04_darkvalley"},
 	["fake_start"] = {"fake_start"},
@@ -216,7 +216,9 @@ tb_allmaps = {
 	["l12u_control_monolith"] = {"l12_stancia_2", "l12_stancia", "l13_generators"},
 	["l12u_sarcofag"] = {"l12_stancia", "l11_pripyat", "l12_stancia_2", "zaton"},
 	["l13u_warlab"] = {"l13_generators", "l12_stancia_2"},
-	["labx8"] = {"pripyat", "l11_pripyat"}
+	["labx8"] = {"pripyat", "l11_pripyat"},
+
+	["default"] = {"k00_marsh",  "l01_escape", "k01_darkscape", "l02_garbage", "y04_pole", "l04_darkvalley", "l05_bar", "l06_rostok", "l03_agroprom", "l08_yantar"},
 }
 
 --[TB] BUNCH OF POSSIBLE COORDINATES FOR PACKAGES TO SPAWN
@@ -1175,10 +1177,12 @@ function tb_radio_thing()
 		return false
 	end
 	if tb_package_active == false then
-		local actor_level, randpath, chosenmap, randspot, packagespot, suitablemapforpsyhelmet, sameaspreviousmap
+		local actor_level, randpath, chosenmap, randspot, packagespot, suitablemapforpsyhelmet, sameaspreviousmap, suitablemapforgrokpsyfields, loop_success
 		local actor_faction = get_actor_true_community()
 		suitablemapforpsyhelmet = false
 		sameaspreviousmap = false
+		suitablemapforgrokpsyfields = false
+		loop_success = false
 		if tb_package_queue[1] ~= nil then
 			actor_level = tb_package_queue[1][1]
 			tb_sender_icon = tb_package_queue[1][2]
@@ -1187,7 +1191,10 @@ function tb_radio_thing()
 			actor_level = level.name()
 		end
 		if (tb_allmaps[actor_level]) then
-			while (sameaspreviousmap or not suitablemapforpsyhelmet) do
+			-- oleh5230
+			-- limited loop iterations
+			-- select level from default list if loop fails
+			for i=1,25 do
 				randpath = math.random(1,#tb_allmaps[actor_level])
 				chosenmap = tb_allmaps[actor_level][randpath]
 				if chosenmap == tb_previous_level then
@@ -1195,8 +1202,8 @@ function tb_radio_thing()
 				else
 					sameaspreviousmap = false
 				end
-				tb_package_in_level = chosenmap
-				if (db.actor:object("bad_psy_helmet") ~= nil or db.actor:object("good_psy_helmet") ~= nil or actor_faction == "monolith" or actor_faction == "greh") then
+
+				if (db.actor:object("bad_psy_helmet") ~= nil or db.actor:object("good_psy_helmet") ~= nil or actor_faction == "monolith" or actor_faction == "greh" or actor_faction == "zombied") then
 					suitablemapforpsyhelmet = true
 				else
 					if (chosenmap == "l10_radar" or chosenmap == "l11_pripyat" or chosenmap == "l12_stancia" or chosenmap == "l12_stancia_2" or chosenmap == "l13_generators") then
@@ -1205,11 +1212,32 @@ function tb_radio_thing()
 						suitablemapforpsyhelmet = true
 					end
 				end
+
+				-- oleh5230
+				-- GAMMA extra psy fields condition
+				if	grok_psy_fields_in_the_north.psy_immune_factions[actor_faction]
+				or	(has_alife_info("yan_labx16_switcher_primary_off") and has_alife_info("bar_deactivate_radar_done"))
+				or	has_alife_info("story_mode_disabled")
+				then
+					suitablemapforgrokpsyfields = true
+				else
+					if grok_psy_fields_in_the_north.psy_extra_levels[chosenmap] then
+						suitablemapforgrokpsyfields = false
+					else
+						suitablemapforgrokpsyfields = true
+					end
+				end
+				if not sameaspreviousmap and suitablemapforpsyhelmet and suitablemapforgrokpsyfields then loop_success = true break end
 			end
-			tb_previous_level = chosenmap
-			randspot = math.random(1,#tb_package_coords[chosenmap])
-			packagespot = tb_package_coords[chosenmap][randspot]
 		end
+		if not loop_success then
+			randpath = math.random(1,#tb_allmaps["default"])
+			chosenmap = tb_allmaps["default"][randpath]
+		end
+		tb_previous_level = chosenmap
+		tb_package_in_level = chosenmap
+		randspot = math.random(1,#tb_package_coords[chosenmap])
+		packagespot = tb_package_coords[chosenmap][randspot]
 		local rpos = vector():set(packagespot[1],packagespot[2],packagespot[3])
 		local rlvid = packagespot[4]
 		local rgvid = packagespot[5]

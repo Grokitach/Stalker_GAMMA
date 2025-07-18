@@ -1,0 +1,385 @@
+--SERIOUS This script overwrites a monkey patch.
+-- Monkey patch overwrite: G.A.M.M.A. Artefacts Reinvention
+-- File zz_ui_workshop_keep_crafting_window_open.script
+
+local SetTip = ui_workshop.SetTip
+local AdjustCon = ui_workshop.AdjustCon
+local print_ws = ui_workshop.print_ws
+
+local hasCraftedItem = false
+
+local CraftInitControlsSuper = ui_workshop.UIWorkshopCraft.InitControls
+ui_workshop.UIWorkshopCraft.InitControls = function(self, x, y)
+	CraftInitControlsSuper(self, x, y)
+	self.last_cont = nil
+	self.last_idx = nil
+	--printf("calling override InitControls")
+end
+
+local CraftOn_CC_Mouse1_Super = ui_workshop.UIWorkshopCraft.On_CC_Mouse1
+ui_workshop.UIWorkshopCraft.On_CC_Mouse1 = function(self, cont, idx)
+	CraftOn_CC_Mouse1_Super(self, cont, idx)
+	self.last_cont = cont
+	self.last_idx = idx
+	--printf("calling override On_CC_Mouse1")
+	return true
+end
+
+ui_workshop.UIWorkshopCraft.UpdateUi = function(self, cont, idx)
+	self:ListItems()
+	self:On_CC_Mouse1(cont, idx)
+	--return true needed for CreateTimeEvent function to queue update once
+	return true
+end
+
+ui_workshop.UIWorkshopCraft.Close = function(self)
+	-- Effect
+	if (hasCraftedItem) then
+		actor_effects.play_item_fx("craft_dummy")
+	end
+
+	--printf("calling override Close")
+
+	hasCraftedItem = false
+	self.last_cont = nil
+	self.last_idx = nil
+	self.owner:Close()
+end
+
+ui_workshop.UIWorkshopCraft.Craft = function(self)
+	if (not self.craft_allow_r) then
+		return
+	end
+
+	--printf("calling override Craft")
+
+	-- Remove supportive items
+	local lead_box_number = 0
+	local total_cond = 0
+	local counter = 0
+	local randomize = 0
+	local complexCraftingSections = {} -- I store the item that is "substituted" by complex crafting.
+
+	if self.complexCraft and #self.complexCraft > 0 then
+		for _, ccInfo in pairs(self.complexCraft) do
+			alife_release_id(ccInfo.id1)
+			alife_release_id(ccInfo.id2)
+
+			if ccInfo.newItemSize >= 1 then
+				local stashId = self.stashId or (self.owner and self.owner.stashId)
+				if stashId then
+					local stash_obj = get_object_by_id(stashId)
+					alife_create_item(ccInfo.section, stash_obj, {ammo = ccInfo.newItemSize})
+				else
+					alife_create_item(ccInfo.section, db.actor, {ammo = ccInfo.newItemSize})
+				end
+			end
+
+			complexCraftingSections[ccInfo.section] = true
+		end
+	end
+
+	for i=1,#self.craft_item do
+		-- Release
+		if #self.craft_item[i] > 0 then
+			for j=1,#self.craft_item[i] do
+				local itm = get_object_by_id(self.craft_item[i][j])
+				local itmSect = itm:section()
+
+				if string.find(itmSect,"_lead_box") then
+					lead_box_number = lead_box_number + 1
+				end
+
+				local cond = itm:condition()
+				local kind = SYS_GetParam(0, itmSect, "kind")
+				if cond and kind == "i_arty" then
+					total_cond = total_cond + cond
+					counter = counter + 1
+				end
+				if cond and kind == "i_arty_junk" then
+					total_cond = 1
+					counter = 1
+					randomize = 1
+				end
+
+				--[[
+					SERIOUS
+					If a component is substituted by complex crafting it will be released in a different way, so for that I don't release an item here.
+					
+					If you need 1 full box of powder for the craft and you have 1 full box in player or stash inventory 
+					and you have partial stacks that add up to a full stack then this prevents both the full box and the partial stack from being consumed.
+					
+					I only do this once because after that if the recipe asks for 3 full boxes I still need to consume the rest regardless of complex crafting.
+				--]]
+				if complexCraftingSections[itmSect] then
+					complexCraftingSections[itmSect] = nil
+				else
+					alife_release_id(self.craft_item[i][j])
+				end
+			end
+		end
+
+		-- Discharge
+		local id_r = self.craft_item_remain[i].id
+		if id_r then
+			local obj_itm = get_object_by_id(id_r)
+			local cnt = self.craft_item_remain[i].cnt
+			if obj_itm and cnt then
+				print_ws("- UIWorkshopCraft:Craft() | discharge item (%s) [%s] %s times", id_r, obj_itm:section(), cnt)
+				for k=1,cnt do
+					utils_item.discharge(obj_itm)
+				end
+			end
+		end
+	end
+
+	-- Craft
+	if IsItem("ammo",self.craft_item_r[1]) then
+		alife_create_item(self.craft_item_r[1], db.actor, {ammo = self.craft_item_r[2]})
+	else
+		for i = 1, self.craft_item_r[2] do
+			kind = SYS_GetParam(0, self.craft_item_r[1], "kind")
+			if kind == "i_arty" or kind == "i_arty_cont" then
+				if counter > 0 and total_cond > 0 then
+					local cond_to_set = total_cond / counter
+					if cond_to_set >= 0.99 then
+						cond_to_set = 0.989
+					end
+
+					if randomize == 1 then
+						cond_to_set = ((math.random(zz_item_artefact.arti_min_eff, zz_item_artefact.arti_max_eff)) / 100)
+					end
+
+					alife_create_item(self.craft_item_r[1], db.actor, {cond = cond_to_set})
+				end
+			else
+				alife_create_item(self.craft_item_r[1], db.actor)
+			end
+		end
+	end
+
+	if string.find(self.craft_item_r[1],"_lead_box") then
+		lead_box_number = lead_box_number - 1
+		if lead_box_number > 0 then
+			for i=1,lead_box_number do
+				alife_create_item("lead_box", db.actor)
+			end
+		end
+	end
+	-- Increase Statistic
+	game_statistics.increment_statistic("items_crafted")
+
+	hasCraftedItem = true
+	if (self.last_cont and self.last_idx) then
+		--Dirty hack to update ui after alife item removal
+		--Disable button and reenable later in update event
+		self.btn_craft:Enable(false)
+		CreateTimeEvent("totally_not_random_event" .. random_number(1, 1000000), "update_ui_delay" .. random_number(1, 1000000), 0.1, self.UpdateUi, self, self.last_cont, self.last_idx)
+	end
+end
+
+local RepairInitControlsSuper = ui_workshop.UIWorkshopRepair.InitControls
+ui_workshop.UIWorkshopRepair.InitControls = function(self, x, y)
+	RepairInitControlsSuper(self, x, y)
+	self.last_cont = nil
+	self.last_idx = nil
+	--printf("calling override InitControls")
+end
+
+local RepairOn_CC_Mouse1_Super = ui_workshop.UIWorkshopRepair.On_CC_Mouse1
+ui_workshop.UIWorkshopRepair.On_CC_Mouse1 = function(self, cont, idx)
+	RepairOn_CC_Mouse1_Super(self, cont, idx)
+	self.last_cont = cont
+	self.last_idx = idx
+	--printf("calling override On_CC_Mouse1")
+	return true
+end
+
+ui_workshop.UIWorkshopRepair.UpdateUi = function(self, cont, idx)
+	self:Reset()
+	--self:On_CC_Mouse1(cont, idx)
+	--return true needed for CreateTimeEvent function to queue update once
+	return true
+end
+
+ui_workshop.UIWorkshopRepair.Close = function(self)
+	-- Effect
+	if (hasCraftedItem) then
+		actor_effects.play_item_fx("craft_dummy")
+	end
+
+	--printf("calling override Close")
+
+	hasCraftedItem = false
+	self.last_cont = nil
+	self.last_idx = nil
+	self.owner:Close()
+end
+
+ui_workshop.UIWorkshopRepair.Repair = function(self)
+	local obj = self.CC["inventory"]:GetCell_Selected(true)
+	if (not obj) then
+		return
+	end
+
+	local sim = alife()
+	local tot_con = 0
+	local cnt = 0
+	if is_not_empty(self.new_con) then
+		for i=1,6 do
+			if self.parts[i] and self.parts[i].sec and (self.parts[i].sec ~= "na") then
+				if self.new_con[i] and self.new_con[i].id then
+					self.parts[i].con = self.new_con[i].con
+					print_ws("- UIWorkshopRepair:Repair() | replaced part spotted | part: %s - condition: %s - order: %s - id: %s", self.parts[i].sec, self.new_con[i].con, i, self.new_con[i].id)
+
+					-- Release replacement parts
+					alife_release_id(self.new_con[i].id)
+				end
+
+				tot_con = tot_con + self.parts[i].con --AdjustCon(self.parts[i].sec, self.parts[i].con, #self.parts, IsOutfit(self.object))
+				cnt = cnt + 1
+				print_ws("/ UIWorkshopRepair:Repair() | total condition calculation | part: %s - condition: %s - order: %s - total sum: %s", self.parts[i].sec, self.parts[i].con, i, tot_con)
+			end
+		end
+	else
+		print_ws("! UIWorkshopRepair:Repair() | no new parts have been replaced")
+		return
+	end
+
+	-- Discharge tools
+	for i=1,#self.toolkit_pick do
+		local obj_tool = level.object_by_id(self.toolkit_pick[i])
+		if obj_tool then
+			utils_item.discharge(obj_tool)
+			print_ws("/ UIWorkshopRepair:Repair() | discharged toolkit (%s)", self.toolkit_pick[i])
+		else
+			printe("!ERROR UIWorkshopRepair:Repair() | can't discharge toolkit with id (%s). Object not found!", self.toolkit_pick[i])
+		end
+	end
+
+	-- Apply condition changes
+	local id = obj:id()
+	local sec = obj:section()
+	sec = ini_sys:r_string_ex(sec,"parent_section") or sec -- for weapons with scopes
+
+	local final_con = (cnt > 0) and (clamp(math.ceil(tot_con/cnt),1,100)/100)
+	local weapon = level.object_by_id(id)
+	if weapon and final_con and (final_con >= 0) and (final_con <= 1) then
+		weapon:set_condition(final_con)
+		print_ws("- UIWorkshopRepair:Repair() | object with id (%s) is set to a new condition: %s", id, final_con)
+	else
+		printe("! UIWorkshopRepair:Repair() | object with id (%s) is either not found. Or didn't register new condition (%s)!", id, final_con)
+	end
+
+	local result_part_tbl = {}
+	result_part_tbl[sec] = math.ceil(tot_con/cnt)
+	for i=1,#self.parts do
+		result_part_tbl[self.parts[i].sec] = self.parts[i].con
+	end
+	item_parts.set_parts_con(id, result_part_tbl)
+
+	for k,v in pairs(result_part_tbl) do
+		print_ws("~ UIWorkshopRepair:Repair() | item's new part table [%s] = %s",k,v)
+	end
+
+	utils_obj.play_sound("interface\\inv_properties_2")
+
+	hasCraftedItem = true
+	if (self.last_cont and self.last_idx) then
+		--Dirty hack to update ui after alife item removal
+		--Disable button and reenable later in update event
+		self.btn_repair:Enable(false)
+		CreateTimeEvent("totally_not_random_event" .. random_number(1, 1000000), "update_ui_delay" .. random_number(1, 1000000), 0.1, self.UpdateUi, self, self.last_cont, self.last_idx)
+	end
+end
+
+local UpgradeInitControlsSuper = ui_workshop.UIWorkshopUpgrade.InitControls
+ui_workshop.UIWorkshopUpgrade.InitControls = function(self, x, y)
+	UpgradeInitControlsSuper(self, x, y)
+	self.last_cont = nil
+	self.last_idx = nil
+	--printf("calling override InitControls")
+end
+
+local UpgradeOn_CC_Mouse1_Super = ui_workshop.UIWorkshopUpgrade.On_CC_Mouse1
+ui_workshop.UIWorkshopUpgrade.On_CC_Mouse1 = function(self, cont, idx)
+	UpgradeOn_CC_Mouse1_Super(self, cont, idx)
+	self.last_cont = cont
+	self.last_idx = idx
+	--printf("calling override On_CC_Mouse1")
+	return true
+end
+
+ui_workshop.UIWorkshopUpgrade.UpdateUi = function(self, cont, idx)
+	self:Reset()
+	--self:On_CC_Mouse1(cont, idx)
+	--return true needed for CreateTimeEvent function to queue update once
+	return true
+end
+
+ui_workshop.UIWorkshopUpgrade.Close = function(self)
+	-- Effect
+	if self.owner.dbg then
+
+	elseif hasCraftedItem then
+		actor_effects.play_item_fx("craft_dummy")
+	end
+
+	--printf("calling override Close")
+
+	hasCraftedItem = false
+	self.last_cont = nil
+	self.last_idx = nil
+	self.owner:Close()
+end
+
+ui_workshop.UIWorkshopUpgrade.Upgrade = function(self)
+	local obj = self.CC:GetCell_Selected(true)
+	if (not obj) then
+		return
+	end
+
+	-- For weapons, unload mag and clear ammo cache in case of ammo type upgrades
+	if IsWeapon(obj) and (not IsItem("fake_ammo_wpn",obj:section())) then
+		obj:force_unload_magazine(true)
+		item_weapon.clear_cache(obj)
+	end
+
+	-- Sort upgrades
+	k2t_table(self.inst_upgr)
+	local sort_tbl = {}
+	for i=1,#self.upgr_order do
+		for ii=1,#self.inst_upgr do
+			if string.find(self.inst_upgr[ii],self.upgr_order[i]) then
+				sort_tbl[#sort_tbl+1] = self.inst_upgr[ii]
+				break
+			end
+		end
+	end
+
+	-- Install upgrades
+	inventory_upgrades.force_upgrade = true
+	for i=1,#sort_tbl do
+		--printf("installing: %s - for [%s]", sort_tbl[i], obj:name())
+		obj:install_upgrade(sort_tbl[i])
+	end
+	inventory_upgrades.force_upgrade = false
+
+	-- Discharge tools
+	for i=1,#self.upgr_tools_pick do
+		local t_obj = level.object_by_id(self.upgr_tools_pick[i])
+		if t_obj then
+			utils_item.discharge(t_obj)
+		end
+	end
+
+	utils_obj.play_sound("interface\\inv_properties_2")
+
+	hasCraftedItem = true
+	if (self.last_cont and self.last_idx) then
+		--Dirty hack to update ui after alife item removal
+		--Disable button and reenable later in update event
+		self.btn_upgrade:Enable(false)
+		CreateTimeEvent("totally_not_random_event" .. random_number(1, 1000000), "update_ui_delay" .. random_number(1, 1000000), 0.1, self.UpdateUi, self, self.last_cont, self.last_idx)
+	end
+end
