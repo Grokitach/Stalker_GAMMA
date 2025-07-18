@@ -1,0 +1,613 @@
+-- Adapted the debugger code
+function spawn_at_position(section, position_vector, lvid, gvid, is_squad, angle, is_anomaly, anomaly_radius)
+    local se_obj = alife_create(section, position_vector, lvid, gvid)
+
+    if is_squad then
+        se_obj:create_npc(nil, position_vector, lvid, gvid)
+        local sim = alife()
+        for k in se_obj:squad_members() do
+            local se_npc = k.object or k.id and sim:object(k.id)
+            if (se_npc) then
+                SIMBOARD:setup_squad_and_group(se_npc)
+                SendScriptCallback("squad_on_npc_creation",se_obj,se_npc)
+            end
+        end
+    end
+
+    if angle then
+        se_obj.angle = angle
+    end
+
+    if is_anomaly then
+        local data = utils_stpk.get_object_data(se_obj)
+        if (data) then
+            data.object_flags = 31
+            data.restrictor_type = 0
+            data.shapes = {}
+            data.shapes[1] = {}
+            data.shapes[1].shtype = 0
+            data.shapes[1].offset = VEC_ZERO
+            data.shapes[1].radius = anomaly_radius or 10
+            utils_stpk.set_object_data(data,se_obj)
+        end
+    end
+
+    return se_obj.id
+end
+
+function spawn_helper(spawn_config)
+    if spawn_config.particles then
+        spawn_particles_at_position(spawn_config.particles, spawn_config.vector)
+    end
+    if spawn_config.sound then
+        spawn_sound_at_position(spawn_config.sound, spawn_config.vector)
+    end
+    return spawn_at_position(
+        spawn_config.section,
+        spawn_config.vector,
+        spawn_config.lvid,
+        spawn_config.gvid,
+        spawn_config.is_squad,
+        spawn_config.angle,
+        spawn_config.is_anomaly,
+        spawn_config.anomaly_radius
+    )
+end
+
+function mass_spawn_helper(spawn_configs, tab_with_ids)
+    for _, v in ipairs(spawn_configs) do
+        local id = spawn_helper(v)
+        if tab_with_ids then
+            table.insert(tab_with_ids, id)
+        end
+	end
+end
+
+-- Can check squads and individual npcs
+-- TODO: check if some tasks could be simplified with this function
+function entity_is_dead(id, section)
+    local se_obj = alife_object(id)
+    if not se_obj then return true end -- Thing gets released - it's dead then. Takes care of offline checks for non-story npcs
+    if se_obj:section_name() ~= section then return true end -- Thing got released but its id was shortly after taken by another spawn
+
+    local is_squad = se_obj.commander_id
+    local se_npc = is_squad and se_obj:commander_id() or se_obj
+    return not se_npc:alive()
+end
+
+-- Useful for places where one needs to await for stuff to spawn first (it takes time for even se_obj to appear)
+-- Saves creating flags that enable condition check
+function entity_is_dead_with_wait(id, section)
+    if not id then return false end
+    return entity_is_dead(id, section)
+end
+
+local timeout_helper = 1
+function set_timeout(callback, timeout)
+    CreateTimeEvent(0,"nta_delay_till_next_tick" .. timeout_helper, timeout or 0, function ()
+        callback()
+        return true
+    end)
+    timeout_helper = timeout_helper + 1
+end
+
+function get_squad_commander(id)
+    return level.object_by_id(alife_object(id):commander_id())
+end
+
+function is_dark_night ()
+	return level.get_time_hours() <= 3 or level.get_time_hours() >= 22
+end
+
+function spawn_helicopter(is_strong, pos, lvid, gvid)
+	local heli = "new_tasks_addon_heli_" .. (is_strong and "strong" or "weak")
+	local se_obj = alife_create(heli, pos, lvid, gvid)
+
+	local visual = utils_data.cfg_get_string(ini_sys, heli,"visual", se_obj, false)
+	local data = utils_stpk.get_heli_data(se_obj)
+	if (data) then
+		data.visual_name = visual and visual ~= "" and visual or [[dynamics\vehicles\mi2\veh_mi2_01]]
+		data.motion_name = [[helicopter\aaa.anm]]
+		data.startup_animation = "idle"
+		data.skeleton_name = "idle"
+		data.engine_sound = [[vehicles\helicopter\helicopter]]
+		utils_stpk.set_heli_data(data, se_obj)
+	else
+		safe_release_manager.release(se_obj)
+	end
+
+	return se_obj.id
+end
+
+function immediate_explosion(actor,obj)
+    if (obj) then
+        obj:explode(0)
+    end
+end
+
+function is_strike(shit)
+    -- IDK why but for some reason hit.strike comes back as 7 sometimes. Something's really fucked up
+    return shit.type == 5
+end
+
+function is_axe()
+    local item = db.actor:active_item()
+    return item and string.find(item:section(), "axe")
+end
+
+function is_melee(item)
+    return string.find(item:section(), "axe") or string.find(item:section(), "knife")
+end
+
+function teleport_visual()
+    level.add_pp_effector ("teleport.ppe", 2006, false)
+    local snd_obj = sound_object("affects\\tinnitus3a")
+    snd_obj:play_no_feedback(db.actor, sound_object.s2d, 0, VEC_ZERO, 1.0, 1.0)
+end
+
+-- Used to push dead bodies that should disappear below the textures to avoid errors caused by on_death callbacks from other mods
+-- Also seems like some creatures have problems being released
+function hide_through_teleport(id)
+    CreateTimeEvent(0,"nta_hide_body_teleport_" .. id,0, function ()
+        local obj = level.object_by_id(id)
+        local pos = obj:position()
+        pos.y = pos.y - 40
+        obj:force_set_position(pos, false)
+        return true
+    end)
+end
+
+function spawn_companion_squad(spawn_config)
+    local id = spawn_helper(spawn_config)
+    local squad = alife_object(id)
+
+    axr_companions.companion_squads[squad.id] = squad
+	for k in squad:squad_members() do
+		local se_obj = k.object or k.id and sim:object(k.id)
+		if (se_obj) then
+			se_save_var(se_obj.id,se_obj:name(),"companion",true)
+			se_save_var(se_obj.id,se_obj:name(),"companion_cannot_dismiss",true)
+			SIMBOARD:setup_squad_and_group(se_obj)
+		end
+	end
+
+    -- Add to ignore offline combat simulation list
+	sim_offline_combat.task_squads[squad.id] = true
+
+    return id
+end
+
+-- Excluded Bar
+southern_maps = {
+    "k00_marsh",
+	"k01_darkscape",
+	"k02_trucks_cemetery",
+	"l01_escape",
+	"l02_garbage",
+	"l03_agroprom",
+	"l04_darkvalley",
+	"l06_rostok",
+	"l07_military",
+	"l08_yantar",
+	"l09_deadcity",
+    "y04_pole",
+}
+
+northern_maps = {
+    "l10_red_forest",
+	"jupiter",
+	"pripyat",
+	"zaton",
+	"l13_generators",
+	"l12_stancia_2",
+	"l12_stancia",
+	"l11_pripyat",
+	"l10_radar",
+}
+
+sim_stalkers = nil
+function prefetch_sim_stalkers()
+    sim_stalkers = {}
+    for i = 1, 65534 do
+        local se_obj = alife_object(i)
+
+        if
+            se_obj
+		    and (IsStalker(nil,se_obj:clsid()) and se_obj:alive() and string.find(se_obj:section_name(),"sim_default") and get_object_story_id(id) == nil)
+		    and (se_obj.group_id ~= 65535 and get_object_story_id(se_obj.group_id) == nil)
+		then
+			local comm = alife_character_community(se_obj)
+
+            if not sim_stalkers[comm] then
+                sim_stalkers[comm] = {}
+            end
+
+            table.insert(sim_stalkers[comm], se_obj.id)
+		end
+    end
+end
+
+function find_random_stalker(factions, maps)
+    local limit = 60
+    -- Check 60 random stalkers at most and make it completely random
+    for i = 1, limit do
+        local faction = factions[math.random(1, #factions)]
+        local faction_stalkers = sim_stalkers[faction]
+        -- It might happen that there's no stalker of a given faction on the map and the entry for that faction won't be created
+        if faction_stalkers then
+            local stalker_id = faction_stalkers[math.random(1, #faction_stalkers)]
+            local se_obj = alife_object(stalker_id)
+
+            if se_obj then
+                local level = get_object_level_id(se_obj)
+
+                if
+                    (not maps or a_tab_utils.has_value(maps, level))
+                    and IsStalker(nil,se_obj:clsid()) and se_obj:alive() and alife_character_community(se_obj) == faction
+                then
+                    return {
+                        id = stalker_id,
+                        level = level,
+                        faction = faction,
+                        name = se_obj:character_name()
+                    }
+                end
+            end
+        end
+    end
+end
+
+function get_object_level_id(se_obj)
+    local gg = game_graph()
+    local sim = alife()
+    return sim:level_name(gg:vertex(se_obj.m_game_vertex_id):level_id())
+end
+
+local earthquake_cam_eff = 3
+function earthquake_screen_effect_gradual(duration_multiplier)
+    local phase_duration_multiplier = duration_multiplier or 2
+    local effector_names = {
+        "camera_effects\\earthquake_20.anm",
+        "camera_effects\\earthquake_40.anm",
+        "camera_effects\\earthquake_60.anm",
+        "camera_effects\\earthquake_80.anm",
+        "camera_effects\\earthquake.anm",
+        "camera_effects\\earthquake_80.anm",
+        "camera_effects\\earthquake_60.anm",
+        "camera_effects\\earthquake_40.anm",
+        "camera_effects\\earthquake_20.anm"
+    }
+
+
+
+    for index, name in ipairs(effector_names) do
+        CreateTimeEvent(0,"nta_earthquake_screen_" .. index, (index - 1) * phase_duration_multiplier, function ()
+            level.remove_cam_effector(earthquake_cam_eff)
+            level.add_cam_effector(name, earthquake_cam_eff, true, "", 0, false)
+            return true
+        end)
+    end
+
+    CreateTimeEvent(0,"nta_earthquake_screen_remove", #effector_names * phase_duration_multiplier, function ()
+        level.remove_cam_effector(earthquake_cam_eff)
+        return true
+    end)
+end
+
+function earthquake_screen_effect_strong(duration)
+    level.add_cam_effector("camera_effects\\earthquake.anm", earthquake_cam_eff, true, "", 0, false)
+
+    CreateTimeEvent(0,"nta_earthquake_screen_remove", duration or 6, function ()
+        level.remove_cam_effector(earthquake_cam_eff)
+        return true
+    end)
+end
+
+function actor_in_range(vector, dist)
+    return db.actor:position():distance_to(vector) < dist
+end
+
+function actor_icon()
+    return db.actor:character_icon()
+end
+
+function actor_name()
+    return db.actor:character_name()
+end
+
+function obj_position_to_spawn_config_partial(obj)
+    return {
+        vector = obj:position(),
+        lvid = obj:level_vertex_id(),
+        gvid = obj:game_vertex_id()
+    }
+end
+
+local delayed_message_index = 0
+function delayed_message(msg, delay, icon, name, keep_time)
+    local k_time = keep_time or 7
+    CreateTimeEvent(0,"nta_delayed_message_" .. delayed_message_index, delay, function ()
+        dynamic_news_helper.send_tip(msg, name, nil, k_time, icon, nil, 'npc')
+        return true
+    end)
+    delayed_message_index = delayed_message_index + 1
+end
+
+function delayed_message_by_story_id(msg, delay, story_id, keep_time)
+    local sender_props = get_sender_props_by_story_id(story_id)
+    delayed_message(msg, delay, sender_props.icon, sender_props.name, keep_time)
+end
+
+function get_sender_props_by_story_id(story_id)
+    local se_obj = get_story_se_object(story_id)
+    if not se_obj then return {} end
+
+    local is_squad = se_obj.commander_id
+
+    local se_stalker = (is_squad and alife():object(se_obj:commander_id())) or se_obj
+    return { 
+        name = se_stalker:character_name(), 
+        icon = se_stalker:character_icon()
+    }
+end
+
+function entity_in_range(id, dist, vector)
+    local v = vector or db.actor:position()
+    local se_obj = alife_object(id)
+    if not se_obj then return false end
+
+    local is_squad = se_obj.commander_id
+    if is_squad then
+        
+    end
+
+    local npc = is_squad and alife_object(se_obj:commander_id()) or se_obj
+    return npc.position:distance_to(v) < dist
+end
+
+local ta2ti = utils_data.CTime_from_table
+function seconds_passed_from_date(time_table)
+    local time = ta2ti(time_table)
+    local seconds = tonumber(game.get_game_time():diffSec(time))
+
+    return seconds
+end
+
+function days_passed_from_date(time_table)
+    local seconds = seconds_passed_from_date(time_table)
+    local days = math.floor(((seconds/60)/60)/24)
+
+    return days
+end
+
+function destroy_with_poltergeist_effect(obj, without_sound)
+    spawn_particles_at_position("monsters\\polter_death_00", obj:position())
+    if not without_sound then
+        local snd = xr_sound.get_safe_sound_object("monsters\\poltergeist\\death_1")
+        snd:play(obj, 0, sound_object.s2d)
+    end
+
+    safe_release_manager.release(alife_object(obj:id()))
+end
+
+function play_burer_particles_on_hit_position(npc, bone_index)
+    if not (npc and bone_index) then
+        return
+    end
+    
+    local b_name = npc:bone_name(bone_index)
+    local pos = npc:bone_position(b_name)
+
+    nta_utils.spawn_particles_at_position([[monsters\effects\bloodsucker_trail]], pos)
+    nta_utils.spawn_particles_at_position([[monsters\effects\polter_trails_02]], pos)
+    nta_utils.spawn_particles_at_position([[anomaly2\effects\bloodsucker_shleyf]], pos)
+end
+
+-- Tab holds ref to particles so that they don't despawn quickly (can be omitted if need short particle effect)
+local particle_tab = {}
+function spawn_particles_at_position(particle_path, vec, prevent_persistence)
+    local part = particles_object(particle_path)
+    if not prevent_persistence then
+        table.insert(particle_tab, part)
+    end
+    part:play_at_pos(vec)
+
+    return part
+end
+
+-- Tab holds ref to sounds so that they don't despawn immediately
+local sound_tab = {}
+function spawn_sound_at_position(sound_path, vec)
+    local snd = xr_sound.get_safe_sound_object(sound_path)
+    table.insert(sound_tab, snd)
+    snd:play_at_pos(db.actor, vec)
+
+    return snd
+end
+
+function spawn_attached_sound(sound_path)
+    local snd = xr_sound.get_safe_sound_object(sound_path)
+    snd:play(db.actor, 0, sound_object.s2d)
+
+    return snd
+end
+
+levels = {
+    swamp = "k00_marsh",
+	darkscape = "k01_darkscape",
+	truck_cemetery = "k02_trucks_cemetery",
+	cordon = "l01_escape",
+	garbage = "l02_garbage",
+	agroprom = "l03_agroprom",
+	dark_valley = "l04_darkvalley",
+	wild_territory = "l06_rostok",
+	army_warehouses = "l07_military",
+	yantar = "l08_yantar",
+	dead_city = "l09_deadcity",
+    meadow = "y04_pole",
+    x8 = 'labx8',
+    x16 = 'l08u_brainlab',
+    x18 = 'l04u_labx18',
+    x19 = 'l10u_bunker',
+    red_forest = 'l10_red_forest',
+    outskirts = 'pripyat',
+    jupiter = 'jupiter',
+    jupiter_underground = 'jupiter_underground',
+    zaton = 'zaton',
+    limansk = 'l10_limansk',
+    bar = 'l05_bar',
+    agroprom_underground = 'l03u_agr_underground',
+    radar = 'l10_radar',
+    hospital = 'l11_hospital',
+    pripyat = 'l11_pripyat',
+    cnpp_south = 'l12_stancia',
+    cnpp_north = 'l12_stancia_2',
+    monolith_control_bunker = 'l12u_control_monolith',
+    sarcophagus = 'l12u_sarcofag',
+    generators = 'l13_generators',
+    warlab = 'l13u_warlab',
+}
+
+function actor_on_level(lvl)
+    return level.name() == lvl
+end
+
+function enforce_logic(story_id, script_name, section, reset_target)
+    if level_changing() then return end
+
+    local se_obj = get_story_se_object(story_id)
+    if not se_obj then return end
+
+    local is_squad = se_obj.commander_id
+
+    local stalker_id
+    if is_squad then
+        stalker_id = get_squad_commander(se_obj.id):id()
+    else
+        stalker_id = se_obj.id
+    end
+
+    logic_enforcer.assign(stalker_id, script_name, 'logic', section)
+
+    if reset_target then
+        local st = db.storage[stalker_id]
+        if st.desired_target then
+            st.desired_target.__keep_until = nil
+        end
+    end
+end
+
+-- It's fake pulse for now - used for some cool visuals
+function spawn_pulse(pos)
+    spawn_particles_at_position("generator\\generator_accum_thunderbolt", pos)
+
+    local pAno_light = script_light()
+    
+    pAno_light.range = 100
+    pAno_light.lanim = "koster_01_electra"
+    pAno_light.lanim_brightness = 0.025
+    pAno_light.volumetric = true
+    pAno_light.volumetric_quality = 1
+    pAno_light.volumetric_distance = 0.25
+    pAno_light.volumetric_intensity = 0.05
+
+	pAno_light.enabled = false
+    pAno_light:set_position(pos)
+	pAno_light:update()
+
+    set_timeout(function () 
+        spawn_sound_at_position("new_tasks_addon\\emi_blowout_shrike", pos)
+        pAno_light.enabled = true
+	    pAno_light:update()
+    end, 5.5)
+
+    set_timeout(function () 
+        pAno_light.lanim_brightness = 0.2
+        pAno_light.volumetric_distance = 1
+        pAno_light.volumetric_intensity = 0.1
+    end, 11.5)
+
+    set_timeout(function () 
+        pAno_light.lanim_brightness = 0.025
+        pAno_light.volumetric_distance = 0.25
+        pAno_light.volumetric_intensity = 0.05
+        pAno_light.enabled = false
+    end, 12)
+end
+
+-- Contains only persistent npcs story ids (i.e. not the ones used for specific task npc that gets released)
+story_ids = {
+    actor = 'actor',
+    -- Cordon
+    sidorovich = 'esc_m_trader',
+    -- Garbage
+    flea_market_trader_day = 'baraholka_trader',
+    -- Bar
+    snitch = 'bar_informator_mlr',
+    barman = 'bar_visitors_barman_stalker_trader',
+    -- Yantar
+    sakharov = 'yan_stalker_sakharov',
+}
+
+local function load_defaults()
+	local t = {}
+	local op = new_tasks_addon_mcm.op
+	for _, v in ipairs(op.gr) do
+		if v.def ~= nil then
+			t[v.id] = v.def
+		end
+	end
+	return t
+end
+
+mcm_config = load_defaults()
+
+local function load_settings()
+	mcm_config = load_defaults()
+	if ui_mcm then
+		for k, v in pairs(mcm_config) do
+			mcm_config[k] = ui_mcm.get("new_tasks_addon/" .. k)
+		end
+	end
+end
+
+xr_effects.dispatch_nta_task_details = function(actor, npc, p)
+    local task_id = p[1]
+    CreateTimeEvent(0,"nta_task_details_" .. task_id,0, function ()
+        -- Build News
+        local news_caption = game.translate_string(task_manager.task_ini:r_string_ex(task_id, "title")) or "error"
+
+        local news_text = game.translate_string(task_manager.task_ini:r_string_ex(task_id, "nta_task_details")) or ""
+        local news_ico = task_manager.task_ini:r_string_ex(task_id, "icon")
+
+        db.actor:give_talk_message2(news_caption, news_text, news_ico, "iconed_answer_item", task_id)
+        return true
+    end)
+end
+
+xr_conditions.check_nta_replayability = function(actor, npc, p)
+    local task_id = p[1]
+    if not has_alife_info(task_id .. '_completed') then
+        return true
+    else
+        return mcm_config["repl_" .. task_id]
+    end
+end
+
+function check_nta_auto_assignment(task_id)
+    return mcm_config["auto_assignment_" .. task_id]
+end
+
+function actor_on_first_update()
+    prefetch_sim_stalkers()
+end
+
+function change_level(configs)
+    change_level_now(configs.vector, configs.lvid, configs.gvid, configs.angle or vector():set(0, 0, 0))
+end
+
+function on_game_start()
+    RegisterScriptCallback("on_game_load", load_settings)
+	RegisterScriptCallback("on_option_change", load_settings)
+    RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
+end

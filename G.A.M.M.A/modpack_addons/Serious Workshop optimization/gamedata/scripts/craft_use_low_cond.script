@@ -1,0 +1,56 @@
+--SERIOUS This script overwrites a monkey patch.
+-- Monkey patch overwrite: 337- QoL Bundle - Utjan
+-- File: craft_use_low_cond.script
+
+function on_game_start()
+    base_craft = ui_workshop.UIWorkshopCraft.Craft
+    function ui_workshop.UIWorkshopCraft:Craft()
+        for idx,v in pairs(self.craft_item) do
+            local sec
+
+            -- Save item section if it's degradable
+            local item = level.object_by_id(self.craft_item[idx][1])
+            if item and utils_item.is_degradable(item) then
+                sec = item:section()
+            end
+
+            if sec then
+                -- Save # of item needed. Empty craft table
+                local craft_cnt = #self.craft_item[idx]
+                self.craft_item[idx] = {}
+                local cond_sort_list = {}
+
+                -- Make list of the same items on actor
+                local function search(temp, item)
+                    if item:section() == sec then
+                        cond_sort_list[item:id()] = item:condition()
+                    end
+                end
+                db.actor:iterate_inventory(search,nil)
+
+                --SERIOUS OPTI
+                local stashId = self.stashId or (self.owner and self.owner.stashId)
+
+                if stashId  then
+                    local stash_obj = get_object_by_id(stashId)
+                    stash_obj:iterate_inventory_box(search)
+                end
+                --SERIOUS OPTI
+
+                -- Sort item list by condition ascending and add the first items to craft table
+                local counter = 1
+                for id, cond in spairs(cond_sort_list, value_sort_ascending) do
+                    self.craft_item[idx][#self.craft_item[idx] + 1] = id
+                    counter = counter + 1
+                    if counter > craft_cnt then break end
+                end
+            end
+        end
+
+        base_craft(self)
+    end
+end
+
+function value_sort_ascending(t, a, b)
+    return t[a] < t[b]
+end
