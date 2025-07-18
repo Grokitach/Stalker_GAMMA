@@ -1,0 +1,82 @@
+OldAxrTaskManagerGetFirstAvailableTask = axr_task_manager.get_first_available_task
+function axr_task_manager.get_first_available_task(npc, skip, is_sim)
+	local tm = task_manager.get_task_manager( )
+	local task_info = tm.task_info
+
+	-- Get current stored task for current npc:
+	local npc_stored_task = load_var( db.actor, ("drx_sl_npc_stored_task_" .. npc:id( )), nil )
+	local time_last_checked = load_ctime( db.actor, ("drx_sl_npc_stored_task_time_" .. npc:id( )) )
+
+	-- Check stored task has not timed out (<3hrs):
+	if ( time_last_checked and game.get_game_time( ):diffSec( time_last_checked ) < 5400 ) then
+
+		-- Check if stored task is still valid:
+		if ( not npc_stored_task or blacklist_helper.TaskBlacklist[npc_stored_task[1]] ) then
+			return
+		elseif ( task_info[npc_stored_task] == nil and xr_conditions.has_completed_task_prerequisites( nil, nil, {npc_stored_task} ) ) then
+			return npc_stored_task
+		else
+			return
+		end
+
+	end
+
+	-- Decide if current npc should have task to give (75% chance):
+	math.randomseed( device( ):time_global( ) )
+	if ( math.random( 100 ) > 75 ) then
+		save_var( db.actor, ("drx_sl_npc_stored_task_" .. npc:id( )), nil )
+		save_ctime( db.actor, ("drx_sl_npc_stored_task_time_" .. npc:id( )), game.get_game_time( ) )
+		return
+	end
+
+	-- If no valid stored task then generate new task:
+	local sec
+	local st = db.storage[npc:id( )]
+	if ( st and st.ini and st.section_logic ) then
+		sec = st.ini:r_string_ex( st.section_logic, "task_section" )
+		if ( sec ) then
+			sec = (sec .. "_task_")
+		end
+	end
+	if not ( sec ) then
+		sec = (is_sim and "simulation_task_" or npc:section( ) ~= "m_trader" and (npc:section( ) .. "_task_") or (npc:name( ) .. "_task_"))
+	end
+
+	-- Build list of valid tasks:
+	local npc_task_list = {}
+	local size_t = 0
+	
+	for task_id in pairs(CFG_CACHE) do
+		if starts_with(task_id, sec) then
+			if ( skipped_tasks[task_id] ~= true and task_info[task_id] == nil and xr_conditions.has_completed_task_prerequisites( nil, nil, {task_id} ) ) then
+				if ( skip ) then
+					skipped_tasks[task_id] = true
+					return
+				else
+					if ( is_sim ) then
+						local p = parse_list( task_manager.task_ini, task_id, "sim_communities", true )
+						if ( p[character_community( npc )] == true ) then
+							size_t = size_t + 1
+							npc_task_list[size_t] = task_id
+						end
+					else
+						size_t = size_t + 1
+						npc_task_list[size_t] = task_id
+					end
+				end
+			end
+		end
+	end
+
+	-- Pick random task from list of valid tasks:
+	local new_task
+	if ( #npc_task_list > 0 ) then
+		math.randomseed( device( ):time_global( ) )
+		new_task = npc_task_list[math.random( #npc_task_list )]
+	end
+
+	-- Store current available task for current npc:
+	save_var( db.actor, ("drx_sl_npc_stored_task_" .. npc:id( )), new_task )
+	save_ctime( db.actor, ("drx_sl_npc_stored_task_time_" .. npc:id( )), game.get_game_time( ) )
+	return new_task
+end

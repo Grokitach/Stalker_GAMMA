@@ -1,0 +1,609 @@
+--[[
+	Made by Tronex
+	Last Edit: 2019/7/9
+	Anomalies measurement
+	
+	Parameters for precondition
+		P[1] = (string) task_id
+		P[2] = (num) scan mode (1 to 5)
+			1 = same level
+			2 = same or nearby levels
+			3 = neaby levels only
+			4 = far levels
+			5 = all levels
+		P[3] = (true) spawn a mutant squad to target the player, see the note below
+		P[4] = (string) section of measurement device
+		p[5+] = (string) anomaly types to target (see table below)1
+		
+	You can specify which mutant squads to spawn and target the player by listing them in "task_measure_mutants", the script will pick one and spawn it once actor take measurement
+	
+	Example of usage in configs:
+		precondition = {=validate_measure_task(simulation_task_50:true:true:detector_anomaly:chemical:acidic:electric:thermal:gravitational)} true, false
+		target_functor = general_measure
+		status_functor = measure_task
+		task_measure_mutants = simulation_lurker,simulation_bloodsucker_1_2,simulation_psysucker,simulation_psy_dog,simulation_snork_2_3,simulation_fracture,simulation_cat,simulation_mix_dogs,simulation_pseudodog
+		on_job_descr = %=setup_measure_task(simulation_task_50)%
+		on_complete = %=inc_goodwill_by_tasker_comm(simulation_task_50:50) =reward_random_money_by_dist(simulation_task_50:3500:4500:0.2) =reward_random_item(beer:vodka:vodka2:cigarettes_lucky:cigarettes_russian) =remove_quest_item(simulation_task_50) -simulation_task_50_quest_item_received -simulation_task_50_measurment_finished -simulation_task_50_measurment_enemy =pstor_reset(simulation_task_50)%
+		on_fail 	= %-simulation_task_50_quest_item_received -simulation_task_50_measurment_finished -simulation_task_50_measurment_enemy =pstor_reset(simulation_task_50)%
+--]]
+
+local measurment_started = {} -- make sure that measurement is on-going
+local anomaly_measure_dist = 10
+
+local anomaly_types = { -- only target these anomalies
+--[[
+	["zone_field_acidic_strong"] = true,
+	["zone_field_acidic_average"] = true,
+	["zone_field_acidic_weak"] = true,
+	
+	["zone_field_thermal_weak"] = true,
+	["zone_field_thermal_average"] = true,
+	["zone_field_thermal_strong"] = true,
+	
+	["zone_field_radioactive_weak"] = true,
+	["zone_field_radioactive_average"] = true,
+	["zone_field_radioactive_strong"] = true,
+	
+
+	["zone_radioactive_weak"] = true,
+	["zone_radioactive_average"] = true,
+	["zone_radioactive_strong"] = true,
+	
+	["zone_mine_static_weak"] = true,
+	["zone_mine_static_average"] = true,
+	["zone_mine_static_strong"] = true,
+	
+	["zone_witches_galantine_weak"] = true,
+	["zone_witches_galantine_average"] = true,
+	["zone_witches_galantine_strong"] = true,
+--]]
+	
+	["chemical"] = {
+		["zone_mine_chemical_weak"] = true,
+		["zone_mine_chemical_average"] = true,
+		["zone_mine_chemical_strong"] = true,
+	},
+	["acidic"] = {
+		["zone_mine_acidic_weak"] = true,
+		["zone_mine_acidic_average"] = true,
+		["zone_mine_acidic_strong"] = true,
+	},
+	["electric"] = {
+		["zone_mine_electric_weak"] = true,
+		["zone_mine_electric_average"] = true,
+		["zone_mine_electric_strong"] = true,
+	},
+		
+	["thermal"] = {
+		["zone_mine_thermal_weak"] = true,
+		["zone_mine_thermal_average"] = true,
+		["zone_mine_thermal_strong"] = true,
+	},
+	["gravitational"] = {
+		["zone_mine_gravitational_weak"] = true,
+		["zone_mine_gravitational_average"] = true,
+		["zone_mine_gravitational_strong"] = true,
+	},
+}
+
+local blacklisted_maps = { -- List of maps to skip in scans
+	-- North
+	["l13_generators"]        = true,
+	["l12_stancia_2"]         = true,
+	["l12_stancia"]           = true,
+	["l11_pripyat"]           = true,
+	["l10_radar"]             = true,
+	["l11_hospital"]          = true,
+	
+	-- Underground
+	["jupiter_underground"]   = true,
+	["labx8"]                 = true,
+	["l03u_agr_underground"]  = true,
+	["l04u_labx18"]           = true,
+	["l08u_brainlab"]         = true,
+	["l10u_bunker"]           = true,
+	["l12u_control_monolith"] = true,
+	["l12u_sarcofag"]         = true,
+	["l13u_warlab"]           = true,
+	
+	["fake_start"]            = true,
+	
+	["l01_escape"]            = true,
+	["l05_bar"]               = true,
+	["l02_garbage"]           = true,
+}
+
+local cache = {}
+
+--==========================================< Utilities >==========================================--
+-- param 1: squad section to spawn
+-- param 2: minimum allowed spawn distance to actor
+-- param 3: maximum allowed spawn distance to actor
+function spawn_squad_dynamic(squad_section, min_distance , max_distance)
+	--printf("-spawn_squad_dynamic")
+	
+	-- Search for possible smart
+	local spawn_smrt
+	local spawn_smrts = {}
+	local function search(min_distance, max_distance, mode)
+		for name,smart in pairs( SIMBOARD.smarts_by_names ) do
+			local dist = smart.position:distance_to(db.actor:position())
+			if (smart.online) and (simulation_objects.available_by_id[smart.id] == true) and (dist > min_distance) and (dist < max_distance) then
+				local smrt = SIMBOARD.smarts[smart.id]
+				if ( smrt ) then
+					local pass = true
+					for k,v in pairs( smrt.squads ) do
+						local squad = alife_object(k)
+						if (squad and squad.current_target_id and squad.current_target_id == smart.id and not squad:get_script_target()) then
+							if (mode == 1) then
+								pass = false
+								printdbg("-spawn_squad_dynamic / [%s] is not a possible smart on mode %s, distance: %s",name,mode,dist)
+							elseif (not is_squad_monster[squad.player_id]) then
+								pass = false
+								printdbg("-spawn_squad_dynamic / [%s] is not a possible smart on mode %s, distance: %s",name,mode,dist)
+							end
+						end
+					end
+					if pass then
+						printdbg("-spawn_squad_dynamic / [%s] is a possible smart found on search mode(%s), distance: %s",name,mode,dist)
+						spawn_smrts[#spawn_smrts+1] = name
+					end
+				end
+			end
+		end
+	end
+	search(min_distance, max_distance, 1) -- mode 1: search for non-controlled smarts
+	if (#spawn_smrts == 0) then search(min_distance, max_distance, 2) end -- mode 2: search for non-controlled smarts or controlled by mutants
+	if (#spawn_smrts == 0) then
+		printdbg("-spawn_squad_dynamic / no smart found to spawn mutants, your ass is safe")
+		return
+	end
+	
+	spawn_smrt = spawn_smrts[math.random(#spawn_smrts)]
+	printdbg("-spawn_squad_dynamic / [%s] is the chosen smart",spawn_smrt)
+	
+	-- Spawn squad and target the player
+	local sq = sim_board.get_sim_board():create_squad(SIMBOARD.smarts_by_names[spawn_smrt],squad_section)
+	sq.scripted_target = "actor"
+	sq.rush_to_target = true
+end
+
+function postpone_for_next_frame(task_id,level_target)
+	local news_caption = game.translate_string(task_manager.task_ini:r_string_ex(task_id, "title")) or "error"
+	local news_text = game.translate_string("st_location") .. " " .. game.translate_string(level_target)
+	db.actor:give_talk_message2(news_caption, news_text, "ui_inGame2_PD_Opitniy_stalker", "iconed_answer_item", task_id)
+	return true
+end
+
+--==========================================< Precondition >==========================================--
+xr_conditions.validate_measure_task = function(actor,npc,p)
+	if not (p and (#p >= 5)) then
+		printe("! ERROR - %s | not enough parameters for on_init_measure_task!",p[1])
+		return false
+	end
+	local task_id = p[1]
+	
+	if (not db.actor:is_talking()) then
+		printe("! ERROR validate_measure_task | actor is not talking")
+		return
+	end
+	local task_giver = mob_trade.GetTalkingNpc()
+	local task_giver_id = task_giver:id()
+	
+	-- Already cached
+	if cache[task_id] and cache[task_id][task_giver_id] then
+		return true
+	end
+	
+	-- Gather info
+	local scan_mode = tonumber(p[2]) or 4
+	local monster_allow = (p[3] == "true") and true or false
+	local item_1_sec = ini_sys:section_exist(p[4]) and p[4] or nil
+	if (not item_1_sec) then
+		printe("! ERROR - %s | can't find item section!",task_id)
+		return false
+	end
+	local target_types = {}
+	for i=5,#p do
+		target_types[p[i]] = true
+	end
+
+	local task_giver_comm = character_community(task_giver)
+	local task_giver_name = task_giver:character_name()
+	local target_id
+	
+	-- Get target
+	local sim = alife()
+	local ano_tbl = {}
+	for typ,v in pairs(anomaly_types) do
+		if target_types[typ] then
+			for sec,_ in pairs(v) do
+				ano_tbl[sec] = true
+			end
+		end
+	end
+	
+	--[[
+		SERIOUS NO NORTH TASKS BEFORE BS
+		AND THE NORTHERN JOB
+	--]]
+	local additionalBlacklist = {}
+	local mcm_scanMode = blacklist_helper.GetMcmDropdownValue()
+	local northernMaps = blacklist_helper.GetNorthernMaps()
+
+	if mcm_scanMode > 0  then
+		scan_mode = mcm_scanMode
+	end
+
+	if blacklist_helper.ShouldBlacklistNorth() then
+		additionalBlacklist = northernMaps
+	elseif northernMaps[level.name()] then -- Player is in the Northern region and rightfully so
+		additionalBlacklist = blacklist_helper.GetSouthernMaps()
+	end
+	--[[
+		SERIOUS NO NORTH TASKS BEFORE BS
+		AND THE NORTHERN JOB
+	--]]
+
+	local targets = {}
+	local actor_level = level.name()
+	local gg = game_graph()
+	local sfind = string.find
+	local dyn_anomalies = bind_anomaly_field and bind_anomaly_field.dyn_anomalies or {}
+	for i=1,65534 do 
+		local se_obj = sim:object(i)
+		if se_obj and ano_tbl[se_obj:section_name()] then
+			local lvl_name = sim:level_name( gg:vertex(se_obj.m_game_vertex_id):level_id())
+			if (not blacklisted_maps[lvl_name] and not additionalBlacklist[lvl_name]) -- not in a blacklisted level
+			and (not (dyn_anomalies[lvl_name] and dyn_anomalies[lvl_name][i] ~= nil)) -- not a dynamic anomaly
+			then
+				local is_online = se_obj.online
+				local is_nearby = sfind(simulation_objects.config:r_value(actor_level, "target_maps", 0, ""), lvl_name)
+				if ((scan_mode == 1) and is_online) -- same level
+				or ((scan_mode == 2) and (is_online or is_nearby)) -- same + nearby level
+				or ((scan_mode == 3) and is_nearby) -- nearby levels only
+				or ((scan_mode == 4) and (not (is_online or is_nearby))) -- far levels only
+				or (scan_mode == 5) -- anywhere
+				then
+					targets[#targets + 1] = i
+				end
+			end
+		end
+	end
+	
+	if (#targets == 0) then
+		printf("! %s | No anomaly found!",task_id)
+		return false
+	end
+	
+	-- Pick Target
+	target_id = targets[math.random(#targets)]
+	local se_target = alife_object(target_id)
+	if (not se_target) then
+		printe("! %s | cant get server object of anomaly (%s)!",task_id,target_id)
+		return false
+	end
+
+	-- Cache
+	if (not cache[task_id]) then
+		cache[task_id] = {}
+	end
+	cache[task_id][task_giver_id] = {
+		target_id = target_id,
+		task_giver_comm = task_giver_comm,
+		item_1_sec = item_1_sec,
+		monster = monster_allow
+	}
+	
+	return true
+end
+
+
+--==========================================< Effect >==========================================--
+xr_effects.setup_measure_task = function(actor,npc,p)
+	if not (p and p[1]) then
+		printe("! ERROR setup_measure_task missing task_id")
+		return false
+	end
+	
+	local task_id = p[1]
+	local task_giver = mob_trade.GetTalkingNpc()
+	local task_giver_id = task_giver:id()
+	local tbl = task_giver_id and cache[task_id] and cache[task_id][task_giver_id]
+	if (not tbl) then
+		printe("! %s | can't get cached result", task_id)
+		return false
+	end
+	
+	local se_target = tbl.target_id and alife_object(tbl.target_id)
+	if (not se_target) then
+		printe("! %s | cant get server object of anomaly (%s)!", task_id, tbl.target_id)
+		return false
+	end
+
+	local level_task = level.name()
+	local level_target = alife():level_name(game_graph():vertex(se_target.m_game_vertex_id):level_id())
+	local var = { 
+		lvl_task = level_task,
+		lvl_target = level_target,
+		task_giver_comm = tbl.task_giver_comm,
+		target_id = tbl.target_id,
+		item_1_sec = tbl.item_1_sec,
+		monster = tbl.monster
+	}
+	save_var(db.actor, task_id, var)
+	printdbg("-%s | setup_measure_task | task_giver_comm: %s - target_id: %s - item_1_sec: %s - lvl_task: %s - lvl_target: %s", task_id, var.task_giver_comm, var.target_id, var.item_1_sec, level_task, level_target)
+	
+	-- Show info
+	CreateTimeEvent(0,"setup_measure_task",0,postpone_for_next_frame,task_id,level_target)
+end
+
+
+--==========================================< Target functors >==========================================--
+task_functor.general_measure = function(task_id,field,p,tsk)
+	if (not db.actor) or (not tsk) then
+		return
+	end
+	
+	if (field == "target") then
+		local var = load_var(db.actor, task_id)
+		if (not var) then
+			return
+		end
+	
+		if (tsk.stage == 0) then
+			return var.item_1_id
+		end
+		
+		if (tsk.stage == 1) then
+			return var.target_id
+		end
+		
+		if (tsk.stage == 2) then
+			return var.target_id --nil
+		end
+		
+		if (tsk.stage == 3) then
+			return tsk.task_giver_id
+		end
+	end
+end
+
+
+--==========================================< Status functor >==========================================--
+task_status_functor.measure_task = function(tsk,task_id)
+	if (not db.actor) or (not tsk) then
+		return
+	end
+	
+	local var = load_var(db.actor, task_id)
+	if (not var) then return end
+	local stage = tsk.stage
+	
+	-- Give quest item upon accepting the quest
+	if (not has_alife_info(task_id .. "_quest_item_received")) and (var.item_1_sec) then
+		local se_item_1 = alife_create_item(var.item_1_sec, db.actor)
+		if not (se_item_1 and se_item_1.id) then return end
+		
+		printdbg("-%s | quest_item_received: %s",task_id, var.item_1_sec)
+		local t = var
+		t.item_1_id = se_item_1.id
+		save_var(db.actor, task_id, t)
+		
+		db.actor:give_info_portion(task_id .. "_quest_item_received")
+		news_manager.relocate_item(db.actor, "in", var.item_1_sec, 1)
+		return
+	end
+	
+	local item_1_obj = var.item_1_id and level.object_by_id(var.item_1_id)
+	local flag_1 = has_alife_info(task_id .. "_measurment_finished")
+	local flag_2 = has_alife_info(task_id .. "_measurment_enemy")
+	local se_target = var.target_id and alife_object(var.target_id)
+	
+	
+	-- stage: 0
+	-- status: player accepted the quest
+	-- objective: take the quest item
+	-- marker: quest item
+	if stage == 0 then
+		-- if actor retrieved item 1
+		if utils_item.has_item_by_id(nil, var.item_1_id , var.item_1_sec) then
+		
+			-- if actor took enough measurement
+			if flag_1 then
+				tsk.stage = 3
+			else
+				tsk.stage = 1
+			end
+		
+		-- if item 1 vanished, fail the quest
+		else 
+			if (not item_1_obj) or (item_1_obj and (item_1_obj:section() ~= var.item_1_sec)) then
+				return "fail"
+			end
+		end
+	end
+	
+	-- stage: 1
+	-- status: player has the quest item
+	-- objective: go to the target anomaly
+	-- marker: target anomaly
+	if stage == 1 then
+		-- if actor is close to target
+		if (se_target.position:distance_to(db.actor:position()) <= anomaly_measure_dist) then
+			tsk.stage = 2
+		end
+		
+		-- if actor took enough measurement
+		if flag_1 then
+			tsk.stage = 3
+		end
+		
+		-- if actor lost item 1 recently
+		if (not utils_item.has_item_by_id(nil, var.item_1_id , var.item_1_sec)) then
+			tsk.stage = 0
+		end
+	end
+	
+	-- stage: 2
+	-- status: player has arrived to the anomaly
+	-- objective: take measurement
+	-- marker: target anomaly
+	if stage == 2 then
+		-- if distance is far, return to stage 1
+		if (se_target.position:distance_to(db.actor:position()) > anomaly_measure_dist) then
+			measurment_started[task_id] = false
+			close_measurement_hud()
+			tsk.stage = 1
+		end
+		
+		-- if actor took enough measurement
+		if flag_1 then
+			measurment_started[task_id] = false
+			close_measurement_hud()
+			tsk.stage = 3
+		end
+		
+		-- if actor lost item 1 recently
+		if (not utils_item.has_item_by_id(nil, var.item_1_id , var.item_1_sec)) then	
+			measurment_started[task_id] = false
+			close_measurement_hud()
+			tsk.stage = 0
+		end
+		
+		-- spawn mutant squad
+		if var.monster and (not flag_2) then
+			local mutants = parse_list(task_manager.task_ini,task_id,"task_measure_mutants")
+			if (#mutants > 0) then
+				spawn_squad_dynamic(mutants[math.random(#mutants)], 50, 200)
+			end
+			db.actor:give_info_portion(task_id .. "_measurment_enemy") 
+		end
+	
+		-- start measurement
+		local active_detector = db.actor:active_detector()
+		if tsk.stage == 2 and active_detector and (active_detector:id() == var.item_1_id) then
+			if (not measurment_started[task_id]) then
+				measurment_started[task_id] = true
+				start_measurement_hud(task_id)
+			end
+		else
+			measurment_started[task_id] = false
+			close_measurement_hud()
+		end
+	end
+	
+	-- stage: 3
+	-- status: player had taken measurements 
+	-- objective: return to the task giver
+	-- marker: taske giver
+	if stage == 3 then
+		close_measurement_hud()
+		-- if actor lost item 1 recently
+		if (not utils_item.has_item_by_id(nil, var.item_1_id , var.item_1_sec)) then
+			tsk.stage = 0
+		end
+	end
+end
+
+
+--==========================================< Description functor >==========================================--
+task_functor.general_measure_desc = function(task_id,field,p,tsk)
+	if (not db.actor) then return "" end
+	local var = load_var(db.actor, task_id)
+	local str = ""
+	if tsk and tsk.stage and var then
+		local task_giver_comm = game.translate_string("st_dyn_news_comm_" .. var.task_giver_comm .. "_1")
+		local item_1_sec = var.item_1_sec and ui_item.get_sec_name(var.item_1_sec)
+		str = game.translate_string(task_id .. "_text_" .. tostring(tsk.stage))
+		str = utils_data.parse_string_keys(str, {["comm"]=task_giver_comm , ["item_1"]=item_1_sec} )
+	end
+	return str
+end
+
+
+----------------------------------------------------------------------
+-- UI
+----------------------------------------------------------------------
+local det_anomaly_ui = nil
+local det_anomaly_state = false
+local det_anomaly_state2 = false
+
+function start_measurement_hud(task_id)
+	det_anomaly_state = task_id
+end
+
+function close_measurement_hud()
+	det_anomaly_state = false
+end
+
+
+class "UI3D_Anomaly" (CUIScriptWnd)
+
+function UI3D_Anomaly:__init() super()
+	self:Show					(true)
+	self:Enable					(true)
+	
+	self.step					= 0
+	self.step_tot				= 10
+	self.timer					= 2000
+	self.tg						= 0
+	self.beep                   = "detectors\\detector_8" -- sound file
+	
+	local xml					= CScriptXmlInit()
+	self.xml = xml
+	xml:ParseFile				("ui_detector_anomaly.xml")
+	xml:InitWindow				("detector_anomaly", 0, self)
+
+	self.m_seg = {}
+	for i=1,self.step_tot do
+		self.m_seg[i]					= xml:InitStatic("detector_anomaly:seg" .. i, self)
+	end
+	
+	--self.m_led_g					= xml:InitStatic("detector_anomaly:led_green", self)
+	--self.m_led_o					= xml:InitStatic("detector_anomaly:led_orange", self)
+end
+
+function UI3D_Anomaly:__finalize() 
+	det_anomaly_ui = nil
+end
+
+function UI3D_Anomaly:Update()
+	
+	CUIScriptWnd.Update(self)
+	
+	local tg = time_global()
+	if (tg < self.tg) then
+		return
+	end
+	self.tg = tg + self.timer
+
+	if det_anomaly_state then
+		self.step = self.step + 1
+		utils_obj.play_sound(self.beep)
+		
+		if has_alife_info(det_anomaly_state .. "_measurment_finished") then
+			det_anomaly_state = false
+			self.step = 0
+		
+		elseif (self.step > self.step_tot) then
+			db.actor:give_info_portion(det_anomaly_state .. "_measurment_finished")
+			det_anomaly_state = false
+			self.step = 0
+		end
+	else
+		self.step = 0
+	end
+	
+	for i=1,self.step_tot do
+		self.m_seg[i]:InitTextureEx( (i <= self.step) and "green_seg_ano" or "green_black_ano", "hud\\p3d")
+	end
+end
+
+function get_UI()
+	if (det_anomaly_ui == nil) then
+		det_anomaly_ui = UI3D_Anomaly()
+	end
+	
+	return det_anomaly_ui
+end

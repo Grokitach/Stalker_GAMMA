@@ -1,3 +1,7 @@
+-- Revised by oleh5230, 24.06.2024
+-- Original script by Qudix
+-- Last edit: 14.07.25 
+
 local opt_aim_rattle = true
 local opt_lower_raise_rattle = true
 local volume_aim_rattle = 1
@@ -12,68 +16,68 @@ function load_settings()
     end
 end
 
--- oleh5230, 24.06.2024:
--- volume and tempo depends on weapon weight
--- removed redundant code
-
--- oleh5230, 04.09.2024:
--- tempo depends on aim time
--- some small tweaks
-
--- oleh5230, 16.10.2024:
--- reworked MCM settings
-
-local cache = 0
-function play_aim_sound(dir, name, volume, frequency)
-    -- local player = db.actor
-    -- if not (player and player:alive()) then return end
-
-    -- local ct = time_global()
-    -- if not tm or ct > tm then
-        -- local list = getFS():file_list_open("$game_sounds$", dir, bit_or(FS.FS_ListFiles, FS.FS_RootOnly)) -- Perhaps cache the result...?
-        -- printf("%s", list:Size())
-        -- if list then
-            local roll = math.random(8)
-            if cache == roll then roll = math.random(8) end
-            cache = roll
-
-            local sound = xr_sound.get_safe_sound_object(dir .. name .. roll) --list:Size()
-            sound:play(db.actor, 0, sound_object.s2d)
-            sound.volume = volume or 0.5
-            sound.frequency = frequency or 1
-            --printf("eft_rattle.script // volume: %s frequency: %s, roll: %s", volume, frequency, roll)
-            -- tm = ct + 175
-        -- end
-    -- end
+-- orginal _g function includes wpn_lr300 for some reason
+local function IsPistol(o,c)
+	if not (c) then
+		c = o and o:clsid()
+	end
+	local pistol = {
+					[clsid.wpn_pm_s] = true,
+					[clsid.wpn_walther_s] = true,
+					[clsid.wpn_usp45_s] = true,
+					[clsid.wpn_hpsa_s] = true,
+					--[clsid.wpn_lr300_s] = true,
+					[clsid.wpn_pm] = true,
+					[clsid.wpn_walther] = true,
+					[clsid.wpn_usp45] = true,
+					[clsid.wpn_hpsa] = true,
+					--[clsid.wpn_lr300] = true
+	}
+	return c and pistol[c] or false
 end
 
-local cached_wpn
+limit = {
+    ["pistol\\pistol_aim"] = 8,
+    ["rifle\\rifle_aim"] = 8,
+}
+
+local count = 1
+function play_aim_sound(dir, class, volume, frequency)
+    local sound = sound_object(dir .. class .. count)
+    sound:play(db.actor, 0, sound_object.s2d)
+    sound.volume = volume or 0.5
+    sound.frequency = frequency or 1
+    count = count + 1
+    if count > limit[class] then count = 1 end
+end
+
+local cached_sec
 function get_wpn_params(wpn)
-    if not wpn then return 0.5, 1 end
-    wpn = wpn:section()
-    if not cached_wpn or wpn ~= cached_wpn then
-        cached_wpn = wpn
-        weight     = ini_sys:r_string_ex(wpn, "inv_weight") or 3.5
-        aim_time   = ini_sys:r_string_ex(wpn, "zoom_rotate_time") or 0.25
-        volume     = (0.5 + weight*0.05) -- ini_sys:r_string_ex(wpn, "bullet_bones") and (1.25 + weight*0.05) or 
-        frequency  = 1.35 - aim_time --0.275 / aim_time
+    if not wpn then return "rifle\\rifle_aim", 0.5, 1 end
+    sec = wpn:section()
+    if not cached_sec or sec ~= cached_sec then
+        cached_sec = sec
+        class      = IsPistol(wpn) and "pistol\\pistol_aim" or "rifle\\rifle_aim"
+        weight     = ini_sys:r_string_ex(sec, "inv_weight") or 3.5
+        aim_time   = ini_sys:r_string_ex(sec, "zoom_rotate_time") or 0.25
+        volume     = (0.25 + weight*0.04)
+        frequency  = 1.3 - aim_time
         if frequency < 0.77 then frequency = 0.77 end
-        --if frequency > 1.33 then frequency = 1.33 end
     end
-    return volume, frequency
+    return class, volume, frequency
 end
 
 function actor_on_weapon_zoom_in(wpn)
     if opt_aim_rattle then
-        local volume, frequency = get_wpn_params(wpn)
-        play_aim_sound("rattle\\raise\\", "raise_", volume * volume_aim_rattle, frequency) --"weapons\\rattle\\aimin\\", "aim_in_"
+        local class, volume, frequency = get_wpn_params(wpn)
+        play_aim_sound("weapons\\_rattle\\", class, volume * volume_aim_rattle, frequency)
     end
 end
 
 function actor_on_weapon_zoom_out(wpn)
     if opt_aim_rattle then
-        local volume, frequency = get_wpn_params(wpn)
-        play_aim_sound("rattle\\lower\\", "lower_", volume * volume_aim_rattle, frequency) --"weapons\\rattle\\aimout\\", "aim_out_"
+        local class, volume, frequency = get_wpn_params(wpn)
+        play_aim_sound("weapons\\_rattle\\", class, volume * volume_aim_rattle, frequency)
     end
 end
 
@@ -81,27 +85,27 @@ function actor_on_weapon_zoom_type_changed(wpn, previous, current)
     if opt_aim_rattle then
         if previous ~= 2 and current == 0 or current == 1 then
             if axr_main.weapon_is_zoomed then
-                local volume, frequency = get_wpn_params(wpn)
-                play_aim_sound("rattle\\raise\\", "raise_", volume * volume_aim_rattle * 0.5, frequency)
+                local class, volume, frequency = get_wpn_params(wpn)
+                play_aim_sound("weapons\\_rattle\\", class, volume * volume_aim_rattle * 0.7, frequency)
             end
         else
-            local volume, frequency = get_wpn_params(wpn)
-            play_aim_sound("rattle\\lower\\", "lower_", volume * volume_aim_rattle * 0.5, frequency)
+            local class, volume, frequency = get_wpn_params(wpn)
+            play_aim_sound("weapons\\_rattle\\", class, volume * volume_aim_rattle * 0.7, frequency)
         end
     end
 end
 
 function actor_on_weapon_raise(wpn)
     if opt_lower_raise_rattle then
-        local volume, frequency = get_wpn_params(wpn)
-        play_aim_sound("rattle\\raise\\", "raise_", volume * volume_lower_raise_rattle, 1.1)
+        local class, volume, frequency = get_wpn_params(wpn)
+        play_aim_sound("weapons\\_rattle\\", class, volume * volume_lower_raise_rattle, 1)
     end
 end
 
 function actor_on_weapon_lower(wpn)
     if opt_lower_raise_rattle then
-        local volume, frequency = get_wpn_params(wpn)
-        play_aim_sound("rattle\\lower\\", "lower_", volume * volume_lower_raise_rattle, 1.1)
+        local class, volume, frequency = get_wpn_params(wpn)
+        play_aim_sound("weapons\\_rattle\\", class, volume * volume_lower_raise_rattle, 1)
     end
 end
 

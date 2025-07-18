@@ -1,0 +1,30 @@
+--[[
+	SERIOUS: This is a modified version of: utils_item.collect_amount
+--]]
+
+function CollectAmountFromStashAndActor(stash, actor, section, mode)
+	-- mode 0: count item as 1
+	-- mode 1: can count item uses, but not ammo count
+	
+		local amount = {}
+		local is_multi = IsItem("multiuse",section)
+		local is_ammo = IsItem("ammo",section)
+		
+		local function itr(temp, obj)
+			if (obj:section() == section) then
+				if (mode == 0) then
+					amount[obj:id()] = 1
+				elseif is_multi then
+					amount[obj:id()] = obj:get_remaining_uses()
+				elseif is_ammo and (mode ~= 1) then
+					amount[obj:id()] = obj:ammo_get_count()
+				else
+					amount[obj:id()] = 1
+				end
+			end
+		end
+		stash:iterate_inventory_box(itr, nil)
+		actor:iterate_inventory(itr, nil)
+		
+		return amount
+	end

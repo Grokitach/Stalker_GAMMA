@@ -1,0 +1,211 @@
+local thejobcanwait_mcm_conf = serious_the_job_can_wait_mcm.get_config
+TaskBlacklist = {} --If a task failed to find a target I'll put it's Id here so I can later prevent the task from entering the task pool.
+
+local northernMaps = {
+	["l10_limansk"] = true,
+    ["l10_red_forest"] = true,
+    ["l10_radar"] = false,
+    ["zaton"] = true,
+    ["jupiter"] = true,
+    ["pripyat"] = true,
+    ["l11_hospital"] = true,
+    ["l11_pripyat"] = true,
+    ["l12_stancia"] = true,
+    ["l12_stancia_2"] = true,
+    ["l13_generators"] = true,
+    ["jupiter_underground"] = true,
+    ["l12u_sarcofag"] = true,
+    ["l12u_control_monolith"] = true,
+    ["l13u_warlab"] = true,
+}
+
+local southern_maps = {
+    ["k00_marsh"] = true,
+	["k01_darkscape"] = true,
+	["k02_trucks_cemetery"] = true,
+	["l01_escape"] = true,
+	["l02_garbage"] = true,
+	["l03_agroprom"] = true,
+	["l04_darkvalley"] = true,
+	["l06_rostok"] = true,
+	["l07_military"] = true,
+	["l08_yantar"] = true,
+	["l09_deadcity"] = true,
+    ["y04_pole"] = true,
+    ["l05_bar"] = true,
+}
+
+local psy_immune_factions = {
+	["monolith"] = true,
+	["isg"] = true,
+	["greh"] = true,
+	["zombied"] = true
+}
+
+local guide_before_north = {
+    l01_escape			= {"k00_marsh",		"k01_darkscape",	"l02_garbage"},
+    k00_marsh			= {"l01_escape",	'l03_agroprom'},
+    k01_darkscape		= {"l01_escape",	"l04_darkvalley"},
+    l02_garbage			= {"l01_escape",	"l03_agroprom",		"l04_darkvalley",		"l05_bar",'l06_rostok'},
+    l03_agroprom		= {"l02_garbage",	'l08_yantar',		'k00_marsh'},
+    l04_darkvalley		= {"l02_garbage",	"k01_darkscape",	'k02_trucks_cemetery'},
+    l05_bar				= {"l02_garbage",	"l06_rostok",		"l07_military",			'k02_trucks_cemetery'},
+    l06_rostok			= {"l08_yantar",	"l05_bar",			'l02_garbage'},
+    l08_yantar			= {"l06_rostok",	"l09_deadcity",		'l03_agroprom'},
+    l09_deadcity		= {"l08_yantar",	'l07_military',},
+    k02_trucks_cemetery	= {'l04_darkvalley','l05_bar',			'l07_military'},
+    l07_military		= {"l05_bar",		"l09_deadcity",		'k02_trucks_cemetery'},
+    y04_pole			= {"l01_escape",	'l04_darkvalley'}
+}
+
+local fate_map_blacklist = {
+    ["zaton"] = true,
+    ["jupiter"] = true,
+    ["pripyat"] = true
+}
+
+function ShouldBlacklistNorth()
+	local playerFaction = get_actor_true_community()
+    local mmAndBsDisabled = IsMmAndBsDisabled()
+
+	if
+		(mmAndBsDisabled)
+		or
+		(psy_immune_factions[playerFaction] or has_alife_info("story_mode_disabled"))
+	then
+		return false
+	end
+
+	return true
+end
+
+function CreatePreScorcherBlacklist(blacklistedMaps)
+    local result = {}
+
+    for key, value in pairs(blacklistedMaps) do
+        result[key] = value
+    end
+
+    for key, value in pairs(northernMaps) do
+        result[key] = value
+    end
+
+    return result
+end
+
+function GetGuideDestinationsNorth()
+    return guide_before_north
+end
+
+function GetFateBlacklist()
+    return fate_map_blacklist
+end
+
+function GetNorthernMaps()
+    return northernMaps
+end
+
+function GetSouthernMaps()
+    return southern_maps
+end
+
+xr_conditions.serious_no_step_back_precond = function(actor, npc, p)
+    local task_id = p[1]
+
+    if ShouldBlacklistNorth() then
+        return false
+    end
+    
+    if not has_alife_info(task_id .. '_completed') then
+        return true
+    else
+        return nta_utils.mcm_config["repl_" .. task_id]
+    end
+end
+
+xr_conditions.serious_monolith_convert_precond = function()
+    return IsMmAndBsDisabled()
+end
+
+function GetMcmDropdownValue()
+    local dropdownValue = tonumber(thejobcanwait_mcm_conf("scan_mode_override")) or 0
+    return dropdownValue
+end
+
+--Compatibility helpers
+function AppendToGuideBeforeNorth(poolExtension)
+    for key, value in pairs(poolExtension) do
+        guide_before_north[key] = value
+    end
+end
+
+function AppendToSouthernMaps(poolExtension)
+    for key, value in pairs(poolExtension) do
+        southern_maps[key] = value
+    end
+end
+
+function AppendToNorthernnMaps(poolExtension)
+    for key, value in pairs(poolExtension) do
+        northernMaps[key] = value
+    end
+end
+
+function IsMmAndBsDisabled()
+    if grok_psy_fields_in_the_north then
+        return has_alife_info("yan_labx16_switcher_primary_off") and has_alife_info("bar_deactivate_radar_done")
+    else
+        return has_alife_info("yan_labx16_switcher_primary_off")
+    end
+end
+
+-- To run compatibility patches
+function on_game_start()
+    if zzzz_for_level_add then serious_new_levels_comp_patch() end
+end
+
+function serious_new_levels_comp_patch()
+    local guideMapPoolExtension = 
+    {
+        promzona = {"l07_military", "k02_trucks_cemetery"},
+        grimwood = {"l07_military"},
+        poselok_ug = {"l02_garbage", "l04_darkvalley", "k02_trucks_cemetery", "l07_military"}
+    }
+
+    local southernMapPoolExtension =
+    {
+        ["promzona"] = true,
+        ["grimwood"] = true,
+        ["poselok_ug"] = true
+    }
+
+    AppendToGuideBeforeNorth(guideMapPoolExtension)
+    AppendToSouthernMaps(southernMapPoolExtension)
+
+    tasks_guide.tbl_ignore_Locations.collaider = true
+    tasks_guide.tbl_ignore_Locations.bunker_a1 = true
+
+    tasks_guide.tbl_way =
+    {
+        l01_escape			= {"k00_marsh",		"k01_darkscape",	"l02_garbage"},
+        k00_marsh			= {"l01_escape",	'l03_agroprom'},
+        k01_darkscape		= {"l01_escape",	"l04_darkvalley"},
+        l02_garbage			= {"l01_escape",	"l03_agroprom",		"l04_darkvalley",		"l05_bar",'l06_rostok'},
+        l03_agroprom		= {"l02_garbage",	'l08_yantar',		'k00_marsh'},
+        l04_darkvalley		= {"l02_garbage",	"k01_darkscape",	'k02_trucks_cemetery'},
+        l05_bar				= {"l02_garbage",	"l06_rostok",		"l07_military",			'k02_trucks_cemetery'},
+        l06_rostok			= {"l08_yantar",	"l05_bar",			'l02_garbage'},
+        l08_yantar			= {"l06_rostok",	"l09_deadcity",		'l03_agroprom'},
+        l09_deadcity		= {"l08_yantar",	'l07_military',		'l10_limansk'},
+        k02_trucks_cemetery	= {'l04_darkvalley','l05_bar',			'promzona'},
+        l07_military		= {"l05_bar",		"l09_deadcity",		'promzona',	'l10_red_forest'}, --, 'l10_radar'},
+        l10_red_forest		= {'l07_military',	'l10_limansk',		'jupiter'}, --'l10_radar'},
+        l10_limansk			= {'l09_deadcity',	'l10_red_forest'},
+        jupiter				= {'l10_red_forest','zaton'}, --,'l11_pripyat'},
+        zaton				= {'jupiter'},
+        y04_pole			= {"l01_escape",	'l04_darkvalley'},
+        promzona			= {"l07_military", "k02_trucks_cemetery"},
+        grimwood			= {"l07_military", "l10_red_forest"},
+        poselok_ug		= {"l02_garbage", "l04_darkvalley", "k02_trucks_cemetery", "l07_military"},
+    }
+end

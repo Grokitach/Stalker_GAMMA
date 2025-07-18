@@ -1,0 +1,56 @@
+--SERIOUS This script overwrites a monkey patch.
+-- Monkey patch overwrite: 286- High-level Toolkits Include Low-level Toolkits - ilrathcxv
+-- File: z_monkey_toolkit_workshop.script
+
+base_workshop = ui_workshop.UIWorkshop.Reset
+workshop_toolkits = ui_workshop.workshop_toolkits
+
+ui_workshop.UIWorkshop.Reset = function(self,owner, mechanic, toolkits_workshop, dbg)
+	self.dbg = dbg and true or false
+	self.owner = owner
+	self.mechanic = mechanic
+	self.toolkits_workshop = toolkits_workshop or {}
+	self.toolkits_state = {}
+
+	--SERIOUS OPTI
+	local stashId = self.stashId or (self.owner and self.owner.stashId)
+	if stashId then
+		local stash = get_object_by_id(stashId)
+
+		if stash then
+			stash:iterate_inventory_box(function(_, item)
+				for i, toolkitSect in pairs(workshop_toolkits) do
+					if item:section() == toolkitSect then
+						self.toolkits_state[i] = true
+					end
+				end
+			end)
+		end
+	end
+	--SERIOUS OPTI
+
+	for i=1,#workshop_toolkits do
+		if self.toolkits_workshop[i] or db.actor:object(workshop_toolkits[i]) or self.toolkits_state[i] then
+			self.toolkits_state[i] = true
+		else
+			self.toolkits_state[i] = false
+		end
+	end
+
+	if db.actor:object(workshop_toolkits[3]) or self.toolkits_state[3] then
+		self.toolkits_state[2] = true
+		self.toolkits_state[1] = true
+	elseif db.actor:object(workshop_toolkits[2]) or self.toolkits_state[2] then
+		self.toolkits_state[1] = true
+	end
+
+	-- Switch to state tab
+	self:OnButton_state()
+
+	-- Background depends on UI owner
+	if device():is_paused() then
+		self.background:Show(true)
+	else
+		self.background:Show(false)
+	end
+end

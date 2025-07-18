@@ -1,0 +1,265 @@
+local faction_list = { -- List of factions targeted in bounty quests
+	"stalker",
+	"dolg",
+	"freedom",
+	"csky",
+	"ecolog",
+	"killer",
+	"army",
+	"bandit",
+	"monolith",
+	"renegade",
+}
+
+local blacklisted_maps = { -- List of maps to skip in scans
+	-- North
+	["l13_generators"]        = true,
+	["l12_stancia_2"]         = true,
+	["l12_stancia"]           = true,
+	["l11_pripyat"]           = true,
+	["l10_radar"]             = true,
+	["l11_hospital"]          = true,
+	-- Underground
+	["jupiter_underground"]   = true,
+	["labx8"]                 = true,
+	["l03u_agr_underground"]  = true,
+	["l04u_labx18"]           = true,
+	["l08u_brainlab"]         = true,
+	["l10u_bunker"]           = true,
+	["l12u_control_monolith"] = true,
+	["l12u_sarcofag"]         = true,
+	["l13u_warlab"]           = true,
+	
+	["fake_start"]            = true
+}
+
+local bounty_cache = {}
+
+local function is_smart_valid(squad_id)
+	local squad = alife_object(squad_id)
+	if squad then
+		local smart_id = squad.assigned_target_id
+		if smart_id then
+			local smrt = SIMBOARD.smarts[smart_id]
+			local smart = smrt and smrt.smrt
+			if smart and (simulation_objects.base_smarts[smart:name()] == true) then
+				--printf("setup_bounty_task | squad (%s) is targeting a base smart [%s]", squad_id, smart:name())
+				return false
+			end
+		end
+	end
+	return true
+end
+
+---------------------------< Effects >---------------------------
+xr_effects.setup_bounty_task = function(actor,npc,p)
+-- p[1]: task_id
+-- p[2]: true = scan all factions except for p[4], false = scan listed factions (p[4]+)
+-- p[3]: true = scan npcs in current and connected levels only, false = scan all
+-- p[4]+: factions that can be targetted; can be list
+
+	axr_task_manager.bounties_by_id[p[1]] = nil 
+	
+	local valid_targets = {["enemy"]={},["neutral"]={}}
+	local other_targets = {["enemy"]={},["neutral"]={}}
+	local sim = alife()
+	local comm
+	local sfind = string.find
+	
+	local faction_lookup = {}
+	
+	-- p[2] == true: pick up all other factions | false == pick up listed factions
+	if (p[2] == "true") then
+		for i=1,#faction_list do
+			if (faction_list[i] ~= p[4]) then
+				faction_lookup[faction_list[i]] = true
+			end
+		end
+	else
+		for i=4,#p do 
+			faction_lookup[p[i]] = true
+		end
+	end
+	
+	--for k,v in pairs (faction_lookup) do
+		--printf("setup_bounty_task | faction_lookup[" .. k .. "] = true")
+	--end
+	
+	local function find_stalker(id, se_obj)
+		-- find random sim stalker
+		if se_obj
+		and (id ~= 0 and IsStalker(nil,se_obj:clsid()) and se_obj:alive() and sfind(se_obj:section_name(),"sim_default") and get_object_story_id(id) == nil)
+		and (se_obj.group_id ~= 65535 and get_object_story_id(se_obj.group_id) == nil)
+		then
+			comm = alife_character_community(se_obj)
+			if (faction_lookup[comm] == true) then
+				local relation = game_relations.get_squad_goodwill_to_actor_by_id(se_obj.group_id)
+				if (valid_targets[relation]) then
+					return valid_targets[relation], relation
+				end
+			end
+		end
+	end
+
+	local target_id
+	local r
+	
+	-- make sure cached ids are still valid
+	if (bounty_cache[p[1]]) then 
+		for i=#bounty_cache[p[1]],1,-1 do
+			local id = bounty_cache[p[1]][i]
+			local se_obj = sim:object(id)
+			local t,rela = find_stalker(id,se_obj) 
+			if (se_obj and t == nil) then
+				table.remove(bounty_cache[p[1]],i)
+			end
+		end
+	end
+		
+--[[
+	SERIOUS NO NORTH TASKS BEFORE BS
+	AND THE NORTHERN JOB
+--]]
+	local additionalBlacklist = {}
+	local northernMaps = blacklist_helper.GetNorthernMaps()
+
+	if blacklist_helper.ShouldBlacklistNorth() then
+		additionalBlacklist = northernMaps
+	elseif northernMaps[level.name()] then -- Player is in the Northern region and rightfully so
+		additionalBlacklist = blacklist_helper.GetSouthernMaps()
+	end
+--[[
+	SERIOUS NO NORTH TASKS BEFORE BS
+	AND THE NORTHERN JOB
+--]]
+
+	-- show up to only 3 targets
+	if (bounty_cache[p[1]] == nil or #bounty_cache[p[1]] < 3) then
+		local gg = game_graph()
+		for id = 1, 65534 do
+			local se_obj = sim:object(id)
+			local t,rela = find_stalker(id,se_obj)
+			local map = t and sim:level_name(gg:vertex(se_obj.m_game_vertex_id):level_id())
+			
+			if (t) and (not blacklisted_maps[map] and not additionalBlacklist[map]) and is_smart_valid(se_obj.group_id) then
+				if (p[3] == "true") then
+					if simulation_objects.is_on_the_nearby_level(sim:actor(), se_obj) then
+					--if simulation_objects.is_on_the_same_level(sim:actor(), se_obj) or simulation_objects.is_on_the_linked_level(sim:actor(), se_obj) then
+						t[#t+1] = id
+						--printf("setup_bounty_task | valid target (" .. tostring(id) .. "): " .. alife_character_community(se_obj) .. " | level: " .. map)
+					else
+						table.insert(other_targets[rela],id)
+						--printf("setup_bounty_task | other target (" .. tostring(id) .. "): " .. alife_character_community(se_obj) .. " | level: " .. map)
+					end
+				else
+					t[#t+1] = id
+					--printf("setup_bounty_task | valid target {anywhere} (" .. tostring(id) .. "): " .. alife_character_community(se_obj) .. " | level: " .. map)
+				end
+			end
+		end
+		
+		-- random chance to prioritize neutral target over enemy
+		local typ = "enemy"
+		local rnd = math.random(1,100)
+		if (rnd < 10) then -- 20
+			typ = "neutral"
+		end
+		--printf("setup_bounty_task | target type: " .. typ)
+		
+		if (#valid_targets[typ] <= 0) then
+			valid_targets[typ] = other_targets[typ]
+		end
+		
+		target_id = valid_targets[typ][math.random(#valid_targets[typ])] or valid_targets.enemy[math.random(#valid_targets.enemy)] or valid_targets.neutral[math.random(#valid_targets.neutral)]
+		if (target_id) then 
+			if not (bounty_cache[p[1]]) then 
+				bounty_cache[p[1]] = {}
+			end
+			table.insert(bounty_cache[p[1]],target_id)
+		end
+	else
+		target_id = bounty_cache[p[1]][math.random(#bounty_cache[p[1]])]
+	end
+	if (target_id == nil or target_id == AC_ID) then
+		printf("! %s - no target found for task",p[1])
+		blacklist_helper.TaskBlacklist[p[1]] = true
+		return
+	end
+
+	blacklist_helper.TaskBlacklist[p[1]] = nil
+	axr_task_manager.bounties_by_id[p[1]] = target_id
+	
+	local se_target = alife_object(target_id)
+	if not (se_target) then
+		printe("! %s - no server object could be retrieved for (%s)",p[1],target_id)
+		return
+	end
+	
+	local target_squad = se_target and se_target.group_id and se_target.group_id ~= 65535 and alife_object(se_target.group_id)
+	if target_squad then
+		sim_offline_combat.task_squads[target_squad.id] = true
+	end
+	
+	-- Save var
+	local target_comm = alife_character_community(se_target)
+	local level_target = sim:level_name(game_graph():vertex(se_target.m_game_vertex_id):level_id())
+	local level_task = level.name()
+	local tbl = {
+		lvl_task = level_task,
+		lvl_target = level_target,
+		target_id = target_id,
+		target_comm = target_comm,
+	}
+	save_var(db.actor, p[1], tbl)
+	printdbg("- %s | setup_bounty_task | target_id: %s - target_comm: %s - lvl_task: %s - lvl_target: %s", p[1], target_id, target_comm, level_task, level_target)
+
+	local function postpone_for_next_frame(target_id)
+		local news_caption = game.translate_string(task_manager.task_ini:r_string_ex(p[1], "title")) or "error"
+		local news_text = game.translate_string("st_mm_new_game_name") .. " " .. se_target:character_name() .. "\\n " .. game.translate_string("st_mm_new_game_faction_2") .. " " .. game.translate_string(se_target:community()) .. "\\n " .. game.translate_string("st_location") .. " " .. game.translate_string(level_target)
+		db.actor:give_talk_message2(news_caption, news_text, se_target:character_icon(), "iconed_answer_item", p[1])
+		return true
+	end
+
+	CreateTimeEvent(0,"setup_bounty_task",0,postpone_for_next_frame,target_id)
+end 
+
+
+---------------------------< Task functor >---------------------------
+task_functor.general_bounty_task = function(task_id,field,p,tsk)
+	if (field == "target") then
+		if (tsk) then
+			if (tsk.stage == 1) then
+				return tsk.task_giver_id or nil
+			end
+
+			return axr_task_manager.bounties_by_id[task_id] or nil
+		end
+	end
+end
+
+
+---------------------------< Task Status functor >---------------------------
+task_status_functor.bounty_task = function(tsk,task_id)
+	if not (axr_task_manager.is_task_giver_valid(tsk)) then
+		return "fail"
+	end
+
+	if (tsk.stage == 0) then
+		local id = axr_task_manager.bounties_by_id[task_id]
+		if not (id) then
+			return "fail"
+		end
+		local se_obj = id and alife_object(id)
+		if not (se_obj) then
+			return "fail"
+		end
+		if not (IsStalker(nil,se_obj:clsid())) then
+			return "fail"
+		end
+		if not (se_obj:alive()) then
+			tsk.stage = 1
+		end
+	elseif (tsk.stage == 254) then
+		return "fail"
+	end
+end

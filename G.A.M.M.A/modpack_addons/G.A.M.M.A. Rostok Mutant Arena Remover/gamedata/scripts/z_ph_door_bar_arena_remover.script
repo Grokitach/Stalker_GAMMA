@@ -1,0 +1,65 @@
+local npc_door_blacklist_id = {}
+local npc_door_blacklist = {
+	["bar_arena_door"] = true,
+	["bar_arena_door_2"] = true,
+	["bar_arena_door_3"] = true,
+}
+
+try_to_open_door = ph_door.try_to_open_door
+function ph_door.try_to_open_door(npc,opened_doors)
+	local npc_position = npc:position()
+	for id,position in pairs(db.level_doors) do
+		if not npc_door_blacklist_id[id] then
+			if (db.storage[id].ph_door and npc_position:distance_to_sqr(position) <= 3) then
+				local action = db.storage[id].ph_door.door_action					
+				if action.st.not_for_npc == false and action.st.closed == true then
+					action:use_callback()
+					opened_doors[id] = true
+				end
+			end
+		end
+	end
+end
+
+try_to_close_door = ph_door.try_to_close_door
+function ph_door.try_to_close_door(npc, doors)
+	local npc_position = npc:position()
+	local closed_doors = {}
+	for id, v in pairs(doors) do
+		if not npc_door_blacklist_id[id] then
+			if (db.storage[id].ph_door) then 
+				if (npc_position:distance_to_sqr(db.level_doors[id]) > 3) then
+					local action = db.storage[id].ph_door.door_action					
+					if action.st.not_for_npc == false and action.st.closed ~= true then
+						action:use_callback()
+						closed_doors[id] = true
+					else 
+						closed_doors[id] = true
+					end
+				end
+			else 
+				closed_doors[id] = true
+			end
+		end
+	end
+	for id,v in pairs(closed_doors) do
+		doors[id] = nil
+	end	
+end
+
+function actor_on_first_update()
+	if has_alife_info("bar_arena_door_despawned") then return end
+	printf("[z_ph_door_bar_arena_remover] Initialization...")
+	for id = 1, 65534 do
+		if alife_object(id) and npc_door_blacklist[alife_object(id):name()] then
+			printf("[z_ph_door_bar_arena_remover] Object released: %s %s", id, alife_object(id):name())
+			table.insert(npc_door_blacklist_id, id, true)
+			alife_release_id(id)
+			db.actor:give_info_portion("bar_arena_door_despawned")
+		end
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+end
