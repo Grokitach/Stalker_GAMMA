@@ -1,0 +1,60 @@
+-- FastTransfer - Nitpicker's Modpack
+-- Last modified: 2021.08.29
+-- https://github.com/Ishmaeel/NitpickerModpack
+--
+last_url = nil
+enabled = {actor_bag = true, npc_bag = true, actor_trade = true, actor_trade_bag = true, npc_trade = true, npc_trade_bag = true}
+cached_idx = nil
+
+function Ishy_On_Hover(self, idx)
+    if idx and enabled[self.ID] then
+        local shift = key_state(DIK_keys.DIK_LSHIFT) ~= 0 or key_state(DIK_keys.DIK_RSHIFT) ~= 0
+
+        if shift then
+            local move_info = {bag = self.ID, idx = idx, ts = math.floor(time_global() / 1000)}
+            new_url = move_info.bag .. "_" .. move_info.idx .. "_" .. move_info.ts
+
+            if last_url == new_url then
+                return
+            end
+            last_url = new_url
+
+            CreateTimeEvent("Ishy_On_Hover", "Move_Items_Delayed", 0.001, Move_Items_Delayed, move_info)
+            return
+        end
+    end
+
+    Base_On_Hover(self, idx)
+end
+
+function Move_Items_Delayed(move_info)
+    if move_info then
+        bag = move_info.bag
+        idx = move_info.idx
+
+        self = ui_inventory.GUI
+
+        local obj = self.CC[bag]:GetObj(idx)
+        bag, idx = self:Picker_Ownership(bag, idx, obj)
+
+        if self:Cond_Move(obj, bag) then
+            if self:Cond_Childs(obj, bag) then
+                self:Action_Move_All(obj, bag)
+            else
+                self:Action_Move(obj, bag)
+            end
+        end
+    end
+
+    return true
+end
+
+function item_focus_receive_sound()
+    sound = sound_object("interface\\inv_hover")
+    sound:play(db.actor, 0, sound_object.s2d)
+    sound.volume = 0.5
+end
+
+function on_game_start()
+    RegisterScriptCallback("ActorMenu_on_item_focus_receive", item_focus_receive_sound)
+end
