@@ -36,12 +36,17 @@ local function IsPistol(o,c)
 	return c and pistol[c] or false
 end
 
+small_weapons = {
+    ["w_pistol"] = true,
+    ["w_smg"] = true,
+}
+
 limit = {
     ["pistol\\pistol_aim"] = 8,
     ["rifle\\rifle_aim"] = 8,
 }
 
-local count = 1
+count = 1
 function play_aim_sound(dir, class, volume, frequency)
     local sound = sound_object(dir .. class .. count)
     sound:play(db.actor, 0, sound_object.s2d)
@@ -57,7 +62,7 @@ function get_wpn_params(wpn)
     sec = wpn:section()
     if not cached_sec or sec ~= cached_sec then
         cached_sec = sec
-        class      = IsPistol(wpn) and "pistol\\pistol_aim" or "rifle\\rifle_aim"
+        class      = small_weapons[SYS_GetParam(0, sec, "kind")] and "pistol\\pistol_aim" or "rifle\\rifle_aim"
         weight     = ini_sys:r_string_ex(sec, "inv_weight") or 3.5
         aim_time   = ini_sys:r_string_ex(sec, "zoom_rotate_time") or 0.25
         volume     = (0.25 + weight*0.04)
@@ -70,14 +75,14 @@ end
 function actor_on_weapon_zoom_in(wpn)
     if opt_aim_rattle then
         local class, volume, frequency = get_wpn_params(wpn)
-        play_aim_sound("weapons\\_rattle\\", class, volume * volume_aim_rattle, frequency)
+        play_aim_sound("weapons\\_rattle\\", class, volume * volume_aim_rattle * 0.8, frequency)
     end
 end
 
 function actor_on_weapon_zoom_out(wpn)
     if opt_aim_rattle then
         local class, volume, frequency = get_wpn_params(wpn)
-        play_aim_sound("weapons\\_rattle\\", class, volume * volume_aim_rattle, frequency)
+        play_aim_sound("weapons\\_rattle\\", class, volume * volume_aim_rattle * 0.8, frequency)
     end
 end
 
@@ -86,11 +91,11 @@ function actor_on_weapon_zoom_type_changed(wpn, previous, current)
         if previous ~= 2 and current == 0 or current == 1 then
             if axr_main.weapon_is_zoomed then
                 local class, volume, frequency = get_wpn_params(wpn)
-                play_aim_sound("weapons\\_rattle\\", class, volume * volume_aim_rattle * 0.7, frequency)
+                play_aim_sound("weapons\\_rattle\\", class, volume * volume_aim_rattle * 0.6, frequency)
             end
         else
             local class, volume, frequency = get_wpn_params(wpn)
-            play_aim_sound("weapons\\_rattle\\", class, volume * volume_aim_rattle * 0.7, frequency)
+            play_aim_sound("weapons\\_rattle\\", class, volume * volume_aim_rattle * 0.6, frequency)
         end
     end
 end
