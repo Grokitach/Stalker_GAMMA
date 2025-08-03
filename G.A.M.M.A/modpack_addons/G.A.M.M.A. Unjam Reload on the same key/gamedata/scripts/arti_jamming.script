@@ -404,7 +404,7 @@ local function calculate_jam(wpn, old_ammo)
 		send_msg(str, verbosity)
 	-- oleh5230
 	-- silencers can cause jams
-	elseif math_random(0,10000) < (silencer_jam_chance * silencer_status) then
+	elseif math_random(1000) <= get_silencer_jam_chance(wpn) then
 		print_dbg("silencer jam")
 		jammed_guns[wpn:id()] = 2
 	end
@@ -462,6 +462,18 @@ function get_jam_chance(wpn)
 		end
 	end
 end
+
+-- oleh5230
+function get_silencer_jam_chance(wpn)
+	if wpn and IsWeapon(wpn) and not IsMelee(wpn) then
+		silencer_status = wpn:weapon_is_silencer() and 1 or SYS_GetParam(2, wpn:section(), "silencer_status") == 1 and 1 or 0
+		misfire_prob = SYS_GetParam(2, wpn:section(), "misfire_start_prob") or 0
+		silencer_jam_chance = misfire_prob < 0.002 and 1 * silencer_status or misfire_prob * 330 * silencer_status
+		print_dbg("Silencer jam chance is %s", silencer_jam_chance)
+		return silencer_jam_chance or 0
+	end
+end
+-- oleh5230 end
 
 -- Randomly damage 1 part of the weapon by DAMAGE, skipping barrels
 local function damage_part(wpn)
