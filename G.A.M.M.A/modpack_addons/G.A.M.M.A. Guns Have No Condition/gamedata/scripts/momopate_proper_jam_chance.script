@@ -15,6 +15,10 @@ if zzzz_arti_jamming_repairs and zzzz_arti_jamming_repairs.process_jam_chance th
 			if arti_jamming.get_jam_chance then
 				if wpn then 
 					jam_prob = arti_jamming.get_jam_chance(wpn)
+					-- oleh5230
+					silencer_jam_chance = arti_jamming.get_silencer_jam_chance and arti_jamming.get_silencer_jam_chance(wpn) * 0.1 or 0
+					printf("%!sil jam: %s", silencer_jam_chance)
+					-- oleh5230 end
 					
 					-- momopate: calc the in-engine's jam chance. not all of this shit is accessible via traditional methods so it needs to be this ugly.
 					start_prob = SYS_GetParam(2, wpn:section(), "misfire_start_prob") or 0
@@ -46,22 +50,17 @@ if zzzz_arti_jamming_repairs and zzzz_arti_jamming_repairs.process_jam_chance th
 						vanilla_jam_chance = clamp(start_prob + ((start_cond - wpn:condition()) * (end_prob - start_prob) / divisor), 0, 0.99)
 					end
 
-					-- oleh5230
-					silencer_status = wpn:weapon_is_silencer() and 1 or SYS_GetParam(2, wpn:section(), "silencer_status") == 1 and 1 or 0
-					silencer_jam_chance = SYS_GetParam(2, wpn:section(), "misfire_start_prob") * 33 * silencer_status
-					-- oleh5230 end
-
 					vanilla_jam_chance = vanilla_jam_chance * 100
 					total_jam_prob = jam_prob + vanilla_jam_chance + silencer_jam_chance
 					--printf("asdf: %s", vanilla_jam_chance)
 					
 					-- oleh5230
-					local clr = clr_ui							 	 -- gray for no jam chance
-					if total_jam_prob >= 0.01	then clr = clr_w end -- white for innate jam chance only
-					if silencer_status == 1		then clr = clr_g end -- green for innate and silencer jam chance only
-					if jam_prob >= 0.01			then clr = clr_y end -- yellow for internal parts jam chance
-					if jam_prob >= 2.5			then clr = clr_o end -- orange for medium internal parts jam chance
-					if jam_prob >= 10			then clr = clr_r end -- red for high internal parts jam chance
+					local clr = clr_ui							 	 	 -- gray: no jam
+					if total_jam_prob >= 0.01		then clr = clr_w end -- white: innate jam
+					if silencer_jam_chance >= 0.01	then clr = clr_g end -- green: innate and silencer jam
+					if jam_prob >= 0.01				then clr = clr_y end -- yellow: internal parts jam
+					if jam_prob >= 2.5				then clr = clr_o end -- orange: medium internal parts jam
+					if jam_prob >= 10				then clr = clr_r end -- red: high internal parts jam
 					-- oleh5230 end
 					
 					total_jam_prob = tonumber(string.format("%.2f", total_jam_prob))
