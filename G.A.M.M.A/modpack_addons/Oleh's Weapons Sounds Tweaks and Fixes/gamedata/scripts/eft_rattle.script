@@ -1,6 +1,6 @@
 -- Revised by oleh5230, 24.06.2024
 -- Original script by Qudix
--- Last edit: 14.07.25 
+-- Last edit: 31.07.25 
 
 local opt_aim_rattle = true
 local opt_lower_raise_rattle = true
@@ -8,9 +8,9 @@ local volume_aim_rattle = 1
 local volume_lower_raise_rattle = 1
 
 function load_settings()
-    if ui_mcm then
-        opt_aim_rattle = ui_mcm.get("grok_casings_sounds/enabled_aim_rattle") or false
-        opt_lower_raise_rattle = ui_mcm.get("grok_casings_sounds/enabled_lower_raise_rattle") or false
+    if ui_mcm and grok_casings_sounds_mcm then
+        opt_aim_rattle = ui_mcm.get("grok_casings_sounds/enabled_aim_rattle")
+        opt_lower_raise_rattle = ui_mcm.get("grok_casings_sounds/enabled_lower_raise_rattle")
         volume_aim_rattle = ui_mcm.get("grok_casings_sounds/volume_aim_rattle") or 1
         volume_lower_raise_rattle = ui_mcm.get("grok_casings_sounds/volume_lower_raise_rattle") or 1
     end
@@ -36,14 +36,14 @@ local function IsPistol(o,c)
 	return c and pistol[c] or false
 end
 
-small_weapons = {
-    ["w_pistol"] = true,
-    ["w_smg"] = true,
+wpn_kinds = {
+    ["w_pistol"]    = "pistol\\pistol_aim",
+    ["w_smg"]       = "pistol\\pistol_aim",
 }
 
 limit = {
-    ["pistol\\pistol_aim"] = 8,
-    ["rifle\\rifle_aim"] = 8,
+    ["pistol\\pistol_aim"]  = 8,
+    ["rifle\\rifle_aim"]    = 8,
 }
 
 count = 1
@@ -62,8 +62,8 @@ function get_wpn_params(wpn)
     sec = wpn:section()
     if not cached_sec or sec ~= cached_sec then
         cached_sec = sec
-        class      = small_weapons[SYS_GetParam(0, sec, "kind")] and "pistol\\pistol_aim" or "rifle\\rifle_aim"
-        weight     = ini_sys:r_string_ex(sec, "inv_weight") or 3.5
+        class      = wpn_kinds[SYS_GetParam(0, sec, "kind")] or "rifle\\rifle_aim"
+        weight     = ini_sys:r_string_ex(sec, "inv_weight") or 3.3
         aim_time   = ini_sys:r_string_ex(sec, "zoom_rotate_time") or 0.25
         volume     = (0.25 + weight*0.04)
         frequency  = 1.3 - aim_time
