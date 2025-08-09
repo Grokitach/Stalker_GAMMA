@@ -1,0 +1,56 @@
+local nvg_gain_index = 0
+local steps = 4
+local pack_nvg_data
+
+local function save_state(mdata)
+    mdata.tpabobap_nvg_gain_index = nvg_gain_index
+end
+
+local function load_state(mdata)
+    nvg_gain_index = mdata.tpabobap_nvg_gain_index
+    if not nvg_gain_index then
+        nvg_gain_index = 0
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
+    patch_methods()
+end
+
+function patch_methods()
+    pack_nvg_data = z_beefs_nvgs.pack_nvg_data
+    z_beefs_nvgs.brightness_adjust = patched_brightness_adjust
+    z_beefs_nvgs.pack_nvg_data = patched_pack_nvg_data
+end
+
+function patched_pack_nvg_data()
+    local data = pack_nvg_data()
+    local parts = {}
+    for p1, p2 in string.gmatch(data, "(%d+).(%d+)") do
+        table.insert(parts, { p1, p2 })
+    end
+
+    if (parts[2] and parts[2][1]) then
+        local nvg_gain_max = z_beefs_nvgs_mcm.get_config("nvg_gain_max_mcm")
+        local nvg_gain_min = z_beefs_nvgs_mcm.get_config("nvg_gain_min_mcm")
+        local value = nvg_gain_min + nvg_gain_index * ((nvg_gain_max - nvg_gain_min) / (steps - 1))
+
+        parts[2][1] = tostring(math.floor(value * 10))
+        data = "(" .. parts[1][1] .. "." .. parts[1][2] .. "," .. parts[2][1] .. "." .. parts[2][2] .. "," .. parts[3][1] .. "." .. parts[3][2] .. "," .. parts[4][1] .. "." .. parts[4][2] .. ")"
+    end
+
+    return data
+end
+
+function patched_brightness_adjust()
+    if item_device.nv_state then
+        nvg_gain_index = nvg_gain_index + 1
+        if nvg_gain_index >= steps then nvg_gain_index = 0 end
+
+        local snd_adjust = sound_object('interface\\inv_nvg')
+        snd_adjust:play(db.actor, 0, sound_object.s2d)
+        z_beefs_nvgs.update_nvgs()
+    end
+end
