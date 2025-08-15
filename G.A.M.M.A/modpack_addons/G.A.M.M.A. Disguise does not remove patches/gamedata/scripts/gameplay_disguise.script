@@ -878,10 +878,6 @@ function player_squad_members()
 		end
 	end
 
-  if db.actor then
-    player_squad_members[#player_squad_members + 1] = db.actor
-  end
-
 	return player_squad_members
 end
 
@@ -905,17 +901,25 @@ end
 function make_npcs_forget_actor_in_engine()
 	local player_squad_members = player_squad_members()
 
-	for npc_id, _ in pairs(npcs_memory) do
-		local npc = db.storage[npc_id] and db.storage[npc_id].object or level.object_by_id(npc_id)
+  for obj_id, obj in pairs(db.storage) do
+    local npc = obj and obj.object and miittp_task_text_formatter.is_human(obj.object) and obj.object
+
+	-- for npc_id, _ in pairs(npcs_memory) do
+	-- 	local npc = db.storage[npc_id] and db.storage[npc_id].object or level.object_by_id(npc_id)
 		if npc then
 			if not npc.memory_remove_links then
 				-- old exes, CScriptGameObject::memory_remove_links is not yet exposed in this version
 				return
 			end
-      
+
       if IsStalker(npc) and npc:alive() and not npc_is_in_combat_with_any_member_of_squad(npc, player_squad_members) then
+        if db.actor then
+          npc:memory_remove_links(db.actor)
+        end
+
         for _, squad_member in ipairs(player_squad_members) do
           npc:memory_remove_links(squad_member)
+          squad_member:memory_remove_links(npc)
         end
       end
 		end
