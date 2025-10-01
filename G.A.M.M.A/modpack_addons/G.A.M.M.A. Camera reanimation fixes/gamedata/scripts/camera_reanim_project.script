@@ -60,6 +60,7 @@ end
 
 function play_switch_anm()
     local wpn = db.actor:active_item()
+	if not wpn then return end
 
     if not is_supported_weapon(wpn) then
         return
@@ -74,8 +75,13 @@ function play_switch_anm()
     if not has_multiple_fire_modes(sec) then
         return
     end
-  
-    level.add_cam_effector("camera_effects\\fmode_crp.anm", 1912, false, "", 0, false)
+
+	if has_own_switch_animation(sec) then
+		return
+	end
+
+	game.play_hud_anm("camera_effects\\fmode_crp.anm", 2, 2, 1, false, false)
+    --level.add_cam_effector("camera_effects\\fmode_crp.anm", 1912, false, "", 0, false)
 end
 
 function is_supported_weapon(wpn)
@@ -85,6 +91,15 @@ end
 function is_weapon_ready(wpn)
     local state = wpn:get_state()
     return state == 0 -- eIdle
+end
+
+function has_own_switch_animation(sec)
+	local hud = sec and ini_sys:r_string_ex(sec, "hud")
+    if hud and ini_sys:r_string_ex(hud, "anm_switch_mode") then
+        return true
+    end
+
+    return false
 end
 
 function has_multiple_fire_modes(sec)
@@ -145,8 +160,11 @@ function actor_on_footstep()
 end
 
 local function actor_on_weapon_jammed()
-	if weapon_jammed then 
-		level.add_cam_effector("camera_effects\\jammed_crp.anm", 1913, false, "", 0, false)
+	if weapon_jammed then
+		-- oleh5230
+		-- controlled by reload_hint.script
+		-- game.play_hud_anm("camera_effects\\fmode_crp.anm", 2, 2, 1, false, false)
+		-- level.add_cam_effector("camera_effects\\jammed_crp.anm", 1913, false, "", 0, false)
 	end
 end
 
