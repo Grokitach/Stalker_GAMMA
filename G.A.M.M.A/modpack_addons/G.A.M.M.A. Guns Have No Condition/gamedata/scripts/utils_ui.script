@@ -383,7 +383,13 @@ function get_stats_value(obj, sec, gr, stat)
 	
 	if obj and value and gr.condition then
 		if ui_inventory.show_full_stats then
-			value = value * 1
+			if stat == "radiation_protection" then
+				value = value * 1/obj:condition()
+			else
+				value = value * 1
+			end
+		elseif stat == "radiation_protection" then
+			value = value
 		else
 			value = value * obj:condition()
 		end
@@ -540,23 +546,70 @@ function UICellItem:InitControls(path, st)
 	self.hl:Show(false)
 	sync_element(self.hl, self.cell)
 end
-function UICellItem:FindChildIdByBestCondition(orElse)
-	if self.childs then
-		local id_child
-		local max_condition_so_far = -1
-		for id, cnt in pairs(self.childs) do
-			local obj = level.object_by_id(id)
-			local condition = (obj and obj:condition()) or 0
 
-			if (max_condition_so_far < condition) then
-				id_child = id
-				max_condition_so_far = condition
-			end
+function UICellItem:UseMeatSortingLogic()
+	if meat_spoiling and meat_spoiling.expiration_table and meat_spoiling.expiration_time and meat_spoiling.meats then
+		local current_obj = self.ID and level.object_by_id(self.ID)
+		if current_obj then
+			local sec = current_obj:section()
+			return meat_spoiling.meats[sec] and true
 		end
 
-		return id_child or orElse;
+		if self.childs then
+			for id, cnt in pairs(self.childs) do
+				local obj = level.object_by_id(id)
+        if obj then
+          local sec = obj:section()
+          return meat_spoiling.meats[sec] and true
+        end
+			end
+		end
+	end
+	return false
+end
+
+function UICellItem:GetMeatExpirationDuration(id) 
+  return meat_spoiling.expiration_table[id] and meat_spoiling.expiration_table[id].duration or meat_spoiling.expiration_time.cooked
+end
+
+function UICellItem:FindChildIdByBestCondition()
+	if self.childs then
+    local use_meat_sorting_logic = self:UseMeatSortingLogic()
+
+    local id_child
+    if use_meat_sorting_logic then
+      -- find by soonest to expire
+      local min_expiration_so_far = meat_spoiling.expiration_time.cooked
+      for id, cnt in pairs(self.childs) do
+        local expires_in = self:GetMeatExpirationDuration(id)
+  
+        if min_expiration_so_far > expires_in then
+          id_child = id
+          min_expiration_so_far = expires_in
+        end
+
+        -- if this save never had meat expiration mod then some meats might not appear in the expiration table, pick random meat as stack top in this case
+        if id_child == nil then
+          id_child = id
+        end
+      end
+    else
+      -- find by best condition
+      local max_condition_so_far = -1
+      for id, cnt in pairs(self.childs) do
+        local obj = level.object_by_id(id)
+        local condition = (obj and obj:condition()) or 0
+  
+        if max_condition_so_far < condition then
+          id_child = id
+          max_condition_so_far = condition
+        end
+      end
+    end
+
+    return id_child
 	else
-		return orElse
+		return nil
 	end
 end
 
@@ -1137,10 +1190,22 @@ function UICellItem:AddChild(obj)
 	end
 
 	local current_obj = self.ID and level.object_by_id(self.ID)
-	if current_obj and (current_obj:condition() < obj:condition()) then
-		self:Set(obj)               -- whatever we set here is visible as the icon in the main invetory section, we make sure to always show item with best condition
-		return self:AddChild(current_obj) -- we need to make sure that previously "top of the stack" is preserved so we insert it as the new UICellItem.childs instead
-	end
+  if current_obj then
+    local use_meat_sorting_logic = self:UseMeatSortingLogic()
+    if use_meat_sorting_logic then
+      local current_obj_expires_in = self:GetMeatExpirationDuration(current_obj:id())
+      local obj_expires_in = self:GetMeatExpirationDuration(obj:id())
+      if current_obj_expires_in > obj_expires_in then
+        self:Set(obj)               -- whatever we set here is visible as the icon in the main invetory section, we make sure to always show item with best condition
+        return self:AddChild(current_obj) -- we need to make sure that previously "top of the stack" is preserved so we insert it as the new UICellItem.childs instead
+      end
+    else
+      if current_obj:condition() < obj:condition() then
+        self:Set(obj)               -- whatever we set here is visible as the icon in the main invetory section, we make sure to always show item with best condition
+        return self:AddChild(current_obj) -- we need to make sure that previously "top of the stack" is preserved so we insert it as the new UICellItem.childs instead
+      end
+    end
+  end
 	
 	-- Real
 	local sec = obj:section()

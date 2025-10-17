@@ -51,7 +51,9 @@ function on_key_press(key)
 			local itm = db.actor:active_item()
 			if IsMelee(itm) then return end
 		end
-		
+
+		-- exec_console_cmd("spawn_antifreeze 0")
+
 		hit_key()
     end
 
@@ -69,6 +71,8 @@ function hit_key()
 	end
 
 	if (db.actor:active_detector()) then return end
+	
+	
 	
 	--test
 
@@ -119,12 +123,14 @@ function hit_key()
 		return
 	end
 
+	--[[
 	cond = knife_to_degrade:condition()
 	if cond > 0.02 then
 		knife_to_degrade:set_condition(cond - 0.0025)
 	else
 		knife_to_degrade:set_condition(0.01)
 	end
+	]]
 
 	-- end test
 	
@@ -152,12 +158,15 @@ local anm_start = 0
 function hit_animation()
 	local wpn = db.actor:item_in_slot(last_slot)
 	
+	
 	if (anm_state == 1) then
-		--db.actor:restore_weapon()
-		db.actor:activate_slot(14)
-		if (wpn) then wpn:switch_state(3) end
-		anm_start = time_global()
-		anm_state = 2
+		if (db.actor:item_in_slot(anm_slot)) then
+			--db.actor:restore_weapon()
+			db.actor:activate_slot(14)
+			if (wpn) then wpn:switch_state(3) end
+			anm_start = time_global()
+			anm_state = 2
+		end
 	elseif (anm_state == 2) and (db.actor:active_slot() == anm_slot) and (time_global() > anm_start) then
 		anm_start = time_global()
 		anm_state = 3
@@ -174,6 +183,9 @@ function hit_animation()
 		db.actor:activate_slot(last_slot)
 		anm_state = 5
 	elseif (anm_state == 5) and (time_global() > anm_start+anm_time+400) then
+
+		-- exec_console_cmd("spawn_antifreeze 1")
+
 		anm_state = 0
 	elseif (anm_state ~= 0) and (db.actor:active_slot() ~= anm_slot) and (time_global() > anm_start+anm_time+400) then
 		anm_state = 0

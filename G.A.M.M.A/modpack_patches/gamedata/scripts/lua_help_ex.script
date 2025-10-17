@@ -50,12 +50,16 @@
         apply_pdm_to_ads // Enables PDM (handling) values to be applied properly during ADS
         smooth_ads_transition // Smoothly applies the ADS accuracy bonus instead of only being applied when fully ADS
         allow_silencer_hide_tracer // Controls wether or not silencers can hide tracers at all
-		
-		viewport_near [0.0, 1.0] // Adjust the camera near value
+        use_separate_ubgl_keybind // Use separate keybind for switching to UBGL, or use vanilla system
+        aimmode_remember // When switching to UBGL the weapon will remember what mode you switched from and will put you back in that mode
+        freelook_while_reloading // // Allows freelook during reload animations
+        
+        viewport_near [0.0, 1.0] // Adjust the camera near value
 
         print_bone_warnings // Print warnings when using bone_position and bone_direction functions and encounter invalid bones
 
         poltergeist_spawn_corpse_on_death // Poltergeists spawn corpses on death
+        g_firepos_zoom // Make firepos work while aiming
     }
 
     lua extensions {
@@ -82,17 +86,23 @@
     }
 
     globals {
+        string dik_to_keyname(number dik, boolean localize)
         int get_modded_exes_version() // Returns modded exes version in integer format
         table get_string_table() // Returns all translated strings in [string id] = string text format 
     }
 
-    namespace alife() {
+    get_console() {
+        table get_variable_bounds(cmd)   
+    }
+
+    alife() {
         void iterate_objects(function(se_obj))
     }
 
-    namespace game {
+    game {
         Fvector2 world2ui(Fvector pos, bool hud = false, bool allow_offscreen = false)
         function ui2world(Fvector2 pos) -> Fvector result, u16 object_id
+        function ui2world_offscreen(Fvector2 pos) -> Fvector result, u16 object_id
         change_game_news_show_time(CUIWindow* UIWindow, float show_time)
         update_pda_news_from_uiwindow(CUIWindow* UIWindow)
     }
@@ -121,13 +131,27 @@
         void reset_hands()
     }
 
+    class CUIProgressBar {
+        CUIStatic GetProgressStatic()
+    }
+
+    class CUIStatic {
+    	void SetColorAnimation(string name, number flags, float delay)
+		void ResetColorAnimation()
+		void RemoveColorAnimation()
+    }
+
+    class particles_object {
+        void set_hud_mode(bool hud_mode)
+    }
+
     // Debug shapes
     enum DebugRenderType {
         line,
         sphere,
         box,
     }
-    namespace debug_render {
+    debug_render {
         DBG_ScriptObject* add_object(u16 id, DebugRenderType type)
         void remove_object(u16 id)
         DBG_ScriptObject* get_object(u16 id)
@@ -169,7 +193,17 @@
         local box = debug_render.add_object(12, DBG_ScriptObject.box):cast_dbg_box()
         box.size = vector():set(0.5,1,0.5)
 
-    namespace level {
+
+    // Query data from actor ray queries
+    // Actor = Pick active ray from Weapon / Device / Camera
+	enum ETraceTarget {
+		Camera      = 0,
+		Weapon      = 1,
+		Device      = 2,
+		Actor       = 3,
+	}
+		
+    level {
         float get_music_volume()
         void set_music_volume(float)
 
@@ -179,9 +213,16 @@
         void set_cam_custom_position_direction(Fvector position, Fvector direction, int smoothing)
         void set_cam_custom_position_direction(Fvector position, Fvector direction)
         void remove_cam_custom_position_direction()
-
-        // Get target position and result of crosshair ray_query
+		
+        game_object get_target_obj(ETraceTarget)
+        game_object get_target_obj()
+        number get_target_dist(ETraceTarget)
+        number get_target_dist()
+        number get_target_element(ETraceTarget)
+        number get_target_element()
+        Fvector get_target_pos(ETraceTarget)
         Fvector get_target_pos()
+        script_rq_result get_target_result(ETraceTarget)
         script_rq_result get_target_result()
 
         void map_remove_all_object_spots(id)
@@ -214,17 +255,41 @@
         //    level.add_bullet(t)
     }
 
+    class CUIMessagesWindow : CUIWindow {
+        // no extra exports yet
+    }
+
+    namespace ActorMenu {
+        function get_messages_menu()
+    }
+
     // obj:get_physics_shell()
     class PHShell {
         void apply_torque(float roll, float yaw, float pitch)
     }
 
     class Fvector {
+        static functions:
+            vector.generate_orthonormal_basis(Fvector dir, Fvector up, Fvector right)
+            vector.generate_orthonormal_basis_normalized(Fvector dir, Fvector up, Fvector right)
+
         function add(float x, float y, float z)
         function sub(float x, float y, float z)
         function mul(float x, float y, float z)
         function div(float x, float y, float z)
         function distance_to_xz_sqr(Fvector)
+        function project(Fvector u, Fvector v)
+        function project(Fvector v)
+
+        function hud_to_world()
+        function world_to_hud()
+
+        function hud_to_world_dir()
+        function world_to_hud_dir()
+    }
+
+    class Fvector2 {
+        function normalize()
     }
 
     class Fmatrix {
@@ -273,6 +338,15 @@
         function setXYZi(float x, float y, float z)
         function setXYZi(Fvector)
         Fvector getHPB()
+        function transform(Fvector, Fvector)
+        function transform(Fvector)
+        function transform_tiny(Fvector, Fvector)
+        function transform_tiny(Fvector)
+        function transform_dir(Fvector, Fvector)
+        function transform_dir(Fvector)
+
+        function hud_to_world()
+        function world_to_hud()
     }
 
     class particle_object {
@@ -292,8 +366,9 @@
     }
 
     class game_object {
-        // Skeletons
-        function bone_direction(string bone_name, bool bHud = false)
+        // General
+        Fmatrix xform(bool bHud)
+        Fbox bounding_box(bool bHud)
 
         // Player
         function get_actor_walk_accel()
@@ -321,7 +396,10 @@
         function set_actor_position(vector pos, bool bskip_collision_correct, bool bkeep_speed)
         function set_movement_speed(vector)
         function get_actor_ui_luminocity()
-
+        function get_actor_object_looking_at()
+        function get_actor_person_looking_at()
+        function get_actor_default_action_for_object()
+		function set_actor_box_y_offset(u32 box_num, float offset) --box_num:0 for stand, 1 for crouch, 2 for prone;
         // Stalker NPCs
         function get_enable_anomalies_pathfinding()
         function set_enable_anomalies_pathfinding(bool)
@@ -346,6 +424,11 @@
         string bone_name(u16 id)
         string bone_name(u16 id, bool bHud)
 
+        Fmatrix bone_transform(u16 id)
+        Fmatrix bone_transform(u16 id, bool bHud)
+        Fmatrix bone_transform(string)
+        Fmatrix bone_transform(string, bool bHud)
+
         Fvector bone_position(u16 id)
         Fvector bone_position(u16 id, bool bHud)
         Fvector bone_position(string)
@@ -369,8 +452,50 @@
         function set_bone_visible(u16 id, bool bVisibility, bool bRecursive, bool bHud)
         function set_bone_visible(string bone_name, bool bVisibility, bool bRecursive, bool bHud)
 
+        function list_bones(bool bHud = false)
+
         // Torch
         function update_torch()
+        
+        // Script Attachments
+        function add_attachment(string, string)
+        function get_attachment(string)
+        function remove_attachment(string)
+        function remove_attachment(script_attachment)
+        function iterate_attachments(function)
+		
+		// Shader/Textures
+		function get_shaders(bool)
+		function set_shader(number, string, string, bool)
+		function get_default_shaders(bool)
+		function reset_shader(number, bool)
+		
+		get_shaders(hud_mode)
+		hud_mode is optional and will default to false
+		returns a table of submesh IDs with subtables containing the shader and texture names of all submeshes of a model, table looks like this for example:
+		{
+		1 = 
+			{
+			texture = "act\act_face_mask_03",
+			shader = "models\model_pn",
+			},
+		2 = 
+			{
+			texture = "act\act_stalker_cskysun_2",
+			shader = "models\model_pn",
+			},
+		},
+		
+		get_default_shaders(hud_mode)
+		returns similar table as get_shaders but containing the default shader and texture names, even after they were changed by set_shader
+		
+		set_shader(id, shader, texture, hud_mode) can assign a new shader/texture to the submesh ID
+		id can be -1 to apply the shader/texture to all submeshes at once
+		shader/texture can be nil if you only want to apply one of them
+		hud_mode is optional and will default to false
+		
+		reset_shader(id, hud_mode)
+		same as set_shader but resets to the default shader/texture values, so you don't need to store them in a table to reset them later
     }
 
     class CArtefact : CGameObject {
@@ -473,7 +598,7 @@
         function GetZoomRotateTime()
         function SetZoomRotateTime(float)
     }
-
+	
     enum rq_target { (sum them up to target multiple types)
         rqtNone     = 0,
         rqtObject   = 1,
@@ -538,5 +663,142 @@
         ["flSlowDown"]          = bit.lshift(1, 31),
     }
     
+    // Child class of script_light - used specifically to attach it to script_attachments
+    // set_position and set_direction work as an offset to the parent attachment position/direction
+    class attachment_script_light : script_light {
+        property color;
+        property enabled;
+        property hud_mode;
+        property lanim;
+        property lanim_brightness;
+        property range;
+        property shadow;
+        property texture;
+        property type;
+        property volumetric;
+        property volumetric_distance;
+        property volumetric_intensity;
+        property volumetric_quality;
+        
+        attachment_script_light ();
+        
+        function set_direction(vector);
+        function set_direction(vector, vector);
+        function set_direction(number, number, number);
+        function set_position(vector);
+        function set_position(number, number, number);
+    }
+    
+    enum script_attachment_type {
+        Hud         = 0,
+        World       = 1,
+        CamAttached = 2,
+    }
 
+    class ScriptAttachment {
+        -- Parent
+        function set_parent(ScriptAttachment*);
+        function set_parent(game_object*);
+        function get_parent();
+
+        -- Child
+        function add_attachment(string, string);
+        function get_attachment(string);
+        function remove_attachment(string);
+        function remove_attachment(script_attachment);
+        function iterate_attachments(function<boolean>);
+
+        -- Offset
+        function set_position(vector);
+        function set_position(number, number, number);
+        function get_position();
+        function set_rotation(vector);
+        function set_rotation(number, number, number);
+        function get_rotation();
+        function set_origin(vector);
+        function set_origin(number, number, number);
+        function get_origin();
+        function set_scale(vector);
+        function set_scale(number, number, number);
+        function set_scale(number);
+        function get_scale();
+        function get_transform();
+        function get_center();
+
+        -- Bones
+        function bone_id(string)
+        function bone_name(number)
+        function bone_visible(number)
+        function bone_visible(string)
+        function set_bone_visible(number, boolean, boolean)
+        function set_bone_visible(string, boolean, boolean)
+        function bone_transform(number)
+        function bone_transform(string)
+        function bone_position(number)
+        function bone_position(string)
+        function bone_direction(number)
+        function bone_direction(string)
+        function bone_parent(number)
+        function bone_parent(string)
+        function set_parent_bone(number);
+        function set_parent_bone(string);
+        function get_parent_bone();
+        function list_bones()
+
+        -- Bone Callbacks
+        function bone_callback(number, number, boolean);
+        function bone_callback(string, string, boolean);
+        function bone_callback(number, string, boolean);
+        function bone_callback(string, number, boolean);
+        function bone_callback(number, function<matrix>, boolean);
+        function bone_callback(string, function<matrix>, boolean);
+        function remove_bone_callback(number);
+        function remove_bone_callback(string);
+
+        -- Other
+        function set_type(number); -- ex. script_attachment_type.Hud
+        function get_type();
+        function set_model(string, boolean);
+        function get_model();
+        function set_name();
+        function get_name();
+        function play_motion(string, boolean, number);
+
+        -- Script 3D UI
+        function set_ui(string);
+        function get_ui();
+        function set_ui_bone(number);
+        function get_ui_bone();
+        function set_ui_position(vector);
+        function set_ui_position(number, number, number);
+        function get_ui_position();
+        function set_ui_rotation(vector);
+        function set_ui_rotation(number, number, number);
+        function get_ui_rotation();
+        function set_ui_scale(vector);
+        function set_ui_scale(number, number, number);
+        function get_ui_scale();
+        function set_ui_origin(vector);
+        function set_ui_origin(number, number, number);
+        function get_ui_origin();
+
+        -- Script Light
+        function attach_light(attachment_script_light*);
+        function detach_light();
+        function get_light();
+        function set_light_bone(number);
+        function set_light_bone(string);
+        function get_light_bone();
+
+        -- Shader and Texture
+		function get_shaders()
+		function get_default_shaders()
+		function set_shader(number, string, string)
+		function reset_shader(number)
+
+        -- Userdata
+        property userdata
+    }
+    
+    Script Attachment Guide: https://igigog.github.io/anomaly-modding-book/tutorials/scripting/script-attachments.html
 --]]

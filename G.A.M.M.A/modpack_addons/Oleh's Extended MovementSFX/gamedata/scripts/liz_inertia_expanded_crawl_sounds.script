@@ -4,7 +4,7 @@
 
 local enabled = true
 local volume = 0.5
-local sound
+local sound = sound_object("crawl\\prone_gear_slow_1")
 local count = 1
 local tg
 local speed_min = 0
@@ -19,18 +19,18 @@ function actor_on_update(_, delta)
     cur_pos.y = 0
     old_pos.y = 0
     local crawl_speed = cur_pos:distance_to(old_pos or cur_pos) / (delta / 100)
-    local anm_speed = clamp( (crawl_speed - speed_min) / (speed_max - speed_min), 0, 1.15 )
+    local anm_speed = clamp( (crawl_speed - speed_min) / (speed_max - speed_min), 0, 1.15 ) * 1.04
     old_pos = cur_pos
+    sound.frequency = anm_speed
 
     if not tg then tg = time_global() end
-    if time_global() > tg + (640 / anm_speed) then
+    if time_global() > tg + (666 / anm_speed) then
         tg = nil
 
         sound = sound_object("crawl\\prone_gear_slow_" .. count)
         if anm_speed > 0.5 then
             sound:play(db.actor, 0, sound_object.s2d)
             sound.volume = anm_speed * volume
-            sound.frequency = anm_speed
 
             count = count + 1
             if count > 12 then count = 1 end
@@ -45,6 +45,6 @@ end
 
 function on_game_start()
     if liz_inertia_expanded_crawl then RegisterScriptCallback("actor_on_update", actor_on_update) end
-    RegisterScriptCallback("on_console_execute",load_settings)
+    RegisterScriptCallback("on_option_change",load_settings)
     load_settings()
 end
