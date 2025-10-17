@@ -9,16 +9,18 @@ function actor_on_before_hit(shit)
 end
 
 step = 925
+coughing_time = 0
+coughing = false
 
 function actor_on_update()
     if db.actor.radiation > 0 then
         local actor_rad = math.floor(db.actor.radiation * 10000 * 0.387) / 1000
         local conditions = db.actor:cast_Actor():conditions()
         local max_power = conditions and conditions:GetMaxPower()
-        local power_dif = 1 - actor_rad * 0.4
+        local power_dif = 1 - actor_rad * 0.5
         local reduced_power = max_power * power_dif
-		if reduced_power <= max_power * 0.15 then
-			reduced_power =  max_power * 0.15
+		if reduced_power <= max_power * 0.20 then
+			reduced_power =  max_power * 0.20
 		end
 
         if db.actor.power > reduced_power then
@@ -35,13 +37,13 @@ function actor_on_update()
 			local actor_rad = math.floor(db.actor.radiation * 10000 * 0.387) / 1000
             tg = nil
             if actor_rad > 0 then
-                local base_damage_value = 0.0004
+                local base_damage_value = 0.0024
                 local actor_health = db.actor.health
-                local life_remove = actor_health - (base_damage_value + base_damage_value * actor_rad/2)
+                local life_remove = actor_health - (base_damage_value * actor_rad * actor_rad * actor_rad * actor_rad)
                 db.actor:set_health_ex(life_remove)
             end
 
-            if actor_rad > 0.1 then
+            if actor_rad > 0.35 and not coughing then
                 probability = math.ceil(22 / actor_rad)
                 chance = math.random(1,probability)
                 if chance == 1 or chance == 2 then
@@ -52,9 +54,13 @@ function actor_on_update()
                     sound:play(db.actor, 0, sound_object.s2d)
                     sound.volume = 1.6
                     level.add_pp_effector("blur2.ppe", math.random(645808, 645820), false)
+					coughing = true
+					coughing_time = time_global() + 9000
 				else
 					grok_rads = 0
                 end
+			elseif coughing and time_global() > coughing_time then
+				coughing = false
             end
         end
     end

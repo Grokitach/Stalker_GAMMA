@@ -42,6 +42,9 @@ local d_key       	= "DIK_LMENU" -- Saftey key hold (Left Alt)
 -- SECTION utils --
 -------------------
 
+-- oleh5230: add jam callback
+AddScriptCallback("actor_on_weapon_jammed_wpo")
+
 function print_dbg(txt, ...)
 	local enable_debug = get_config("debug") or false
 	if enable_debug then
@@ -165,7 +168,8 @@ end
 function play_anim(weapon, anim, sound)
 	if not block_repeat then
 		-- oleh5230
-		-- force exit ADS before unjam animation
+		-- force raise weapon and exit ADS before unjam animation
+		game.actor_lower_weapon(false)
 		if axr_main.weapon_is_zoomed then
 			if get_console():get_bool("wpn_aim_toggle") then
 				level.press_action(bind_to_dik(key_bindings.kWPN_ZOOM))
@@ -378,7 +382,7 @@ local function calculate_jam(wpn, old_ammo)
 		-- bad ammo adds a flat 2% chance to jam
 		jam_chance = jam_chance + 20
 	end
-	print_dbg("Final jam chance is %s", jam_chance)
+	print_dbg("Jam chance is %s", jam_chance)
 
 	if (math_random(1000) <= jam_chance) then
 		local str = gc("ui_st_jam")
@@ -386,16 +390,25 @@ local function calculate_jam(wpn, old_ammo)
 		if wpn:get_ammo_in_magazine() > 0 and get_config("superjam") and (math_random(1000) < jam_chance/2) then
 			jammed_guns[wpn:id()] = 3
 			print_dbg("Severe jam")
+			SendScriptCallback("actor_on_weapon_jammed_wpo", wpn, 3)
 			if get_config("verbosity") > 1 then
 				str = gc("ui_st_superjam")
 			end
 		else
 			jammed_guns[wpn:id()] = 2
 			print_dbg("Normal jam")
+			SendScriptCallback("actor_on_weapon_jammed_wpo", wpn, 2)
 		end
 		start_jammin(2)
 		send_msg(str, verbosity)
+	-- oleh5230
+	-- silencers can cause jams
+	elseif math_random(1000) <= get_silencer_jam_chance(wpn) then
+		print_dbg("silencer jam")
+		jammed_guns[wpn:id()] = 2
+		SendScriptCallback("actor_on_weapon_jammed_wpo", wpn, 2)
 	end
+	-- oleh5230 end
 end
 
 function get_jam_chance(wpn)
@@ -436,9 +449,9 @@ function get_jam_chance(wpn)
 
 			if jc_cond < 1 then
 				local jc_ratio = (1.0-jc_cond)/0.7 - 0.05
-				printf(jc_ratio)
+				--printf(jc_ratio)
 				jc = jc * (1 + jc_ratio)
-				printf(jc)
+				--printf(jc)
 			end
 				
 			if jc then
@@ -449,6 +462,18 @@ function get_jam_chance(wpn)
 		end
 	end
 end
+
+-- oleh5230
+function get_silencer_jam_chance(wpn)
+	if wpn and IsWeapon(wpn) and not IsMelee(wpn) then
+		silencer_status = wpn:weapon_is_silencer() and 1 or SYS_GetParam(2, wpn:section(), "silencer_status") == 1 and 1 or 0
+		misfire_prob = SYS_GetParam(2, wpn:section(), "misfire_start_prob") or 0
+		silencer_jam_chance = misfire_prob < 0.002 and 1 * silencer_status or misfire_prob * 330 * silencer_status
+		print_dbg("Silencer jam chance is %s", silencer_jam_chance)
+		return silencer_jam_chance or 0
+	end
+end
+-- oleh5230 end
 
 -- Randomly damage 1 part of the weapon by DAMAGE, skipping barrels
 local function damage_part(wpn)
@@ -622,6 +647,7 @@ local function actor_on_weapon_before_fire(flags)
 			else
 				str = gc("ui_st_misfire")
 				jammed_guns[id] = 1
+				SendScriptCallback("actor_on_weapon_jammed_wpo", obj_wpn, 1)
 			end
 		end
 		
