@@ -1,0 +1,100 @@
+icon_msv_requirement = 2
+faster_refresh_rate = true
+
+function eval_geiger_requirement()
+	if icon_msv_requirement > 0 then
+		local obj_geiger = db.actor:object("detector_geiger")
+		if obj_geiger and icon_msv_requirement > 1 then
+			return item_device.is_device_charged(obj_geiger, "detector_geiger")
+		end
+		return obj_geiger
+	end
+	return true
+end
+
+local pass = false
+local slot_n = 1
+local og_UIIndicators_Update = actor_status.UIIndicators.Update
+function actor_status.UIIndicators:Update(force)
+	local update_allowed = false
+	local tg = time_global()
+	if force or self._tmr < tg then
+		update_allowed = true
+	end
+
+	og_UIIndicators_Update(self, force)	
+
+	if update_allowed then
+		if not eval_geiger_requirement() then
+			return
+		end
+
+		local t = actor_status.indicators["Radiation"]
+		local value = t.functor and execute_func(unpack(t.functor))
+	
+		pass = false
+		if t.typ == "state" then
+			pass = value and value <= 4 and value >= 1
+		elseif t.typ == "booster" then
+			pass = value and true or false
+		end
+
+		if pass then
+			-- FDDA REDONE Gasmask Icon support
+			slot_n = actor_status_gasmask and (actor_status_gasmask.get_gasmask_status(true) ~= 0) and 2 or 1
+
+			if self.slot[slot_n] and self.slot[slot_n].icon_f:IsShown() and self.slot[slot_n].xcvb_time then
+				local show_time = math.ceil(db.actor.radiation*10000*0.387)
+				self.slot[slot_n].xcvb_time:Show(show_time and true or false)
+				self.slot[slot_n].xcvb_time:SetText(show_time or "")
+			end
+		end
+	else
+		if faster_refresh_rate and pass then
+			if self.slot[slot_n] and self.slot[slot_n].icon_f:IsShown() and self.slot[slot_n].xcvb_time:IsShown() then
+				local show_time = math.ceil(db.actor.radiation*10000*0.387)	
+				self.slot[slot_n].xcvb_time:SetText(show_time or "")
+			end
+		end
+	end
+end
+
+-- mcm
+
+function on_mcm_load()
+    ch_options = {
+        id = "rad_status_icon_msv",
+        sh = true,
+        gr = {
+			{ id = "title", type = "slide", link = "ui_options_slider_radio", text = "ui_mcm_rad_status_icon_msv_title", size = {512,50}, spacing= 20 },
+			{ id = "title_desc", type = "desc", text = "ui_mcm_rad_status_icon_msv_title_desc" },
+
+			{id = "faster_refresh_rate", type = "check", val = 1, def = true},
+
+			{ id = "icon_msv_requirement", type = "list", val = 2, def = 2, content = {
+				{0, "rad_status_icon_msv_no_requirement_label"},
+				{1, "rad_status_icon_msv_geiger_in_inv_label"},
+				{2, "rad_status_icon_msv_charged_geiger_label"},
+			}
+
+		},
+	}
+    }
+    return ch_options
+end
+
+function actor_on_first_update()
+    on_option_change()
+end
+
+function on_option_change()
+    if ui_mcm then
+        icon_msv_requirement = ui_mcm.get("rad_status_icon_msv/icon_msv_requirement")
+        faster_refresh_rate = ui_mcm.get("rad_status_icon_msv/faster_refresh_rate")
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+    RegisterScriptCallback("on_option_change", on_option_change)
+end

@@ -1,0 +1,130 @@
+-- Might want to extend this to track flags based on IDs since detectors have animations too
+-- Likely overkill unless someone implements custom anims for them
+FLAGS = {}
+
+local active_flags = {}
+
+-- Export: Flags
+function get_flag(flag)
+    return active_flags[flag]
+end
+
+function set_flag(flag)
+    active_flags[flag] = true
+end
+
+function remove_flag(flag)
+    active_flags[flag] = nil
+end
+
+function add_flag(flag)
+    -- Exit early if it already exists
+    if FLAGS[flag] then return end
+    FLAGS[flag] = #FLAGS
+end
+
+local anim_mutators = {}
+
+-- Export: Animation Mutators
+function add_anim_mutator(functor, priority)
+    -- Add mutator func to list of mutators
+    table.insert(anim_mutators, {functor=functor, priority=priority})
+    
+    -- Sort anim_mutators again
+    table.sort(anim_mutators, function(a,b) return a.priority < b.priority end)
+end
+
+function has_animation(section, anm)
+    local hud_section = ini_sys:r_string_ex(section,"hud") or section
+    return SYS_GetParam(0, hud_section, anm)
+end
+
+function mutate_anim(anm_table, anm_suffix, section)
+    local new_anm = anm_table.anm_name .. anm_suffix
+    if has_animation(section, new_anm) then
+        anm_table.anm_name = new_anm
+        return true
+    end
+    return false
+end
+
+-- Sounds
+local sound_object_by_sec_by_path = {}
+function get_safe_sound_object(path, sec)
+    assert(path, "path to sound file was nil")
+    assert(sec, "item section was nil")
+
+	if sound_object_by_sec_by_path[sec] == nil then
+		sound_object_by_sec_by_path[sec] = {}
+	end
+    local snd_obj = sound_object(path)
+    sound_object_by_sec_by_path[sec][path] = snd_obj
+	return snd_obj
+end
+
+function stop_all_sound_object(sec)
+    -- printf("stop_all_sound_object(sec): %s", sec)
+	for section, list in pairs(sound_object_by_sec_by_path) do
+        for path, v in pairs(list) do
+            if section == sec and v:playing() then
+                -- printf("sec: %s| Stopping: %s", sec, path)
+                v:stop()
+            end
+        end
+        sound_object_by_sec_by_path[sec] = nil
+	end
+end
+
+function get_sound_from_anm(anm_name) -- TODO: allow sound volume to be defined in config
+    return anm_name:gsub("anm_", "scripted_snd_")
+end
+
+-- Probably worth adding an ordered list of functions with conditions that can mutate anm_table
+-- and use this script as source of truth for about-to-be-played animations since callback order is random between scripts
+---@param anm_table {anm_name: string, anm_mixin: boolean, anm_mixin2: boolean, anm_state: integer, anm_speed: number, anm_end: number}
+---@param item game_object
+function actor_on_hud_animation_play(anm_table, item)
+	if not item then return end
+    stop_all_sound_object(item:section())
+    local section = item:section()
+
+    -- Execute each mutator functor in turn, ordered by priority
+    for i, mutator in ipairs(anim_mutators) do
+        local stop = mutator.functor(anm_table, item)
+        if stop then break end
+    end
+
+    -- Sound: Check if weapon has a valid scripted sound in config
+    local anm_name = anm_table.anm_name
+
+    local snd_name = get_sound_from_anm(anm_name)
+
+	local snd_value = SYS_GetParam(0, section, snd_name)
+    if not snd_value then return end
+
+    -- Look for actor-specific sounds if they exist
+    if item:parent() and item:parent():id() == AC_ID then
+        local snd_value_actor = SYS_GetParam(0, section, snd_name .. "_actor")
+        if snd_value_actor then
+            snd_value = snd_value_actor
+        end
+    end
+
+    local snd_values = str_explode(snd_value,",")
+    local snd_path = snd_values[1]
+    local never_cancel = snd_values[2]
+
+    -- Play sound
+    local snd_obj = get_safe_sound_object( snd_path, item:section() )
+	if not snd_obj then return end
+
+    if never_cancel then
+        snd_obj:play_no_feedback(db.actor, sound_object.s2d, 0, vector(), 1.0, 1.0)
+    else
+        snd_obj:play(db.actor, 0, sound_object.s2d)
+    end
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_hud_animation_play",actor_on_hud_animation_play)
+end 

@@ -861,10 +861,75 @@ function calculate_npc_suspicion(npc, id, t, awareness)
 	return math.floor(clamp(suspicion,1,100))
 end
 
-
 ------------------------------------------------------------
 -- Callbacks
 ------------------------------------------------------------
+
+--- @return table_where_values_are_game_objects
+function player_squad_members()
+	local player_squad_members = {}
+	for squad_id, _ in pairs(axr_companions.companion_squads) do
+		local squad = squad_id and alife_object(squad_id)
+		for sm in squad:squad_members() do
+			local squad_member = sm and sm.id and db.storage[sm.id] and db.storage[sm.id].object or level.object_by_id(sm.id)
+			if squad_member then
+				player_squad_members[#player_squad_members + 1] = squad_member
+			end
+		end
+	end
+
+	return player_squad_members
+end
+
+--- @param npc game_object
+--- @param squad table_where_values_are_game_objects
+--- @return boolean
+function npc_is_in_combat_with_any_member_of_squad(npc, squad)
+	local best_enemy_id = npc:best_enemy() and npc:best_enemy():id()
+
+	for _, squad_member in ipairs(squad) do
+		if squad_member:id() == best_enemy_id or npc:see(squad_member) then
+			return true
+		end
+	end
+
+	return false
+end
+
+function is_human(se_obj)
+	return IsStalker(se_obj) or se_obj:clsid() == clsid.trader or se_obj:clsid() == clsid.script_trader
+end
+
+--- When player tears off the disguise patch enemies that remember him (in engine memory - memory_manager.h) immediately aggro even if they don't see the player.
+--- Forcefully make them forget the player and his squad unless they're actively fighting with the NPC or are in plain sight.
+function make_npcs_forget_actor_in_engine()
+	local player_squad_members = player_squad_members()
+
+  for obj_id, obj in pairs(db.storage) do
+    local npc = obj and obj.object and is_human(obj.object) and obj.object
+
+	-- for npc_id, _ in pairs(npcs_memory) do
+	-- 	local npc = db.storage[npc_id] and db.storage[npc_id].object or level.object_by_id(npc_id)
+		if npc then
+			if not npc.memory_remove_links then
+				-- old exes, CScriptGameObject::memory_remove_links is not yet exposed in this version
+				return
+			end
+
+      if IsStalker(npc) and npc:alive() and not npc_is_in_combat_with_any_member_of_squad(npc, player_squad_members) then
+        if db.actor then
+          npc:memory_remove_links(db.actor)
+        end
+
+        for _, squad_member in ipairs(player_squad_members) do
+          npc:memory_remove_links(squad_member)
+          squad_member:memory_remove_links(npc)
+        end
+      end
+		end
+	end
+end
+
 function try_to_disguise(new_comm, naked, no_patch)
 	local curr_comm = character_community(db.actor):sub(7)
 	--printf("/ Disguise | current comm: %s - new comm: %s", curr_comm, new_comm)
@@ -874,9 +939,13 @@ function try_to_disguise(new_comm, naked, no_patch)
 	end
 	
 	if no_patch then
+    make_npcs_forget_actor_in_engine()
+
 		set_msg("ui_st_disguse_patch_torn", default_comm)
 		set_comm(default_comm)
 	elseif (new_comm == default_comm) then
+    make_npcs_forget_actor_in_engine()
+
 		set_msg("ui_st_disguse_back_to_default", default_comm)
 		set_comm(default_comm)
 	elseif blacklisted_factions[new_comm] and IsStoryMode() then
@@ -887,6 +956,8 @@ function try_to_disguise(new_comm, naked, no_patch)
 		set_msg("ui_st_disguse_someone_remember", curr_comm)
 	else
 		if naked then
+      make_npcs_forget_actor_in_engine()
+      
 			set_msg("ui_st_disguse_naked", default_comm)
 			set_comm(default_comm)
 		elseif start_record then

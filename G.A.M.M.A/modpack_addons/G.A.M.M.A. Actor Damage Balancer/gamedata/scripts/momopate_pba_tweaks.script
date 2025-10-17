@@ -46,7 +46,7 @@ perk_based_artefacts.artefact_on_before_hit_functions.af_black_angel =
 		end
 
 		af_black_angel.dice_roll = random(100)
-		if af_black_angel.dice_roll <= af_black_angel.reflect_chance[artefact_count] then
+		if af_black_angel.dice_roll <= af_black_angel.reflect_chance[math.min(artefact_count, 5)] then
 			
 			local snd = get_safe_sound_object("perk_based_artefacts\\NLRICO" .. random(1, 4))
 			snd:play_at_pos(db.actor, db.actor:position(), 0, sound_object.s3d)
@@ -75,7 +75,7 @@ perk_based_artefacts.artefact_on_before_hit_functions.af_black_angel =
 perk_based_artefacts.artefact_on_hit_functions.af_black_angel =
 	function(actor, artefact_count, artefact_ids, artefact_names, obj, amount, who, last_hit)
 		local af_black_angel = perk_based_artefacts.artefact_props.af_black_angel
-		if af_black_angel.dice_roll > af_black_angel.reflect_chance[artefact_count] then
+		if af_black_angel.dice_roll > af_black_angel.reflect_chance[math.min(artefact_count, 5)] then
 			--trace("Black Angel not triggered, dice roll %s, chance %s", af_black_angel.dice_roll, af_black_angel.reflect_chance[artefact_count])
 			return
 		end
@@ -173,10 +173,12 @@ perk_based_artefacts.artefact_props.af_sandstone =
 		
 		RemoveTimeEvent("af_sandstone_speed", "af_sandstone_speed")
 		
-		speed.add_speed("af_sandstone_speed_w", 1 + self.g_speed[artefact_count], false, false)
-		speed.add_speed("af_sandstone_speed_s", 1 + self.g_speed[artefact_count], true, false)
+		local adj_arty_count = math.min(artefact_count, 5)
 		
-		local health_boost = self.g_regen[artefact_count]
+		speed.add_speed("af_sandstone_speed_w", 1 + self.g_speed[adj_arty_count], false, false)
+		speed.add_speed("af_sandstone_speed_s", 1 + self.g_speed[adj_arty_count], true, false)
+		
+		local health_boost = self.g_regen[adj_arty_count]
 		
 		if health_boost <= 0 then
 			health_boost = 0
@@ -447,9 +449,11 @@ perk_based_artefacts.artefact_props.af_repei =
 		local pellet_count = ini_sys:r_float_ex(ammo_section, "buck_shot") and ini_sys:r_float_ex(ammo_section, "buck_shot") or 1
 
 		local hit_k = self.hit_coeff
-
-		local chance = self.g_proc[artefact_count]
-		local bleed = self.g_bleed[artefact_count]
+		
+		local adj_arty_count = math.min(artefact_count, 5)
+		
+		local chance = self.g_proc[adj_arty_count]
+		local bleed = self.g_bleed[adj_arty_count]
 
 		s_hit.power = s_hit.power * hit_k
 
