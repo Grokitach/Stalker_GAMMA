@@ -2,6 +2,12 @@ local remove_name
 local is_part
 local act_fieldstrip
 
+local baseUICPII = utils_ui.UICellProperties_item.__init
+utils_ui.UICellProperties_item.__init = function(self)
+    baseUICPII(self)
+    self.textControl:SetTextComplexMode(true)
+end
+
 function on_game_start()
     patch_methods()
 end
@@ -22,9 +28,10 @@ function patched_init(obj)
 
     local parts = item_parts.get_parts_con(obj)
     local num = 0
-    for k,v in spairs(parts, zzzz_arti_jamming_repairs.sort_parts) do
+    for k, v in spairs(parts, zzzz_arti_jamming_repairs.sort_parts) do
         if is_part(k) and not arti_jamming.is_barrel(k) and v > 0 then
-            table.insert(context_str, remove_name(k) .. " (" .. v .. "%)")
+            local clr = utils_xml.get_color_con(v)
+            table.insert(context_str, clr .. remove_name(k) .. " (" .. v .. "%)")
             table.insert(context_action, "remove_part")
             table.insert(context_params, { obj:id(), k, v })
             num = num + 1
