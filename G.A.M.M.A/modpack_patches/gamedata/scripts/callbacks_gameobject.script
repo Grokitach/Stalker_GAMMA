@@ -43,11 +43,6 @@ function game_object_on_net_destroy(obj)
 			end
 		end
 	end
-
-	-- Fix self.response containing deleted object
-	if instance and instance.response and instance.response["who"] and type(instance.response["who"]) == "userdata" and instance.response["who"]:id() == obj:id() then
-		instance.response["who"] = nil
-	end
 end
 
 -- Game objects iterator
@@ -110,7 +105,6 @@ AddScriptCallback("bullet_on_remove")
 -- target_id = game object id of entity the bullet hit (it will be 65535 if bullet hit the terrain or vanished)
 -- material = name of material that bullet hit
 -- life_time = time of bullet fly
--- element - bone_id if the target hit is object, triangle number if its static geometry. -1 if nothing was hit
 
 -- Called when bullet is shot from the weapon
 _G.CBulletOnInit = function(bullet)
@@ -309,18 +303,12 @@ body_state = {
 	move.stand,
 }
 --]]
+local csbs_flags = {}
 AddScriptCallback("npc_on_combat_set_body_state")
 function _G.CAI_Stalker__CombatSetBodyState(npc,world_operator,body_state)
-	local csbs_flags = {body_state = body_state}
+	csbs_flags.body_state = body_state
 	SendScriptCallback("npc_on_combat_set_body_state",npc,world_operator,body_state,csbs_flags)
 	return csbs_flags.body_state
-end
-
-AddScriptCallback("npc_on_before_look_at_actor")
-_G.CNPCBeforeLookAtActor = function(npc, distance)
-	local flags = {ret_value = true}
-	SendScriptCallback("npc_on_before_look_at_actor", npc, distance)
-	return flags.ret_value
 end
 
 -- actor_on_task_callback
@@ -353,26 +341,18 @@ _G.CPickupModeUpdate_COD = function(obj)
 end
 
 --[[
-on_before_play_hud_sound callback, possibility to override sound with another one, or changing the volume of existing sound or both
-Callback returns a table which must contain "section", "line" or "volume_mult" fields, which refer to section and line to load new sounds from, and the volume multiplier.
-Unforturnately, the engine have some limitation regarding its sound's volume, so it can't increase the volume too much.
+on_before_play_hud_sound callback, possibility to override sound with another one
+Callback returns a table which must contain "section" and "line" fields, which refer to section and line to load new sounds from
 
 Arguments
 	Alias: internal sound type in the engine
 	Parent: Parent object of an object that initiated the sound (`actor` when shooting a weapon for example), might be nil
 
-Example:
+Example
 	if alias == "sndShot" and parent and parent:id() == AC_ID then
 		result.section = "wpn_l96a1_sounds"
 		result.line = "snd_shoot"
-		result.volume_mult = 0.75 -- Multiply the fire sound's volume by 0.75
 	end
-
-Or:
-	if alias == "sndShot" and parent and parent:id() == AC_ID then
-		result.volume_mult = 0.5 -- Multiply the fire sound's volume by 0.5
-	end
-	
 
 Possible aliases:
 	"catch_snd"
@@ -413,6 +393,7 @@ Possible aliases:
 	"sndShotActor"
 	"sndShotActorFirst"
 	"sndShotG"
+	"sndShotIndoor"
 	"sndShotMisfire"
 	"sndShotMisfireActor"
 	"sndShow"
@@ -421,6 +402,7 @@ Possible aliases:
 	"sndSilencerShot"
 	"sndSilencerShotActor"
 	"sndSilencerShotActorFirst"
+	"sndSilencerShotIndoor"
 	"sndSilencerShotMisfire"
 	"sndSilencerShotMisfireActor"
 	"sndSwitch"
@@ -435,13 +417,12 @@ AddScriptCallback("on_before_play_hud_sound")
 _G.COnBeforePlayHudSound = function(alias, parent)
 	local result = {
 		section = nil,
-		line = nil,
-		volume_mult = nil
+		line = nil
 	}
 
 	SendScriptCallback("on_before_play_hud_sound", alias, parent, result)
 
-	if (result.section and result.line) or result.volume_mult then
+	if result.section and result.line then
 		return result
 	end
 end
@@ -458,15 +439,6 @@ end
 AddScriptCallback("imgui_on_render")
 function on_imgui_render(name)
 	SendScriptCallback("imgui_on_render", name)
-end
-
---on GAME path build fail callback (can be used when npc tries to get to currently unavailable smart), 
---can be used to intercept and redirect squad to available smart, also can suppress error message with flags.ret_value = false
-AddScriptCallback("npc_on_game_path_build_fail")
-_G.CAI_Stalker__PathBuildFailCallback = function(npc)
-	local flags = {ret_value = true}
-	SendScriptCallback("npc_on_game_path_build_fail",npc,flags)
-	return flags.ret_value
 end
 
 -- Improve NPCs pathfinding by reducing actual anomaly damage radius
@@ -537,21 +509,13 @@ function actor_on_first_update_prefetch()
 	end, db.actor)
 end
 
--- Force update close enough traders
-function npc_on_update(npc)
-	if npc:position():distance_to_sqr(db.actor:position()) < 30^2 then
-		trade_manager.update(npc)
-	end
-end
-
 function on_game_start()
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
 
 	-- Prefetch callbacks. Disabled for now, conflict with SSS
 	-- RegisterScriptCallback("actor_item_to_slot", actor_item_to_slot_prefetch)
 	-- RegisterScriptCallback("actor_on_first_update", actor_on_first_update_prefetch)
-	
-	RegisterScriptCallback("npc_on_update", npc_on_update)
+
 	RegisterScriptCallback("ActorMenu_on_item_after_move", ActorMenu_on_item_after_move)
 	RegisterScriptCallback("anomaly_on_before_activate", anomaly_on_before_activate)
 	RegisterScriptCallback("game_object_on_net_spawn", game_object_on_net_spawn)
