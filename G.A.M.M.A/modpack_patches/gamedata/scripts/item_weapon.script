@@ -1,0 +1,1059 @@
+--[[
+	Last modification: 2020/3/18
+	
+	Ammunition wheel (by Tronex)
+	Suppressor toggle keybind (by TKGP)
+		Modified by Tronex
+		Suppressor Toggle can be binded from keybinds in options
+		2018/9/2 - Removed actor_on_update callback, the script relies on a timer instead. No need to run check at all times
+		
+	Scopes support (by Darryl123)
+--]]
+
+local string_find   = string.find
+local string_gsub   = string.gsub
+
+-------------------------------
+-- SCOPES
+-------------------------------
+local scopes_table = utils_data.collect_sections(ini_sys, {"addons_table"})
+
+local function transfer_item(id)
+	local item = level.object_by_id(id)
+	if not (item) then 
+		return false 
+	end 
+	db.actor:transfer_item(item, db.actor)
+	return true
+end
+
+local function check_scope(addon_sect, weapon_sect)
+	local valid_addons = parse_list(ini_sys, weapon_sect, "scopes")
+	for k, v in pairs(valid_addons) do
+		if (v == addon_sect) then
+			return true
+		end
+	end
+	return false
+end
+
+function get_weapon_slot()
+	local slot = db.actor:active_slot()
+	local item
+	
+	if (slot == 1 or slot == 2 or slot == 3) then
+		item = db.actor:item_in_slot(slot)
+		if (item and IsWeapon(item)) then 
+			return item
+		end
+	end
+	
+	item = db.actor:item_in_slot(1)
+	if (item and IsWeapon(item)) then 
+		return item 
+	end
+	
+	item = db.actor:item_in_slot(2)
+	if (item and IsWeapon(item)) then 
+		return item 
+	end
+	
+	item = db.actor:item_in_slot(3)
+	if (item and IsWeapon(item)) then 
+		return item 
+	end
+end
+
+function attach_scope(item, weapon)
+	-- Return if the addon or weapon aren't valid.
+	if not (item and weapon) then 
+		return 
+	end 
+	
+	-- An addon has already been attached or none can be used.
+	local parent_section = ini_sys:r_string_ex(weapon:section(),"parent_section")
+	if (not parent_section or weapon:section() ~= parent_section) then return end
+	
+	-- Modified weapon does not exist and as such can't be used.
+	local child_section = (parent_section .. "_" .. item:section())
+	if not (ini_sys:section_exist(child_section)) then return end
+	
+	-- Determine whether the addon is valid for the weapon selected.
+	if not (check_scope(item:section(), weapon:section())) then
+		return
+	end
+	
+	-- Create objects for the 'before' and 'after' attachment weapons.
+	local old_weapon = alife_object(weapon:id())
+	local new_weapon = old_weapon and alife_clone_weapon(old_weapon, child_section)
+	if new_weapon then
+		alife_release(item)
+	end
+end
+
+function detach_scope(weapon)
+	-- Return if the weapon is not valid.
+	if not (weapon) then
+		return
+	end
+	
+	-- An addon has not been attached or none can be detached.
+	local parent_section = ini_sys:r_string_ex(weapon:section(),"parent_section")
+	if (not parent_section or weapon:section() == parent_section) then return end
+	
+	-- Get weapon owner
+	local old_weapon = alife_object(weapon:id())
+	local owner = old_weapon and old_weapon.parent_id and get_object_by_id(old_weapon.parent_id)
+	if (not owner) then
+		printf("~ item_weapon.detach_scope | weapon owner not found")
+		return
+	end
+	
+	
+	-- Determine which addon is attached to the weapon.
+	-- Create the item in the actor's inventory when found.
+	for k, v in pairs(scopes_table) do
+		if (string.find(weapon:section(), k)) then
+			--give_object_to_actor(k)
+			alife_create_item(k, owner)
+			break
+		end
+	end
+	
+	-- Create objects for the 'before' and 'after' detachment weapons.
+	local new_weapon = old_weapon and alife_clone_weapon(old_weapon, parent_section)
+end
+
+function menu_scope(weapon)
+	
+	-- Return if the weapon is invalid.
+	if (not weapon) then
+		return
+	end
+	
+	-- Return if the weapon has no parent section.
+	local parent_section = ini_sys:r_string_ex(weapon:section(),"parent_section")
+	if (not parent_section or weapon:section() == parent_section) then
+		return
+	end
+	
+	--[[ Return if the weapon is not in the actor's inventory.
+	local p = weapon:parent()
+	if not (p and p:id() == AC_ID) then 
+		return
+	end
+	--]]
+	
+	-- Return the context option to detach an addon.
+	return game.translate_string("st_detach_scope")
+end
+
+function menu_scope_inv(weapon)
+	
+	-- Return if LUA inventory is enabled, detach scope menu is already included there
+	if ui_inventory.is_enabled() then
+		return
+	end
+	
+	return menu_scope(weapon)
+end
+
+function func_scope(weapon)
+	detach_scope(weapon)
+end
+
+
+-------------------------------
+-- SILENCER
+-------------------------------
+local sil_delay = 1500 -- Additional time (milliseconds) before weapon is reequipped
+local SIL_ATTACH_SOUND = "interface\\inv_attach_addon"
+local SIL_DETACH_SOUND = "interface\\inv_detach_addon"
+
+local sil_info, sil_attach, sil_sound, sil_restore
+
+function test_silencer()
+	if db.actor and not sil_info then
+		local weapon = db.actor:active_item()
+		if weapon and weapon:weapon_silencer_status() == 2 then
+			local supSection = utils_item.get_param(weapon:section(), weapon:id(), "silencer_name", "string")
+			local proceed = false
+			if weapon:weapon_is_silencer() then -- if active weapon has silencer
+				proceed = true
+				sil_attach = false
+			elseif db.actor:object(supSection) then -- if active weapon doesn't have silencer and silencer is in inv
+				proceed = true
+				sil_attach = true
+			end
+			if proceed then
+				db.actor:hide_weapon()
+				sil_info = {id = weapon:id(), section = supSection}
+				CreateTimeEvent(0,"delay_silencer",1,toggle_silencer)
+			end
+		end
+	end
+end
+
+function toggle_silencer()
+	if sil_restore then
+		sil_restore = false
+		db.actor:restore_weapon()
+		RemoveTimeEvent(0,"delay_silencer")
+	end
+	
+	if sil_info and not db.actor:active_item() then
+		local success = false
+		local weapon = level.object_by_id(sil_info.id)
+		if weapon and weapon:parent() and weapon:parent():id() == AC_ID then
+			local newSound
+			if sil_attach then -- if attach the silencer
+				local suppressor = db.actor:object(sil_info.section)
+				if suppressor then
+					weapon:weapon_addon_attach(suppressor)
+					newSound = SIL_ATTACH_SOUND
+					success = true
+				end
+			else -- if de-attach the silencer
+				weapon:weapon_addon_detach(sil_info.section, true)
+				newSound = SIL_DETACH_SOUND
+				success = true
+			end
+			
+			if newSound then
+				if sil_sound then
+					sil_sound:stop()
+				end
+				sil_sound = sound_object(newSound)
+				sil_sound.volume = 1
+				sil_sound:play(db.actor, 0, sound_object.s2d)
+			end
+		end
+		
+		sil_info = nil
+		if success then
+			sil_restore = true
+			ResetTimeEvent(0,"delay_silencer",(sil_delay/1000))
+		else
+			--restore = true
+			db.actor:restore_weapon()
+			RemoveTimeEvent(0,"delay_silencer")
+		end
+	end
+end
+
+
+-------------------------------
+-- AMMO
+-------------------------------
+_G._NO_DAMAGED_AMMO	= true	-- if you want to get verybad ammo, set this to false
+local ui_delay       = 0 -- small hack to prevent instant keybind action (between switching to next ammo type, and start the wheel again)
+local ui_delay_const = 200 -- [ms]
+
+local cache_ammo     = {}
+local nums_dik       = {}
+
+function relocate_ammo_to_actor(actor, npc, section, amount)
+	if not (actor and section and amount and IsItem("ammo",section)) then 
+		return
+	end
+	
+	alife_create_item(section, actor, {ammo = amount})
+	
+	news_manager.relocate_item(actor, "in", section, amount)
+end
+
+function relocate_ammo_from_actor(actor, npc, section, amount)
+	if not (actor and amount) then 
+		return
+	end
+	
+	if (npc == nil) then
+		--printe("!ERROR: Couldn't relocate_item_from_actor | no npc found!")
+	end
+	
+	local box_size = IsItem("ammo",section)
+	if (not box_size) then
+		return
+	end
+	
+	local cnt = amount
+	local keep_itr = true
+	actor:iterate_inventory( function(temp, obj)
+		--printf("~relocate_item_from_actor | checked [%s]", obj:section())
+		if keep_itr and (obj and obj:section() == section) then
+			--printf("-relocate_item_from_actor | found needed section [%s]", section)
+			cnt = cnt - obj:ammo_get_count()
+			if (cnt >= 0) then
+				if npc then
+					actor:transfer_item(obj, npc)
+				else
+					alife_release(obj)
+				end
+				
+				if (cnt == 0) then
+					keep_itr = false
+				end
+			else
+				local remain_1 = -cnt
+				local remain_2 = obj:ammo_get_count() + cnt
+				alife_process_item(section, obj:id(), {ammo = remain_1})
+				if npc then
+					alife_create_item(section, npc, {ammo = remain_2})
+				end
+				keep_itr = false
+			end
+		end
+	end)
+	
+	if cnt > 0 then
+		printe("! ERROR: Couldn't relocate_item_from_actor | not enough item [%s] recolated! need %s more", section, cnt)
+	end
+	
+	news_manager.relocate_item(actor, "out", section, amount)
+end
+
+-- demonized: Ammo aggregation script that waits for game objects to spawn, proceed after
+-- Different aggregation algorithm
+function ammo_aggregation_full(npc_id)
+	-- Some shitty mods send objects there
+	if type(npc_id) == "userdata" then
+		npc_id = type(npc_id.id) == "function" and npc_id:id() or npc_id.id
+	end
+	
+	local npc = level.object_by_id(npc_id)
+	if not npc then
+		return true
+	end
+	local se_npc = alife_object(npc_id)
+	if not se_npc then
+		return true
+	end
+
+	-- printf_me("item_weapon.ammo_aggregation_full %s", npc:name())
+
+	-- Collect all alife ammo objects
+	local ammoObjectIds = {}
+	for id in alife():get_children(se_npc) do
+		local se_item = alife_object(id)
+		if se_item and IsAmmo(nil,se_item:clsid()) then
+			table.insert(ammoObjectIds, id)
+		end
+	end
+
+	-- Wait for objects to come online if any needed
+	CreateTimeEvent("ammo_aggregation_full_wait_for_gobj", npc_id, 0, function()
+		local ammoObjectsBySection = {}
+		for i = #ammoObjectIds, 1, -1 do
+			local id = ammoObjectIds[i]
+
+			-- If for some reason id is not in alife, remove that id
+			if not alife_object(id) then
+				table.remove(ammoObjectIds, i)
+			else
+
+				-- If object is not online - try next frame
+				local obj = level.object_by_id(id)
+				if not obj then return false end
+
+				-- Replace damaged ammo with old, and wait until its online
+				if _NO_DAMAGED_AMMO and string.find(obj:section(), "verybad") then
+					local new_section = string.gsub(obj:section(), "verybad", "bad")
+					if ini_sys:section_exist(new_section) then
+						alife_release(obj)
+						table.remove(ammoObjectIds, i)
+						local new_obj = alife_create_item(new_section, npc, {ammo = obj:ammo_get_count()})
+						if new_obj then
+							table.insert(ammoObjectIds, new_obj.id)
+							return false
+						end
+					end
+				end
+				
+				-- Replace home-made buck ammo with regular type, and wait until its online
+				if (obj:section() == "ammo_12x70_buck_self") then
+					local new_section = "ammo_12x70_buck"
+					if ini_sys:section_exist(new_section) then
+						alife_release(obj)
+						table.remove(ammoObjectIds, i)
+						local new_obj = alife_create_item(new_section, npc, {ammo = obj:ammo_get_count()})
+						if new_obj then
+							table.insert(ammoObjectIds, new_obj.id)
+							return false
+						end
+					end
+				end
+
+				-- If object has less ammo count then possible, add it to process
+				if obj:ammo_get_count() < obj:ammo_box_size() then
+					local sec = obj:section()
+					ammoObjectsBySection[sec] = ammoObjectsBySection[sec] or {}
+					table.insert(ammoObjectsBySection[sec], obj)
+				end	
+			end
+		end
+
+		-- Process not full ammo boxes
+		for sec, objects in pairs(ammoObjectsBySection) do
+
+			-- Sort it first descending
+			table.sort(objects, function(a, b) return a:ammo_get_count() > b:ammo_get_count() end)
+
+			local indexToAddAmmo = 1
+			local currentIndex = #objects
+
+			-- Double loop, fill close to full boxes starting from almost empty boxes
+			while currentIndex > indexToAddAmmo do
+				local curObj = objects[currentIndex]
+				local targetObj = objects[indexToAddAmmo]
+
+				local ammoNeededToAdd = targetObj:ammo_box_size() - targetObj:ammo_get_count()
+				local ammoPossibleToAdd = curObj:ammo_get_count()
+				local ammoToAdd = math.min(ammoNeededToAdd, ammoPossibleToAdd)
+				local ammoResult = targetObj:ammo_get_count() + ammoToAdd
+
+				targetObj:ammo_set_count(ammoResult)
+
+				-- Release empty box and move to the next small one
+				if ammoToAdd == ammoPossibleToAdd then
+					alife_release_id(curObj:id())
+					currentIndex = currentIndex - 1
+				else
+					-- Decrease amount of ammo in box
+					curObj:ammo_set_count(curObj:ammo_get_count() - ammoToAdd)
+				end
+
+				-- If box is filled, move to the next big one
+				if ammoResult == targetObj:ammo_box_size() then
+					indexToAddAmmo = indexToAddAmmo + 1
+				end
+			end
+		end
+
+		return true
+	end)
+
+	return true
+end
+
+-- Perform full ammo aggregation when ammo is picked up
+-- No reason to check for a specific object since we iterate all inventory anyway
+function ammo_aggregation(obj, npc)
+	if IsAmmo(obj) and obj:parent() then
+
+		-- Do on next frame in order to combine all calls on a frame into one, in case of picking multiple ammo items at once
+		-- Ensure parent is still online
+		local parent_id = obj:parent():id()
+		CreateTimeEvent("ammo_aggregation_next_frame", ("%s_%s"):format(device():time_global(), parent_id), 0, function()
+			local parent = level.object_by_id(parent_id)
+			if parent then
+				-- printf_me("item_weapon.ammo_aggregation %s", parent:name())
+				ammo_aggregation_full(parent_id)
+			end
+			return true
+		end)	
+	end
+	return true
+end
+
+function ammo_injection(obj_1, obj_2, sec_1, sec_2)
+	-- Gather weapon's ammo list
+	local ammo_list = utils_item.get_ammo(obj_2:section(), obj_2:id(), true)
+	if (not ammo_list[sec_1]) then
+		return
+	end
+	
+	-- Gather ammo box count and full size
+	local ammo_list_n = utils_item.get_ammo(obj_2:section(), obj_2:id())
+	local ammo_count = obj_1:ammo_get_count()
+	--local ammo_box_size = obj_1:ammo_box_size()
+
+	-- Gather weapon info
+	local wpn_ammo_type = obj_2:get_ammo_type()
+	local wpn_ammo_sec = ammo_list_n[wpn_ammo_type + 1]
+	local wpn_ammo_elapsed = obj_2:get_ammo_in_magazine()
+	local wpn_ammo_mag_size = ini_sys:r_u32(sec_2, "ammo_mag_size")
+	local wpn_one_shot = (ini_sys:r_string_ex(sec_2, "tri_state_reload") == "on") or (ini_sys:r_string_ex(sec_2, "class") == "WP_BM16")
+
+	-- If the ammo type is different from new ammo box -> throw weapon's ammo in inventory + change weapon's ammo type
+	local is_ammo_same = (wpn_ammo_sec == sec_1)
+	if (not is_ammo_same) then
+
+		if (wpn_ammo_elapsed > 0) then
+			alife_create_item(wpn_ammo_sec, db.actor, { ammo = wpn_ammo_elapsed })
+			obj_2:unload_magazine()
+			wpn_ammo_elapsed = 0
+		end
+		
+		for i=1,#ammo_list_n do
+			if (ammo_list_n[i] == sec_1) then
+				local wpn_ammo_new_type = (i - 1)
+				obj_2:set_ammo_type(wpn_ammo_new_type)
+				break
+			end
+		end
+	end
+
+	local ammo_to_wpn = wpn_ammo_mag_size - wpn_ammo_elapsed
+	if (wpn_one_shot) then 
+		ammo_to_wpn = clamp(ammo_to_wpn,0,1)
+	end
+
+	local ammo_from_box = clamp(ammo_to_wpn,0,ammo_count)
+	if (ammo_from_box > 0) then
+
+		-- Adjust ammo box size that got taken from
+		if (ammo_count > ammo_from_box) then
+			obj_1:ammo_set_count(ammo_count - ammo_from_box)
+		else
+			alife_release_id(obj_1:id())
+		end
+
+		-- Set the ammo size added to weapon
+		obj_2:set_ammo_elapsed(wpn_ammo_elapsed + ammo_from_box)
+		local prev_state = obj_2:get_state()
+
+		-- Play reload effect
+		if wpn_one_shot then
+			xr_sound.set_sound_play(AC_ID,"reload_shell")
+			level.add_cam_effector("camera_effects\\switch\\low" .. math.random(1,4) .. ".anm", 23239, false,'')
+		else
+			actor_effects.play_item_fx("reload_weapon_fast")
+			local snd_reload = ini_sys:r_string_ex(sec_2,"snd_reload")
+			utils_obj.play_sound(snd_reload)
+		end
+	end
+end
+
+function unload_all_weapons()
+	db.actor:iterate_ruck( function(temp,obj)	
+		if IsWeapon(obj) and (not IsItem("fake_ammo_wpn",obj:section())) then
+			obj:force_unload_magazine(true)
+		end
+	end)
+end
+
+function clear_cache(obj)
+	if obj then
+		cache_ammo[obj:id()] = nil
+	else
+		empty_table(cache_ammo)
+	end
+end
+
+function remove_extra_ammo(npc_id)
+	local se_npc = alife_object(npc_id)
+	if (not se_npc) then
+		return
+	end
+	
+	-- Collect ammo list
+	local t = {}
+	for id in alife():get_children(se_npc) do
+		local se_item = alife_object(id)
+		if se_item and IsAmmo(nil,se_item:clsid())then
+			local sec = se_item:section_name()
+			t[sec] = t[sec] or {}
+			t[sec][se_item.id] = true
+		end
+	end
+	
+	-- Release all extra ammo, keep one box per section
+	local cnt = 0
+	for sec,v in pairs(t) do
+		if size_table(v) > 1 then
+			--printf("NPC [%s] has %s [%s]", se_npc:name(), size_table(v), sec)
+			local ignore_once = false
+			for id,_ in pairs(v) do
+				if (not ignore_once) then
+					ignore_once = true
+				else
+					cnt = cnt + 1
+					alife_release_id(id)
+				end
+			end
+		end
+	end
+	
+	--[[
+	if cnt > 1 then
+		printf("~Release (%s) ammo box from NPC [%s]", cnt, se_npc:name())
+	end
+	--]]
+end
+
+
+-------------------------------------------------------------------
+GUI = nil -- instance, don't touch
+local aw_cooldown = 0
+
+function start_ammo_wheel()
+	local wpn = db.actor:active_item()
+	if wpn and IsWeapon(wpn) and (not IsItem("fake_ammo_wpn",wpn:section())) then
+	
+		hide_hud_inventory()
+		
+		if (not GUI) then
+			GUI = UIWheelAmmo()
+		end
+	
+		if (GUI) and (not GUI:IsShown()) then
+			GUI:ShowDialog(true)
+			GUI:Reset(wpn)
+			
+			aw_cooldown = time_global()
+			
+			Register_UI("UIWheelAmmo","item_weapon")
+		end
+	end
+end
+
+class "UIWheelAmmo" (CUIScriptWnd)
+
+function UIWheelAmmo:__init() super()
+	self.object    = nil
+	self.id        = nil
+	self.section   = nil
+	self.ammo_type = nil
+	self.ammo_list = {}
+	
+	self.ammo_max = 12
+	self.show_verybad = (not _NO_DAMAGED_AMMO) 
+	self.ammo_inv = {}
+	self.avail     = {}
+	self.key = {}
+	
+	for i=1,9 do
+		nums_dik[ DIK_keys["DIK_" .. i] ] = i
+		nums_dik[ DIK_keys["DIK_NUMPAD" .. i] ] = i
+	end
+	
+	self:InitControls()
+	self:InitCallBacks()
+end
+
+function UIWheelAmmo:__finalize()
+end
+
+function UIWheelAmmo:InitControls()
+	self:SetWndRect			(Frect():set(0,0,1024,768))
+	self:SetAutoDelete(true)
+	self:AllowMovement(true)
+	
+	self.xml				= CScriptXmlInit()
+	local xml = self.xml
+	xml:ParseFile			("ui_wheel_ammo.xml")
+
+	self.dialog	= xml:InitStatic("wheel", self)
+	self.background = xml:InitStatic("wheel:background", self.dialog)
+	self.extended = xml:InitStatic("wheel:extended", self.dialog)
+	
+	local box_type = self.show_verybad and ":all" or ":alt"
+	self.box_r = xml:InitStatic("wheel:result", self.dialog)
+	self.box_icon_tmp_r = xml:InitStatic("ammo:icon", self.box_r)
+	
+	self.box = {}
+	self.box_icon = {}
+	self.box_icon_r = {}
+	self.box_icon_tmp = {}
+	self.box_num = {}
+	self.box_txt = {}
+	self.box_txt_r = {}
+	self.box_btn = {}
+	self.box_hl_1 = {}
+	self.box_hl_2 = {}
+	for i=1,self.ammo_max do
+		self.box[i]          = xml:InitStatic("wheel" .. box_type .. ":box_" .. i, self.dialog)
+		self.box_hl_1[i]     = xml:InitStatic("ammo:highlight", self.box[i])
+		self.box_hl_2[i]     = xml:InitStatic("ammo:highlight", self.box[i])
+		self.box_icon[i]     = xml:InitStatic("ammo:icon", self.box[i])
+		self.box_icon_tmp[i] = xml:InitStatic("ammo:icon", self.box[i])
+		self.box_num[i]      = xml:InitTextWnd("ammo:num", self.box[i])
+		self.box_txt[i]      = xml:InitTextWnd("ammo:text", self.box[i])
+		self.box_btn[i]      = xml:Init3tButton("ammo:btn", self.box[i])
+		self:Register(self.box_btn[i],"btn_" .. i)
+
+		self.box_icon_r[i]   = xml:InitStatic("ammo:icon", self.box_r)
+		self.box_txt_r[i]    = xml:InitTextWnd("ammo:text_r", self.box_r)
+	end
+end
+
+function UIWheelAmmo:InitCallBacks()
+	for i=1,self.ammo_max do
+		local _wrapper = function(handler) -- we need wrapper in order to pass ctrl to method
+			self:OnAmmo(i)
+		end
+		self:AddCallback("btn_" .. i, ui_events.BUTTON_CLICKED, _wrapper, self)
+	end
+end
+
+function UIWheelAmmo:Update()
+	CUIScriptWnd.Update(self)
+	
+	for i=1,self.ammo_max do
+		if self.box_btn[i] then
+			if self.box_btn[i]:IsCursorOverWindow() then
+				self.box_icon_r[i]:Show(true)
+				self.box_txt_r[i]:Show(true)
+			else
+				self.box_icon_r[i]:Show(false)
+				self.box_txt_r[i]:Show(false)
+			end
+		end
+	end
+end
+
+function get_grenades(section)
+	local s = ini_sys:r_string_ex(section, "grenade_class")
+	local x = s and str_explode(s,",")
+	return x
+end
+
+function UIWheelAmmo:Reset(obj)
+	self.object    = obj
+	self.id        = obj:id()
+	self.section   = obj:section()
+	self.ammo_type = obj:get_ammo_type()
+	self.grenade_mode = obj:weapon_in_grenade_mode() and true or false
+
+	-- Collect weapon's ammo list
+	if (not cache_ammo[self.id]) then
+		cache_ammo[self.id] = utils_item.get_ammo(self.section, self.id)
+		
+		-- Cut anything with more than 12 ammo types
+		if (#cache_ammo[self.id] > self.ammo_max) then
+			for i=self.ammo_max, #cache_ammo[self.id] do
+				cache_ammo[self.id][i] = nil
+			end
+		end
+	end
+	
+	
+	self.ammo_list = self.grenade_mode and get_grenades(self.section) or cache_ammo[self.id]
+
+	if not self.ammo_list then
+		printf("ERROR: could not find ammo list for [%s] - grenade mode: %s", self.section, self.grenade_mode)
+		self:Close()
+	end
+	
+	
+	-- Collect all ammo in inventory
+	empty_table(self.ammo_inv)
+	local function itr(temp, itm)
+		local section = itm:section()
+		if IsItem("ammo",section) or IsItem("grenade_ammo",section) then
+			self.ammo_inv[section] = (self.ammo_inv[section] or 0) + itm:ammo_get_count()
+		end
+	end
+	db.actor:iterate_inventory(itr, nil)
+
+	-- Reset XML elements
+	self.extended:Show((#self.ammo_list > 9) and (self.ammo_list[10] ~= "ammo_12x70_buck_self"))
+	--self.box_r:Show(false)
+	
+	local cnt = 0
+	empty_table(self.key)
+	for i=1,self.ammo_max do
+		local section = self.ammo_list[i]
+		local found_verybad = section and string.find(section,"verybad") and true or false
+		if section and (section ~= "ammo_12x70_buck_self") and ( self.show_verybad or ( (not self.show_verybad) and (not found_verybad) ) ) then
+			
+			-- Show box and highlighted ammo
+			local is_curr_ammo = (self.ammo_type == (i - 1))
+			self.box[i]:Show(true)
+			self.box_hl_1[i]:Show(is_curr_ammo)
+			self.box_hl_2[i]:Show(is_curr_ammo)
+			
+			self.avail[i] = self.ammo_inv[section] and (self.ammo_inv[section] > 0) and true or false
+			utils_xml.set_icon(section, (not self.avail[i]), self.box_icon[i], self.box_icon_tmp[i])
+			utils_xml.set_icon(section, nil, self.box_icon_tmp_r, self.box_icon_r[i])
+			
+			cnt = cnt + 1
+			self.key[cnt] = i
+			if self.avail[i] and i <= 9 then
+				self.box_num[i]:SetText(cnt)
+			else
+				self.box_num[i]:SetText("")
+			end
+			
+			-- Show ammo count
+			self.box_txt[i]:SetText("x" .. (self.avail[i] and self.ammo_inv[section] or 0))
+			self.box_txt_r[i]:SetText( ui_item.get_sec_name(section) )
+		else
+			self.avail[i] = false
+			self.box[i]:Show(false)
+		end
+	end
+end
+
+function UIWheelAmmo:SwitchNextAmmo()
+	local wpn = db.actor:active_item()
+	if wpn and (wpn:section() == self.section) then
+		
+		local new_type
+		local ammo_type = wpn:get_ammo_type()
+		
+		-- Search for available next ammo types
+		for i=(ammo_type + 2),self.ammo_max do -- +2 because we need next type (+1 is the current type in ammo table)
+			if self.avail[i] then
+				new_type = i
+				break
+			end
+		end
+		
+		-- Search for available earlier ammo types
+		if (not new_type) then
+			for i=1,ammo_type do
+				if self.avail[i] then
+					new_type = i
+					break
+				end
+			end
+		end
+		
+		if new_type then
+			wpn:unload_magazine(true)
+			wpn:set_ammo_type(new_type - 1) -- ammo type starts from 0
+			db.actor:reload_weapon()
+		end
+	end
+
+	self:Close()
+end
+
+function UIWheelAmmo:OnAmmo(n)
+	local wpn = db.actor:active_item()
+	if wpn and (wpn:section() == self.section) and self.avail[n] then
+		
+		local ammo_type = wpn:get_ammo_type()
+		if (ammo_type ~= n - 1) then
+			wpn:unload_magazine(true)
+			wpn:set_ammo_type(n - 1) -- ammo type starts from 0
+			db.actor:reload_weapon()
+		end
+	end
+
+	self:Close()
+end
+
+function UIWheelAmmo:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+	if (res == false) then
+		if keyboard_action == ui_events.WINDOW_KEY_RELEASED then
+			if (time_global() < aw_cooldown + 100) then
+				return
+			end
+			
+			local bind = dik_to_bind(dik)
+			local num = nums_dik[dik]
+			if (bind == key_bindings.kWPN_NEXT) then
+				ui_delay = time_global() + ui_delay_const				
+				self:SwitchNextAmmo()
+			elseif num and self.key[num] then
+				self:OnAmmo( self.key[num] )
+			elseif (bind == key_bindings.kQUIT or bind == key_bindings.kUSE) then
+				self:Close()
+			end
+		end
+	end
+	return res
+end
+
+function UIWheelAmmo:Close()
+	if self:IsShown() then
+		self:HideDialog()
+		self:Show(false)
+		
+		Unregister_UI("UIWheelAmmo")
+	end
+end
+
+
+-------------------------------
+-- OVERHEAT
+-------------------------------
+can_overheat = true
+
+local overheat_threshold = 100
+local time_quant
+local decrease_quant
+
+local max_overheat = 150
+
+local overheat = 0
+local smoke
+local last_wpn_id
+
+function update_overheat()
+
+	if overheat < overheat_threshold then
+		decrease_quant = 0.2
+	else
+		decrease_quant = 0.1
+	end
+
+
+	local wpn = db.actor:active_item()
+	if not wpn then return end
+	if (string.match(tostring(wpn:section()),"knife") or string.match(tostring(wpn:section()),"axe")) then return end
+	
+	
+	if IsWeapon(wpn) then
+		-- reset overheat value on weapon change
+		if not (last_wpn_id) then
+			last_wpn_id = wpn:id()
+		end
+
+		if (last_wpn_id ~= wpn:id()) then
+			overheat = 0
+			last_wpn_id = wpn:id()
+		end
+
+		if not (can_overheat) then
+			return
+		end
+
+		local rpm = ui_wpn_params.GetRPM(wpn:section())
+		
+		-- Grab packet data
+		local se_wpn = alife_object(wpn:id())
+		local data = utils_stpk.get_weapon_data(se_wpn)
+
+		if not data then return end
+		
+		--printf("RPM: "..rpm)
+		time_quant = rpm/100
+		
+		-- Check if weapon firing
+		if (data.weapon_state == 5) then
+
+			-- increase overheat quantity over time
+			overheat = overheat + time_quant <= max_overheat and overheat + time_quant or max_overheat
+
+		else
+			-- Stop playing particle if value less then threshold
+			if (overheat < overheat_threshold) then
+				if (smoke and smoke:playing()) then
+					smoke:stop()
+				end
+			end
+		end
+		
+		--printf("-heat: "..overheat.."/"..overheat_threshold)
+
+		-- if overheating greater then threshold
+		if (overheat >= overheat_threshold) then
+			-- create particle if not exist
+			if not (smoke) then
+				smoke = particles_object("industrial_particles\\weapon_smoke")
+			end
+
+			-- play at bone position
+			if not (smoke:playing()) then
+				smoke:play_at_pos( wpn:bone_position("wpn_body") )
+			end
+
+			-- move to firepoint
+			local hud = utils_data.read_from_ini(nil,wpn:section(),"hud","string",nil)
+			local fire_bone = utils_data.read_from_ini(nil,hud,"fire_bone","string",nil) or "wpn_body"
+			local offset = utils_data.read_from_ini(nil,hud,"fire_point","string",nil) or VEC_ZERO
+			offset = offset and utils_data.string_to_vector(offset)
+			smoke:move_to( wpn:bone_position(fire_bone), offset )
+		end
+
+		-- decrease quantity over time
+		overheat = overheat - decrease_quant >= 0 and overheat - decrease_quant or 0
+	end
+end
+
+
+-------------------------------
+-- CALLBACKS
+-------------------------------
+local function actor_on_item_use(item)
+	-- Attachments
+	if (scopes_table[item:section()]) then
+		attach_scope(item,get_weapon_slot())
+	end
+	
+	-- Multi-Tool (Compatibility)
+	if (item:section() == "addons_box") then
+		detach_scope(get_weapon_slot())
+	end
+end
+
+local function on_item_drag_dropped(obj_1, obj_2, slot_from, slot_to)
+
+	-- Check capability
+	if not (slot_from == EDDListType.iActorBag and (slot_to == EDDListType.iActorBag or slot_to == EDDListType.iActorSlot)) then
+        return
+    end
+	
+	local parent = obj_2:parent()
+	if not (IsWeapon(obj_2) and parent and parent:id() == AC_ID) then
+		return
+	end
+	
+	local sec_1 = obj_1:section()
+	local sec_2 = obj_2:section()
+	
+	-- Inject ammo
+	if IsItem("ammo",sec_1) then
+		--ammo_injection(obj_1, obj_2, sec_1, sec_2)
+		
+	-- Attach scope
+	elseif (check_scope(sec_1, sec_2)) then
+		attach_scope(obj_1, obj_2)
+	end
+end
+
+local function on_key_release(key)
+	local bind = dik_to_bind(key)
+	
+	-- Ammo wheel
+	if (bind == key_bindings.kWPN_NEXT) and (time_global() > ui_delay) then
+		start_ammo_wheel()
+		
+	-- Toggle silencer
+	elseif (bind == key_bindings.kCUSTOM13) then
+		test_silencer()
+		
+	-- Unload all weapons
+	elseif (bind == key_bindings.kCUSTOM15) then
+		unload_all_weapons()
+		
+	end
+end
+
+local function actor_on_update()
+	update_overheat()
+end
+
+local function move(npc_id, obj, mode, bag_from)
+	if mode == "loot" and bag_from == EDDListType.iActorBag and IsAmmo(obj) then
+		CreateTimeEvent("box", "box_agg", 0, function(ammo_id, box_id)
+			local box = get_object_by_id(box_id)
+			local ammo = get_object_by_id(ammo_id)
+			if box and ammo then  
+				ammo_aggregation(ammo, box)
+			end
+			return true
+		end, obj:id(), npc_id)
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("ActorMenu_on_item_drag_drop",on_item_drag_dropped)
+	RegisterScriptCallback("on_key_release",on_key_release)
+	RegisterScriptCallback("actor_on_update",actor_on_update)
+	RegisterScriptCallback("ActorMenu_on_item_after_move", move)
+	if (ini_sys:section_exist("addons_table")) then
+		--[[
+		local snd_targets = get_console_cmd(2,"snd_targets")
+		if (snd_targets < 32) then
+			exec_console_cmd("snd_targets 32")
+			exec_console_cmd("snd_restart")
+		end
+		--]]
+		RegisterScriptCallback("actor_on_item_use", actor_on_item_use)
+	end
+end
