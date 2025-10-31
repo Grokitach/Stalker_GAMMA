@@ -1,0 +1,162 @@
+-------------------------------------------------------------------------------
+-- ImGui
+-- Group Manager
+-------------------------------------------------------------------------------
+--
+-- Implements an extensible grouping system for ImGui widgets,
+-- providing a common interface for shareable UI containers.
+--
+-- Modders are advised to structure their ImGui interfaces with groups,
+-- as they allow new elements to be added by downstream code.
+-- For instance: Other scripts within the same mod, patches, or extension mods.
+--
+-- Usage:
+-- Groups correspond to widget IDs passed to the `imgui_on_render` callback,
+-- and should be given in CamelCase by convention.
+--
+-- A group can be registered by calling `ImGui.Groups.Add(<group name>)`,
+-- which will allocate widget storage, and implement
+-- `<group name>.Widget` and `<group name>.Render` on `ImGui.Groups`.
+--
+-- For instance:
+-- `ImGui.Groups.Add("MyGroup")`
+-- Will create:
+-- `ImGui.Groups.MyGroup.Widget(<widget function>)`
+-- `ImGui.Groups.MyGroup.Render()`
+--
+-- Widgets can be registered to a group by calling its registrar,
+-- or using `ImGui.Groups.Widget(<group name>, <widget function>)`.
+-- If the given group does not exist when using the latter syntax,
+-- it will be added automatically.
+--
+-- Groups can be drawn by calling their renderer function,
+-- or via `ImGui.Groups.Render(<group name>)`.
+-- This will render all widgets registered to the group,
+-- in the order they were registered.
+-- Attempting to render an unregistered group is an error.
+--
+-- Built-in groups:
+-- Main - Default group, renders only when the overlay is visible
+-- MenuBar - Built-in overlay menu bar group
+-- Unique - Renders every frame, independent of the ImGui overlay
+-- Debug - Built-in MenuBar entry to hold debugging tools
+-- Mods - Built-in MenuBar entry to hold individual mod UIs
+--
+-- Basic Example:
+-- -- Register MyGroup
+-- ImGui.Groups.Add("MyGroup")
+--
+-- -- Register a 'main widget' that always draws in MyGroup
+-- ImGui.Groups.MyGroup.Widget(function() <ImGui drawing code> end)
+--
+-- -- Add the MyGroup render function to Main so it draws in the overlay
+-- ImGui.Groups.MyGroup.Render(ImGui.Groups.RenderMyGroup)
+--
+-- -- Downstream code may now call `ImGui.Groups.MyGroup.Widget` to extend it
+--
+-------------------------------------------------------------------------------
+-- Implemented by Lander
+-------------------------------------------------------------------------------
+
+-- Inject namespace into ImGui
+ImGui.Groups = {}
+
+-- Add a group with the given NAME
+function ImGui.Groups.Add(name)
+    if ImGui.Groups[name] ~= nil then
+        printf("~ Warning: ImGui group %s already exists", name)
+        return
+    end
+
+    -- Create a container for this group's widgets
+    ImGui.Groups[name] = {_widgets = {}}
+
+    -- Implement a function for adding a widget to this group
+    ImGui.Groups[name].Widget = function(widget)
+        ImGui.Groups.Widget(name, widget)
+    end
+
+    -- Implement a function for rendering this group
+    ImGui.Groups[name].Render = function()
+        ImGui.Groups.Render(name)
+    end
+end
+
+-- Register WIDGET to render in GROUP
+function ImGui.Groups.Widget(group, widget)
+    assert(type(group) == "string", "ID is not a string")
+    assert(type(widget) == "function", "Widget is not a function")
+    
+    -- Lazily allocate storage and registrar for this group
+    if ImGui.Groups[group] == nil then
+        ImGui.Groups.Add(group)
+    end
+
+    -- Add the given widget to it
+    table.insert(ImGui.Groups[group]._widgets, widget)
+end
+
+-- Render all widgets registered to GROUP
+function ImGui.Groups.Render(group)
+    if type(group) ~= "string" then
+        error("Group name is not a string: " .. tostring(group))
+    end
+
+    if ImGui.Groups[group] == nil then
+        error("Group name is not registered: " .. tostring(group))
+    end
+    
+    SendScriptCallback("imgui_on_render", group)
+end
+
+-- Entrypoint
+function on_game_start()
+    -- Register group rendering callback
+    RegisterScriptCallback(
+        "imgui_on_render",
+        function(name)
+            -- If a group exists with the given name
+            if ImGui.Groups[name] then
+                -- Render all widgets registered to it
+                for _,f in ipairs(ImGui.Groups[name]._widgets) do
+                    f()
+                end
+            end
+        end
+    )
+end
+
+-- Built-in groups
+
+--- Main, renders with the ImGui overlay
+ImGui.Groups.Add("Main")
+
+--- MenuBar, renders the overlay menu bar
+ImGui.Groups.Add("MenuBar")
+
+--- Unique, renders unconditionally
+ImGui.Groups.Add("Unique")
+AddUniqueCall(ImGui.Groups.Unique.Render)
+
+--- Debug, provides a shared menu for tooling (inspectors, editors, etc.)
+ImGui.Groups.Add("Debug")
+
+local RenderDebug = ImGui.Groups.Debug.Render
+ImGui.Groups.MenuBar.Widget(function()
+    if ImGui.BeginMenu("Debug") then
+        RenderDebug()
+        ImGui.EndMenu()
+    end
+end)
+
+--- Mods, provides a shared menu for simple mod UIs
+ImGui.Groups.Add("Mods")
+
+local RenderMods = ImGui.Groups.Mods.Render
+ImGui.Groups.MenuBar.Widget(function()
+     if ImGui.BeginMenu("Mods") then
+        RenderMods()
+        ImGui.EndMenu()
+    end
+end)
+
