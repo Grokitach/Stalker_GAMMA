@@ -1,0 +1,562 @@
+class "UIFactionIDHUD"(CUIScriptWnd)
+
+local xml
+local smallPatches = false
+local SMALL = vector2():set(18, 24)
+local NORMAL = vector2():set(24, 32)
+
+local factions = {
+    ["stalker"] = "ui_mm_faction_stalker",
+    ["bandit"] = "ui_mm_faction_bandit",
+    ["csky"] = "ui_mm_faction_csky",
+    ["army"] = "ui_mm_faction_army",
+    ["freedom"] = "ui_mm_faction_freedom",
+    ["dolg"] = "ui_mm_faction_dolg",
+    ["ecolog"] = "ui_mm_faction_ecolog",
+    ["killer"] = "ui_mm_faction_killer",
+    ["monolith"] = "ui_mm_faction_monolith",
+    ["greh"] = "ui_mm_faction_greh",
+    ["renegade"] = "ui_mm_faction_renegade",
+    ["isg"] = "ui_mm_faction_isg",
+
+    ["stalker_dead"] = "ui_mm_faction_stalker_inactive",
+    ["bandit_dead"] = "ui_mm_faction_bandit_inactive",
+    ["csky_dead"] = "ui_mm_faction_csky_inactive",
+    ["army_dead"] = "ui_mm_faction_army_inactive",
+    ["freedom_dead"] = "ui_mm_faction_freedom_inactive",
+    ["dolg_dead"] = "ui_mm_faction_dolg_inactive",
+    ["ecolog_dead"] = "ui_mm_faction_ecolog_inactive",
+    ["killer_dead"] = "ui_mm_faction_killer_inactive",
+    ["monolith_dead"] = "ui_mm_faction_monolith_inactive",
+    ["greh_dead"] = "ui_mm_faction_greh_inactive",
+    ["renegade_dead"] = "ui_mm_faction_renegade_inactive",
+    ["isg_dead"] = "ui_mm_faction_isg_inactive",
+
+    ["unknown"] = "ui_mm_faction_unknown"
+}
+
+function UIFactionIDHUD:__init()
+    super()
+    self.ratio = utils_xml.screen_ratio()
+
+    xml = CScriptXmlInit()
+    xml:ParseFile("ui_patches.xml")
+
+    self.kpatch = xml:InitStatic("patch", self)
+    self.upatch = xml:InitStatic("patch_unknown", self)
+
+    self.name = xml:InitTextWnd("name", self)
+    self.rank = xml:InitTextWnd("rank", self)
+
+    self.kpatch:Show(false)
+    self.upatch:Show(false)
+
+    self.name:SetText("")
+    self.rank:SetText("")
+
+    self:updateCFG()
+end
+
+function UIFactionIDHUD:updateCFG()
+    if smallPatches then
+        self.kpatch:SetWndSize(SMALL)
+        self.upatch:SetWndSize(SMALL)
+    else
+        self.kpatch:SetWndSize(NORMAL)
+        self.upatch:SetWndSize(NORMAL)
+    end
+end
+
+function UIFactionIDHUD:__finalize()
+end
+
+function UIFactionIDHUD:Reset()
+    self.kpatch:Show(false)
+    self.upatch:Show(false)
+
+    self.name:SetText("")
+    self.rank:SetText("")
+end
+
+local tickSpeed = 200
+
+function dot_eye(position)
+    local toPoint = vector():set(position):sub(device().cam_pos):normalize()
+    local toEye = device().cam_dir
+    local dot = toPoint:dotproduct(toEye)
+
+    return dot
+end
+
+HUD = nil
+
+function activate_hud()
+    RegisterScriptCallback("actor_on_net_destroy", actor_on_net_destroy)
+
+    if HUD == nil then
+        HUD = UIFactionIDHUD()
+        get_hud():AddDialogToRender(HUD)
+    end
+    -- HUD:Update(true)
+end
+
+function deactivate_hud()
+    if HUD ~= nil then
+        get_hud():RemoveDialogToRender(HUD)
+        HUD = nil
+    end
+
+    UnregisterScriptCallback("actor_on_net_destroy", actor_on_net_destroy)
+end
+
+function on_screen_resolution_changed()
+    deactivate_hud()
+    activate_hud()
+end
+
+function actor_on_net_destroy()
+    if HUD ~= nil then
+        get_hud():RemoveDialogToRender(HUD)
+        HUD = nil
+    end
+end
+
+function actor_on_first_update()
+    activate_hud()
+end
+
+local deadID = true
+local nameID = true
+local timeID = true
+local rankID = true
+local talkName = true
+local talkRank = false
+local speedID = 1
+local targetLenience = 0.984
+
+local xo = 108
+local yo = 665
+
+local xp = 0
+local yp = 0
+
+local xn = 16
+local yn = -14
+
+local xr = 16
+local yr = 3
+
+local r = 200
+local g = 200
+local b = 200
+
+local rr = 150
+local rg = 150
+local rb = 150
+
+local onlyZoomed = false
+local textAlign = 0
+
+local zoomed = false
+local changed = false
+
+local detectionDistanceMin = 625    -- this is squared distance, so actually 25m
+local detectionDistanceMax = 22500    -- this is squared distance, so actually 150m
+local detectionTimeMin = 750        -- if detection is not instant, how long it takes at minimum distance, in ms
+local detectionTimeMax = 10000        -- if detection is not instant, how long it takes at maximum distance and beyond, in ms
+
+local detectionKoeff = 1
+
+local function updateDetectionKoeff()
+    detectionKoeff = (detectionTimeMax - detectionTimeMin) / (detectionDistanceMax - detectionDistanceMin)
+end
+
+local function updateHUD()
+    if HUD then
+        HUD:updateCFG()
+    end
+end
+
+function loadsettings()
+    if ui_mcm then
+        -- here we test to make sure ui_mcm exists before trying to call it's get function.
+        deadID = ui_mcm.get("targetID/deadID")
+        nameID = ui_mcm.get("targetID/nameID")
+        timeID = ui_mcm.get("targetID/timeID")
+        rankID = ui_mcm.get("targetID/rankID")
+        talkName = ui_mcm.get("targetID/talkName")
+        talkRank = ui_mcm.get("targetID/talkRank")
+        smallPatches = ui_mcm.get("targetID/smallPatches")
+        speedID = clamp(ui_mcm.get("targetID/speedID"), 0.3, 3)
+        local distance = ui_mcm.get("targetID/detectDistance")
+        detectionDistanceMin = distance * distance
+
+        targetLenience = ui_mcm.get("targetID/targL")
+
+        xo = ui_mcm.get("targetID/xo")
+        yo = ui_mcm.get("targetID/yo")
+        xp = ui_mcm.get("targetID/xp")
+        xn = ui_mcm.get("targetID/xn")
+        xr = ui_mcm.get("targetID/xr")
+        yp = ui_mcm.get("targetID/yp")
+        yn = ui_mcm.get("targetID/yn")
+        yr = ui_mcm.get("targetID/yr")
+
+        r = ui_mcm.get("targetID/colorR")
+        g = ui_mcm.get("targetID/colorG")
+        b = ui_mcm.get("targetID/colorB")
+        rr = ui_mcm.get("targetID/RcolorR")
+        rg = ui_mcm.get("targetID/RcolorG")
+        rb = ui_mcm.get("targetID/RcolorB")
+
+        onlyZoomed = ui_mcm.get("targetID/onlyZoomed")
+        textAlign = ui_mcm.get("targetID/textAlign")
+
+        changed = true
+    end
+    updateDetectionKoeff()
+    updateHUD()
+end
+
+function on_mcm_load()
+    op = { id = "targetID", sh = true, gr = {
+        { type = "title", text = "ui_mcm_menu_targetID_title_basic" },
+        { id = "deadID", type = "check", val = 1, def = true },
+        { id = "nameID", type = "check", val = 1, def = true },
+        { id = "talkName", type = "check", val = 1, def = true },
+        { id = "rankID", type = "check", val = 1, def = true },
+        { id = "talkRank", type = "check", val = 1, def = false },
+        { id = "smallPatches", type = "check", val = 1, def = false },
+        { id = "timeID", type = "check", val = 1, def = true },
+        { id = "speedID", type = "track", val = 2, def = 1.0, min = 0.3, max = 3.0, step = 0.1 },
+        { id = "detectDistance", type = "track", val = 2, def = 25, min = 5, max = 75, step = 1 },
+        { id = "targL", type = "track", val = 2, def = 0.984, min = 0.8, max = 1.0, step = 0.001 },
+        { id = "onlyZoomed", type = "check", val = 1, def = false },
+        { type = "line" },
+
+        { type = "title", text = "ui_mcm_menu_targetID_title_position" },
+        { id = "xo", type = "input", val = 2, def = 108.0, min = 0.0, max = 1024.0, step = 1.0 },
+        { id = "yo", type = "input", val = 2, def = 665.0, min = 0.0, max = 768.0, step = 1.0 },
+        { type = "title", text = "" },
+        { id = "xp", type = "input", val = 2, def = 0.0, min = -300.0, max = 300.0, step = 1.0 },
+        { id = "yp", type = "input", val = 2, def = 0.0, min = -300.0, max = 300.0, step = 1.0 },
+        { type = "title", text = "" },
+        { id = "xn", type = "input", val = 2, def = 16.0, min = -300.0, max = 300.0, step = 1.0 },
+        { id = "yn", type = "input", val = 2, def = -14.0, min = -300.0, max = 300.0, step = 1.0 },
+        { type = "title", text = "" },
+        { id = "xr", type = "input", val = 2, def = 16.0, min = -300.0, max = 300.0, step = 1.0 },
+        { id = "yr", type = "input", val = 2, def = 3.0, min = -300.0, max = 300.0, step = 1.0 },
+        { type = "line" },
+
+        { type = "title", text = "ui_mcm_menu_targetID_title_text" },
+        { id = "textAlign", type = "list", val = 2, def = 0, content = { { 0, "targetID_align_left" }, { 1, "targetID_align_center" }, { 2, "targetID_align_right" } } },
+        { id = "colorR", type = "track", val = 2, def = 200.0, min = 0.0, max = 255.0, step = 1.0 },
+        { id = "colorG", type = "track", val = 2, def = 200.0, min = 0.0, max = 255.0, step = 1.0 },
+        { id = "colorB", type = "track", val = 2, def = 200.0, min = 0.0, max = 255.0, step = 1.0 },
+        { type = "title", text = "" },
+        { id = "RcolorR", type = "track", val = 2, def = 150.0, min = 0.0, max = 255.0, step = 1.0 },
+        { id = "RcolorG", type = "track", val = 2, def = 150.0, min = 0.0, max = 255.0, step = 1.0 },
+        { id = "RcolorB", type = "track", val = 2, def = 150.0, min = 0.0, max = 255.0, step = 1.0 },
+
+    }
+    }
+
+    return op
+end
+
+local idtable = {}
+local nametable = {}
+
+function identify(obj)
+    if not timeID then
+        idtable[obj:character_name()] = 1
+        return true
+    end
+
+    if not idtable[obj:character_name()] then idtable[obj:character_name()] = 0 end
+
+    if idtable[obj:character_name()] >= 1 then
+        return true
+    end
+
+    local distance = db.actor:position():distance_to_sqr(obj:position())
+
+    if distance < detectionDistanceMin then
+        idtable[obj:character_name()] = 1
+        return true
+    end
+
+    local time = detectionTimeMin + detectionKoeff * (distance - detectionDistanceMin) * (device().fov / 100)
+    local power = tickSpeed / time
+
+    --actor_menu.set_msg(1,  "D: " .. distance .. ", T: " .. time .. ", F: " .. device().fov)
+
+    idtable[obj:character_name()] = idtable[obj:character_name()] + (power * speedID)
+    if idtable[obj:character_name()] >= 1 then
+        return true
+    end
+
+    return false
+end
+
+function displayFaction(obj)
+    if not obj then return end
+
+    local fact = obj:character_community()
+    local name = obj:character_name()
+    local isUnknown = not nametable[name]
+    local rankId = ranks.get_obj_rank_name(obj)
+    local rank
+
+    if not nameID then
+        name = nil
+    elseif talkName and isUnknown then
+        name = "???"
+    end
+
+    if not rankID or (talkRank and isUnknown) then
+        rank = nil
+    else
+        local rankStrId = "st_rank_" .. rankId
+        rank = game.translate_string(rankStrId)
+        if rankStrId == rank then
+            rank = rankId
+        end
+        rank = rank:sub(1, 1):upper() .. rank:sub(2)
+    end
+
+    if deadID and obj.health <= 0 and factions[fact] then
+        fact = fact .. "_dead"
+    end
+
+    display(fact, name, rank)
+end
+
+function display(faction, name, rank)
+    --printf("Display")
+
+    if HUD then
+        local nameHud = HUD.name
+        local rankHud = HUD.rank
+
+        nameHud:SetTextColor(GetARGB(255, r, g, b))
+        rankHud:SetTextColor(GetARGB(255, rr, rg, rb))
+
+        local ppos = vector2():set(xo + xp, yo + yp)
+        if not factions[faction] then
+            HUD.upatch:Show(false)
+            HUD.kpatch:Show(false)
+            local tmp = "(" .. game.translate_string(faction) .. ")"
+            if rank then
+                rank = rank .. " " .. tmp
+            else
+                rank = tmp
+            end
+        elseif faction == "unknown" then
+            HUD.upatch:SetWndPos(ppos)
+            HUD.upatch:Show(true)
+        else
+            HUD.kpatch:SetWndPos(ppos)
+            HUD.kpatch:InitTexture(factions[faction])
+            HUD.kpatch:Show(true)
+        end
+
+        local shift_x = 0
+
+        if name then
+            nameHud:SetText(name)
+            nameHud:AdjustWidthToText()
+            nameHud:SetWndSize(vector2():set(nameHud:GetWidth(), nameHud:GetHeight()))
+
+            if textAlign == 1 then shift_x = -nameHud:GetWidth() / 2 elseif textAlign == 2 then shift_x = -nameHud:GetWidth() end
+            nameHud:SetWndPos(vector2():set(xo + xn + shift_x, yo + yn))
+        end
+
+        if rank then
+            rankHud:SetText(rank)
+
+            rankHud:AdjustWidthToText()
+            rankHud:SetWndSize(vector2():set(rankHud:GetWidth(), rankHud:GetHeight()))
+
+            if textAlign == 1 then shift_x = -rankHud:GetWidth() / 2 elseif textAlign == 2 then shift_x = -rankHud:GetWidth() end
+            rankHud:SetWndPos(vector2():set(xo + xr + shift_x, yo + yr))
+        end
+    end
+end
+
+function clear()
+    if HUD then
+        HUD:Reset()
+    end
+end
+
+function target_enter(obj)
+    if not obj then return end
+    local identified = identify(obj)
+    if onlyZoomed and not zoomed then return end
+    if identified then
+        displayFaction(obj)
+    else
+        display("unknown", "???", nil)
+    end
+
+end
+
+function target_exit(obj)
+    if not obj then return end
+    clear()
+end
+
+local lastTick = 0
+function target_tick(obj)
+    if not obj then return end
+    if (time_global() - lastTick) < tickSpeed then return end
+    lastTick = time_global()
+
+    if not idtable[obj:character_name()] then
+        printf("ERROR: faction ID nil in tick")
+        return
+    end
+
+    if idtable[obj:character_name()] < 1 or changed then
+        if identify(obj) then
+            clear()
+            if zoomed or not onlyZoomed then
+                displayFaction(obj)
+            end
+        end
+    end
+
+    changed = false
+end
+
+local LastHitObject = nil
+local lastCheckTime = 0
+
+-- function getDotPower(x)
+-- return clamp( -(1 / ((x * 0.05) + 1)) + 1 , 0.8, 0.997)
+-- end
+
+local function zoom_in()
+    changed = true
+    zoomed = true
+end
+
+local function zoom_out()
+    changed = true
+    zoomed = false
+end
+
+function actor_on_update()
+
+    local obj = level.get_target_obj()
+
+    if HUD and obj and IsStalker(obj) and obj:id() ~= 0 and (obj.health > 0 or deadID) and obj:character_community() then
+
+        if LastHitObject then
+            if obj:id() ~= LastHitObject:id() then
+                target_exit(LastHitObject)
+                target_enter(obj)
+            else
+                target_tick(obj)
+            end
+        else
+            target_enter(obj)
+        end
+
+        LastHitObject = obj
+        return
+    else
+        if LastHitObject then
+            if targetLenience >= 1.0 then
+                target_exit(LastHitObject)
+                LastHitObject = nil
+                return
+            end
+
+            if (time_global() - lastCheckTime) > 100 then
+                lastCheckTime = time_global()
+
+                local pos = utils_obj.safe_bone_pos(LastHitObject, "bip01_spine")
+                if pos then
+                    local dot = dot_eye(pos)
+                    --0.984
+                    --getDotPower(device().cam_pos:distance_to_sqr(pos))
+                    if dot < targetLenience then
+
+                        target_exit(LastHitObject)
+
+                        LastHitObject = nil
+                        return
+                    end
+                end
+
+            end
+
+        end
+    end
+
+    if LastHitObject then
+        target_tick(LastHitObject)
+    end
+end
+
+function npc_on_death_callback(npc, who)
+    if not LastHitObject then return end
+    if npc:id() == LastHitObject:id() then
+
+        if deadID then
+            clear()
+            displayFaction(npc)
+        else
+            target_exit(LastHitObject)
+            LastHitObject = nil
+        end
+
+    end
+end
+
+function GUI_on_show(gui, str2)
+
+    --printf(ui_inventory.mode)
+
+    if gui == "Dialog" then
+        --local obj = level.get_target_obj()
+        local obj = mob_trade.GetTalkingNpc()
+
+        if obj and LastHitObject and LastHitObject:id() == obj:id() then
+            nametable[obj:character_name()] = true
+            clear()
+            displayFaction(obj)
+        end
+
+    end
+
+    if gui == "UIInventory" then
+        local obj = level.get_target_obj()
+        if obj and obj.health <= 0 and LastHitObject and LastHitObject:id() == obj:id() then
+
+            local mid = utils_obj.safe_bone_pos(LastHitObject, "bip01_spine")
+            local pos = device().cam_pos
+
+            if mid and pos and pos:distance_to_sqr(mid) < 4.9 then
+                nametable[obj:character_name()] = true
+                clear()
+                displayFaction(obj)
+            end
+        end
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+    RegisterScriptCallback("on_screen_resolution_changed", on_screen_resolution_changed)
+    RegisterScriptCallback("actor_on_update", actor_on_update)
+    RegisterScriptCallback("npc_on_death_callback", npc_on_death_callback)
+    RegisterScriptCallback("GUI_on_show", GUI_on_show)
+    RegisterScriptCallback("GUI_on_show", GUI_on_show)
+    RegisterScriptCallback("actor_on_weapon_zoom_in", zoom_in)
+    RegisterScriptCallback("actor_on_weapon_zoom_out", zoom_out)
+    RegisterScriptCallback("on_option_change", loadsettings)  --MCM sends the same callback as ui_options
+    loadsettings()
+end
