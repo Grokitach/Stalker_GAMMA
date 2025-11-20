@@ -1,0 +1,162 @@
+-- zzz_auto_loot_fix.script
+-- Purpose: Overrides Demonized's get_suitable_dtool() and Auto Looter handle_disassemble() for better tool handling and sync
+-- Author: kdvfirehawk 08/10/2025
+
+-- ========================================
+-- === Override: get_suitable_dtool() ====
+-- ========================================
+
+-- Helper: return a safe options table (real global if available, fallback defaults)
+local function safe_get_options()
+    local o = rawget(_G, "options")
+    if o then return o end
+    return {
+        consume_warning = true,
+        outfit_knife = true,
+        leatherman_limit = 10,
+        swiss_limit = 10,
+        grooming_limit = 10
+    }
+end
+
+-- Local helper to compute whether a tool would "break" on use.
+-- Uses GetItemList("disassemble") and local options (safe).
+local function is_breaking_local(obj_d, opts)
+    if not obj_d then return false end
+    local diss = GetItemList("disassemble")[obj_d:section()] or 0
+    local limit = 0
+    if obj_d:section() == "leatherman_tool" then
+        limit = (opts.leatherman_limit or 10) / 100
+    elseif obj_d:section() == "swiss_knife" then
+        limit = (opts.swiss_limit or 10) / 100
+    elseif obj_d:section() == "grooming" then
+        limit = (opts.grooming_limit or 10) / 100
+    end
+    local cond = obj_d:condition() - limit
+    return diss >= cond or false
+end
+
+-- Override function: choose the most intact tool available (safe against missing globals)
+function item_parts.get_suitable_dtool(itm)
+    local opts = safe_get_options()
+
+    local item_priority = {
+        grooming = 0,
+        swiss_knife = 1,
+        leatherman_tool = 2
+    }
+
+    -- Build list of disassemble tool sections
+    local itms_disassemble = {}
+    for k in pairs(GetItemList("disassemble")) do
+        itms_disassemble[#itms_disassemble + 1] = k
+    end
+    table.sort(itms_disassemble, function(a, b) return item_priority[a] < item_priority[b] end)
+
+    local res = nil
+
+    for _, sec in pairs(itms_disassemble) do
+        -- Decide which tool type to look for (respect outfit_knife option)
+        local itm_d = nil
+        if IsWeapon(itm) then
+            itm_d = db.actor:object("leatherman_tool")
+        elseif opts.outfit_knife and (IsOutfit(itm) or IsHeadgear(itm)) then
+            itm_d = db.actor:object("swiss_knife") or db.actor:object("leatherman_tool")
+        else
+            itm_d = db.actor:object(sec)
+        end
+
+        if itm_d then
+            local inventory_d = {}
+            for k in pairs(utils_item.collect_amount(db.actor, itm_d:section(), 0)) do
+                inventory_d[#inventory_d + 1] = level.object_by_id(k)
+            end
+
+            if #inventory_d == 0 then
+                -- no tools of this section, continue to next section
+            else
+                -- Sort tools by condition descending (best first)
+                table.sort(inventory_d, function(a, b) return a:condition() > b:condition() end)
+
+                -- Select index depending on consume_warning
+                local index = 1
+                if opts.consume_warning then
+                    -- original behavior: skip breaking tools, prefer somewhat damaged but not-breaking ones
+                    for i, v in ipairs(inventory_d) do
+                        if not is_breaking_local(v, opts) then
+                            index = i
+                            break
+                        elseif i == #inventory_d then
+                            -- all are breaking: keep last (most worn)
+                            index = i
+                        end
+                    end
+                else
+                    -- prefer fully intact: pick the first tool that is not breaking; if none, take the first (best)
+                    local found = false
+                    for i, v in ipairs(inventory_d) do
+                        if not is_breaking_local(v, opts) then
+                            index = i
+                            found = true
+                            break
+                        end
+                    end
+                    if not found then index = 1 end
+                end
+
+                if inventory_d[index] then
+                    res = inventory_d[index]
+                    return res
+                end
+            end
+        end
+    end
+
+    return res
+end
+
+
+-- ========================================
+-- === Override: handle_disassemble() ====
+-- ========================================
+
+function handle_disassemble(actor)
+    local collected_items = collect_items(actor)
+    local count = table_length(collected_items)
+
+    -- Adaptive delay based on item count
+    local delay = 0.01
+    if count > 10 then delay = 0.02 end
+    if count > 30 then delay = 0.03 end
+
+    for _, v in pairs(collected_items) do
+        local should_disassemble = false
+        if IsAmmo(v) then
+            should_disassemble = cond_ammo_disassemble(v)
+        elseif IsOutfit(v) or IsHeadgear(v) then
+            should_disassemble = cond_armor_disassemble(v)
+        elseif IsWeapon(v) then
+            should_disassemble = cond_weapon_disassemble(v)
+        else
+            should_disassemble = cond_misc_disassemble(v)
+        end
+
+        if should_disassemble then
+            local obj_d = get_disassembly_tool(v)
+            if not obj_d then
+                if config.no_valid_tool_messaging then
+                    CreateTimeEvent("auto_looter_no_suitable_tool", "auto_looter_no_suitable_tool_" .. v:id(), 0, function()
+                        news_manager.send_tip(db.actor, game.translate_string("st_auto_looter_no_valid_tool"), nil, "swiss_knife", 6000)
+                        return true
+                    end)
+                end
+            else
+                -- Delay per item to prevent CTDs and incorrect tool consumption
+                CreateTimeEvent("auto_looter_disassemble_item_" .. v:id(), "auto_looter_disassemble_item_" .. v:id(), delay, function()
+                    item_parts.func_disassembly(v, obj_d)
+                    return true
+                end)
+            end
+        end
+    end
+end
