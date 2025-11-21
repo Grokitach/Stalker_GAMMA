@@ -1,0 +1,117 @@
+-- oleh5230, 18.11.25
+
+snd_on_take = {
+	-- vanilla types:
+	["coin"]    			= {"interface\\items\\inv_items_money_coin"},
+	["bolt"]    			= {"interface\\items\\inv_items_bolt"},
+	["paper"]   			= {"interface\\items\\inv_items_money_paper"},
+	["bottle"]   			= {"interface\\items\\inv_items_bottle_",1,2},
+	["pills"]   			= {"interface\\items\\inv_items_pills_1"},
+	["part"]   				= {"interface\\items\\inv_items_parts_",1,3},
+	["outfit"]  			= {"interface\\items\\inv_items_fabric_",1,2},
+	["ammo"]    			= {"interface\\items\\inv_items_ammo_",1,7},
+	["grenade"] 			= {"interface\\items\\inv_items_grenade_1"},
+	["knife"]    			= {"interface\\items\\inv_items_knife_",1,2},
+	["weapon"]  			= {"interface\\items\\inv_items_wpn_",1,2},
+	["other"]   			= {"interface\\items\\inv_items_generic_",1,3},
+
+	-- Audio Expansion + custom types:
+	["addon"]  				= {"interface\\items\\inv_items_addon_1"},
+	["ammoshell"]  			= {"interface\\items\\inv_items_ammoshell_",1,3},
+	["ammogren"]  			= {"interface\\items\\inv_items_ammogren_1"},
+
+	["tincan"]  			= {"interface\\items\\inv_items_tincan_1"},
+	["wrap"]				= {"interface\\items\\inv_items_wrap_1"},
+	["bottlepoly"]  		= {"interface\\items\\inv_items_bottlepoly_1"},
+	["cigar"]				= {"interface\\items\\inv_items_cigar_1"},
+	["bandage"]				= {"interface\\items\\inv_items_bandage_1"},
+	["syringe"]  			= {"interface\\items\\inv_items_syringe_1"},
+	["blister"]				= {"interface\\items\\inv_items_blister_1"},
+
+	["wood"]				= {"interface\\items\\inv_items_wood_1"},
+	["rock"]				= {"interface\\items\\inv_items_rock_",1,2},
+	["coal"]				= {"interface\\items\\inv_items_coal_1"},
+	["plastic"]				= {"interface\\items\\inv_items_plastic_1"},
+	["powder"]				= {"interface\\items\\inv_items_generic_",1,3},
+
+	["junk"]				= {"interface\\items\\inv_items_junk_1"},
+	["jar"]  				= {"interface\\items\\inv_items_jar_1"},
+	["matchbox"]			= {"interface\\items\\inv_items_matchbox_1"},
+	["shovel"]  			= {"interface\\items\\inv_items_shovel_1"},
+	["jerrycan"]  			= {"interface\\items\\inv_items_jerrycan_1"},
+	["jerrycanpoly"]		= {"interface\\items\\inv_items_jerrycanpoly_1"},
+	["device"]  			= {"interface\\items\\inv_items_device_1"},
+	["book"]				= {"interface\\items\\inv_items_book_1"},
+	["tape"]				= {"interface\\items\\inv_items_tape_1"},
+	["patch"]				= {"interface\\items\\inv_items_patch_1"},
+
+	["flesh"]  				= {"interface\\items\\inv_items_flesh_",1,2},
+	["hide"]  				= {"interface\\items\\inv_items_hide_1"},
+
+	["kit"]  				= {"interface\\items\\inv_items_kit_1"},
+    ["outfit_equ"]  		= {"interface\\items\\inv_items_outfit_",1,2},
+	["helmet_equ"]  		= {"interface\\items\\inv_items_helmet_1"},
+
+	["w_pistol"]			= {"interface\\items\\inv_items_wpn_",1,2},
+	["w_smg"]				= {"interface\\items\\inv_items_wpn_",1,2},
+	["w_shotgun"]			= {"interface\\items\\inv_items_wpn_",1,2},
+	["w_rifle"]				= {"interface\\items\\inv_items_wpn_",1,2},
+	["w_sniper"]			= {"interface\\items\\inv_items_wpn_",1,2},
+	["w_explosive"]			= {"interface\\items\\inv_items_wpn_",1,2},
+
+	["woodfurniture"]  		= {"interface\\items\\inv_items_woodfurniture_",1,2},
+	["metalfurniture"]  	= {"interface\\items\\inv_items_metalfurniture_",1,2},
+}
+
+local enabled = true
+local base_vol = 1
+
+time_snd_prev = 0
+play_item_sound = itms_manager.play_item_sound
+function itms_manager.play_item_sound(item, vol)
+	if not enabled then return end
+	if (not item) then
+		printe("!ERROR itms_manager | play_item_sound | no object recieved!")
+	end
+
+	local snd_type = SYS_GetParam(0,item:section(),"snd_on_take")
+	if not (snd_type and snd_type ~= "") then
+		return
+	end
+
+	local snd = snd_on_take[snd_type]
+	-- oleh5230
+	if snd_type == "weapon" then
+		snd = snd_on_take[SYS_GetParam(0,item:section(),"kind") or "w_rifle"]
+	end
+	-- oleh5230 end
+	if (not snd) then
+		return
+	end
+
+	local snd_obj
+	if (#snd == 1) then
+		snd_obj = sound_object(snd[1])
+	else
+		snd_obj = sound_object(snd[1] .. tostring(math.random(snd[2],snd[3])))
+	end
+
+	local time_g = time_global()
+	if snd_obj and (time_g > time_snd_prev + 25) then
+		snd_obj:play(db.actor,0,sound_object.s2d)
+		snd_obj.volume = vol and base_vol * vol or base_vol
+	end
+	time_snd_prev = time_g
+end
+
+function load_mcm_options()
+    if ui_mcm then
+        enabled = ui_mcm.get("oleh_misc_sounds/enabled_inventory_pickup")
+        base_vol = ui_mcm.get("oleh_misc_sounds/volume_inventory_pickup") or 1
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("on_option_change", load_mcm_options)
+    load_mcm_options()
+end
