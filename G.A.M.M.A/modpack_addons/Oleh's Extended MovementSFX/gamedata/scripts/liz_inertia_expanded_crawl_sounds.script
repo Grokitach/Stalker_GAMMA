@@ -1,15 +1,20 @@
 -- plays sounds for crawling animation (from Weapon Inertia Expanded addon)
--- oleh5230, 14.04.25
 -- Credits: lizzardman
+-- oleh5230, 14.04.25
+-- Last edit: 02.12.25
 
 local enabled = true
 local volume = 0.5
 local sound = sound_object("crawl\\prone_gear_slow_1")
-local count = 1
 local tg
 local speed_min = 0
 local speed_max = 0.035
 local old_pos = vector()
+
+-- create sample queues to mitigate the issue of same sample playing multiple time in a row
+local queue = {1,2,3,4,5,6,7,8,9,10,11}
+local count = 1
+shuffle_table(queue)
 
 function actor_on_update(_, delta)
     if not enabled or not liz_inertia_expanded_crawl.is_crawl_active then return end
@@ -27,19 +32,22 @@ function actor_on_update(_, delta)
     if time_global() > tg + (666 / anm_speed) then
         tg = nil
 
-        sound = sound_object("crawl\\prone_gear_slow_" .. count)
         if anm_speed > 0.5 then
+            sound = sound_object("crawl\\prone_gear_slow_" .. queue[count])
             sound:play(db.actor, 0, sound_object.s2d)
             sound.volume = anm_speed * volume
 
             count = count + 1
-            if count > 12 then count = 1 end
+            if count > 11 then
+                count = 1
+                shuffle_table(queue)
+            end
         end
     end
 end
 
 function load_settings()
-    enabled = ui_mcm.get("extended_movement_sounds/enabled_crawl_sounds") or false
+    enabled = ui_mcm.get("extended_movement_sounds/enabled_crawl_sounds")
     volume  = ui_mcm.get("extended_movement_sounds/volume_crawl_sounds") or 0.5
 end
 
