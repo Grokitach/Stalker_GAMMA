@@ -69,9 +69,11 @@ snd_on_take = {
 
 snd_on_use = {
 	["cap"]					= {"interface\\items_use\\cap_1"},
+
+	["glue"]				= {"interface\\items_use\\glue_1"},
 	["scissors"]			= {"interface\\items_use\\scissors_1"},
 	["tape"]				= {"interface\\items_use\\tape_1"},
-	["parts_fabric"]		= {"interface\\items_use\\scissors_1"},
+	["parts_fabric"]		= {"interface\\items_use\\parts_fabric_1"},
 
 	["oil"]					= {"interface\\items_use\\oil_1"},
 	["spray"]				= {"interface\\items_use\\spray_1"},
@@ -79,12 +81,13 @@ snd_on_use = {
 
 	["clean"]				= {"interface\\items_use\\clean_1"},
 	["file"]				= {"interface\\items_use\\file_1"},
-	["sharp"]				= {"interface\\items_use\\sharp_",1,2},
+	["sharp"]				= {"interface\\items_use\\sharp_1"},
 }
 
 local enabled = true
 local base_vol = 1
 
+local timeout_tg = 0
 local time_snd_prev = 0
 play_item_sound = itms_manager.play_item_sound
 function itms_manager.play_item_sound(item, vol)
@@ -117,7 +120,7 @@ function itms_manager.play_item_sound(item, vol)
 	end
 
 	local time_g = time_global()
-	if snd_obj and (time_g > time_snd_prev + 25) then
+	if snd_obj and (time_g > time_snd_prev + 25) and (time_g > timeout_tg + 10) then
 		snd_obj:play(db.actor,0,sound_object.s2d)
 		snd_obj.volume = vol and base_vol * vol or base_vol
 	end
@@ -149,11 +152,18 @@ function itms_manager.play_use_sound(item, vol)
 	end
 
 	local time_g = time_global()
-	if snd_obj and (time_g > time_snd_prev2 + 25) then
+	if snd_obj and (time_g > time_snd_prev2 + 200) then
 		snd_obj:play(db.actor,0,sound_object.s2d)
 		snd_obj.volume = vol and base_vol * vol or base_vol
 	end
 	time_snd_prev2 = time_g
+end
+
+-- fix for items spawned after opening a container
+function GUI_on_show(name)
+	if name == "UIInventory" then
+		timeout_tg = time_global()
+	end
 end
 
 function load_mcm_options()
@@ -164,6 +174,7 @@ function load_mcm_options()
 end
 
 function on_game_start()
+	RegisterScriptCallback("GUI_on_show", GUI_on_show)
     RegisterScriptCallback("on_option_change", load_mcm_options)
     load_mcm_options()
 end
