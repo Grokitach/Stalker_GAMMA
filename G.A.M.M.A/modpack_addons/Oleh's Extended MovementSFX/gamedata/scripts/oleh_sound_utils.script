@@ -1,0 +1,55 @@
+FreelookActive = false
+local freelook_toggle = false
+
+function freelook_hold(key)
+    local bind = dik_to_bind(key)
+	if bind == key_bindings.kFREELOOK then
+		FreelookActive = true
+	end
+end
+
+function freelook_release(key)
+    local bind = dik_to_bind(key)
+	if bind == key_bindings.kFREELOOK then
+		FreelookActive = false
+	end
+end
+
+function load_settings()
+    freelook_toggle = get_console_cmd(1,"g_freelook_toggle") or false
+end
+
+local cached_outfit_class = "default"
+local cached_outfit_id
+function get_outfit_class()
+    local outfit = db.actor:item_in_slot(7)
+    if not outfit then return "default" end
+
+    if outfit:id() ~= cached_outfit_id then
+        local section = outfit:section()
+        if not section then return end
+        local outfit_class = SYS_GetParam(0, section, "repair_type") or "default"
+
+        if string.find(section, "proto") then
+            outfit_class = "outfit_exo_proto"
+        end
+
+        if string.find(section, "nosorog") then
+            outfit_class = "outfit_exo_nosorog"
+        end
+
+        cached_outfit_class = outfit_class
+        cached_outfit_id = outfit:id()
+    end
+
+    return cached_outfit_class
+end
+
+function on_game_start()
+    RegisterScriptCallback("on_key_hold", freelook_hold)
+    RegisterScriptCallback("on_key_release", freelook_release)
+
+    RegisterScriptCallback("on_option_change", load_settings)
+    RegisterScriptCallback("on_console_execute",load_settings)
+    load_settings()
+end

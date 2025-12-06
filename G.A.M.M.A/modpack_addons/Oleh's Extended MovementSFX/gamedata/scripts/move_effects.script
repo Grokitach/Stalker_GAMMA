@@ -40,6 +40,28 @@ local states_blacklist = {
     ['mcClimb']     = true,
 }
 
+local servo_enabled = true
+local servo_volume = 0.5
+local exo_classes = {
+    ["outfit_exo_proto"]    = "light_",
+    ["outfit_exo"]          = "medium_",
+    ["outfit_exo_nosorog"]  = "heavy_",
+}
+
+-- create sample queues to mitigate the issue of same sample playing multiple time in a row
+queues = {
+    ["crouch"] = {},
+    ["stand"] = {},
+    ["lookout"] = {},
+    ["lookback"] = {},
+}
+for k,v in pairs(queues) do
+    for i=1, limit[k] do
+        table.insert(queues[k], i)
+    end
+    shuffle_table(queues[k])
+end
+
 function on_key_press(key)
     if device():is_paused() or not is_hud_free() or not MovementAllowed then return end
 
@@ -70,7 +92,7 @@ function on_key_press(key)
         if IsMoveState('mcAccel') then volume = 1.5 end
         play_sound("stand", volume)
 
-    elseif (bind == key_bindings.kR_LOOKOUT or bind == key_bindings.kL_LOOKOUT) and not freelook_state.FreelookActive then
+    elseif (bind == key_bindings.kR_LOOKOUT or bind == key_bindings.kL_LOOKOUT) and not oleh_sound_utils.FreelookActive then
         play_sound("lookout", volume)
     end
 end
@@ -89,20 +111,24 @@ function on_key_release(key)
     elseif (bind == key_bindings.kACCEL and IsMoveState('mcCrouch')) and not accel_toggle then
         play_sound("stand", volume)
 
-    elseif (bind == key_bindings.kR_LOOKOUT or bind == key_bindings.kL_LOOKOUT) and not lookout_toggle and not freelook_state.FreelookActive then
+    elseif (bind == key_bindings.kR_LOOKOUT or bind == key_bindings.kL_LOOKOUT) and not lookout_toggle and not oleh_sound_utils.FreelookActive then
         play_sound("lookback", volume)
     end
 end
 
 function play_sound(movement, volume)
     if not toggle_settings[movement] then return end
+    local outfit_class = oleh_sound_utils.get_outfit_class()
 
     local sound = sound_object(movement .. "\\" .. movement .. "_" .. count[movement])
     sound:play(db.actor, 0, sound_object.s2d)
     sound.volume = volume * volume_settings[movement]
 
     count[movement] = count[movement] + 1
-    if count[movement] > limit[movement] then count[movement] = 1 end
+    if count[movement] > limit[movement] then
+        count[movement] = 1
+        shuffle_table(queues[movement])
+    end
     --print_dbg("movement_sounds // movement: %s volume: %s", movement, volume)
 
     -- Exo servo sounds
@@ -157,10 +183,10 @@ function load_settings()
             ["lookback"]    = ui_mcm.get("extended_movement_sounds/volume_lookout_sounds")  or 0.5,
         }
         toggle_settings = {
-            ["crouch"]      = ui_mcm.get("extended_movement_sounds/enabled_stance_sounds")  or false,
-            ["stand"]       = ui_mcm.get("extended_movement_sounds/enabled_stance_sounds")  or false,
-            ["lookout"]     = ui_mcm.get("extended_movement_sounds/enabled_lookout_sounds") or false,
-            ["lookback"]    = ui_mcm.get("extended_movement_sounds/enabled_lookout_sounds") or false,
+            ["crouch"]      = ui_mcm.get("extended_movement_sounds/enabled_stance_sounds"),
+            ["stand"]       = ui_mcm.get("extended_movement_sounds/enabled_stance_sounds"),
+            ["lookout"]     = ui_mcm.get("extended_movement_sounds/enabled_lookout_sounds"),
+            ["lookback"]    = ui_mcm.get("extended_movement_sounds/enabled_lookout_sounds"),
         }
     end
 end

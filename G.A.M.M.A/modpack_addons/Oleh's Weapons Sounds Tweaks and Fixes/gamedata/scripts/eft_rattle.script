@@ -1,6 +1,6 @@
--- Revised by oleh5230, 24.06.2024
+-- Revised by oleh5230, 24.06.24
 -- Original script by Qudix
--- Last edit: 31.07.25 
+-- Last edit: 28.11.25 
 
 local opt_aim_rattle = true
 local opt_lower_raise_rattle = true
@@ -16,102 +16,140 @@ function load_settings()
     end
 end
 
--- orginal _g function includes wpn_lr300 for some reason
-local function IsPistol(o,c)
-	if not (c) then
-		c = o and o:clsid()
-	end
-	local pistol = {
-					[clsid.wpn_pm_s] = true,
-					[clsid.wpn_walther_s] = true,
-					[clsid.wpn_usp45_s] = true,
-					[clsid.wpn_hpsa_s] = true,
-					--[clsid.wpn_lr300_s] = true,
-					[clsid.wpn_pm] = true,
-					[clsid.wpn_walther] = true,
-					[clsid.wpn_usp45] = true,
-					[clsid.wpn_hpsa] = true,
-					--[clsid.wpn_lr300] = true
-	}
-	return c and pistol[c] or false
-end
-
 wpn_kinds = {
-    ["w_pistol"]    = "pistol\\pistol_aim",
-    ["w_smg"]       = "pistol\\pistol_aim",
+    ["w_pistol"]            = "pistol",
+    ["w_smg"]               = "pistol",
+    ["w_rifle"]             = "shotgun",
+    ["w_sniper"]            = "shotgun",
+    ["w_shotgun"]           = "shotgun",
+    ["w_explosive"]         = "shotgun",
 }
 
 limit = {
-    ["pistol\\pistol_aim"]  = 8,
-    ["rifle\\rifle_aim"]    = 8,
+    ["pistol_aim_in_"]      = 4,
+    ["pistol_aim_out_"]     = 4,
+    ["rifle_aim_in_"]       = 4,
+    ["rifle_aim_out_"]      = 4,
+    ["shotgun_aim_out_"]    = 4,
+    ["shotgun_aim_in_"]     = 4,
 }
 
-count = 1
-function play_aim_sound(dir, class, volume, frequency)
-    local sound = sound_object(dir .. class .. count)
+count = {
+    ["pistol_aim_in_"]      = 1,
+    ["pistol_aim_out_"]     = 1,
+    ["rifle_aim_in_"]       = 1,
+    ["rifle_aim_out_"]      = 1,
+    ["shotgun_aim_out_"]    = 1,
+    ["shotgun_aim_in_"]     = 1,
+}
+
+-- create sample queues to mitigate the issue of same sample playing multiple time in a row
+queues = {
+    ["pistol_aim_in_"]      = {},
+    ["pistol_aim_out_"]     = {},
+    ["rifle_aim_in_"]       = {},
+    ["rifle_aim_out_"]      = {},
+    ["shotgun_aim_out_"]    = {},
+    ["shotgun_aim_in_"]     = {},
+}
+for k,v in pairs(queues) do
+    for i=1, limit[k] do
+        table.insert(queues[k], i)
+    end
+    shuffle_table(queues[k])
+end
+
+function play_aim_sound(movement, wpn_kind, volume, frequency)
+    local class = wpn_kind .. movement
+    local sound = sound_object("weapons\\_rattle\\" .. class .. queues[class][count[class]])
     sound:play(db.actor, 0, sound_object.s2d)
     sound.volume = volume or 0.5
     sound.frequency = frequency or 1
-    count = count + 1
-    if count > limit[class] then count = 1 end
+
+    count[class] = count[class] + 1
+    if count[class] > limit[class] then
+        count[class] = 1
+        shuffle_table(queues[class])
+    end
 end
 
 local cached_sec
+local wpn_kind = "rifle"
+local volume, frequency = 0.5, 1
+local weight, aim_time = 3.3, 0.25
+
 function get_wpn_params(wpn)
-    if not wpn then return "rifle\\rifle_aim", 0.5, 1 end
-    sec = wpn:section()
+    if not wpn then return end
+    local sec = wpn:section()
     if not cached_sec or sec ~= cached_sec then
         cached_sec = sec
-        class      = wpn_kinds[SYS_GetParam(0, sec, "kind")] or "rifle\\rifle_aim"
+        wpn_kind   = wpn_kinds[SYS_GetParam(0, sec, "kind")] or "rifle"
         weight     = ini_sys:r_string_ex(sec, "inv_weight") or 3.3
         aim_time   = ini_sys:r_string_ex(sec, "zoom_rotate_time") or 0.25
-        volume     = (0.25 + weight*0.04)
-        frequency  = 1.3 - aim_time
-        if frequency < 0.77 then frequency = 0.77 end
+        volume     = (0.25 + weight * 0.025)
+        frequency  = clamp(0.25 / aim_time, 0.8, 1.2)
     end
-    return class, volume, frequency
 end
 
 function actor_on_weapon_zoom_in(wpn)
     if opt_aim_rattle then
-        local class, volume, frequency = get_wpn_params(wpn)
-        play_aim_sound("weapons\\_rattle\\", class, volume * volume_aim_rattle * 0.8, frequency)
+        get_wpn_params(wpn)
+        play_aim_sound("_aim_in_", wpn_kind, volume * volume_aim_rattle * 0.8, frequency)
     end
 end
 
 function actor_on_weapon_zoom_out(wpn)
     if opt_aim_rattle then
-        local class, volume, frequency = get_wpn_params(wpn)
-        play_aim_sound("weapons\\_rattle\\", class, volume * volume_aim_rattle * 0.8, frequency)
+        get_wpn_params(wpn)
+        play_aim_sound("_aim_out_", wpn_kind, volume * volume_aim_rattle * 0.8, frequency)
     end
 end
 
 function actor_on_weapon_zoom_type_changed(wpn, previous, current)
     if opt_aim_rattle then
-        if previous ~= 2 and current == 0 or current == 1 then
-            if axr_main.weapon_is_zoomed then
-                local class, volume, frequency = get_wpn_params(wpn)
-                play_aim_sound("weapons\\_rattle\\", class, volume * volume_aim_rattle * 0.6, frequency)
-            end
-        else
-            local class, volume, frequency = get_wpn_params(wpn)
-            play_aim_sound("weapons\\_rattle\\", class, volume * volume_aim_rattle * 0.6, frequency)
+        get_wpn_params(wpn)
+        -- UBGL on
+        if current == 2 then
+            play_aim_sound("_aim_in_", wpn_kind, volume * volume_aim_rattle * 0.6, frequency)
+        -- UBGL off
+        elseif previous == 2 then
+            play_aim_sound("_aim_out_", wpn_kind, volume * volume_aim_rattle * 0.6, frequency)
+        -- alt aim on
+        elseif current == 1 and axr_main.weapon_is_zoomed then
+            play_aim_sound("_aim_in_", wpn_kind, volume * volume_aim_rattle * 0.6, frequency)
+        -- alt aim off
+        elseif current == 0 and axr_main.weapon_is_zoomed then
+            play_aim_sound("_aim_out_", wpn_kind, volume * volume_aim_rattle * 0.6, frequency)
         end
     end
 end
 
 function actor_on_weapon_raise(wpn)
     if opt_lower_raise_rattle then
-        local class, volume, frequency = get_wpn_params(wpn)
-        play_aim_sound("weapons\\_rattle\\", class, volume * volume_lower_raise_rattle, 1)
+        get_wpn_params(wpn)
+        play_aim_sound("_aim_in_", wpn_kind, volume * volume_lower_raise_rattle, 1)
     end
 end
 
 function actor_on_weapon_lower(wpn)
     if opt_lower_raise_rattle then
-        local class, volume, frequency = get_wpn_params(wpn)
-        play_aim_sound("weapons\\_rattle\\", class, volume * volume_lower_raise_rattle, 1)
+        get_wpn_params(wpn)
+        play_aim_sound("_aim_out_", wpn_kind, volume * volume_lower_raise_rattle, 1)
     end
+end
+
+local wct_raised = false
+play_sound = weapon_cover_tilt_rattle.play_sound
+function weapon_cover_tilt_rattle.play_sound(dir, wpn, coeff)
+    if not weapon_cover_tilt.get_setting("tilt_rattle") or not wpn then return end
+    get_wpn_params(wpn)
+
+    if wct_raised then
+        play_aim_sound("_aim_out_", wpn_kind, volume * volume_lower_raise_rattle, clamp(1.25 - weight * 0.0625, 0.8, 1.2))
+    else
+        play_aim_sound("_aim_in_", wpn_kind, volume * volume_lower_raise_rattle, clamp(1.25 - weight * 0.0625, 0.8, 1.2))
+    end
+    wct_raised = not wct_raised
 end
 
 function on_game_start()
