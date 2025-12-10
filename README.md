@@ -1,8 +1,11 @@
+![Static Badge](https://img.shields.io/badge/version-0.9.4-f5dd42?style=flat-square&logoColor=%23FFFFFF) [![Static Badge](https://img.shields.io/badge/install-ready-00ba1f?style=flat-square&logoColor=%23FFFFFF)](https://github.com/Grokitach/Stalker_GAMMA/wiki/Installing-GAMMA) [![Discord](https://img.shields.io/discord/912320241713958912?style=flat-square&logo=discord&logoColor=%23FFFFFF&label=discord&link=https%3A%2F%2Fdiscord.gg%2Fstalker-gamma)](http://discord.gg/stalker-gamma) [![Static Badge](https://img.shields.io/badge/GSC-official%20page-blue?style=flat-square)](https://www.stalker-game.com/en/modding/gamma) [![Static Badge](https://img.shields.io/badge/GOG-store%20page-8A2BE2?style=flat-square&logo=gogdotcom&logoColor=%23FFFFFF)](https://www.gog.com/en/game/stalker_gamma) [![Static Badge](https://img.shields.io/badge/PayPal-donations-002991?style=flat-square&logo=paypal&logoColor=%23FFFFFF)](https://www.paypal.com/paypalme/GrokitachGAMMA)
+
+
 ![image](https://github.com/user-attachments/assets/84c1bc08-f957-4372-bc98-3bef29f666d1)
 
 ## Description
 
-G.A.M.M.A. stands for Gigantic Automated Modular Modpack for Anomaly. This modpack for the 100% free and standalone STALKER Anomaly changes *every* aspect of the game, from the entire economy to the minute detail statistic of every gun and artefact.
+G.A.M.M.A. stands for Grok's Automated Modular Modpack for Anomaly. This modpack for the 100% free and standalone STALKER Anomaly changes *every* aspect of the game, from the entire economy to the minute detail statistic of every gun and artefact.
 
 From a technical point of view, the main motivation behind this project is to provide an easy to install, automatically updated and modular modding platform for Stalker Anomaly. From a gameplay point of view, the default parameters and mods activated with G.A.M.M.A. aim at providing a balanced survival, scavenging, cooking, crafting and repairing focused experience with a streamlined gameplay. GAMMA aims at creating a meaningful and enjoyable sense of progression in the sandbox Chernobyl Exclusion Zone of STALKER Anomaly.
 
@@ -20,12 +23,11 @@ The sense of progression in GAMMA is achieved through different aspects, that yo
 
 This modpack is 100% copyright free since it redistributes little to no copyrighted content developed by other modders. Indeed, G.A.M.M.A. downloads every add-on directly from moddb or github, and installs them automatically. You will thus directly support modders by installing G.A.M.M.A. On top of this, each addon original source (moddb or github page) is directly accessible from the Mod Organizer 2 instance by right-clicking addons > visit moddb.com.
 
-## Installation and content of this repository
+## Installation
 
-S.T.A.L.K.E.R. Anomaly G.A.M.M.A. modpack "actively updated" files are stored in this repository.
+S.T.A.L.K.E.R. G.A.M.M.A. can be installed following the [wiki guide](https://github.com/Grokitach/Stalker_GAMMA/wiki/Installing-GAMMA) (short and concise) or the [discord guide](http://discord.gg/stalker-gamma) (in depth, with lot of images).
 
-For the complete client (heavy, rarely modified files) necessary for this repository to work, you need to download it and follow the installation instructions stored in the associated discord server. A team of people is ready to help you with your questions and potential issues related to this project:
-https://discord.gg/stalker-gamma
+It can also be installed using GOG one-click mod install system (simplest installation procedure), which however requires to own one of the base games: https://www.gog.com/en/game/stalker_gamma
 
 ## Contributing
 
@@ -49,4 +51,4 @@ I would like to thank all the modders involved in this project by making all the
 
 ## Other Projects
 
-I also made a modpack for Dragon's Dogma 2 called "Dragon's Dogamma", for which I notably remade the entire gear looting system to put more emphasis on exploration and boss hunting instead of buying gear from shops: https://github.com/Grokitach/Dragons-Dogamma
+A similar logic was applied to a modpack built for Dragon's Dogma 2 called "Dragon's Dogamma", for whic the entire gear looting system as been remade to put more emphasis on exploration and boss hunting instead of buying gear from shops: https://github.com/Grokitach/Dragons-Dogamma
