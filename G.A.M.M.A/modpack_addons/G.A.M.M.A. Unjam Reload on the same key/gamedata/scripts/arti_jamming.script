@@ -325,7 +325,12 @@ local function actor_on_update()
 			cgd.id = gun:id()
 			cgd.has_parts = true
 			print_dbg("Current gun changed to %s (%s)", cgd.id, gun:section())
-			cgd.current_gun_shot_dec = gun:section() and ini_sys:r_string_ex(gun:section(),"condition_shot_dec")  or 0.0005
+
+			local section = gun:section()
+			cgd.current_gun_shot_dec 	= section and SYS_GetParam(2, section, "condition_shot_dec") or 0.0008
+			cgd.misfire_start_prob 		= section and SYS_GetParam(2, section, "misfire_start_prob") or 0.003
+			cgd.silencer_status 		= section and SYS_GetParam(2, section, "silencer_status") or false
+
 			local fire_modes = SYS_GetParam(0, gun:section(), "fire_modes") or "1"
 			local fire_table = invert_table(str_explode(fire_modes, ","))
 			cgd.fullAuto = fire_table["-1"] ~= nil
@@ -466,9 +471,8 @@ end
 -- oleh5230
 function get_silencer_jam_chance(wpn)
 	if wpn and IsWeapon(wpn) and not IsMelee(wpn) then
-		silencer_status = wpn:weapon_is_silencer() and 1 or SYS_GetParam(2, wpn:section(), "silencer_status") == 1 and 1 or 0
-		misfire_prob = SYS_GetParam(2, wpn:section(), "misfire_start_prob") or 0
-		silencer_jam_chance = misfire_prob < 0.002 and 1 * silencer_status or misfire_prob * 330 * silencer_status
+		local silencer_status = wpn:weapon_is_silencer() and 1 or cgd.silencer_status == 1 and 1 or 0
+		local silencer_jam_chance = cgd.misfire_start_prob < 0.002 and 1 * silencer_status or cgd.misfire_start_prob * 330 * silencer_status
 		print_dbg("Silencer jam chance is %s", silencer_jam_chance)
 		return silencer_jam_chance or 0
 	end
@@ -479,7 +483,8 @@ end
 local function damage_part(wpn)
 	local to_damage = random_key_table(cgd.parts)
 	local part_con = cgd.parts[to_damage]
-	local damage = math_random(5, 12)
+	-- oleh5230: no damage random roll
+	local damage = 1
 	cgd.parts[to_damage] = part_con > damage and (part_con - damage) or 1
 
 	print_dbg("%s damaged to %s condition", to_damage, cgd.parts[to_damage])
@@ -489,39 +494,39 @@ local function damage_part(wpn)
 	-- play a sound?
 end
 
+local weapon_degradation = 0.5
 -- Calculate chance to damage based on weapon condition
 local function calculate_damage(wpn, old_ammo, heat)
 	local cond = wpn and math_floor(wpn:condition()*100) or 100
 	local damaged = false
 	local roll = math_random(1000)
-	local damage_chance = old_ammo and 6 or 2
+	-- oleh5230: higher damage chance but lower damage severity + apply vanilla weapon degradation modifier
+	local damage_chance = weapon_degradation * cgd.current_gun_shot_dec * 15000
 	local threshold = get_config("threshold") or 85
 	local overheat_modifier = get_overheat_modifier(wpn)
 	print_dbg("weapon %s, heat is %s. heat modifier is  %s", wpn:section(), cgd.heat, overheat_modifier)
 	if (cond < threshold) then
-		-- 200 x (threshold - condition) * per shot decrease, should result in pretty small chances
-		damage_chance = (threshold - cond) * cgd.current_gun_shot_dec * 2000 * overheat_modifier
-		-- if cgd.fullAuto then damage_chance = damage_chance / 2 end
-		-- damage_chance = (170 - 200*cond) * cgd.current_gun_shot_dec * 1000
-		-- add flat 2% chance of damage w. old ammo
-		if old_ammo then damage_chance = damage_chance + 20 end
-		print_dbg("Damage chance: %s. Condition: %s", damage_chance, cond)
+		local part_count = 0
+		for i in pairs(cgd.parts) do -- skip barrel
+			part_count = part_count + 1
+		end
+		print_dbg("Part damage chance: %s; Barrel damage chance: %s", damage_chance * part_count * (old_ammo and 4 or 2), damage_chance)
+
+		-- damage chance proportional to number of parts
+		-- double damage chance if using old ammo
+		if (roll < (damage_chance * part_count * (old_ammo and 4 or 2))) then
+			damage_part(wpn)
+			damaged = true
 	end
 
 	if (roll < damage_chance) then
-		damage_part(wpn)
-		damaged = true
-	end
-	-- base 2% chance to wear barrel by 1, doubled with old ammo
-	local barrel_wear = old_ammo and 40 or 20
-	barrel_wear = barrel_wear * overheat_modifier
-	if (roll < barrel_wear) then
 		print_dbg("Damaged barrel")
 		cgd.barrel_con = cgd.barrel_con > 0 and cgd.barrel_con - 1 or 0
 		damaged = true
+		end
 	end
-	
-	if damaged then 
+
+	if damaged then
 		persist_current_weapon()
 	end
 end
@@ -1118,5 +1123,8 @@ function on_game_start()
 	RegisterScriptCallback("on_before_key_press", block_weapon_keybinds)
 	RegisterScriptCallback("actor_on_hud_animation_play",actor_on_hud_animation_play)
 	RegisterScriptCallback("actor_on_hud_animation_mark",actor_on_hud_animation_mark)
+
+	weapon_degradation = game_difficulties.get_eco_factor("weapon_degradation") or 0.5
+	RegisterScriptCallback("on_option_change", function() weapon_degradation = game_difficulties.get_eco_factor("weapon_degradation") or 0.5 end)
 	-- oleh5230 end
 end
