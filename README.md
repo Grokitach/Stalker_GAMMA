@@ -1,4 +1,5 @@
-![Static Badge](https://img.shields.io/badge/version-0.9.4-f5dd42?style=flat-square&logoColor=%23FFFFFF) [![Static Badge](https://img.shields.io/badge/install-ready-00ba1f?style=flat-square&logoColor=%23FFFFFF)](https://github.com/Grokitach/Stalker_GAMMA/wiki/Installing-GAMMA) [![Discord](https://img.shields.io/discord/912320241713958912?style=flat-square&logo=discord&logoColor=%23FFFFFF&label=discord&link=https%3A%2F%2Fdiscord.gg%2Fstalker-gamma)](http://discord.gg/stalker-gamma) [![Static Badge](https://img.shields.io/badge/GSC-official%20page-blue?style=flat-square)](https://www.stalker-game.com/en/modding/gamma) [![Static Badge](https://img.shields.io/badge/GOG-store%20page-8A2BE2?style=flat-square&logo=gogdotcom&logoColor=%23FFFFFF)](https://www.gog.com/en/game/stalker_gamma)
+![Static Badge](https://img.shields.io/badge/version-0.9.4-f5dd42?style=flat-square&logoColor=%23FFFFFF) [![Static Badge](https://img.shields.io/badge/install-ready-00ba1f?style=flat-square&logoColor=%23FFFFFF)](https://github.com/Grokitach/Stalker_GAMMA/wiki/Installing-GAMMA) [![Discord](https://img.shields.io/discord/912320241713958912?style=flat-square&logo=discord&logoColor=%23FFFFFF&label=discord&link=https%3A%2F%2Fdiscord.gg%2Fstalker-gamma)](http://discord.gg/stalker-gamma) [![Static Badge](https://img.shields.io/badge/GSC-official%20page-blue?style=flat-square)](https://www.stalker-game.com/en/modding/gamma) [![Static Badge](https://img.shields.io/badge/GOG-store%20page-8A2BE2?style=flat-square&logo=gogdotcom&logoColor=%23FFFFFF)](https://www.gog.com/en/game/stalker_gamma) [![Static Badge](https://img.shields.io/badge/PayPal-donations-002991?style=flat-square&logo=paypal&logoColor=%23FFFFFF)](https://www.paypal.com/paypalme/GrokitachGAMMA)
+
 
 ![image](https://github.com/user-attachments/assets/84c1bc08-f957-4372-bc98-3bef29f666d1)
 
@@ -26,7 +27,7 @@ This modpack is 100% copyright free since it redistributes little to no copyrigh
 
 S.T.A.L.K.E.R. G.A.M.M.A. can be installed following the [wiki guide](https://github.com/Grokitach/Stalker_GAMMA/wiki/Installing-GAMMA) (short and concise) or the [discord guide](http://discord.gg/stalker-gamma) (in depth, with lot of images).
 
-It can also be installed using GOG, which however requires to own one of the base games: https://www.gog.com/en/game/stalker_gamma
+It can also be installed using GOG one-click mod install system (simplest installation procedure), which however requires to own one of the base games: https://www.gog.com/en/game/stalker_gamma
 
 ## Contributing
 
