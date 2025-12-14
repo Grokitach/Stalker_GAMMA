@@ -1,0 +1,321 @@
+local M = {}
+
+function on_game_start()
+	RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("load_state",load_state)
+end
+
+function save_state(m)
+	m.tasks_rioc = M
+end
+
+function load_state(m)
+	M = m.tasks_rioc or {}
+end
+
+function id_exists(id)
+	local se = id and alife_object(id)
+	return se and true
+end
+
+function same_level(id1,id2)
+	local se1 = id1 and alife_object(id1)
+	local se2 = id2 and alife_object(id2)
+	return same_level_se(se1,se2)
+end
+
+function same_level_se(se1,se2)
+	local gg = game_graph()
+	return se1 and se2 and gg:vertex(se1.m_game_vertex_id):level_id() == gg:vertex(se2.m_game_vertex_id):level_id() 
+end
+
+function has_item(item_id, owner_id)
+	owner_id = owner_id or 0
+	local se = item_id and alife_object(item_id)
+	return se and se.parent_id == owner_id
+end
+
+function randsign()
+	return math.random() > 0.5 and 1 or -1
+end
+
+function release_item_if_exists(id)
+	local se = id and alife_object(id)
+	_ = se and alife():release(se)
+end
+
+function spawn_on_id_position(section, target_id)
+	if not section then printf('spawn_on_id_position called without section') return end
+	local se = alife_object(target_id)
+	return se and alife():create(section, se.position, se.m_level_vertex_id, se.m_game_vertex_id)
+end
+function spawn_on_id(section, target_id)
+	local se = alife_object(target_id)
+	return se and alife():create(section, se.position, se.m_level_vertex_id, se.m_game_vertex_id, se.id)
+end
+
+function split_tonumber(str)
+	local x = split(str)
+	for i,v in ipairs(x) do
+		x[i] = tonumber(v)
+	end
+	return x
+end
+
+local _splitcache = {}
+function split(str)
+	if not _splitcache[str] then
+		_splitcache[str] = {}
+		for x in string.gmatch(str, '([^,]+)') do
+			x = x:gsub(' ','')
+			table.insert(_splitcache[str], x)
+		end	
+	end
+	return _splitcache[str]
+end
+
+function pick_random_array(arr)
+	return arr[math.random(#arr)]
+end
+
+function split_and_pick(str)
+	return pick_random_array(split(str))
+end
+
+function safe_target(id)
+	local se = id and alife_object(id)
+	if se then return se.parent_id == 65535 and se.id or se.parent_id end
+end
+
+function parse_settings(task_id)
+	return utils_data.parse_ini_section_to_array(task_manager.task_ini,task_id)
+end
+
+function kill_if_online(id)
+	local o = id and level.object_by_id(id)
+	if o and o:alive() then o:kill(o) end
+end
+
+-- obj:kill() doesn't work on mutants?
+function kill_if_online_mutant(id, random_push)
+	if id then
+		local o = level.object_by_id(id)
+		if o then
+			if not o:has_info("online_mutant_killed") then
+				local h = hit()
+				h.power = 1
+				h.direction = random_push and vector():set(math.random(3)-2,0.2,math.random(3)-2) or vector(0,-1,0)
+				h.bone = "bip01_spine"
+				h.draftsman = o
+				h.impulse = random_push and math.random(8000,12000) or 0
+				h.type = hit.wound
+				o:hit(h)
+				o:give_info_portion("online_mutant_killed")
+			end
+		end
+	end
+end
+
+target_recover_item_on_corpse = {}
+status_recover_item_on_corpse = {}
+
+function cleanup_recover_item_on_corpse(a,b,c)
+	local tdata = M[c[1]]
+	
+	if tdata.item_id and id_exists(tdata.item_id) then
+		local se = alife_object(tdata.item_id)
+		if se.parent_id == 0 then
+			news_manager.relocate_item(db.actor, "out", se:section_name())
+		end
+		_ = se and alife():release(se)
+	end
+	
+	release_item_if_exists(tdata.corpse_id)
+	
+	if tdata.critter then
+		for i,v in ipairs(tdata.critter) do
+			release_item_if_exists(v)
+		end
+	end
+	
+	for k in pairs(M) do
+		if string.find(k,'chosen') then
+			M[k] = nil
+		end
+	end
+	
+	if tdata.settings.timer_name then
+		local tss = game.get_game_time():diffSec(level.get_start_time())
+		local delay = tdata.settings.repeat_timeout and tonumber(tdata.settings.repeat_timeout) or 24*60*60*2
+		M['task_timeout_'..tdata.settings.timer_name] = tss + delay
+		-- printf('%s set', 'task_timeout_'..tdata.settings.timer_name)
+	end
+	
+	M[c[1]] = nil
+end
+
+function section_from_critter_category(x)
+	if x == 'dogs' then
+		return split_and_pick('dog_normal_red,dog_normal_white,dog_normal_white,dog_normal_white,dog_normal_white,dog_normal_brown,dog_normal_bulterier')
+	end
+	if x == 'bloodsucker' then
+		return split_and_pick('bloodsucker_red_weak, bloodsucker_green_weak, bloodsucker_black_weak, bloodsucker_red_normal, bloodsucker_green_normal, bloodsucker_black_normal, bloodsucker_red_strong, bloodsucker_green_strong, bloodsucker_black_strong')
+	end
+end
+
+status_recover_item_on_corpse[0] = function(tsk, task_id)
+	local tdata = M[task_id]
+	if not tdata.corpse_id then
+		local pool = {}
+		for k,v in pairs(tdata.settings) do
+			if string.find(k,'^coordinate_') then
+				table.insert(pool,v)
+			end
+		end
+		local stash_coords = pick_random_array(pool)
+		local x = split_tonumber(stash_coords)
+		
+		local se_corpse = alife():create('sim_default_'..(tdata.settings.corpse_comm and split_and_pick(tdata.settings.corpse_comm) or 'stalker')..'_'.. (math.random(3)-1), vector():set(x[1], x[2], x[3]), x[4], x[5])
+		tdata.corpse_id = se_corpse.id
+		
+		local se_item = spawn_on_id(split_and_pick(tdata.settings.item_section), se_corpse.id)
+		se_save_var(se_corpse.id,se_corpse:name(),"death_dropped",true)
+		
+		tdata.item_id = se_item.id
+	end
+	
+	local corpse = level.object_by_id(tdata.corpse_id)
+	
+	if tdata.settings.critters and corpse and not tdata.critter then
+		tdata.critter = {}
+		local setnum = tdata.settings.critters_num and split_tonumber(tdata.settings.critters_num)
+		local num = setnum and math.random(setnum[1], setnum[2]) or math.random(0,3)
+		for i=1,num do 
+			local se_c = spawn_on_id_position(section_from_critter_category(split_and_pick(tdata.settings.critters)),tdata.corpse_id)
+			table.insert(tdata.critter, se_c.id)
+		end
+	end
+	
+	kill_if_online(tdata.corpse_id)
+	if tdata.critter then
+		for i,v in ipairs(tdata.critter) do
+			kill_if_online_mutant(v, true)
+		end
+	end
+	
+	if not id_exists(tdata.item_id) then return "fail" end
+	
+	if has_item(tdata.item_id) then
+		return 1
+	end
+end
+
+target_recover_item_on_corpse[0] = function(tsk,task_id)
+	local tdata = M[task_id]
+	return tdata and safe_target(tdata.item_id)
+end
+
+
+------------------------------------------------------------------------
+status_recover_item_on_corpse[1] = function(tsk, task_id)
+	local tdata = M[task_id]
+
+	if not id_exists(tdata.item_id) then return "fail" end
+
+	if not has_item(tdata.item_id) then
+		return 0
+	end
+end
+
+target_recover_item_on_corpse[1] = function(tsk,task_id)
+	return tsk.task_giver_id
+end
+
+
+------------------------------------------------------------------------
+task_status_functor.recover_item_on_corpse_status_functor = function(tsk,task_id)
+	if not (db.actor and tsk) then return end
+	local stage = tsk.stage
+	
+	
+	if not M[task_id] then M[task_id] = {
+		settings = parse_settings(task_id)
+	} end
+	
+	M[task_id].stage = stage
+	
+	local ret = status_recover_item_on_corpse[stage] and status_recover_item_on_corpse[stage](tsk, task_id) or stage
+	
+	if tonumber(ret) then
+		tsk.stage = ret
+	else
+		return ret
+	end
+end
+
+task_functor.recover_item_on_corpse_target_functor = function(task_id,field,p,tsk)
+	local stage = tsk.stage
+	return target_recover_item_on_corpse[stage] and target_recover_item_on_corpse[stage](tsk, task_id)
+end
+
+task_functor.recover_item_on_corpse_descr_functor = function(task_id,x,xx,tsk)
+	return game.translate_string(task_id..'_'..tsk.stage)
+end
+
+local pool_all = {
+	'agroprom',
+	'wt',
+	'garbage',
+	'pol',
+	'aw',
+	'trucc',
+}
+function precondition_corpse_task_sid(a,b,c)
+	local tss = game.get_game_time():diffSec(level.get_start_time())
+	if M.task_timeout_sid and tss < M.task_timeout_sid then 
+		return
+	end
+	if not M.chosen_refresh_sid or tss > M.chosen_refresh_sid then 
+		-- printf('new')
+		M.chosen_sid = pick_random_array(pool_all)
+		M.chosen_refresh_sid = tss + 60*60*24*2
+	end
+	return M.chosen_sid == c[1]
+end
+function precondition_corpse_task_petr(a,b,c)
+	local tss = game.get_game_time():diffSec(level.get_start_time())
+	if M.task_timeout_petr and tss < M.task_timeout_petr then 
+		return
+	end
+	if not M.chosen_refresh_petr or tss > M.chosen_refresh_petr then 
+		M.chosen_petr = pick_random_array(pool_all)
+		M.chosen_refresh_petr = tss + 60*60*24*2
+	end
+	return M.chosen_petr == c[1]
+end
+function precondition_corpse_task_sak(a,b,c)
+	local tss = game.get_game_time():diffSec(level.get_start_time())
+	if M.task_timeout_sak and tss < M.task_timeout_sak then 
+		return
+	end
+	if not M.chosen_refresh_sak or tss > M.chosen_refresh_sak then 
+		M.chosen_sak = pick_random_array(pool_all)
+		M.chosen_refresh_sak = tss + 60*60*24*2
+	end
+	return M.chosen_sak == c[1]
+end
+
+function on_descr(a,b,c)	
+	local function postpone_for_next_frame(x)
+		local news_caption = ''
+		local news_icon = 'ui_pda2_mtask_overlay'		
+		local news_text = game.translate_string("st_location") .. " " .. game.translate_string(x)
+		db.actor:give_talk_message2(news_caption, news_text, news_icon, "iconed_answer_item")
+		return true
+	end
+	CreateTimeEvent(0,"on_descr_rioc",0,postpone_for_next_frame, utils_data.read_from_ini(task_manager.task_ini,c[1],'level_name','string'))
+end
+
+function reward(a,b,c)
+	xr_effects.reward_random_money(a,b,{"5000","7500"})	
+end
