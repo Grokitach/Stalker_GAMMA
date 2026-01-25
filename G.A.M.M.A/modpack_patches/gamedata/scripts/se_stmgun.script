@@ -1,0 +1,66 @@
+--[[
+Create a new section for stationary machine gun object by adding class = _S_STMGUN:
+
+[stm_object]
+class = _S_STMGU
+--]]
+
+function _G.IsStmgun(o,c)
+	if not (c) then
+		c = o and o:clsid()
+	end
+	return c and (c == clsid.stmgun_s or c == clsid.wpn_stat_mgun) or false
+end
+
+--[[----------------------------------------------------------------------------------------------------
+	db
+------------------------------------------------------------------------------------------------------]]
+db.se_stmgun = {}
+
+function add_se_stmgun(se)
+	db.se_stmgun[se.id] = se
+end
+
+function del_se_stmgun(se)
+	db.se_stmgun[se.id] = nil
+end
+
+--[[----------------------------------------------------------------------------------------------------
+	Class
+------------------------------------------------------------------------------------------------------]]
+class "se_stmgun" (cse_alife_stmgun)
+
+function se_stmgun:__init (section) super (section)
+end
+
+function se_stmgun:on_register()
+	cse_alife_stmgun.on_register(self)
+	add_se_stmgun(self)
+	SendScriptCallback("server_entity_on_register",self,"se_stmgun")
+end
+
+function se_stmgun:on_unregister()
+	SendScriptCallback("server_entity_on_unregister",self,"se_stmgun")
+	del_se_stmgun(self)
+	cse_alife_stmgun.on_unregister(self)
+end
+
+function se_stmgun:can_switch_offline()
+	return cse_alife_stmgun.can_switch_offline(self)
+end
+
+function se_stmgun:can_switch_online()
+	return cse_alife_stmgun.can_switch_online(self)
+end
+
+function se_stmgun:STATE_Write(packet)
+	cse_alife_stmgun.STATE_Write(self,packet)
+end
+
+function se_stmgun:STATE_Read(packet,size)
+	cse_alife_stmgun.STATE_Read(self,packet,size)
+end
+
+function se_stmgun:keep_saved_data_anyway()
+	return true
+end

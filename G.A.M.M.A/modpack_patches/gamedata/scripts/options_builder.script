@@ -83,10 +83,8 @@ end
 
 -- RGBA color sliders
 function curr_crosshair_clr(id, n)
-	-- printf_me("curr_crosshair_clr(%s, %s)", id, n)
 	local curr = get_console_cmd(nil, id)
 	curr = tostring(curr)
-	-- printf_me("  curr: %s", curr)
 	local r,g,b,a = string.match(curr,"(%d+), (%d+), (%d+), (%d+)")
 	if n == "a" then
 		return tonumber(a)
@@ -101,16 +99,13 @@ function curr_crosshair_clr(id, n)
 end
 
 function func_crosshair_clr(id, n)
-	printf_me("func_crosshair_clr(%s, %s)", id, n)
 	local val = ui_options.opt_temp["modded_exes/visual/crosshair/" .. id .. "_" .. n]
-	printf_me("val: %s", val)
 	if (val == nil) then
 		return
 	end
 
 	local curr = get_console_cmd(nil, id)
 	curr = tostring(curr)
-	printf_me("curr: %s", curr)
 	local r,g,b,a = string.match(curr,"(%d+), (%d+), (%d+), (%d+)")
 	if n == "a" then
 		a = val
@@ -170,6 +165,105 @@ function crosshair_color(args)
 			functor = {func_crosshair_clr, args.id, "a"},
 			cmd = false
 		}
+end
+
+-- Vector sliders
+function curr_vector(id, n)
+	local curr = get_console_cmd(nil, id)
+	curr = tostring(curr)
+	local x,y,z,w = string.match(curr,"([+-]?%d*%.?%d+), ([+-]?%d*%.?%d+), ([+-]?%d*%.?%d+), ([+-]?%d*%.?%d+)")
+	if n == "x" then
+		return tonumber(x)
+	elseif n == "y" then
+		return tonumber(y)
+	elseif n == "z" then
+		return tonumber(z)
+	elseif n == "w" then
+		return tonumber(w)
+	end
+	return 0
+end
+
+function func_vector(id, n, path)
+	local val = ui_options.opt_temp["modded_exes/" .. path .. "/" .. id .. "_" .. n]
+	if val == nil then
+		return
+	end
+
+	local curr = get_console_cmd(nil, id)
+	curr = tostring(curr)
+	local x,y,z,w = string.match(curr,"([+-]?%d*%.?%d+), ([+-]?%d*%.?%d+), ([+-]?%d*%.?%d+), ([+-]?%d*%.?%d+)")
+	local has_w = w
+	if n == "x" then
+		x = val
+	elseif n == "y" then
+		y = val
+	elseif n == "z" then
+		z = val
+	elseif n == "w" then
+		w = val
+	end
+
+	if has_w then
+		local result = strformat(id .. " (%s, %s, %s, %s)", tostring(x), tostring(y), tostring(z), tostring(w))
+		exec_console_cmd(result)
+	else
+		local result = strformat(id .. " (%s, %s, %s)", tostring(x), tostring(y), tostring(z))
+		exec_console_cmd(result)
+	end
+end
+
+function vector(args)
+	return
+		track {
+			id = args.id .. "_x",
+			hint = args.id .. "_x",
+			min = args.x_min,
+			max = args.x_max,
+			def = args.x_def,
+			step = args.x_step,
+			curr = {curr_vector, args.id, "x"},
+			functor = {func_vector, args.id, "x", args.path},
+			cmd = false
+		},
+		track {
+			id = args.id .. "_y",
+			hint = args.id .. "_y",
+			min = args.y_min,
+			max = args.y_max,
+			def = args.y_def,
+			step = args.y_step,
+			curr = {curr_vector, args.id, "y"},
+			functor = {func_vector, args.id, "y", args.path},
+			cmd = false
+		},
+		track {
+			id = args.id .. "_z",
+			hint = args.id .. "_z",
+			min = args.z_min,
+			max = args.z_max,
+			def = args.z_def,
+			step = args.z_step,
+			curr = {curr_vector, args.id, "z"},
+			functor = {func_vector, args.id, "z", args.path},
+			cmd = false
+		},
+		(function()
+			if args.w_min and args.w_max and args.w_def and args.w_step then
+				return track {
+					id = args.id .. "_w",
+					hint = args.id .. "_w",
+					min = args.w_min,
+					max = args.w_max,
+					def = args.w_def,
+					step = args.w_step,
+					curr = {curr_vector, args.id, "w"},
+					functor = {func_vector, args.id, "w", args.path},
+					cmd = false
+				}
+			end
+		end)()
+		
 end
 
 -- String input
