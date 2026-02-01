@@ -174,7 +174,7 @@ function get_outfit_ap_res(obj)
 			-- Outfit
 		if outfit then
 			armor_hit_frac = ini_sys:r_float_ex(obj:section(), "hit_fraction_actor") or 1
-			armor_bone_value = (1 - armor_hit_frac) * 0.75 or 0
+			armor_bone_value = (1 - armor_hit_frac) or 0
 
 			-- Helmet
 		elseif helmet then
@@ -346,7 +346,7 @@ function get_protection(shit,bone_id,k_ap)
 				armor_protection = math.ceil(c_outfit:GetDefHitTypeProtection( hit_type ) * adjuster *100)/100 or 0
 			end
 			armor_hit_frac = ini_sys:r_float_ex(outfit:section(), "hit_fraction_actor") or 1
-			armor_bone_value = math.ceil((1 - armor_hit_frac) * cond * 0.75 *100)/100 or 0
+			armor_bone_value = math.ceil((1 - armor_hit_frac) * cond *100)/100 or 0
 		end
 	end
 
@@ -368,9 +368,10 @@ function get_protection(shit,bone_id,k_ap)
         end
 	end
 
-	-- Artefacts protection
+	-- Artefacts protection + Plates which boost BRC and increase its premitigation of damages
 	local artefacts_protection = 0
 	local artefacts_ap_res = 0
+	local premitigation = 0
 	actor:iterate_belt( function(owner, obj)
 		local sec = obj:section()
 		local cond = obj:condition()
@@ -380,15 +381,19 @@ function get_protection(shit,bone_id,k_ap)
 
 		if sec == "af_kevlar" then
 			af_bone_value = 0.01
+			premitigation = 0.05
 		end
 		if sec == "af_kevlar_up" then
 			af_bone_value = 0.03
+			premitigation = 0.07
 		end
 		if sec == "af_plates" then
 			af_bone_value = 0.04
+			premitigation = 0.10
 		end
 		if sec == "af_plates_up" then
 			af_bone_value = 0.06
+			premitigation = 0.15
 		end
 
 		local immunities_sec = SYS_GetParam(0, sec, "hit_absorbation_sect", sec)
@@ -441,15 +446,18 @@ function get_protection(shit,bone_id,k_ap)
 
 
 	-- Special case if ammo do not penetrate armor
+	-- Takes into account the ballistic plates premitigation
 	no_pen = 0
 	if shit.type == hit.fire_wound then
 		if headshot == 1 then
 			--printf('ammo pen = %s', k_ap)
 			--printf('armor class = %s', helmet_bone_value)
 			if helmet_bone_value >= k_ap then
-				helmet_protection = helmet_protection * 0.2 + helmet_bone_value * 1.3
+				premitigation = 0.35
 				printf("ammo didn't penetrate armor, damage reduction applied")
 				no_pen = 1
+			else
+				premitigation = 0
 			end
 		else
 			--printf('ammo pen = %s', k_ap)
@@ -458,9 +466,11 @@ function get_protection(shit,bone_id,k_ap)
 			armor_bone_value = armor_bone_value + artefacts_ap_res
 			--printf('total armor class = %s', armor_bone_value)
 			if armor_bone_value >= k_ap then
-				armor_protection = armor_protection * 0.2 + armor_bone_value * 1.3
+				premitigation = 0.35 + premitigation
 				--printf("ammo didn't penetrate armor, damage reduction applied")
 				no_pen = 1
+			else
+				premitigation = 0
 			end
 		end
 	end
@@ -471,7 +481,7 @@ function get_protection(shit,bone_id,k_ap)
 		total_prot = limiter
 	end
 	
-	return total_prot, limiter, armor_protection, helmet_protection, armor_bone_value, helmet_bone_value
+	return total_prot, limiter, armor_protection, helmet_protection, armor_bone_value, helmet_bone_value, premitigation
 end
 
 protection_to_hit_type = {
@@ -619,7 +629,7 @@ function shit_booster(shit, bone_id, k_ap)
 		end
 	end
 	
-	player_protection = get_protection(shit,bone_id,k_ap)
+	player_protection, limiter, armor_protection, helmet_protection, armor_bone_value, helmet_bone_value, premitigation = get_protection(shit,bone_id,k_ap)
 
 	if shit.type == hit.telepatic then
 		game_num = gameplay["type"] or game_num
@@ -649,7 +659,7 @@ function shit_booster(shit, bone_id, k_ap)
 	PBA_a_obh(pbadamage, bone_id, flags)
 	shit.power = pbadamage.power
 
-	damage = shit.power * ( 1 - player_protection )
+	damage = shit.power * ( 1 - premitigation ) * ( 1 - player_protection ) 
 
 	-- Body part damage multiplier (already applied by engine in shit.power)
 	local body_part = hitboxes[bone_id]
