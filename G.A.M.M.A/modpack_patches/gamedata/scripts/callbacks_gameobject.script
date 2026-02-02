@@ -538,9 +538,19 @@ function actor_on_first_update_prefetch()
 end
 
 -- Force update close enough traders
+local delay = 17 -- delay in ms
+local trigger = 0
 function npc_on_update(npc)
-	if npc:position():distance_to_sqr(db.actor:position()) < 30^2 then
-		trade_manager.update(npc)
+	tg = time_global()
+	if trigger == 0 then
+		local npc_update_delay = tg + delay
+		trigger = 1
+	end
+	if (trigger == 1 and tg > npc_update_delay) then
+		trigger = 0
+		if npc:position():distance_to_sqr(db.actor:position()) < 25 then
+			trade_manager.update(npc)
+		end
 	end
 end
 
