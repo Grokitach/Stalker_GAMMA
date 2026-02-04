@@ -371,56 +371,77 @@ function get_protection(shit,bone_id,k_ap)
 	-- Artefacts protection + Plates which boost BRC and increase its premitigation of damages
 	local artefacts_protection = 0
 	local artefacts_ap_res = 0
-	local premitigation = 0
+	local artefacts_premitigation = 0
 	actor:iterate_belt( function(owner, obj)
 		local sec = obj:section()
 		local cond = obj:condition()
-
-		af_bone_value = 0
-		prot = 0
-
-		if sec == "af_kevlar" then
-			af_bone_value = 0.01
-			premitigation = 0.05
-		end
-		if sec == "af_kevlar_up" then
-			af_bone_value = 0.03
-			premitigation = 0.07
-		end
-		if sec == "af_plates" then
-			af_bone_value = 0.06
-			premitigation = 0.10
-		end
-		if sec == "af_plates_up" then
-			af_bone_value = 0.10
-			premitigation = 0.14
-		end
 		
-		if sec == "hide_pseudogiant" then
-			af_bone_value = 0.04
-			premitigation = 0.08
-		end
+		local af_bone_value = 0
+		local prot = 0
+		local itm_premitigation = 0
 		
-		if sec == "hide_boar" then
-			af_bone_value = 0.02
-			premitigation = 0.04
+		-- convert this to a table later, it was designed just for plates in the beginning
+		if headshot == 1 then
+			if sec == "hide_pseudogiant" then
+				af_bone_value = 0.04
+				itm_premitigation = 0.08
+			end
+			if sec == "hide_boar" then
+				af_bone_value = 0.02
+				itm_premitigation = 0.04
+			end
+			if sec == "af_ear" then
+				af_bone_value = 0
+				itm_premitigation = 0.03
+			end
+			if sec == "af_kogot" then
+				af_bone_value = 0
+				itm_premitigation = 0.03
+			end			
+		else
+			if sec == "af_kevlar" then
+				af_bone_value = 0.01
+				itm_premitigation = 0.05
+			end
+			if sec == "af_kevlar_up" then
+				af_bone_value = 0.03
+				itm_premitigation = 0.07
+			end
+			if sec == "af_plates" then
+				af_bone_value = 0.06
+				itm_premitigation = 0.10
+			end
+			if sec == "af_plates_up" then
+				af_bone_value = 0.10
+				itm_premitigation = 0.14
+			end
+			if sec == "hide_pseudogiant" then
+				af_bone_value = 0.04
+				itm_premitigation = 0.08
+			end
+			if sec == "hide_boar" then
+				af_bone_value = 0.02
+				itm_premitigation = 0.04
+			end
+			if sec == "af_ear" then
+				af_bone_value = 0
+				itm_premitigation = 0.03
+			end
+			if sec == "af_kogot" then
+				af_bone_value = 0
+				itm_premitigation = 0.03
+			end	
 		end
 
 		local immunities_sec = SYS_GetParam(0, sec, "hit_absorbation_sect", sec)
 		local prot = SYS_GetParam(2, immunities_sec, immunity , 0) * cond
 		local af_limit = ini_sys:r_float_ex(sec, cap_stat) or 0
-
-		if headshot == 1 then
-			if sec == "af_kevlar" or sec == "af_kevlar_up" or sec == "af_plates" or sec == "af_plates_up" then
-				prot = 0
-				af_bone_value = 0
-			end
-		end
 		
 		prot = math.ceil(prot * 0.6 * arti_adjuster *100)/100
 
 		artefacts_protection = artefacts_protection + prot
 		artefacts_ap_res = artefacts_ap_res + af_bone_value
+		artefacts_premitigation = artefacts_premitigation + itm_premitigation
 		limiter = limiter + af_limit
 		if limiter >= 1 then
 			limiter = 0.95
@@ -462,8 +483,9 @@ function get_protection(shit,bone_id,k_ap)
 		if headshot == 1 then
 			--printf('ammo pen = %s', k_ap)
 			--printf('armor class = %s', helmet_bone_value)
+			helmet_bone_value = helmet_bone_value + artefacts_ap_res 
 			if helmet_bone_value >= k_ap then
-				premitigation = 0.35
+				premitigation = 0.35 + artefacts_premitigation
 				printf("ammo didn't penetrate armor, damage reduction applied")
 				no_pen = 1
 			else
@@ -476,7 +498,7 @@ function get_protection(shit,bone_id,k_ap)
 			armor_bone_value = armor_bone_value + artefacts_ap_res
 			--printf('total armor class = %s', armor_bone_value)
 			if armor_bone_value >= k_ap then
-				premitigation = 0.35 + premitigation
+				premitigation = 0.35 + artefacts_premitigation
 				--printf("ammo didn't penetrate armor, damage reduction applied")
 				no_pen = 1
 			else
