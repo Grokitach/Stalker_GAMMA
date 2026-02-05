@@ -23,8 +23,8 @@
 
 -----------------------------------------------------------------------
 
---local mrs	= math.randomseed
---local dtg	= device():time_global()
+local mrs	= math.randomseed
+local dtg	= device():time_global()
 
 local maps = {
     ["k00_marsh"] = 1,
@@ -61,6 +61,10 @@ local maps = {
     ["pripyat"] = 32,
     ["y04_pole"] = 33,
 }
+
+local function char_to_number(c)
+    return string.byte(c:lower()) - string.byte("a") + 1
+end
 
 local ini_seed = ini_file("plugins\\mass_fat_loot.ltx")
 
@@ -287,24 +291,31 @@ end
 --	
 --end
 
+local function generate_seed_weapon(obj)
+	local seed_hour = level.get_time_hours()
+	local seed_lvl = maps[level.name()] or 5
+	local parent_id = obj:parent() and obj:parent():id() or 2
+	local seed_parent_last_digit = tonumber(string.sub(base_seed,-1)) or 2
+	local sec = obj:section()
+	local seed_weapon_name = char_to_number(sec)
+	local seed = seed_parent_last_digit .. seed_weapon_name .. seed_hour .. seed_lvl
+	
+	return seed
+end
+
 if zzzz_arti_jamming_repairs then												-- Check if you have WPO installed, version shouldn't matter question mark.
 	
 	local create_parts	= zzzz_arti_jamming_repairs.weapon_eval_parts			-- Do part condition rolls
-	local disassemble	= zzzz_arti_jamming_repairs.custom_disassembly_weapon	-- Same but when disassembling the weapon
+--	local disassemble	= zzzz_arti_jamming_repairs.custom_disassembly_weapon	-- Same but when disassembling the weapon
 	
 	printf("/// SAVESCUMMER: WPO is loaded!")
 	
 	function zzzz_arti_jamming_repairs.weapon_eval_parts(wpn)
-		local cur_hour = level.get_time_hours()
-		local lvl_id = maps[level.name()] or 5
-		local base_seed = wpn:parent() and wpn:parent():id() or wpn:id()
-		local seed_last_digit = tonumber(string.sub(base_seed,-1)) or 3
+		seed = generate_seed_weapon(wpn)
 		
-		local seed = cur_hour .. lvl_id .. seed_last_digit
-		
-		if (seed == AC_ID) then
-			seed = wpn:id()
-		end
+--		if (seed == AC_ID) then
+--			seed = wpn:id()
+--		end
 		
 		mrs(seed, "Weapon parts generation")
 		
@@ -312,24 +323,25 @@ if zzzz_arti_jamming_repairs then												-- Check if you have WPO installed,
 		mrs(dtg())
 	end
 	
-	function zzzz_arti_jamming_repairs.custom_disassembly_weapon(obj, obj_d)
-		local cur_hour = level.get_time_hours()
-		local lvl_id = maps[level.name()] or 5
-		local base_seed = wpn:parent() and wpn:parent():id() or wpn:id()
-		local seed_last_digit = tonumber(string.sub(base_seed,-1)) or 3
-		
-		local seed = cur_hour .. lvl_id .. seed_last_digit
-		
-		if (seed == AC_ID) then
-			seed = obj:id()
-		end
-		
-		mrs(seed)
-		
-		disassemble(obj, obj_d)
-		mrs(dtg())
-	end
-	
+--	function zzzz_arti_jamming_repairs.custom_disassembly_weapon(obj, obj_d)
+--		local cur_hour = level.get_time_hours()
+--		
+--		local sec_last_char = string.sub(sec,-1)
+--		local lvl_id = maps[level.name()] or 5
+--		local base_seed = wpn:parent() and wpn:parent():id() or wpn:id()
+--		local seed_last_digit = tonumber(string.sub(base_seed,-1)) or 3
+--		
+--		local seed = cur_hour .. lvl_id .. seed_last_digit
+--		
+--		if (seed == AC_ID) then
+--			seed = obj:id()
+--		end
+--		
+--		mrs(seed)
+--		
+--		disassemble(obj, obj_d)
+--		mrs(dtg())
+--	end
 end
 --
 --if smr_loot and smr_loot_mcm then 										-- Check if you have ZCP installed, again, version shouldn't matter
