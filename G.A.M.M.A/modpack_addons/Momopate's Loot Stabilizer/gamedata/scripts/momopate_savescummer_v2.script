@@ -64,9 +64,25 @@ local maps = {
 
 
 local function last_char_as_number(str)
-    local char = str:match(".*(%a)")
-    local char = char:sub(-1)
-    return string.byte(char:lower()) - string.byte("a") + 1  -- returns nil if not a number
+	if not str then
+		return 8
+	end
+	
+	local s = tostring(str)
+	local text = string.gsub(s,"[^%a]", "")
+    local last_letter = string.sub(text,-1)
+	
+	if not last_letter then
+		return 8
+	end
+
+	local result = string.byte(last_letter) - string.byte("a") + 1
+	
+	if not result then
+		return 8
+	end
+	
+	return result
 end
 
 local ini_seed = ini_file("plugins\\mass_fat_loot.ltx")
@@ -153,11 +169,11 @@ local outfitter 		= item_parts.evaluate_parts						-- Outfit parts, maybe
 --	mrs(npc:id())
 --end
 
-function death_manager.set_weapon_drop_condition(npc, itm)
-	mrs(npc:id())
-	greasy_hands(npc, itm)
-	mrs(dtg())
-end
+--function death_manager.set_weapon_drop_condition(npc, itm)
+--	mrs(npc:id())
+--	greasy_hands(npc, itm)
+--	mrs(dtg())
+--end
 
 function ui_mutant_loot.loot_mutant(section, clsid, loot_table, npc, dont_create, victim)
 	mrs(victim and victim:id() or dtg())
@@ -295,16 +311,21 @@ end
 --end
 
 local function generate_seed_weapon(obj)
-	local seed_hour = level.get_time_hours()
-	local seed_lvl = maps[level.name()] or 5
-	local parent_id = obj:parent() and obj:parent():id() or 2
+	seed_hour = level.get_time_hours()
+	seed_lvl = maps[level.name()] or 5
+	local parent_id = obj:parent() and obj:parent():id()
 	if parent_id then
-		local seed_parent_last_digit = tonumber(string.sub(parent_id,-1)) or 2
+		seed_parent_last_digit = string.sub(tostring(parent_id),-1)
 	else
-		local seed_parent_last_digit = 2
+		seed_parent_last_digit = 2
 	end
-
-	local seed_weapon_name = last_char_as_number(obj:id()) or 8
+	
+	local obj_sec = obj:section()
+	if obj_sec then
+		seed_weapon_name = last_char_as_number(obj_sec)
+	else
+		seed_weapon_name = 8
+	end
 
 	return seed_parent_last_digit .. seed_weapon_name .. seed_hour .. seed_lvl
 end
