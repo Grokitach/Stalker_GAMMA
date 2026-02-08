@@ -538,22 +538,33 @@ function actor_on_first_update_prefetch()
 end
 
 -- Force update close enough traders
-local delay = 17 -- delay in ms
-local trigger = 0
-local npc_update_delay  = 0
+local function t2c(t)
+	if not t then return nil end
+	local ct = game.CTime()
+	ct:set(t.Y,t.M,t.D,t.h,t.m,t.s,t.ms)
+	return ct
+end
+
 function npc_on_update(npc)
-    tg = time_global()
-    if trigger == 0 then
-        npc_update_delay = tg + delay
-        trigger = 1
-        return
-    end
-    if (trigger == 1 and tg > npc_update_delay) then
-        trigger = 0
-        if npc:position():distance_to_sqr(db.actor:position()) < 25 then
-            trade_manager.update(npc)
-        end
-    end
+	if npc:position():distance_to_sqr(db.actor:position()) < 30^2 then
+		-- Copy checks from trade_manager with fixed restock time, fixes GAMMA
+		local id = npc:id()
+		if not (trade_manager.tm and trade_manager.tm[id] and trade_manager.tm[id].cfg_ltx) then 
+			return
+		end 
+		
+		local config = trade_manager.config_by_name and trade_manager.config_by_name[trade_manager.tm[id].cfg_ltx]
+		if not (config) then
+			return
+		end
+
+		local restock_time = math.max(game_difficulties.get_eco_factor("restock") or 24, 12)
+		if (trade_manager.tm[id].resupply_time and game.get_game_time():diffSec(t2c(trade_manager.tm[id].resupply_time)) < (restock_time * 3600))  then
+			return
+		end
+
+		trade_manager.update(npc)
+	end
 end
 
 function on_game_start()

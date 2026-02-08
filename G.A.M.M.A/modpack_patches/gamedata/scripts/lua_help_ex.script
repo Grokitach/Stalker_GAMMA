@@ -60,6 +60,10 @@
 
         poltergeist_spawn_corpse_on_death // Poltergeists spawn corpses on death
         g_firepos_zoom // Make firepos work while aiming
+
+        g_decouple_horz_recoil // calculate horz recoil independently of vert recoil
+        g_use_non_linear_inertia // enable non linear weapon inertia movement
+
     }
 
     lua extensions {
@@ -90,6 +94,16 @@
         int get_modded_exes_version() // Returns modded exes version in integer format
         table get_string_table() // Returns all translated strings in [string id] = string text format 
         player_hud* get_player_hud()
+
+        -- color getters / setters
+        ClrGetA(number argb)
+        ClrGetR(number argb)
+        ClrGetG(number argb)
+        ClrGetB(number argb)
+        ClrSetA(number argb, number a)
+        ClrSetR(number argb, number r)
+        ClrSetG(number argb, number g)
+        ClrSetB(number argb, number b)
     }
 
     get_console() {
@@ -267,6 +281,10 @@
         script_rq_result get_target_result(ETraceTarget)
         script_rq_result get_target_result()
 
+        table get_nearby_vertices(pos, radius) // can be used to collect nearby vertices. ([lvid] = true)
+        number vertex_link(lvid, index) // can be used to get the vertices that is connected to the current vertex.
+        table get_nearby_covers(pos, radius) // can be used to collect nearby vertices that are covers. ([lvid] = true)
+
         // antglobes
         Fvector get_sun_pos() // Get the sun's position in the sky
         Fcolor get_sun_color() // Get the float represenation of the sun's color in rgb format
@@ -418,6 +436,10 @@
     class game_object {
 		// Class casting
 		function cast_Knife()
+        function get_projector()
+        function get_stmgun()
+        function cast_Missile()
+        function cast_Explosive()
 
         // General
         Fmatrix xform(bool bHud)
@@ -561,6 +583,34 @@
         property m_additional_weight
     }
 
+    class CMissile : CGameObject {
+        enum EMissileStates
+            eThrowStart
+            eReady
+            eThrow
+            eThrowEnd
+
+        function GetMinForce()
+        function GetMaxForce()
+        function GetThrowForce()
+        function GetConstForce()
+        function IsConstPower()
+        function GetThrowPoint()
+        function GetThrowDir()
+    }
+
+    class CProjector : CGameObject {
+        enum projector_enum
+            eActive
+            eSwitch
+            eDesiredPos
+            eDesiredDir
+            eDesiredAng
+        
+        functiom Action(number id, number flags, string sec)
+        functiom SetParam(number id, Fvector val, string sec)
+    }
+
     class CWeapon : CGameObject {
         // Return RPM in actual RPM value like in configs
         function RealRPM()
@@ -604,7 +654,14 @@
         function Set_mStrapOffset(Fvector position, Fvector orientation)
         function Set_mFirePoint(Fvector position)
         function Set_mFirePoint2(Fvector position)
-        function Set_mShellPoint(Fvector position)        
+        function Set_mShellPoint(Fvector position)  
+
+        function Get_mOffset()
+        function Get_mStrapOffset()
+        function Get_strap_bone0()
+        function Get_strap_bone1()
+        function Get_strapped_mode()
+        function HandDependence()
 
         // Cam Recoil
         // Getters
