@@ -81,6 +81,10 @@ local upg_prop_tool = {
 }
 
 local repair_tier = {
+	["helmet_light"] =  {1, 1, 1},
+	["helmet_medium"] =  {1, 2, 2},
+	["helmet_heavy"] =  {2, 2, 3},
+	["helmet_exo"] =  {3, 3, 3},
 	["outfit_novice"] =  {1, 1, 1},
 	["outfit_light"] =  {1, 1, 1},
 	["outfit_medium"] =  {1, 2, 2},
@@ -96,11 +100,18 @@ function utils_item.extract_upgrade(tree, group, not_first, itm_section)
 	tier_scheme = {1, 2, 3}
     if itm_section then
 		printf(itm_section)
-		local parent_sec = ini_sys:r_string_ex(itm_section,"parent_section") or itm_section
-		local repair_type = ini_sys:r_string_ex(parent_sec,"repair_type")
-		printf(repair_type)
+		local repair_type = ini_sys:r_string_ex(itm_section,"repair_type")
+--		printf(repair_type)
+		if not repair_type then
+			local parent_sec = ini_sys:r_string_ex(itm_section,"parent_section") or itm_section
+			local repair_type = ini_sys:r_string_ex(parent_sec,"repair_type")
+		end
+--		printf(repair_type)
 		if repair_type then
 			tier_scheme = repair_tier[repair_type]
+			if not tier_scheme then
+				tier_scheme = {1, 2, 3}
+			end
 			printf("%s, %s, %s", tier_scheme[1], tier_scheme[2], tier_scheme[3])
 		end
 	end
@@ -131,7 +142,7 @@ function utils_item.extract_upgrade(tree, group, not_first, itm_section)
 					tree[row][col].icon = ini_sys:r_string_ex(element,"icon")
 					tree[row][col].effect = effect and parse_list(ini_sys, effect, "elements",true)
 					tree[row][col].prop = parse_list(ini_sys,element,"property")
-					printf("%s, %s, %s", tier_scheme[1], tier_scheme[2], tier_scheme[3])
+--					printf("%s, %s, %s", tier_scheme[1], tier_scheme[2], tier_scheme[3])
 					tree[row][col].tier = ((col <= 2) and tier_scheme[1]) or ((col <= 4) and tier_scheme[2]) or tier_scheme[3]
 					
 					local prop = tree[row][col].prop[1]
