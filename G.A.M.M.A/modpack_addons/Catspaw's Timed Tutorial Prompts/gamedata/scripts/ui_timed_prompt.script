@@ -1,0 +1,1417 @@
+-- ======================================================================
+--[[	Timed Floating Prompt
+-- ==================================================================--]]
+script_name 	= "ui_timed_prompt"
+script_version 	= "1.1"
+release_date 	= 20260206
+--[[=====================================================================
+	Author: Catspaw (CatspawMods @ ModDB)
+	
+	https://www.youtube.com/@CatspawAdventures
+-- ======================================================================
+	A parameterized floating prompt that disappears after a set time
+	without user action. Can be skinned with any desired texture and
+	configured with a variety of behaviors, all of which have useful
+	defaults.
+
+	Requires utils_catspaw_text from my utility scripts for certain 
+	features. The prompt won't crash without it, but it won't be able 
+	to generate keybind text or parse color substitutions.
+
+	See PROMPT USAGE below, or FULL SETTINGS LIST at the bottom.
+
+	If you have an NPE tutorial that you want to prompt the user first,
+	see z_npe_timed_prompt.script for instructions and methods.
+-- ====================================================================]]
+if not (utils_catspaw_text and utils_catspaw_text.bindtext) then
+	printf("! ERROR: utils_catspaw_text.script is missing or outdated! %s will not be able to generate keybind text or parse color tokens.", script_name)
+end
+
+logprefix   = "[TimedPrompt] "
+debuglogs   = false
+verbose     = false
+debug_dump  = true
+
+local bindtext 			= utils_catspaw_text and utils_catspaw_text.bindtext or function() return "" end
+local parse_colors 		= utils_catspaw_text and utils_catspaw_text.parse_color_tokens or function(st) return st end
+local gts 				= game.translate_string
+local pda_dik 			= bind_to_dik(key_bindings.kACTIVE_JOBS)
+local tutorial_prefix 	= gts("ui_st_catsy_new_tutorial")
+local xml_cache 		= {}
+local unsquish_ratio 	= 1
+local anim_active 		= nil
+local active_anims 		= {}
+wnds 					= {}
+
+-- ======================================================================
+
+local function getargb(a, r, g, b)
+    return GetARGB(
+    a or 255,
+    r or 255,
+    g or 255,
+    b or 255
+)
+end
+
+local argb = {
+	white = getargb(255, 255, 255, 255),
+	black = getargb(255, 0, 0, 0)
+}
+
+cfg = {
+	disable_all_sounds 		= false,
+	icons_for_keys 			= true,
+	mark_missed_as_played 	= false,
+	mark_passed_as_played 	= true,
+	attach_timer_to_title 	= true,
+	show_timer_indicator 	= true,
+	show_timeout_reminder 	= true,
+	load_from_file 			= true,
+	ease_in_duration 		= 200,
+	ease_out_duration 		= 400,
+	default_wait_time 		= 5000,
+	easing_in_type 			= "easeInOutBack",
+	easing_out_type 		= "easeInOutBack",
+	default_ui_file 		= "ui_timed_prompt.xml"
+	-- If load_from_file is true and the above file is present, the other settings in this
+	-- table will be loaded from that file instead. If this is the default config file, it
+	-- contains comments explaining each setting.
+	-- Allows modpacks such as GAMMA to define default behaviors.
+}
+
+dik_icons = {
+	-- DIK key codes that have an icon texture to be used instead of text on a key background
+	[337] 	= "ui_catsy_keybind_mouse1",
+	[338] 	= "ui_catsy_keybind_mouse2",
+	[339] 	= "ui_catsy_keybind_mouse3",
+	[340] 	= "ui_catsy_keybind_mouse4",
+	[341]	= "ui_catsy_keybind_mouse5"
+}
+-- ======================================================================
+-- 		
+-- ======================================================================
+--- @param tutorial_id string
+--- @param title_text string
+--- @param exec_func function
+--- @param args table
+function show_tutorial_prompt(tutorial_id, title_text, exec_func, args)
+--[[=====================================================================
+	PROMPT USAGE
+
+	This function is designed to allow anyone to pop up a tutorial 
+	prompt with helpful default settings and a minimum of input or 
+	arguments required.
+
+	The minimum necessary for the prompt to be useful is an exec_func
+	argument, which passes a pointer to the function that should be
+	called if the user elects to view the tutorial.
+
+	All of the default settings below are individually explained. All
+	are optional.
+-- ====================================================================]]
+	args 				= args or {}
+	-- Carry over any passed args, or init a blank table
+	args.uid 			= args.uid or tutorial_id
+	-- A unique internal identifier for this prompt, can be any valid Lua string
+	args.tutorial_id 	= tutorial_id or args.tutorial_id or args.uid
+	-- NPE set ID
+	args.add_tutorial_prefix = get_val_or_default(args.add_tutorial_prefix, cfg.add_tutorial_prefix)
+	local prefix 		= args.add_tutorial_prefix and tutorial_prefix and (tutorial_prefix .. ": ") or ""
+	-- If add_tutorial_prefix is true, the tutorial title will be prefixed with 
+	-- the localized string "New Tutorial: "
+	local title 		= args.title or title_text or (args.tutorial_loc_str and gts(args.tutorial_loc_str)) or nil
+	-- args.title, if passed, should be raw translated text
+	-- alternatively, args.tutorial_loc_str can contain a localization string
+	-- The "New Tutorial" phrase is used as a default if no title is passed either way
+	args.title 			= title and (prefix .. title) or tutorial_prefix or ""
+	-- The translated title text announcing the appearance of the prompt
+	args.frame_texture 	= args.frame_texture or (args.hide_header and "ui_catsy_tutorialprompt_noimg_frame" or "ui_catsy_tutorialprompt_full_frame")
+	-- Texture used for the prompt's "chrome"--the nonfunctional parts of the UI frame
+	args.drop_texture 	= args.drop_texture or (args.hide_header and "ui_catsy_tutorialprompt_noimg_cfbg" or "ui_catsy_tutorialprompt_full_cfbg")
+	-- Texture used for the drop shadow/background
+	args.header_image	= args.header_image or "ui_options_slider_news"
+	-- Texture for header image. The default prompt is designed for Anomaly's 512x50 menu "sliders"
+	args.show_timer 	= get_val_or_default(args.show_timer, cfg.show_timer_indicator)
+	-- Show a timed indicator for when the prompt will disappear on its own
+	args.timer_on_title	= get_val_or_default(args.timer_on_title, cfg.attach_timer_to_title)
+	-- Position the timer relative to the end of the title text
+	args.hide_passed 	= get_val_or_default(args.hide_passed, cfg.mark_passed_as_played)
+	-- Tell NPE to mark declined tutorials as played, so that they won't be shown again
+	args.hide_missed 	= get_val_or_default(args.hide_missed, cfg.mark_missed_as_played)
+	-- Tell NPE to mark timed-out tutorials as played, so that they won't be shown again
+	args.timeout_msg 	= get_val_or_default(args.timeout_msg, cfg.show_timeout_reminder)
+	-- Tell NPE to mark timed-out tutorials as played, so that they won't be shown again
+	args.title_font 	= args.title_font or GetFontGraffiti22Russian()
+	-- Use larger text for the title
+	args.snd_on_init 	= args.snd_on_init or "catspaw\\tutorial_beep"
+	-- Optional sound to play when prompt window opens
+	args.snd_on_close 	= args.snd_on_close or "catspaw\\paw_blip"
+	-- Optional sound to pl
+	args.title_x 		= args.title_x or 10
+	-- x position of the title text
+	args.title_y 		= args.title_y or (args.hide_header and 6 or 36)
+	-- y position of the title text
+	-- gets moved up 30 units when header box is hidden
+	args.key 			= args.key or pda_dik
+	-- DIK code of the key to watch
+	args.bind    		= args.bind or bindtext(args.key, 0) or nil
+	-- Optional override for the text shown for the keybind
+	args.window_x 		= args.window_x or 10
+	-- x position of the entire window on the screen canvas
+	args.window_y 		= args.window_y or 180
+	-- y position of the entire window on the screen canvas
+	args.window_w 		= args.window_w or 360
+	-- width of the window container and texture
+	args.window_h 		= args.window_h or (args.hide_header and 50 or 84)
+	-- height of the window container and texture
+	-- gets moved up 34 units when header box is hidden
+	-- The drop and frame arguments that follow will default to the above w and h if omitted
+	args.drop_w 		= args.drop_w or args.window_w
+	-- width of the background container and texture
+	args.drop_h 		= args.drop_h or args.window_h
+	-- height of the background container and texture
+	args.frame_w 		= args.frame_w or args.window_w
+	-- width of the frame container and texture
+	args.frame_h 		= args.frame_h or args.window_h
+	-- height of the frame container and texture
+	args.wait_time 	= args.wait_time or 5000
+	-- Time in ms that the prompt will wait for input before disappearing - default 5s
+	-- Note: the default cleanup time (auto-destroy of orphaned prompts) is 20s, so if you 
+	-- pass args.wait_time that is >=20000, also pass a args.cleanup_time that is higher
+	args.on_ignore 	= args.on_ignore or ignored_tutorial_reminder or func_debug_tutorial_ignore
+	-- Optional functor that is executed if the tutorial times out without player response
+	args.prompts 		 = args.prompts or {
+		-- Any number of prompts can technically be specified in args.prompts, meaning that
+		-- you could create a fairly complex pop-up if you wanted to do so. You can also
+		-- omit them entirely if you just want to pop up a timed banner and message, with 
+		-- nothing to trigger or ignore.
+		-- For our purposes here we just need to track the "view" and "dismiss" keys.
+			[1] = {
+				label_text 	= args.view_label_text or gts("ui_st_catsy_view_tutorial"),
+				-- text label for the option to view the tutorial
+				func    	= exec_func or args.func_tutorial or func_debug_tutorial_start,
+				-- functor to execute if tutorial is viewed
+				key 		= args.key,
+				-- DIK code of the key to watch - defaults to PDA keybind
+				bind 		= args.bind,
+				-- Text caption of the keybind to press
+				bind_argb	= argb.black,
+				-- ARGB color to use for the keybind text
+				bind_shadow = false,
+				-- Don't show the text drop shadow, since we're using dark text on light bg
+				bind_icon 	= cfg.icons_for_keys and get_icon_for_dik(args.key) or nil,
+				-- Texture to use instead of text for keybinds (e.g. mouse buttons) that have one
+				window_x 	= 0,
+				-- x position of the accept prompt
+				window_y 	= (args.hide_header and 27 or 58),
+				-- y position of the accept prompt
+				bind_x 		= 8,
+				-- x position of the keybind display
+				bind_y 		= -2,
+				-- y position of the keybind display
+				label_x 	= 30,
+				-- x position of the text label
+			},
+			[2] = {
+				label_text 	= args.hold_label_text or gts("ui_st_catsy_dismiss_prompt"),
+				-- text label for the option to dismiss the tutorial
+				func    	= args.on_dismiss or func_debug_tutorial_dismiss,
+				-- optional functor to execute if tutorial is dismissed
+				-- pass in the initial args as args.func_on_dismiss
+				key 		= args.key,
+				hide_bind 	= true,
+				-- Don't show the keybind element on this prompt - it's already on the other
+				prog_x 		= 2,
+				-- x position for the long-press indicator
+				prog_y 		= -1,
+				-- y position for the long-press indicator
+				window_x 	= 120,
+				window_y 	= (args.hide_header and 27 or 58),
+				label_x 	= 20,
+				mode 		= 2
+				-- Mode 2 is long press/hold
+			}
+		}
+
+	return UITimedPrompt(ActorMenu.get_maingame(), args)
+end
+
+-- =======================================================================
+-- ======================================================================
+
+class "UITimedPrompt" (CUIScriptWnd)
+
+--- @param anchor CUIStatic
+--- @param args table
+function UITimedPrompt:__init(anchor, args) super()
+	--printf("UITimedPrompt:__init")
+	self:SetAutoDelete(true)
+	RegisterScriptCallback("actor_on_net_destroy", self)
+	if not self:ParseArgs(args) then return end
+	self:BuildUI(anchor)
+	self:SetTimer()
+	if args.snd_on_init and not self.args.no_sound then
+		-- passing 
+		play_snd_path(args.snd_on_init)
+	end
+	wnds[self.uid] = self.wnd
+	if self.args.on_init then
+		self.args.on_init(self)
+	end
+	if self.wnd and not self.args.no_animations then
+		self.wnd:SetWndPos(vector2():set(-self.w * self.aspect, self.args.window_y))
+		self.wnd:Show(true)
+		slide_window_in(self)
+	elseif self.wnd then
+		self.wnd:Show(true)
+	end
+end
+
+--- @param args table
+function UITimedPrompt:ParseArgs(args)
+	if not args then return end
+	self.uid = args.uid or "UITimedPrompt_" .. tostring(time_global())
+	self.wait_time = args.wait_time or 5000
+	self.cleanup_time 	= args.cleanup_time or 20000
+	self.aspect 		= args.no_aspect_correction and 1 or unsquish_ratio
+	self.tutorial_id 	= args.tutorial_id or self.uid
+
+	if args.header_image then
+		args.header_w 	= args.header_w or 340
+		args.header_h 	= args.header_h or 25
+		args.header_x 	= args.header_x or 6
+		args.header_y 	= args.header_y or 6
+	else
+		args.hide_header= true
+	end
+
+	if args.title then
+		args.title_x 	= args.title_x or 0
+		args.title_y 	= args.title_y or 0
+		args.title_h 	= args.title_h or 20
+	end
+
+	if args.on_parse_args then
+		args.on_parse_args(self, args)
+	end
+	args.window_x 		= args.window_x or 0
+	args.window_y 		= args.window_y or 0
+	args.window_w 		= args.window_w or 360
+	args.window_h 		= args.window_h or 84
+	self.x 				= args.window_x
+	self.y 				= args.window_y
+	self.w 				= args.window_w
+	args.argb_drop 		= args.argb_drop or getargb((args.drop_alpha or 0.75) * 255)
+	args.complex 		= get_val_or_default(args.complex, true)
+
+	self.title_wadj	= 0
+	self.args = args
+	return true
+end
+
+--- @param anchor CUIStatic
+function UITimedPrompt:BuildUI(anchor)
+	if not self.args then return end
+	self.xml 		= self.args.xml or get_xml_cache(self.args.xml_file or cfg.default_ui_file)
+	self.wnd    	= self.xml:InitStatic("uichrome", anchor or maingameui)
+	self.drop 		= self.xml:InitStatic("uichrome", self.wnd)
+	self.frame  	= self.xml:InitStatic("uichrome", self.drop)
+	self.header		= self.xml:InitStatic("uichrome:header", self.frame)
+	self.title_ref 	= self.xml:InitTextWnd("uichrome:title", self.frame)
+	self.title_b 	= self.xml:InitTextWnd("uichrome:title", self.frame)
+	self.title_f	= self.xml:InitTextWnd("uichrome:title", self.frame)
+	self.desc_b 	= self.xml:InitTextWnd("uichrome:desc", self.frame)
+	self.desc_f		= self.xml:InitTextWnd("uichrome:desc", self.frame)
+	self.wnd:Show(false)
+
+	--printf("wnd w %s h %s | drop w %s h %s | frame w %s h %s", self.args.window_w, self.args.window_h, self.args.drop_w, self.args.drop_h, self.args.frame_w, self.args.frame_h)
+	self.drop:InitTexture(self.args.drop_texture or "ui_catsy_tutorialprompt_full_cfbg")
+
+	self.drop:SetTextureColor(self.args.argb_drop)
+	self.drop:Show(true)
+
+	self.frame:InitTexture(self.args.frame_texture or (self.args.hide_header and "ui_catsy_tutorialprompt_noimg_frame" or "ui_catsy_tutorialprompt_full_frame"))
+	if self.args.argb_frame then
+		self.drop:SetTextureColor(self.args.argb_frame)
+	end
+	self.frame:Show(not self.args.hide_frame)
+
+	if self.args.header_image and not self.args.hide_header then
+		self.header:InitTexture(self.args.header_image)
+		self.header:SetWndSize(vector2():set(self.args.header_w * self.aspect, self.args.header_h))
+		self.header:SetWndPos(vector2():set(self.args.header_x * self.aspect, self.args.header_y))
+	end
+	if self.args.title then
+		local text_c = parse_colors(self.args.title, nil, true)
+		local text_p = parse_colors(self.args.title, nil, false)
+		self.title_ref:SetWndSize(vector2():set(600, 20))
+		self.title_ref:SetFont(self.args.title_font or GetFontGraffiti32Russian())
+		self.title_ref:SetTextComplexMode(false)
+		self.title_ref:SetText(text_p)
+		self.title_ref:AdjustWidthToText()
+		self.title_wadj = self.title_ref:GetWidth() + 20
+		self.title_ref:Show(false)
+
+		self.title_b:SetFont(self.args.title_font or GetFontGraffiti32Russian())
+		self.title_b:SetTextComplexMode(true)
+		self.title_b:SetText(text_p)
+		self.title_b:SetWndPos(vector2():set(self.args.title_x, self.args.title_y))
+		self.title_b:SetWndSize(vector2():set(self.w * self.aspect, self.args.title_h))
+		self.title_b:SetTextColor(argb.black)
+		self.title_f:SetFont(self.args.title_font or GetFontGraffiti32Russian())
+		self.title_f:SetTextComplexMode(true)
+		self.title_f:SetText(text_c)
+		--self.title_f:AdjustWidthToText()
+		self.title_f:SetWndPos(vector2():set(self.args.title_x - 1, self.args.title_y - 1))
+		self.title_f:SetWndSize(vector2():set(self.w * self.aspect, 20))
+		self.title_f:SetTextColor(argb.white)
+	end
+
+	if self.args.prompts then
+		self.prompts = {}
+		for i = 1, #self.args.prompts do
+			local p = self.args.prompts[i]
+			p.index = i
+			self.prompts[i] = UIKeyPrompt(self.frame, p.uid or (self.uid .. "_ind_" .. i), p)
+			self.prompts[i].parent = self
+		end
+	end
+
+	self.wnd:SetWndPos(vector2():set(self.args.window_x * self.aspect, self.args.window_y))
+	self.wnd:SetWndSize(vector2():set(self.w * self.aspect, self.args.window_h))
+	self.drop:SetWndSize(vector2():set(self.args.drop_w * self.aspect, self.args.drop_h))
+	self.frame:SetWndSize(vector2():set(self.args.frame_w * self.aspect, self.args.frame_h))
+	self.wnd:Show(true)
+
+	if self.args.on_build_ui then self.args.on_build_ui(self) end
+end
+
+--- @param wait_time number
+function UITimedPrompt:SetTimer(wait_time)
+	wait_time = wait_time or self.wait_time or 5000
+	self.timeout = time_global() + wait_time
+	self.cleanup = time_global() + (self.cleanup_time or 20000)
+	if not self.timer_set then
+		if self.args.show_timer then
+			self.timer = ui_circular_progress and ui_circular_progress.init_new_indicator({
+					width = self.args.timer_size or 16,
+					offset_x = (self.args.timer_x or 0),
+					offset_y = (self.args.timer_y or 0),
+					initial_value = 1
+				},
+				self.uid .. "_timer",
+				self.frame
+			) or nil
+			if self.timer then
+				if self.args.timer_on_title and self.title_f then
+					local title_p = self.title_f:GetWndPos()
+					local timer_y = title_p.y + (self.args.timer_y or 0) + 1
+					local timer_x = self.title_wadj + (self.args.timer_x or 0)
+					self.timer.wnd:SetWndPos(vector2():set(timer_x, timer_y))
+				end
+			end
+		end
+		
+		self.timer_set = time_global()
+
+		CreateTimeEvent(self.uid, 0, 0, self.args.func_timer or (
+			function()
+				local now = time_global()
+				if self.args.on_timer_tick then
+					self.args.on_timer_tick(self)
+				end
+				if self.triggered or (now > self.timeout) or (now > self.cleanup) then
+					if (now > self.timeout) then
+						if self.args.hide_missed and z_npe_timed_prompt and self.tutorial_id then
+							z_npe_timed_prompt.mark_npe_tutorial_as_played(self.tutorial_id)
+						end
+						if self.args.on_ignore then
+							self.args.on_ignore(self)
+						end
+					end
+					--self:Destroy(self.triggered_by)
+					self:CloseWindow()
+					return true
+				end
+				if self.timer then
+					local waited = now - self.timer_set
+					local progval = 1 - (waited / wait_time)
+					--printf("[Timer] start %s | now %s | end %s | waited %s | wait_time %s | progress %s", self.timer_set, now, self.timeout, waited, wait_time, progval)
+					self.timer:SetProgressPos(progval)
+				end
+			end
+		))
+	end
+end
+
+function UITimedPrompt:DisableOtherPrompts()
+	if not self.prompts then return end
+	for k,v in pairs(self.prompts) do
+		if k ~= self.triggered_by then
+			v:Destroy()
+		end
+	end
+
+end
+
+function UITimedPrompt:CloseWindow()
+	if self.args.no_animations or not self.args.timeout_msg then
+		self:Destroy()
+	else
+		slide_window_out(self, true)
+	end
+end
+
+--- @param reason string
+function UITimedPrompt:Destroy(reason)
+	if self.destroyed then return end
+	if self.args.on_destroy then
+		self.args.on_destroy(self, reason)
+	end
+	if self.prompts then
+		for k,v in pairs(self.prompts) do
+			if v.Destroy then v:Destroy() end
+		end
+	end
+	if self.timer then
+		self.timer:Destroy()
+	end
+	if self.wnd then
+		self.wnd:Show(false)
+		self.wnd = nil
+	end
+	get_hud():RemoveDialogToRender(self)
+	if self.args.snd_on_close and not self.args.no_sound then
+		play_snd_path(self.args.snd_on_close)
+	end
+	self.destroyed = true
+end
+
+function UITimedPrompt:actor_on_net_destroy()
+	self:Destroy()
+end
+
+-- =======================================================================
+-- 	SINGLE KEY INPUT PROMPT
+--[[======================================================================
+	Watches for DIK code passed in args.key. By default a single press, 
+	but it will wait for a long press instead if args.mode == 2.
+
+	If the specified input is detected, it will execute args.func.
+
+	This was designed as a piece of the Timed Prompt, but can be used on
+	its own.
+-- =====================================================================]]
+class "UIKeyPrompt" (CUIScriptWnd)
+
+--- @param anchor CUIStatic
+--- @param uid string
+--- @param args table
+function UIKeyPrompt:__init(anchor, uid, args) super()
+	--printf("UIKeyPrompt:__init")
+	self:SetAutoDelete(true)
+	args.uid = uid
+	if not self:ParseArgs(args) then return end
+	self:BuildUI(anchor)
+	self:RegisterCallbacks(true)
+	
+end
+
+--- @param state boolean
+function UIKeyPrompt:RegisterCallbacks(state)
+	if state and not self.callbacks_set then
+		RegisterScriptCallback("actor_on_net_destroy", self)
+		RegisterScriptCallback("on_before_key_press", self)
+		RegisterScriptCallback("on_key_release", self)
+		if (self.args.mode == 2) then
+			RegisterScriptCallback("actor_on_update", self)
+			RegisterScriptCallback("on_key_hold", self)
+		end
+		self.callbacks_set = true
+	elseif self.callbacks_set and not state then
+		UnregisterScriptCallback("on_before_key_press", self)
+		UnregisterScriptCallback("on_key_release", self)
+		if (self.args.mode == 2) then
+			UnregisterScriptCallback("on_key_hold", self)
+			UnregisterScriptCallback("actor_on_update", self)
+		end
+		self.callbacks_set = false
+	end
+end
+
+--- @param args table
+function UIKeyPrompt:ParseArgs(args)
+	if not (args and args.key) then return end
+	self.uid = args.uid or tostring(args.key or 0) .. "_" .. tostring(args.mode or 0) .. "_" .. time_global()
+
+	if args.on_parse_args then
+		args.on_parse_args(self, args)
+	end
+	args.xml_box = args.xml_box or "box"
+	local tap_time = ui_mcm.get("mcm/mcm_kb/mcm_kb_main/dtaptime2") or 200
+	self.hold_time  = (args.hold_time or ui_mcm.get("mcm/mcm_kb/mcm_kb_main/presstime") or 2) * tap_time
+	self.args = args
+	self.uid 	= uid or tostring(self.args.key) .. tostring(self.args.mode or 0) .. time_global()
+
+	return true
+end
+
+--- @param anchor CUIStatic
+function UIKeyPrompt:BuildUI(anchor)
+	self.xml 		= self.args.xml or get_xml_cache(self.args.xml_file or "ui_timed_prompt.xml")
+	self.wnd    	= self.xml:InitStatic(self.args.xml_box, anchor or maingameui)
+	self.wnd:SetWndPos(vector2():set(self.args.window_x * unsquish_ratio, self.args.window_y))
+	
+	self.drop   	= self.xml:InitStatic(self.args.xml_box, self.wnd)
+	if self.args.tex_drop then
+		self.drop:InitTexture(self.args.tex_drop)
+		self.drop:SetTextureColor(getargb((self.args.drop_alpha or 0.75) * 255))
+	end
+
+	self.frame  	= self.xml:InitStatic(self.args.xml_box, self.drop)
+	if self.args.tex_frame then
+		self.frame:InitTexture(self.args.tex_frame)
+	end
+	
+	self:SetupHoldIndicator()
+	self:SetLabelText()
+	if self.shownbind or self.args.hide_bind then return end
+	self.shownbind = get_keybind_display(self)
+
+end
+
+function UIKeyPrompt:SetupHoldIndicator()
+	if self.prog then
+		self.prog:Destroy()
+		self.prog = nil
+	end
+	if (self.args.mode == 2) then
+		self.prog 	= ui_circular_progress and ui_circular_progress.init_new_indicator({
+				progress_argb = self.args.argb_progress and getargb(self.args.argb_progress) or nil,
+				width = self.args.prog_size or 16,
+				offset_x = self.args.prog_x or nil,
+				offset_y = self.args.prog_y or nil
+			},
+			self.uid,
+			self.frame
+		)
+		if self.args.prog_x or self.args.prog_y then
+			self.prog:SetWndPos(vector2():set((self.args.prog_x or 0) * unsquish_ratio, self.args.prog_y or 0))
+		end
+		if self.args.hide_hold_ind then
+			self.prog:Show(false)
+		end
+	end
+end
+
+--- @param labeltext string
+function UIKeyPrompt:SetLabelText(labeltext)
+	if self.args.hide_label then return end
+	if labeltext then
+		self.args.label_text = labeltext
+	end
+	if self.args.label_text then
+		if not self.textlabel then
+			self.textlabel 	= self.xml:InitStatic(self.args.xml_box, self.frame)
+			self.text_bg	= self.xml:InitTextWnd(self.args.xml_box, self.textlabel)
+			self.text_fg	= self.xml:InitTextWnd(self.args.xml_box, self.textlabel)
+		end
+		self.textlabel:SetWndPos(vector2():set((self.args.label_x or 0) * unsquish_ratio, self.args.label_y or 0))
+		self.text_bg:SetFont(self.args.label_font or GetFontLetterica16Russian())
+		self.text_bg:SetText(self.args.label_text)
+		self.text_bg:SetTextColor(argb.black)
+		self.text_fg:SetFont(self.args.label_font or GetFontLetterica16Russian())
+		self.text_fg:SetText(self.args.label_text)
+		self.text_fg:SetTextColor(argb.white)
+
+	elseif self.textlabel then
+		self.textlabel:Show(false)
+	end
+end
+
+function UIKeyPrompt:Destroy()
+	if self.prog then
+		self.prog:Destroy()
+	end
+	if self.wnd then
+		self.wnd:Show(false)
+		self.wnd = nil
+	end
+	self:RegisterCallbacks(false)
+	get_hud():RemoveDialogToRender(self)
+end
+
+--- @param progress number
+function UIKeyPrompt:SetHoldProgress(progress)
+	if not self.prog then return end
+	--printf("Setting progress to %s", progress or 0)
+	self.prog:SetProgressPos(progress or 0)
+end
+
+function UIKeyPrompt:ExecuteAction()
+	--printf("[%s][%s] Executing prompt action functor for %s", time_continual(), self.uid, self.args.label_text)
+	if self.args.func then
+		--printf("calling self.args.func")
+		self.args.func(self.parent, self)
+	end
+	if self.parent then
+		self.parent.triggered = true
+		self.parent.triggered_by = self.index
+		self.parent:DisableOtherPrompts()
+		local args = self.parent.args
+		if args and args.hide_passed and z_npe_timed_prompt then
+			local set_id = self.parent.tutorial_id
+			local set = args.npe_set
+			if not set then return end
+			-- mark set as played
+			z_npe_timed_prompt.mark_npe_tutorial_as_played(set)
+		end
+	end
+	if self.args.snd_on_exec and not self.args.no_sound then
+		play_snd_path(self.args.snd_on_exec)
+	end
+
+	self:RegisterCallbacks(false)
+end
+
+function UIKeyPrompt:ResetHold()
+	if not self.prog then return end
+	self.peak_hold  = nil
+	self.held_key    = nil
+	self.held_mod    = nil
+	self.held_time   = nil
+	self:SetHoldProgress(0)
+	--printf("UIKeyPrompt reset hold progress")
+end
+
+function UIKeyPrompt:UpdateLongPress()
+	if not self.prog then return end
+	if (self.held_key == self.args.key) and (self.held_mod == self.args.mod) then
+		self.peak_hold = time_continual() - (self.held_time or 0)
+		local prog = (self.peak_hold / self.hold_time)
+		--printf("[%s][InteractPrompt:UpdateLongPress] | peak %s | hold_time %s | progress %s", time_continual(), self.peak_hold, self.hold_time, prog)
+		self:SetHoldProgress(prog)
+	else
+		self.peak_hold = nil
+		self:SetHoldProgress(0)
+	end
+	CUIScriptWnd.Update(self)
+end
+
+function UIKeyPrompt:actor_on_update()
+	self:UpdateLongPress()
+end
+
+--- @param key number
+function UIKeyPrompt:on_key_hold(key)
+	if not ui_mcm then return end
+	--printf("[%s][%s] UIKeyPrompt:on_key_hold | key %s", time_global(), self.uid, key)
+	
+	if (key == self.args.key) and self:ModKeyHeld() then
+		local now = time_global()
+
+		if ui_mcm.key_hold(self.uid, key, 5) then
+			self:ResetHold()
+			self:ExecuteAction()
+			return
+		end
+
+		if not self.held_key then
+			self:ResetHold()
+			--printf("[%s][UITimedPrompt:on_key_hold] Beginning hold of key %s", now, self.args.key)
+		end
+		self.held_key    = key
+		self.held_mod    = self.args.mod
+		self.held_time   = ui_mcm and ui_mcm.hold[key] and ui_mcm.hold[key][self.uid]
+		self:UpdateLongPress()
+	elseif self.held_key then
+		self:ResetHold()
+	end
+end
+
+--- @param key number
+--- @param bind number
+--- @param dis boolean
+--- @param flags table
+function UIKeyPrompt:on_before_key_press(key, bind, dis, flags)
+	if (key == self.args.key) then
+		--printf("[%s] Pressed watched key %s", self.uid, key)
+		flags.ret_value = false
+		if (self.args.mode == 0) and self:ModKeyHeld() then
+			--printf("[%] Checking for simple press", self.uid)
+			ui_mcm.simple_press(self.uid, key, self.args.func, self.parent)
+		end
+	end
+end
+
+--- @param key number
+function UIKeyPrompt:on_key_release(key)
+	if (key == self.args.key) then
+		--printf("[%s] Watched key %s released", self.uid, key)
+		if self.prog then
+			self:ResetHold()
+		else
+			self:ExecuteAction()
+		end
+	end
+end
+
+function UIKeyPrompt:ModKeyHeld()
+   	return ui_mcm and ui_mcm.get_mod_key(self.args.mod or 0)
+end
+
+function UIKeyPrompt:actor_on_net_destroy()
+	self:Destroy()
+end
+
+-- ======================================================================
+-- ======================================================================
+
+--- @param bind_text string
+function get_keybind_display(self, bind_text)
+	-- Returns a static with an icon representation of the specified 
+	-- keybind, whether by using a specific texture for a given DIK code, 
+	-- or by putting together a fake key icon labeled with the bind name.
+
+	-- Requires that the passed self object have a parsed XML object with
+	-- "prompt" and "box" elements stored in self.xml, as well as a table
+	-- of attributes in self.args.
+
+	if bind_text then
+		self.args.bind = bind_text
+	end
+	if self.args.bind then
+		if not self.shownbind then
+			self.shownbind 	= self.xml:InitStatic(self.args.xml_box, self.frame)
+		end
+		local bind_x 		= (self.args.bind_x or 0) * unsquish_ratio
+		local bind_y 		= (self.args.bind_y or 0)
+		local bind_char_x 	= (self.args.bind_char_x or 0) - 2
+		local bind_char_y 	= (self.args.bind_char_y or 0)
+		
+		if self.args.text_only_bind then
+			self.shownbind:TextControl():SetText(self.args.bind)
+		elseif self.args.bind_icon then
+			--printf("setting up special keybind icon %s", self.args.bind_icon)
+			self.prompt     = self.xml:InitStatic("prompt", self.shownbind)
+			self.prompt:InitTexture(self.args.bind_icon)
+			self.prompt:SetWndSize(vector2():set((self.args.bind_w or 20) * unsquish_ratio, self.args.bind_h or 20))
+			self.args.bind = ""
+		else
+			--printf("setting up default keybind icon for %s", self.args.bind)
+			local stretch_adj 	= 0
+			local boxlen 		= 0
+			local one_char 		= (#self.args.bind == 1)
+			if one_char then
+				self.prompt     = self.xml:InitStatic("prompt", self.shownbind)
+				self.prompt:InitTexture("ui_catsy_keybind_bg_single_v4")
+				self.prompt:SetWndSize(vector2():set((self.args.bind_w or 20) * unsquish_ratio, self.args.bind_h or 20))
+			else
+				stretch_adj     = 2
+				self.prompt     = self.xml:InitStatic(self.args.xml_box, self.shownbind)
+				self.prompt_l   = self.xml:InitStatic("prompt_l", self.prompt)
+				self.prompt_c   = self.xml:InitStatic("prompt_c", self.prompt)
+				self.prompt_r   = self.xml:InitStatic("prompt_r", self.prompt)
+				self.prompt_l:InitTexture("ui_catsy_keybind_bg_left_v4")
+				self.prompt_c:InitTexture("ui_catsy_keybind_bg_center_v4")
+				self.prompt_r:InitTexture("ui_catsy_keybind_bg_right_v4")
+				self.prompt_l:SetWndSize(vector2():set(5.3125 * unsquish_ratio, 20))
+				self.prompt_l:SetWndPos(vector2():set(0, 0))
+				self.prompt_c:SetWndPos(vector2():set(5.1125 * unsquish_ratio, 0))
+				self.prompt_r:SetWndSize(vector2():set(5.3125 * unsquish_ratio, 20))
+			end
+			self.bind_sh        = self.xml:InitStatic("textbox", self.prompt)
+			self.bind_sh:TextControl():SetFont(GetFontLetterica16Russian())
+			self.bind_sh:TextControl():SetText(self.args.bind)
+			self.bind_sh:TextControl():SetTextColor(argb.black)
+			if self.args.bind_shadow == false then
+				self.bind_sh:Show(false)
+			end
+
+			self.bind           = self.xml:InitStatic("textbox", self.prompt)
+			self.bind:TextControl():SetFont(GetFontLetterica16Russian())
+			self.bind:TextControl():SetText(self.args.bind)
+			self.bind:TextControl():SetTextColor(self.args.bind_argb or argb.white)
+			if not one_char then
+				self.bind:AdjustWidthToText()
+				self.bind_sh:AdjustWidthToText()
+				boxlen       	= self.bind:GetWidth() + (1 * unsquish_ratio)
+				self.prompt_c:SetWndSize(vector2():set(boxlen, 20))
+				self.prompt_r:SetWndSize(vector2():set(4.78 + boxlen, 0))
+			else
+				self.bind:SetWndSize(vector2():set(20 * unsquish_ratio, 20))
+				self.bind_sh:SetWndSize(vector2():set(20 * unsquish_ratio, 20))
+			end
+			self.bind_sh:SetWndPos(vector2():set(bind_char_x + stretch_adj + (one_char and 1.5 or 0) + 0.25, bind_char_y + 0.5))
+			self.bind:SetWndPos(vector2():set(bind_char_x + stretch_adj + (one_char and 1.5 or 0), bind_char_y))
+
+		end
+		self.shownbind:SetWndPos(vector2():set(bind_x, bind_y))
+	elseif self.shownbind then
+		self.shownbind:Show(false)
+	end
+end
+
+--- @param key number
+function get_icon_for_dik(key)
+	--printf("get_icon_for_dik(%s) = %s", key, key and dik_icons and dik_icons[key])
+	return key and dik_icons and dik_icons[key]
+end
+
+function lerp(a, b, f)
+	-- linear interpolation
+    if a and b and f then
+        return a + f * (b - a)
+    else
+        return a or b or 0
+    end
+end
+
+easing = {
+	-- Easing functions for progression along a curve
+	InSine 	= (function(x) return 1 - math.cos((x * math.pi) / 2) end),
+	OutSine = (function(x) return math.sin((x * math.pi) / 2) end),
+	InQuint = (function(x) if not x then return end return x * x * x * x * x end),
+	OutQuint = (function(x) if not x then return end return 1 - math.pow(1 - x, 5) end),
+	easeOutElastic = (
+		function(x)
+    		local c4 = 2 * math.pi / 3
+    		return x == 0 and 0 or (x == 1 and 1 or 2 ^ (-10 * x) * math.sin((x * 10 - 0.75) * c4) + 1)
+		end
+	),
+ 	easeOutBounce = (
+	 	function(x)
+		    local n1 = 7.5625
+		    local d1 = 2.75
+
+		    if x < 1 / d1 then
+		        return n1 * x * x
+		    elseif x < 2 / d1 then
+		        x = x - 1.5 / d1
+		        return n1 * x * x + 0.75
+		    elseif x < 2.5 / d1 then
+		        x = x - 2.25 / d1
+		        return n1 * x * x + 0.9375
+		    else
+		        x = x - 2.625 / d1
+		        return n1 * x * x + 0.984375
+	    	end
+    	end
+	),
+ 	easeInOutBack = (
+    	function(x)
+		    local c1 = 1.70158
+		    local c2 = c1 * 1.525
+
+		    if x < 0.5 then
+		        return (math.pow(2 * x, 2) * ((c2 + 1) * 2 * x - c2)) / 2
+		    else
+		        return (math.pow(2 * x - 2, 2) * ((c2 + 1) * (x * 2 - 2) + c2) + 2) / 2
+		    end
+		end	
+	)
+}
+
+function slide_window_in(window)
+	if not (window and window.wnd) then return end
+	local w = window.w or 360
+	local x = window.x or 10
+	local y = window.y or 180
+	local args = window.args or {}
+	local dur = tonumber(args.ease_in_duration or cfg.ease_in_duration) or 200
+	local func = args.easing_in_type or cfg.easing_in_type
+	local curve = func and easing[func] or function(x) return x end
+	do_timed_anim(window.wnd, window.uid, dur, "slide", -w, y, x, y, curve)
+end
+
+
+function slide_window_out(window, delayed_destroy)
+	if not (window and window.wnd) then return end
+	local w = window.w or 360
+	local x = window.x or 10
+	local y = window.y or 180
+	local args = window.args or {}
+	local dur = tonumber(args.ease_out_duration or cfg.ease_out_duration) or 400
+	local func = args.easing_out_type or cfg.easing_out_type
+	local curve = func and easing[func] or function(x) return x end
+	do_timed_anim(window.wnd, window.uid, dur, "slide", x, y, (-w - 1), y, curve)
+	if delayed_destroy then
+		CreateTimeEvent(window.uid, 0, 0.5, 
+			function()
+				window:Destroy()
+				return true
+			end
+		)
+
+	end
+end
+
+function update_unsquish_ratio()
+    -- Scaling multiplier for all horizontal screen coordinates and sizes
+    -- Makes things not look squished/stretched in widescreen
+    unsquish_ratio  = (device().height / device().width) / (768 / 1024)
+    return unsquish_ratio
+end
+
+function get_val_or_default(val, def)
+	if val == nil then return def end
+	return val
+end
+
+function strbool(s)
+	-- Returns boolean value whether it was stored as a string or bool
+	return ((s == "true") or (s == true)) and true or false
+end
+
+--- @param snd sound_object
+function play_sfx(snd)
+    if cfg.disable_all_sounds or not snd then return end
+    snd:play(db.actor, 0, sound_object.s2d)
+end
+
+--- @param snd_path string
+function play_snd_path(snd_path)
+	if not snd_path then return end
+    play_sfx(xr_sound.get_safe_sound_object(snd_path))
+end
+
+--- @param filepath string
+function get_xml_cache(filepath)
+	-- Pulled from utils_catspaw_common so that that script isn't required for just
+	-- this one function.
+	-- Caches repeat calls to open the same file in order to cut down on XML loads
+    if not filepath then return end
+    xml_cache = xml_cache or {}
+    if xml_cache[filepath] then
+        -- cache exist, use cached content
+    else
+        -- no cache, init new XML object
+        xml_cache[filepath] = CScriptXmlInit()
+        xml_cache[filepath]:ParseFile(filepath)
+    end
+    return xml_cache[filepath]
+end
+
+
+function on_option_change()
+	pda_dik = bind_to_dik(key_bindings.kACTIVE_JOBS)
+	unsquish_ratio = update_unsquish_ratio() or 1
+	tutorial_prefix = gts("ui_st_catsy_new_tutorial")
+end
+
+
+
+
+function ignored_tutorial_reminder()
+	local args = {
+		hide_header	= true,
+		no_sound 	= true,
+		show_timer 	= false,
+		wait_time 	= 4000,
+		title_y 	= 8,
+		title 		= gts("ui_st_catsy_ignored_offer_later"),		
+		title_font 	= GetFontLetterica16Russian(),
+		prompts 	= {},
+		on_dismiss 	= ( function() end ),
+		on_ignore 	= ( function() end )
+	}
+	show_tutorial_prompt(nil, nil, nil, args)
+	return true
+end
+
+--- @param parent UITimedPrompt
+--- @param prompt UIKeyPrompt
+function func_debug_tutorial_start(parent, prompt)
+	if not parent then return end
+	local _ = DEV_DEBUG and printf("Tutorial %s triggered, no custom functor for event", parent and parent.args and parent.args.title)
+end
+
+--- @param parent UITimedPrompt
+--- @param prompt UIKeyPrompt
+function func_debug_tutorial_dismiss(parent, prompt)
+	if not parent then return end
+	local _ = DEV_DEBUG and printf("Tutorial %s dismissed, no custom functor for event", parent and parent.args and parent.args.title)
+end
+
+--- @param parent UITimedPrompt
+function func_debug_tutorial_ignore(parent)
+	if not parent then return end
+	local _ = DEV_DEBUG and printf("Tutorial %s ignored, no custom functor for event", parent and parent.args and parent.args.title)
+end
+
+function trigger_test_prompt()
+	local args = {
+		uid = "test_prompt",
+		prompts = {},
+		func_tutorial 	= (
+			function()
+				printf("[%s] Test tutorial triggered", time_continual())
+				actor_menu.set_msg(1, "Test tutorial triggered", 4)
+			end
+		),
+		on_dismiss 		= (
+			function()
+				printf("[%s] Test tutorial dismissed", time_continual())
+				actor_menu.set_msg(1, "Test tutorial dismissed", 4)
+			end
+		),
+		on_ignore 		= (
+			function()
+				printf("[%s] Test tutorial ignored/timed out", time_continual())
+				actor_menu.set_msg(1, "Test tutorial ignored/timed out", 4)
+				--ignored_tutorial_reminder()
+			end
+		)
+	}
+	show_tutorial_prompt("test_tutorial", "Tutorial Name", nil, args)
+
+	return true
+end
+
+function do_timed_anim(
+		element, wnd_id, duration, anim_type,
+		x_start, y_start, x_end, y_end, 
+		easing_func, on_finish_func, abort_func
+	)
+
+	--printf("do_timed_anim for %s | %sms | x %s -> %s | y %s -> %s | wnd exists: %s", wnd_id, duration, x_start, y_start, x_end, y_end, not not element)
+	if not (element and wnd_id and duration) then return end
+
+	local anim_state = 0
+	anim_type = anim_type or "anim"
+	local anim_id = wnd_id .. "_" .. anim_type
+
+	if not active_anims[wnd_id] then
+		active_anims[wnd_id] = {}
+	end
+	if active_anims[wnd_id][anim_type] then
+		anim_active = nil
+	end
+	anim_active = wnd_id
+
+	local start_time= time_global()
+	local end_time  = time_global() + duration
+	--printf("initting %s sequence from %s to %s", anim_type, start_time, end_time)
+
+	easing_func = easing_func or function(x) return x end
+	active_anims[wnd_id][anim_type] = {
+		wnd_id     = wnd_id,
+		anim_id     = anim_id,
+		start_time  = start_time,
+		end_time    = end_time,
+		active      = true,
+		x_start     = x_start or 0,
+		x_end       = x_end or 0,
+		y_start     = y_start or 0,
+		y_end       = y_end or 0
+	}
+	
+	
+	CreateTimeEvent("animate_" .. anim_type .. "_" .. wnd_id, time_global(), 0, 
+		function()
+			local abort = abort_func and abort_func()
+			if abort then
+				anim_state = 1
+			elseif start_time - end_time > 20000 then
+				-- Timeout to catch orphaned timeevents
+				anim_state = 1
+			else
+				local anim = active_anims[wnd_id][anim_type]
+				if anim and anim.active then
+					local i = easing_func(anim_state)
+					anim.x = lerp(anim.x_start, anim.x_end, i)
+					anim.y = lerp(anim.y_start, anim.y_end, i)
+					local x = anim.x or anim.x_end
+					local y = anim.y or anim.y_end
+					element:SetWndPos(vector2():set(x, y))
+					--printf("pos set to %s,%s", x, y)
+				else
+					anim_state = 1
+				end
+			end
+
+			if (anim_state == 1) then
+				if on_finish_func then on_finish_func() end
+				active_anims[wnd_id][anim_type] = nil
+				anim_active = nil
+				return true
+			end
+			anim_state = math.min(1, normalize(time_global(), start_time, end_time))
+			--printf("anim_state: %s", anim_state)
+		end
+	)
+end
+
+
+
+function on_loading_screen_dismissed()
+	CreateTimeEvent("delay_wnd", 0, 2, trigger_test_prompt)
+	--ui_timed_prompt.ignored_tutorial_reminder()
+end
+
+function actor_on_first_update()
+	on_option_change()
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	--RegisterScriptCallback("on_loading_screen_dismissed", on_loading_screen_dismissed)
+	cfg = cfg or {}
+    if cfg.load_from_file then
+        local ini_ttp = ini_file("plugins\\timed_prompt\\timed_prompt_config.ltx")
+        if not ini_ttp then return end
+        
+        local defs = utils_data.collect_section(ini_ttp, "default_settings", true)
+        if defs then
+        	cfg.disable_all_sounds 		= strbool(get_val_or_default(defs.disable_all_sounds, cfg.disable_all_sounds))
+			cfg.icons_for_keys 			= strbool(get_val_or_default(defs.icons_for_keys, cfg.icons_for_keys))
+			cfg.mark_missed_as_played 	= strbool(get_val_or_default(defs.mark_missed_as_played, cfg.mark_missed_as_played))
+			cfg.attach_timer_to_title 	= strbool(get_val_or_default(defs.attach_timer_to_title, cfg.attach_timer_to_title))
+			cfg.show_timer_indicator 	= strbool(get_val_or_default(defs.show_timer_indicator, cfg.show_timer_indicator))
+			cfg.show_timeout_reminder 	= strbool(get_val_or_default(defs.show_timeout_reminder, cfg.show_timeout_reminder))
+			cfg.default_ui_file 		= get_val_or_default(defs.default_ui_file, cfg.default_ui_file)
+			cfg.default_ui_file 		= get_val_or_default(defs.default_ui_file, cfg.default_ui_file)
+			cfg.easing_in_type 			= get_val_or_default(defs.easing_in_type, cfg.easing_in_type)
+			cfg.easing_out_type 		= get_val_or_default(defs.easing_out_type, cfg.easing_out_type)
+			cfg.default_wait_time 		= get_val_or_default(tonumber(defs.default_wait_time), cfg.default_wait_time)
+			cfg.ease_in_duration 		= get_val_or_default(tonumber(defs.ease_in_duration), cfg.ease_in_duration)
+			cfg.ease_out_duration 		= get_val_or_default(tonumber(defs.ease_out_duration), cfg.ease_out_duration)
+		end
+        if not z_npe_timed_prompt then return end
+        
+        local prompts = utils_data.collect_section(ini_ttp, "enabled_prompts", true)
+        if (not prompts) or is_empty(prompts) then return end
+        
+        for set_id, _ in pairs(prompts) do
+           	z_npe_timed_prompt.enable_tutorial_ask_prompt(set_id)
+        end
+    end
+end
+
+
+--[[=====================================================================
+	FULL SETTINGS LIST
+-- ======================================================================
+	This should cover all of the "args" that can be used by the timed
+	prompt, along with their default values:
+-- ======================================================================
+	FEATURE FLAGS
+		add_tutorial_prefix - false
+			Prefixes tutorial name with "New Tutorial: "
+
+		complex - true
+			Enables Complex Mode in the title textbox, which allow the use of mid-string color codes.
+			Will also parse substitution codes from utils_catspaw_text.
+
+		no_aspect_correction - false
+			Disables correction of the width of UI elements based on screen aspect ratio. Not recommended.
+
+		no_sound - false
+			Disables all UI sound effects, regardless of other settings.
+
+		show_timer - true
+			Show a circular timer icon to display the time remaining until the window disappears.
+
+		timer_on_title - true
+			Timer positioning is relative to the end of the title text, however long that is.
+
+		timeout_msg - true
+			Show a brief reminder after missed tutorials that they will be shown again and where they can be found/
+
+
+	NUMERIC VALUES
+		cleanup_time - 20000
+			Time in ms before the prompt assumes something went wrong, and destroys itself.
+
+		drop_alpha - 0.75
+			Opacity of the drop texture, from 0 to 1.
+
+		drop_h
+		drop_w
+			Height and width of the drop texture. Based on window dimensions if omitted.
+
+		frame_h
+		frame_w
+			Height and width of the UI frame. Based on window dimensions if omitted.
+
+		key
+			The DIK code of the key to be watched for single and long presses. Defaults to the user's PDA keybind.
+
+		header_h - 25
+		header_w - 340
+			Height and width of the optional header image.
+
+		header_x - 6
+		header_y - 6
+			Screen position of the header image, relative to the window.
+
+		timer_size - 16
+			Size of the countdown timer element.
+
+		title_x - 10
+		title_y - 6 if header is hidden, 36 if not
+			Screen position of the title text, relative to the window.
+
+		title_h - 20
+			Height of the title text element. Width is determined by text and window.
+
+		wait_time - 5000
+			Time in ms to wait before the prompt is ignored and closed.
+
+		window_x - 10
+		window_y - 180
+			Screen position of the tutorial window itself, relative to the 1024x768 internal screen canvas.
+
+		window_h - 180
+		window_w - 360
+			Height and width of the window itself. Determines frame and drop sizes as well, if they are omitted.
+
+	STRINGS
+		bind
+			Default: generated by utils_catspaw_text based on args.key
+			The text of the keybind to be pressed, as shown to the user. Used to build a fake "key" icon image.
+
+		drop_texture
+			Name of the texture used for the drop "shadow". Defaults:
+				With header image: ui_catsy_tutorialprompt_full_cfbg
+				Without header: ui_catsy_tutorialprompt_noimg_cfbg
+
+		frame_texture
+			Name of the texture used for the UI frame. Defaults:
+				With header image: ui_catsy_tutorialprompt_full_frame
+				Without header: ui_catsy_tutorialprompt_noimg_frame
+
+		header_image
+			Default: ui_options_slider_news
+			Name of the texture used for the header image.
+		
+		title
+			Default: "New Tutorial"
+			Title text to display between the header image and the prompts.
+
+		tutorial_loc_str
+			Alternately, a localization string for the title text that will be used after being translated.
+
+		snd_on_init
+			Default: catspaw\\tutorial_beep
+			Sound path to play when window is first initialized.
+
+		snd_on_close
+			Default: catspaw\\paw_blip
+			Sound path to play when the window is closed for any reason.
+
+		uid
+			A unique internal identified for this specific prompt. Used internally in various ways. Auto-generated if omitted.
+
+		xml_file
+			Optional filename to use instead of ui_timed_prompt.xml. Use this or args.xml, not both.
+
+	EVENT FUNCTORS
+		func_timer
+			Optional replacement functor to perform all timer-related logic.
+			You should understand how the prompt works internally if you want to use this.
+
+		func_tutorial
+			Functor to execute when tutorial is viewed.
+
+		on_ignore
+			Optional functor to trigger if tutorial is missed/ignored.
+
+		on_init
+			Optional functor to trigger when all window setup is complete, just after snd_on_init.
+
+		on_destroy
+			Optional functor to trigger upon window shutdown.
+
+		xml
+			Optional pre-parsed XML object to replace the default UI structure. Use this or args.xml_file, not both.
+
+
+	OTHER
+		title_font
+			Default: GetFontGraffiti32Russian()
+			A font object to use for the title text.
+
+		prompts
+			An index table containing all of the prompt definitions, and their attributes that should be passed to UIKeyPrompt.
+			Each key should be a sequential number beginning with 1, with a value that is a subtable for each prompt.
+
+			UIKeyPrompt args:
+
+				argb_progress
+					Optional ARGB color of the long-press progress indicator.
+
+				bind
+					Default: args.bind,
+					Text caption of the keybind to press.
+
+				bind_argb
+					Default: black
+					ARGB color to use for the keybind text.
+
+				bind_icon
+					Texture to use instead of of the generated keybind icon
+
+				bind_shadow
+					Default: true
+					Don't show drop shadow for keybind label text. 
+					Defaults to true because the default prompt is already dark text on light background.
+
+				bind_x
+					Default: 8
+				bind_y
+					Default: -2
+					Position of the keybind display container
+
+				bind_h
+					Default: 20
+				bind_w
+					Default: 20
+					Size of the generated keybind icon for single-character binds.
+
+				func
+					Functor to execute if tutorial is viewed. Can be passed either in ags.func_tutorial, or by passing
+					to show_tutorial_prompt or UITimedPrompt in the exec_func argument.
+
+				key
+					Default: user's PDA keybind, pulled from args.key
+					DIK code of the key to watch.
+
+				hide_bind
+					Don't show the keybind display on this action prompt. Used on the long-press version so that the keybind isn't shown twice.
+
+				hide_hold_ind
+					Don't show the long-press progress indicator.
+
+				label_font
+					Default: GetFontLetterica16Russian()
+					Optional font object to use for the text label.
+
+				label_text
+					Default: Localized ui_st_catsy_view_tutorial
+					Text label for the option to view the tutorial, e.g. "Press to view".
+
+				label_x
+					Default: 30
+					Horizontal offset for the label text.
+				mode
+					Should be 0 for simple press, 2 for long press.
+
+				prog_x
+					Default: 2
+				prog_y
+					Default: -1
+					Position of the long press progress indicator, if relevant.
+
+				tex_frame
+					Optional UI frame texture for the action prompt.
+
+				window_x
+					Default: 0
+				window_y
+					Default: 58 with header, 27 without
+					Position of the action prompt container.
+
+-- ====================================================================]]

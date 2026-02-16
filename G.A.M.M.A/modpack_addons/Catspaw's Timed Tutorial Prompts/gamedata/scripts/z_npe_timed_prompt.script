@@ -1,0 +1,90 @@
+-- ======================================================================
+--[[    Timed Prompt integration hooks and monkeypatch for NPE
+-- ======================================================================
+    Author: Catspaw (CatspawMods @ ModDB)
+-- ======================================================================
+    This script is necessary in order for the Timed Tutorial Prompt to
+    be able to hook into New Player Experience and intercept tutorials
+    in order to show the prompt first, then launch the tutorial if the
+    player chose to view it.
+
+    If this file is deleted or omitted, the Prompt will still work, but
+    it will be unable to integrate with NPE at all.
+
+    Conversely, this file does nothing without ui_timed_prompt.
+
+    All NPE integration functionality is strictly opt-in--this script 
+    will not touch tutorials that haven't requested it, passing them
+    straight through to NPE.
+
+    To opt in, pass your NPE set ID along with an optional table of 
+    arguments to customize the prompt:
+
+    z_npe_timed_prompt.enable_tutorial_ask_prompt(set_id, args)
+
+    This will take effect until the next saveload. The table of args
+    you specify (if any) are the same ones used by the timed prompt,
+    found in ui_timed_prompt.script.
+
+    You can also add set IDs to the enabled_prompts section in
+    configs\plugins\timed_prompt_config.ltx, but you won't be able to
+    specify custom args when done that way.
+-- ==================================================================--]]
+
+enabled_prompts = {}
+
+function enable_tutorial_ask_prompt(set_id, args)
+    if not (ui_timed_prompt and set_id) then return end
+    local passed_args = args and size_table(args) or nil
+    local _ = DEV_DEBUG and printf("[enable_tutorial_ask_prompt] prompt for NPE tutorial %s is now enabled%s", set_id, state, passed_args and (" ("..passed_args.." base args supplied") or "")
+    enabled_prompts[set_id] = args or {}
+end
+
+function disable_tutorial_ask_prompt(set_id)
+    if not set_id then return end
+    enabled_prompts[set_id] = nil
+end
+
+function mark_npe_tutorial_as_played(set_id)
+    if not (set_id and npe_director) then return end
+    npe_director.Update_set_played_state(set_id, true)
+end
+
+if ui_timed_prompt then
+    local play_set
+    function check_for_tutorial_ask(set)
+        if not (set and set.id) then return end
+        printf("checking whether to ask before showing tutorial %s", set.id)
+        if set.never_prompt or not enabled_prompts[set.id] then
+            local _ = DEV_DEBUG and printf("%s (never_prompt: %s) has not opted in, passing directly to NPE", set.id, not not set.never_prompt)
+            play_set(set)
+            return
+        end
+        local functor = "run_tutorial_" .. set.id
+        this[functor] = (
+            function()
+                printf("Executing NPE tutorial after timed prompt")
+                play_set(set)
+            end
+        )
+        local _ = DEV_DEBUG and printf("Intercepting play_set_dialog and starting timed tutorial prompt")
+        local args = enabled_prompts[set.id] or {}
+        args.npe_set = set
+        args.tutorial_loc_str = args.tutorial_loc_str or set.title
+        ui_timed_prompt.show_tutorial_prompt(set.id, nil, this[functor], args)
+    end
+
+    if npe_director then
+        -- New NPE
+        play_set = npe_director.play_set_dialog
+        function npe_director.play_set_dialog(set)
+            check_for_tutorial_ask(set)
+        end
+    elseif npe_dialog then
+        -- Old NPE
+        play_set = npe_dialog.Play
+        function npe_dialog.Play(set)
+            check_for_tutorial_ask(set)
+        end
+    end
+end
