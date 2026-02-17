@@ -101,17 +101,16 @@ function kill_if_online_mutant(id, random_push)
 	if id then
 		local o = level.object_by_id(id)
 		if o then
-			if not o:has_info("online_mutant_killed") then
-				local h = hit()
-				h.power = 1
-				h.direction = random_push and vector():set(math.random(3)-2,0.2,math.random(3)-2) or vector(0,-1,0)
-				h.bone = "bip01_spine"
-				h.draftsman = o
-				h.impulse = random_push and math.random(8000,12000) or 0
-				h.type = hit.wound
-				o:hit(h)
-				o:give_info_portion("online_mutant_killed")
-			end
+			if o:has_info("online_mutant_killed") then return end
+			local h = hit()
+			h.power = 1
+			h.direction = random_push and vector():set(math.random(3)-2,0.2,math.random(3)-2) or vector(0,-1,0)
+			h.bone = "bip01_spine"
+			h.draftsman = o
+			h.impulse = random_push and math.random(8000,12000) or 0
+			h.type = hit.wound
+			o:hit(h)
+			o:give_info_portion("online_mutant_killed")
 		end
 	end
 end
@@ -197,12 +196,13 @@ status_recover_item_on_corpse[0] = function(tsk, task_id)
 	end
 	
 	kill_if_online(tdata.corpse_id)
-	if tdata.critter then
-		for i,v in ipairs(tdata.critter) do
-			kill_if_online_mutant(v, true)
+	if not corpse then
+		if tdata.critter then
+			for i,v in ipairs(tdata.critter) do
+				kill_if_online_mutant(v, false)
+			end
 		end
 	end
-	
 	if not id_exists(tdata.item_id) then return "fail" end
 	
 	if has_item(tdata.item_id) then
