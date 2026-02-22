@@ -1,0 +1,588 @@
+-- ============================================================
+--
+-- TASK_STATUS_FUNCTOR..script
+--	CoC 1.4.18 - DoctorX Questlines 1.18
+--
+--	Modified by: DoctorX
+--	Last revised: December 06, 2016
+--
+-- ============================================================
+
+--lostzone
+function special_steps_for_lostzone_tasks(tsk,task_id)
+	if not (db.actor) then 
+		return 
+	end
+	if (task_id == "mar_smart_terrain_base_stalker_leader_marsh_task_2") then 
+		if has_alife_info("special_chimera_task_squad_dead") then 
+			tsk.stage = 1
+		else
+			tsk.stage = 0
+		end
+	elseif (task_id == "cit_killers_merc_barman_mlr_task_4") then 
+		if has_alife_info("special_chimera_task2_squad_dead") then 
+			tsk.stage = 1
+		else
+			tsk.stage = 0
+		end
+	elseif (task_id == "mil_smart_terrain_7_10_freedom_trader_stalker_task_3") then 
+		if has_alife_info("special_bloodsucker_task_squad_dead") then 
+			tsk.stage = 1
+		else
+			tsk.stage = 0
+		end
+	elseif (task_id == "bar_dolg_leader_task_2") then 
+		if has_alife_info("special_bloodsucker_task2_squad_dead") then 
+			tsk.stage = 1
+		else
+			tsk.stage = 0
+		end
+	elseif (task_id == "zat_b7_bandit_boss_sultan_task_5") then 
+		if has_alife_info("boss_sultan_task_5_stalkers_death") then 
+			tsk.stage = 1
+		elseif not actor_on_level("l04_darkvalley") then
+			return "fail"
+		else
+			tsk.stage = 0
+		end
+	elseif (task_id == "zat_b7_bandit_boss_sultan_task_6") then 
+		if has_alife_info("special_bloodsucker_task3_squad_dead") then 
+			tsk.stage = 1
+		else
+			tsk.stage = 0
+		end
+	elseif (task_id == "lttz_ll_call_north") then 
+		local obj_helm_g = db.actor:object("good_psy_helmet")
+		local obj_helm_b = db.actor:object("bad_psy_helmet")
+		
+		if not (obj_helm_g or obj_helm_b) then
+			tsk.stage = 0
+		elseif (obj_helm_g or obj_helm_b) and not has_alife_info("living_legend_psy_helmet") then
+			tsk.stage = 1
+			give_info("living_legend_psy_helmet")
+			xr_effects.give_task(nil,nil,{"turn_off_brain_machine"})
+		elseif has_alife_info("living_legend_psy_helmet") then
+			tsk.stage = 2
+		end
+		
+		
+	elseif (task_id == "lttz_ll_fetch_gauss") then 
+		if not db.actor:object("wpn_gauss_quest") then 
+			tsk.stage = 0
+		elseif db.actor:object("wpn_gauss_quest") and not has_alife_info("stalker_rogue_living_legend_fetch_complete") then
+			tsk.stage = 1
+			give_info("wpn_gauss_quest")
+		elseif has_alife_info("stalker_rogue_living_legend_fetch_complete") then
+			tsk.stage = 2
+		end
+	elseif (task_id == "lttz_ll_attack_on_titan") then 
+		if not has_alife_info("special_gigant_task_squad_dead") then 
+			tsk.stage = 0
+		elseif has_alife_info("special_gigant_task_squad_dead") and not has_alife_info("living_legend_rogue_titan_complete") then
+			tsk.stage = 1
+		elseif has_alife_info("living_legend_rogue_titan_complete") then
+			tsk.stage = 2
+		end
+	elseif (task_id == "lttz_ms_needle_haystack") then 
+		if not db.actor:object("stitch_decoder") then 
+			tsk.stage = 0
+		elseif db.actor:object("stitch_decoder") and not has_alife_info("stalker_stitch_mortal_sin_decoder") then
+			tsk.stage = 1
+			give_info("has_stitch_decoder")
+		elseif has_alife_info("stalker_stitch_mortal_sin_decoder") then
+			tsk.stage = 2
+		end
+	elseif (task_id == "lttz_ms_protect_miracle_machine") then 
+		local p = parse_list(task_manager.task_ini,task_id,"status_functor_params")
+		if not (p[1]) then
+			printf("status_functor_params not set up properly! impending_doom needs an extra param for game time! task_id=%s",task_id)
+			return 
+		end 
+		local gt = load_ctime(db.actor,"impending_doom_timer")
+		if (gt == nil or game.get_game_time():diffSec(gt) <= tonumber(p[1])) and not has_alife_info("too_late") then 
+			tsk.stage = 0
+		elseif (gt == nil or game.get_game_time():diffSec(gt) >= tonumber(p[1])) and not has_alife_info("too_late") then 
+			tsk.stage = 1
+			give_info("too_late")
+		elseif has_alife_info("too_late") then
+			tsk.stage = 2
+		end
+	elseif (task_id == "lttz_ms_protect_brain_scorcher") then 
+		local p = parse_list(task_manager.task_ini,task_id,"status_functor_params")
+		if not (p[1]) then
+			printf("status_functor_params not set up properly! impending_doom needs an extra param for game time! task_id=%s",task_id)
+			return 
+		end 
+		local gt = load_ctime(db.actor,"impending_doom_timer")
+		if (gt == nil or game.get_game_time():diffSec(gt) <= tonumber(p[1])) and not has_alife_info("too_late") then 
+			tsk.stage = 0
+		elseif (gt == nil or game.get_game_time():diffSec(gt) >= tonumber(p[1])) and not has_alife_info("too_late") then 
+			tsk.stage = 1
+			give_info("too_late")
+		elseif has_alife_info("too_late") then
+			tsk.stage = 2
+		end
+	elseif (task_id == "lttz_ms_contact_lost") then
+        if not has_alife_info("lim_stalker_scout_dead") then
+            tsk.stage = 0
+        elseif has_alife_info("lim_stalker_scout_dead") and not has_alife_info("lim_bloodsucker_ambush_squad_spawn") then
+            tsk.stage = 1
+			xr_effects.play_sound_on_actor(nil,nil,{"bloodsucker_script_attack_0"})
+            xr_effects.create_squad(nil,nil,{"lim_bloodsucker_ambush_squad","lim_smart_terrain_8"})   
+            give_info("lim_bloodsucker_ambush_squad_spawn")
+        elseif has_alife_info("lim_stalker_scout_dead") and has_alife_info("lim_bloodsucker_ambush_squad_spawn") and has_alife_info("lim_bloodsucker_ambush_squad_dead") and not has_alife_info("lim_greh_patrol_squad_spawn") then
+            tsk.stage = 2
+			xr_effects.create_squad(nil,nil,{"lim_greh_patrol_squad","lim_smart_terrain_7"})
+			give_info("lim_greh_patrol_squad_spawn")
+		elseif has_alife_info("lim_stalker_scout_dead") and has_alife_info("lim_bloodsucker_ambush_squad_spawn") and has_alife_info("lim_greh_patrol_squad_spawn") then
+            tsk.stage = 3
+        end
+    elseif (task_id == "lttz_ms_hospital_assault") then
+        if not has_alife_info("kat_greh_garrison_squad_dead") then
+            tsk.stage = 0
+        elseif has_alife_info("kat_greh_garrison_squad_dead") and not has_alife_info("kat_greh_sabaoth_call") then
+            tsk.stage = 1
+			xr_effects.play_sound_on_actor(nil,nil,{"monolith_call_1"})  
+            give_info("kat_greh_sabaoth_call")
+        elseif has_alife_info("kat_greh_sabaoth_call") and not has_alife_info("kat_greh_sabaoth_psi") then
+            tsk.stage = 2
+		elseif has_alife_info("kat_greh_sabaoth_psi") and not has_alife_info("kat_greh_sabaoth_psi_attack") then
+            tsk.stage = 3
+			xr_effects.play_sound_on_actor(nil,nil,{"sabaoth_psi"})
+			level.add_pp_effector("psi.ppe", 15000, false)
+			level.add_cam_effector("camera_effects\\fatigue.anm", 15000, false, "")
+			give_info("kat_greh_sabaoth_psi_attack")
+		elseif has_alife_info("kat_greh_sabaoth_psi_attack") and not has_alife_info("kat_greh_sabaoth_psi_end") and not has_alife_info("kat_greh_sabaoth_psi_conversion") and not has_alife_info("kat_greh_sabaoth_psi_death") then
+			level.add_pp_effector("psi.ppe", 15000, false)
+            tsk.stage = 4
+		elseif has_alife_info("kat_greh_sabaoth_psi_end") and not has_alife_info("kat_greh_sabaoth_mortal_sin") then
+			tsk.stage = 5
+			--give_info("kat_greh_sabaoth_mortal_sin")
+		elseif has_alife_info("kat_greh_sabaoth_psi_conversion") and not has_alife_info("kat_greh_sabaoth_mortal_sin") then
+			tsk.stage = 7
+			xr_effects.drx_sl_change_factions(nil,nil,{"zombied"})
+			xr_effects.play_sound_on_actor(nil,nil,{"gimlet_teleport"})
+			xr_effects.remove_special_task_squad(nil,nil,{"greh_sabaoth"})
+			--give_info("kat_greh_sabaoth_mortal_sin")
+		elseif has_alife_info("kat_greh_sabaoth_psi_death") and not has_alife_info("kat_greh_sabaoth_mortal_sin") then
+			--give_info("kat_greh_sabaoth_mortal_sin")
+			tsk.stage = 7
+			xr_effects.kill_actor()
+			xr_effects.kill_squad(nil,nil,{"stalker_rogue"})
+		elseif has_alife_info("kat_greh_sabaoth_mortal_sin") and not has_alife_info("lttz_ms_hospital_assault_task_done") then
+            tsk.stage = 6
+		elseif has_alife_info("lttz_ms_hospital_assault_task_done") then
+            tsk.stage = 7
+        end
+    elseif (task_id == "lttz_ms_heart_zone") then
+        if not has_alife_info("stalker_stitch_mortal_sin_emission_buildup") then
+            tsk.stage = 0
+        elseif has_alife_info("stalker_stitch_mortal_sin_emission_buildup") and not has_alife_info("stalker_stitch_mortal_sin_move") then
+            tsk.stage = 1
+			xr_effects.play_sound_on_actor(nil,nil,{"organic_moan1"})
+			xr_effects.aes_earthshake({"stalker_stitch"})
+            give_info("stalker_stitch_mortal_sin_move")
+        elseif has_alife_info("stalker_stitch_mortal_sin_move") then
+            tsk.stage = 2
+        end
+    elseif (task_id == "lttz_ms_decisive_blow") then 
+		local p = parse_list(task_manager.task_ini,task_id,"status_functor_params")
+		if not (p[1]) then
+			printf("status_functor_params not set up properly! impending_doom needs an extra param for game time! task_id=%s",task_id)
+			return 
+		end 
+		local gt = load_ctime(db.actor,"impending_doom_timer")
+		if (gt == nil or game.get_game_time():diffSec(gt) <= tonumber(p[1])) and not has_alife_info("too_late") then 
+			tsk.stage = 0
+		elseif (gt == nil or game.get_game_time():diffSec(gt) >= tonumber(p[1])) and not has_alife_info("too_late") then 
+			tsk.stage = 1
+			xr_effects.play_sound_on_actor(nil,nil,{"blowout_impact_02"})
+			xr_effects.premature_emission()
+			give_info("too_late")
+		elseif has_alife_info("too_late") then
+			tsk.stage = 2
+			xr_effects.kill_actor()
+			xr_effects.kill_squad(nil,nil,{"stalker_stitch"})
+			xr_effects.kill_squad(nil,nil,{"stalker_rogue"})
+		end
+	elseif (task_id == "lttz_ms_confrontation") then
+        if not has_alife_info("premature_emission") then
+            tsk.stage = 0
+		elseif has_alife_info("premature_emission") and not has_alife_info("premature_emission_started") then
+            tsk.stage = 1
+			xr_effects.premature_emission()
+            give_info("premature_emission_started")
+        elseif has_alife_info("premature_emission_started") and not has_alife_info("gen_greh_sabaoth_mortal_sin_generators") then
+            tsk.stage = 2
+        elseif has_alife_info("gen_greh_sabaoth_mortal_sin_generators") then
+            tsk.stage = 3
+        end
+    elseif (task_id == "lttz_ms_endgame") then 
+		local p = parse_list(task_manager.task_ini,task_id,"status_functor_params")
+		if not (p[1]) then
+			printf("status_functor_params not set up properly! impending_doom needs an extra param for game time! task_id=%s",task_id)
+			return 
+		end 
+		local gt = load_ctime(db.actor,"impending_doom_timer")
+		if (gt == nil or game.get_game_time():diffSec(gt) <= tonumber(p[1])) and not has_alife_info("too_late") then 
+			tsk.stage = 0
+		elseif (gt == nil or game.get_game_time():diffSec(gt) >= tonumber(p[1])) and not has_alife_info("too_late") then 
+			tsk.stage = 1
+			xr_effects.play_sound_on_actor(nil,nil,{"blowout_impact_02"})
+			xr_effects.premature_emission()
+			give_info("too_late")
+		elseif has_alife_info("too_late") then
+			tsk.stage = 2
+			xr_effects.kill_actor()
+			xr_effects.kill_squad(nil,nil,{"stalker_stitch"})
+			xr_effects.kill_squad(nil,nil,{"stalker_rogue"})
+		end
+	elseif (task_id == "lttz_ms_choice") then
+        if not has_alife_info("stalker_stitch_mortal_sin_deny_the_wish") and not has_alife_info("stalker_stitch_mortal_sin_wishful_thinking") then
+            tsk.stage = 0
+        elseif has_alife_info("stalker_stitch_mortal_sin_deny_the_wish") and not has_alife_info("lttz_ms_choice_complete") then
+            tsk.stage = 2
+			xr_effects.remove_special_task_squad(nil,nil,{"stalker_stitch"})
+            xr_effects.remove_special_task_squad(nil,nil,{"stalker_rogue"})   
+            give_info("deny_the_wish")
+			give_info("lttz_ms_choice_complete")
+        elseif has_alife_info("stalker_stitch_mortal_sin_wishful_thinking") then
+            tsk.stage = 1
+			give_info("wishful_thinking")
+		elseif has_alife_info("stalker_stitch_mortal_sin_wishful_thinking") and has_alife_info("actor_made_wish") and not has_alife_info("lttz_ms_choice_complete") then
+            tsk.stage = 2
+			xr_effects.remove_special_task_squad(nil,nil,{"stalker_stitch"})
+            xr_effects.remove_special_task_squad(nil,nil,{"stalker_rogue"})
+			give_info("lttz_ms_choice_complete")
+		elseif has_alife_info("lttz_ms_choice_complete") then
+            tsk.stage = 3
+        end
+    elseif (task_id == "lttz_ms_zone_hero_dolg") then 
+		if not has_alife_info("lazarus_join") then 
+			tsk.stage = 0
+		elseif has_alife_info("lazarus_join") and not has_alife_info("lazarus_spawn") then
+			tsk.stage = 1
+			xr_effects.create_squad(nil,nil,{"lazarus_dolg_squad","bar_dolg_general"})
+			give_info("lazarus_spawn")
+		elseif has_alife_info("lazarus_spawn") and not has_alife_info("mortal_sin_zone_hero") then
+			tsk.stage = 2
+		elseif has_alife_info("mortal_sin_zone_hero") then
+			tsk.stage = 3
+		end
+	elseif (task_id == "lttz_ms_zone_hero_killer") then 
+		if not has_alife_info("lazarus_join") then 
+			tsk.stage = 0
+		elseif has_alife_info("lazarus_join") and not has_alife_info("lazarus_spawn") then
+			tsk.stage = 1
+			xr_effects.create_squad(nil,nil,{"lazarus_killer_squad","cit_killers"})
+			give_info("lazarus_spawn")
+		elseif has_alife_info("lazarus_spawn") and not has_alife_info("mortal_sin_zone_hero") then
+			tsk.stage = 2
+		elseif has_alife_info("mortal_sin_zone_hero") then
+			tsk.stage = 3
+		end
+	elseif (task_id == "lttz_ms_zone_hero_stalker") then 
+		if not has_alife_info("lazarus_join") then 
+			tsk.stage = 0
+		elseif has_alife_info("lazarus_join") and not has_alife_info("lazarus_spawn") then
+			tsk.stage = 1
+			xr_effects.create_squad(nil,nil,{"lazarus_stalker_squad","esc_smart_terrain_2_12"})
+			give_info("lazarus_spawn")
+		elseif has_alife_info("lazarus_spawn") and not has_alife_info("mortal_sin_zone_hero") then
+			tsk.stage = 2
+		elseif has_alife_info("mortal_sin_zone_hero") then
+			tsk.stage = 3
+		end
+	elseif (task_id == "lttz_ms_zone_hero_csky") then 
+		if not has_alife_info("lazarus_join") then 
+			tsk.stage = 0
+		elseif has_alife_info("lazarus_join") and not has_alife_info("lazarus_spawn") then
+			tsk.stage = 1
+			xr_effects.create_squad(nil,nil,{"lazarus_csky_squad","mar_smart_terrain_base"})
+			give_info("lazarus_spawn")
+		elseif has_alife_info("lazarus_spawn") and not has_alife_info("mortal_sin_zone_hero") then
+			tsk.stage = 2
+		elseif has_alife_info("mortal_sin_zone_hero") then
+			tsk.stage = 3
+		end
+	elseif (task_id == "lttz_ms_zone_hero_freedom") then 
+		if not has_alife_info("lazarus_join") then 
+			tsk.stage = 0
+		elseif has_alife_info("lazarus_join") and not has_alife_info("lazarus_spawn") then
+			tsk.stage = 1
+			xr_effects.create_squad(nil,nil,{"lazarus_freedom_squad","mil_smart_terrain_7_7"})
+			give_info("lazarus_spawn")
+		elseif has_alife_info("lazarus_spawn") and not has_alife_info("mortal_sin_zone_hero") then
+			tsk.stage = 2
+		elseif has_alife_info("mortal_sin_zone_hero") then
+			tsk.stage = 3
+		end
+	elseif (task_id == "lttz_ms_zone_hero_ecolog") then 
+		if not has_alife_info("lazarus_join") then 
+			tsk.stage = 0
+		elseif has_alife_info("lazarus_join") and not has_alife_info("lazarus_spawn") then
+			tsk.stage = 1
+			xr_effects.create_squad(nil,nil,{"lazarus_ecolog_squad","yan_smart_terrain_6_4"})
+			give_info("lazarus_spawn")
+		elseif has_alife_info("lazarus_spawn") and not has_alife_info("mortal_sin_zone_hero") then
+			tsk.stage = 2
+		elseif has_alife_info("mortal_sin_zone_hero") then
+			tsk.stage = 3
+		end
+	elseif (task_id == "bar_dolg_leader_task_3")
+	or (task_id == "cit_killers_merc_trader_stalker_task_4")
+	or (task_id == "esc_m_trader_task_4")
+	or (task_id == "mar_smart_terrain_base_stalker_leader_marsh_task_3")
+	or (task_id == "mil_smart_terrain_7_7_freedom_leader_stalker_task_7")
+	then 
+		if has_alife_info("zat_greh_resurgent_squad_dead") then 
+			tsk.stage = 1
+		else
+			tsk.stage = 0
+		end
+	elseif (task_id == "lttz_oa_encrypted_transmission") then 
+		if not has_alife_info("encrypted_transmission_done") then 
+			tsk.stage = 0
+		elseif has_alife_info("encrypted_transmission_done") and not has_alife_info("degtyarev_transmission") then
+			tsk.stage = 1
+		elseif has_alife_info("degtyarev_transmission") then
+			tsk.stage = 2
+		end
+	elseif (task_id == "lttz_oa_special_delivery") then 
+		local p = parse_list(task_manager.task_ini,task_id,"status_functor_params")
+		if not (p[1]) then
+			printf("status_functor_params not set up properly! impending_doom needs an extra param for game time! task_id=%s",task_id)
+			return 
+		end 
+		local gt = load_ctime(db.actor,"impending_doom_timer")
+		if (gt == nil or game.get_game_time():diffSec(gt) <= tonumber(p[1])) and not has_alife_info("delivery_too_late") then 
+			tsk.stage = 0
+		elseif (gt == nil or game.get_game_time():diffSec(gt) >= tonumber(p[1])) and not has_alife_info("delivery_too_late") and not has_alife_info("army_lt_jup_special_delivery") then 
+			tsk.stage = 1
+			give_info("delivery_too_late")
+		elseif has_alife_info("delivery_too_late") and not has_alife_info("army_lt_jup_special_delivery") then
+			tsk.stage = 2
+		elseif has_alife_info("army_lt_jup_special_delivery") then
+			tsk.stage = 3
+		end
+	elseif (task_id == "lttz_oa_search_unit") then 
+		local p = parse_list(task_manager.task_ini,task_id,"status_functor_params")
+		if not (p[1]) then
+			printf("status_functor_params not set up properly! impending_doom needs an extra param for game time! task_id=%s",task_id)
+			return 
+		end 
+		local gt = load_ctime(db.actor,"impending_doom_timer")
+		if (gt == nil or game.get_game_time():diffSec(gt) <= tonumber(p[1])) and not has_alife_info("search_too_late") then 
+			tsk.stage = 0
+		elseif (gt == nil or game.get_game_time():diffSec(gt) >= tonumber(p[1])) and not has_alife_info("search_too_late") and not has_alife_info("search_unit_approach") then 
+			tsk.stage = 1
+			give_info("search_too_late")
+		elseif has_alife_info("search_too_late") and not has_alife_info("search_unit_approach") then
+			tsk.stage = 2
+		elseif has_alife_info("search_unit_approach") then
+			tsk.stage = 3
+		end
+	elseif (task_id == "lttz_hb_task_2_1_guarded_secrets") then 
+		if not db.actor:object("jupiter_documents") then 
+			tsk.stage = 0
+		elseif db.actor:object("jupiter_documents") and not has_alife_info("lttz_hb_jupiter_documents_given") then
+			tsk.stage = 1
+			give_info("has_jupiter_documents")
+		elseif has_alife_info("lttz_hb_jupiter_documents_given") then
+			tsk.stage = 2
+		end
+	end
+end
+
+
+function impending_doom(tsk,task_id)
+	if not (db.actor) then 
+		return 
+	end
+	
+end
+--lostzone
+
+-- Determine status of money task:
+function drx_sl_money_task_status( tsk, task_id )
+
+	if not ( db.actor ) then
+		return
+	end
+
+	if ( db.actor:money( ) >= tonumber( load_var( db.actor, (task_id .. "_fetch"), 0 ) ) ) then
+		tsk.stage = 1
+	else
+		tsk.stage = 0
+	end
+
+end
+
+-- Determine retrieve item task status:
+function drx_sl_retrieve_item_task_status( tsk, task_id )
+
+	-- Get item id from status functor params:
+	local task_item_params = parse_list( task_manager.task_ini, task_id, "status_functor_params" )
+	if ( #task_item_params < 1 ) then
+		printf( "DRX SL Error: drx_sl_retrieve_item_task_status not supplied with item id in status functor !!!" )
+		return "fail"
+	end
+
+	-- Check if player has item:
+	if not ( db.actor ) then
+		return
+	end
+	if db.actor:object( task_item_params[1] ) then
+		tsk.stage = 1
+	else
+		tsk.stage = 0
+	end
+
+end
+
+-- Determine retrieve item task status:
+function drx_sl_retrieve_item_task_status( tsk, task_id )
+
+	-- Get item id from status functor params:
+	local task_item_params = parse_list( task_manager.task_ini, task_id, "status_functor_params" )
+	if ( #task_item_params < 1 ) then
+		printf( "DRX SL Error: drx_sl_retrieve_item_task_status not supplied with item id in status functor !!!" )
+		return "fail"
+	end
+
+	-- Check if player has item:
+	if not ( db.actor ) then
+		return
+	end
+	
+	local cnt = 0
+	for i=1,#task_item_params do
+		if db.actor:object( task_item_params[i] ) then
+			cnt = cnt + 1
+		end
+	end
+	if (#task_item_params <= cnt) then
+		tsk.stage = 1
+	else
+		tsk.stage = 0
+	end
+
+end
+
+
+------------------------------------
+-- HELPERS
+------------------------------------
+
+----------------------------------------------------------------------------------------------
+-- Status Functors
+----------------------------------------------------------------------------------------------
+function check_if_enough_time_passed(tsk,task_id)
+	if not (db.actor) then
+		return
+	end
+	local p = parse_list(task_manager.task_ini,task_id,"status_functor_params")
+	if not (p[1]) then
+		printf("task_status_function not set up properly! check_if_killed_enough needs an extra param for squad story id! task_id=%s",task_id)
+		return
+	end
+
+	local gt = load_ctime(db.actor,task_id)
+	if (gt == nil or game.get_game_time():diffSec(gt) >= tonumber(p[1])) then
+		tsk.stage = 2
+		return
+	end
+end
+
+function check_if_killed_enough(tsk,task_id)
+	local p = parse_list(task_manager.task_ini,task_id,"status_functor_params")
+	if not (p[1]) then
+		printf("task_status_function not set up properly! check_if_killed_enough needs an extra param for squad story id! task_id=%s",task_id)
+		return
+	end
+
+	local squad = get_story_squad(p[1])
+	if not (squad) then
+		return
+	end
+
+	local id = squad:commander_id()
+	local npc = db.storage[id] and db.storage[id].object
+	if not (npc) then
+		return
+	end
+
+	local total_kill_count, npc
+	for k in self:squad_members() do
+		local npc = db.storage[k.id] and db.storage[k.id].object
+		if (npc) then
+			total_kill_count = total_kill_count + (load_var(npc,"s_kill_count") or 0)
+		end
+	end
+
+	if (total_kill_count >= tonumber(p[2] or 5)) then
+		return "complete"
+	end
+end
+
+function check_if_looted_enough(tsk,task_id)
+	local p = parse_list(task_manager.task_ini,task_id,"status_functor_params")
+	if not (p[1]) then
+		printf("task_status_function not set up properly! check_if_looted_enough needs an extra param for squad story id! task_id=%s",task_id)
+		return
+	end
+
+	local squad = get_story_squad(p[1])
+	if not (squad) then
+		return
+	end
+
+	local id = squad:commander_id()
+	local npc = db.storage[id] and db.storage[id].object
+	if not (npc) then
+		return
+	end
+
+	local total_loot_count, npc
+	for k in squad:squad_members() do
+		local npc = db.storage[k.id] and db.storage[k.id].object
+		if (npc) then
+			total_loot_count = total_loot_count + (load_var(npc,"s_loot_count") or 0)
+		end
+	end
+
+	if (total_loot_count >= tonumber(p[2] or 5)) then
+		return "complete"
+	end
+end
+
+function task_type_ecolog_gathered_tissue_samples(tsk,task_id)
+	if (db.actor and tsk.stage == 0) then
+		local count = load_var(db.actor,task_id.."_tissue_count",0)
+		local need = load_var(db.actor,task_id.."_tissue_need",0)
+
+		if (count >= need) then
+			tsk.stage = 1
+		else
+			tsk.stage = 0
+		end
+	end
+	return
+end
+
+function actor_on_level(expected_level)
+	local cur = level.name()
+	return cur ~= nil and cur == expected_level
+end
+--------------------------------------------------------------
+function kill_strelok(tsk,task_id)
+	local squad = get_story_squad("legendary_strelok")
+	if (squad) then
+		for k in squad:squad_members() do
+			local se_obj = alife_object(k.id)
+			if (se_obj and not se_obj:alive()) then
+				return "complete"
+			end
+		end
+	end
+end
