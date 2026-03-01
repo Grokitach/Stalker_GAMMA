@@ -1,0 +1,127 @@
+af_spawn_duration_limit = 259200 -- time in game time seconds after which artefacts are released if not looted
+ah_af_sections = {
+    ["af_ah_o1"] = true,
+    ["af_ah_o1"] = true,
+    ["af_ah_o2"] = true,
+    ["af_ah_e1"] = true,
+    ["af_ah_g1"] = true,
+    ["af_ah_g2"] = true,
+    ["af_ah_h1"] = true,
+    ["af_ah_h2"] = true,
+    ["af_ah_e1"] = true,
+    ["af_ah_e2"] = true,
+    ["af_ah_g1"] = true,
+    ["af_ah_o2"] = true,
+    ["af_ah_h1"] = true,
+    ["af_ah_g1"] = true,
+    ["af_ah_o1"] = true,
+    ["af_ah_s1"] = true,
+    ["af_ah_r1"] = true,
+    ["af_ah_r2"] = true,
+    ["af_ah_r3"] = true,
+    ["af_ah_h1"] = true,
+    ["af_ah_h2"] = true,
+    ["af_ah_e1"] = true,
+    ["af_ah_e2"] = true,
+    ["af_ah_g2"] = true,
+    ["af_ah_f1"] = true,
+}
+
+function t2c(t)
+    if not t then return nil end
+    local ct = game.CTime()
+    ct:set(t.Y, t.M, t.D, t.h, t.m, t.s, t.ms)
+    return ct
+end
+
+function c2t(ct)
+    if not ct then return nil end
+    local Y, M, D, h, m, s, ms = 0, 0, 0, 0, 0, 0, 0
+    Y, M, D, h, m, s, ms = ct:get(Y, M, D, h, m, s, ms)
+    return {
+        Y = Y,
+        M = M,
+        D = D,
+        h = h,
+        m = m,
+        s = s,
+        ms = ms
+    }
+end
+
+function clear_old_artefacts()
+    printf("\\\\ Checking IDs for artefacts")
+    local actor_id = db.actor:id()
+    for i = 1, 65534 do
+        se_obj = alife_object(i)
+        if se_obj and IsArtefact(se_obj) then
+            parent_id = se_obj.parent_id
+            if parent_id then
+                local se_parent = se_obj.parent_id and se_obj.parent_id < 65535 and alife_object(se_obj.parent_id)
+                if parent_id == actor_id then
+                    goto skip
+                end
+
+                if IsStalker(se_parent) then
+                    goto skip
+                end
+
+                if IsInvbox(se_parent) then
+                    goto skip
+                end
+
+                if IsMonster(se_parent) then
+                    goto skip
+                end
+
+                delete_artefacts(se_obj)
+
+                ::skip::
+            else
+                delete_artefacts(se_obj)
+            end
+        end
+    end
+end
+
+function delete_artefacts(artefact)
+    curr_time = game.get_game_time()
+    if artefact then
+        local af_sec = artefact:section_name()
+        local kind = SYS_GetParam(0, af_sec, "kind") 
+        printf("// scanning IDs for artefacts")
+        local af_id = artefact.id
+        if kind == "i_arty_junk" or kind == "i_arty" then
+            if artefacts_spawned_time[af_id] then -- artefact has spawn time defined > compare and potentially release
+                printf(artefacts_spawned_time[af_id])
+                local spawn_time_diff = curr_time:diffSec(t2c(artefacts_spawned_time[af_id]))
+                printf(spawn_time_diff)
+                if spawn_time_diff >= af_spawn_duration_limit then
+                    printf("/// old artefact found, releasing it")
+                    if not ah_af_sections[af_sec] then -- respawn artefact hunter artefacts > Implement it later / avoid for the moment
+                        alife_release(artefact)
+                        artefacts_spawned_time[af_id] = nil
+                    end
+                end
+            else -- attribute current game time as spawn time for the given artefact
+                printf("/// new artefact found, registering the time of spawn")
+                artefacts_spawned_time[af_id] = c2t(curr_time)
+            end
+        end
+    end
+end
+
+function save_state(m_data)
+    printf("/// saving artefacts spawn time")
+    m_data.artefacts_spawned_time = artefacts_spawned_time
+end
+
+function load_state(m_data)
+    artefacts_spawned_time = m_data.artefacts_spawned_time or {}
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_first_update", clear_old_artefacts)
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
+end
