@@ -469,6 +469,12 @@ _G.CAI_Stalker__PathBuildFailCallback = function(npc)
 	return flags.ret_value
 end
 
+-- HUD items state switch
+AddScriptCallback("actor_on_item_state_switch")
+_G.CHudItem__OnStateSwitch = function(obj, new_state, old_state)
+	SendScriptCallback("actor_on_item_state_switch", obj, new_state, old_state)
+end
+
 -- Improve NPCs pathfinding by reducing actual anomaly damage radius
 -- Works only when npc:get_enable_anomalies_pathfinding() == true or ai_die_in_anomalies cvar is 1
 function is_outside_damage_radius(zone, obj)
@@ -537,6 +543,11 @@ function actor_on_first_update_prefetch()
 	end, db.actor)
 end
 
+-- Update ranks on first update
+function actor_on_first_update_calculate_rankings()
+	pda.calculate_rankings()
+end
+
 -- Force update close enough traders
 local function t2c(t)
 	if not t then return nil end
@@ -549,17 +560,18 @@ function npc_on_update(npc)
 	if npc:position():distance_to_sqr(db.actor:position()) < 30^2 then
 		-- Copy checks from trade_manager with fixed restock time, fixes GAMMA
 		local id = npc:id()
-		if not (trade_manager.tm and trade_manager.tm[id] and trade_manager.tm[id].cfg_ltx) then 
+		local tm = trade_manager.get_trade_profile(id)
+		if not tm.cfg_ltx then 
 			return
 		end 
 		
-		local config = trade_manager.config_by_name and trade_manager.config_by_name[trade_manager.tm[id].cfg_ltx]
-		if not (config) then
+		local config = trade_manager.get_trade_cfg(tm.cfg_ltx)
+		if not config then
 			return
 		end
 
 		local restock_time = math.max(game_difficulties.get_eco_factor("restock") or 24, 12)
-		if (trade_manager.tm[id].resupply_time and game.get_game_time():diffSec(t2c(trade_manager.tm[id].resupply_time)) < (restock_time * 3600))  then
+		if (tm.resupply_time and game.get_game_time():diffSec(t2c(tm.resupply_time)) < (restock_time * 3600))  then
 			return
 		end
 
@@ -569,6 +581,7 @@ end
 
 function on_game_start()
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update_calculate_rankings)
 
 	-- Prefetch callbacks. Disabled for now, conflict with SSS
 	-- RegisterScriptCallback("actor_item_to_slot", actor_item_to_slot_prefetch)
