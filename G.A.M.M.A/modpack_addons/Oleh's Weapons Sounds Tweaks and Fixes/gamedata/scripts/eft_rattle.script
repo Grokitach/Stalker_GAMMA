@@ -1,56 +1,74 @@
 -- Revised by oleh5230, 24.06.24
 -- Original script by Qudix
--- Last edit: 28.11.25 
+-- Last edit: 28.02.26
 
 local opt_aim_rattle = true
 local opt_lower_raise_rattle = true
+local opt_sprint_rattle = true
 local volume_aim_rattle = 1
 local volume_lower_raise_rattle = 1
+local volume_sprint_rattle = 1
 
 function load_settings()
-    if ui_mcm and grok_casings_sounds_mcm then
-        opt_aim_rattle = ui_mcm.get("grok_casings_sounds/enabled_aim_rattle")
-        opt_lower_raise_rattle = ui_mcm.get("grok_casings_sounds/enabled_lower_raise_rattle")
-        volume_aim_rattle = ui_mcm.get("grok_casings_sounds/volume_aim_rattle") or 1
-        volume_lower_raise_rattle = ui_mcm.get("grok_casings_sounds/volume_lower_raise_rattle") or 1
+    if ui_mcm and oleh_sounds_mcm then
+        opt_aim_rattle              = ui_mcm.get("oleh_sounds/weapons/enabled_aim_rattle")
+        opt_lower_raise_rattle      = ui_mcm.get("oleh_sounds/weapons/enabled_lower_raise_rattle")
+        opt_sprint_rattle           = ui_mcm.get("oleh_sounds/weapons/enabled_sprint_rattle")
+        volume_aim_rattle           = ui_mcm.get("oleh_sounds/weapons/volume_aim_rattle") or 1
+        volume_lower_raise_rattle   = ui_mcm.get("oleh_sounds/weapons/volume_lower_raise_rattle") or 1
+        volume_sprint_rattle        = ui_mcm.get("oleh_sounds/weapons/volume_sprint_rattle") or 1
+    -- old MCM compatibility
+    elseif ui_mcm and grok_casings_sounds_mcm then
+        opt_aim_rattle              = ui_mcm.get("grok_casings_sounds/enabled_aim_rattle")
+        opt_lower_raise_rattle      = ui_mcm.get("grok_casings_sounds/enabled_lower_raise_rattle")
+        opt_sprint_rattle           = ui_mcm.get("grok_casings_sounds/enabled_sprint_rattle")
+        volume_aim_rattle           = ui_mcm.get("grok_casings_sounds/volume_aim_rattle") or 1
+        volume_lower_raise_rattle   = ui_mcm.get("grok_casings_sounds/volume_lower_raise_rattle") or 1
+        volume_sprint_rattle        = ui_mcm.get("grok_casings_sounds/volume_sprint_rattle") or 1
     end
 end
 
 wpn_kinds = {
-    ["w_pistol"]            = "pistol",
-    ["w_smg"]               = "pistol",
-    ["w_rifle"]             = "shotgun",
-    ["w_sniper"]            = "shotgun",
-    ["w_shotgun"]           = "shotgun",
-    ["w_explosive"]         = "shotgun",
+    ["w_pistol"]            = "pistol-0",
+    ["w_smg"]               = "smg-0",
+    ["w_shotgun"]           = "shotgun-0",
+    ["w_rifle"]             = "rifle-0",
+    ["w_sniper"]            = "shotgun-0",
+    ["w_explosive"]         = "shotgun-0",
 }
 
 limit = {
-    ["pistol_aim_in_"]      = 4,
-    ["pistol_aim_out_"]     = 4,
-    ["rifle_aim_in_"]       = 4,
-    ["rifle_aim_out_"]      = 4,
-    ["shotgun_aim_out_"]    = 4,
-    ["shotgun_aim_in_"]     = 4,
+    ["pistol-0"]            = 9,
+    ["smg-0"]               = 9,
+    ["shotgun-0"]           = 9,
+    ["rifle-0"]             = 9,
+    ["sprint_pistol-0"]     = 6,
+    ["sprint_smg-0"]        = 6,
+    ["sprint_shotgun-0"]    = 6,
+    ["sprint_rifle-0"]      = 6,
 }
 
 count = {
-    ["pistol_aim_in_"]      = 1,
-    ["pistol_aim_out_"]     = 1,
-    ["rifle_aim_in_"]       = 1,
-    ["rifle_aim_out_"]      = 1,
-    ["shotgun_aim_out_"]    = 1,
-    ["shotgun_aim_in_"]     = 1,
+    ["pistol-0"]            = 1,
+    ["smg-0"]               = 1,
+    ["shotgun-0"]           = 1,
+    ["rifle-0"]             = 1,
+    ["sprint_pistol-0"]     = 1,
+    ["sprint_smg-0"]        = 1,
+    ["sprint_shotgun-0"]    = 1,
+    ["sprint_rifle-0"]      = 1,
 }
 
--- create sample queues to mitigate the issue of same sample playing multiple time in a row
+-- create sample queues to mitigate the issue of same sample playing multiple times in a row
 queues = {
-    ["pistol_aim_in_"]      = {},
-    ["pistol_aim_out_"]     = {},
-    ["rifle_aim_in_"]       = {},
-    ["rifle_aim_out_"]      = {},
-    ["shotgun_aim_out_"]    = {},
-    ["shotgun_aim_in_"]     = {},
+    ["pistol-0"]            = {},
+    ["smg-0"]               = {},
+    ["shotgun-0"]           = {},
+    ["rifle-0"]             = {},
+    ["sprint_pistol-0"]     = {},
+    ["sprint_smg-0"]        = {},
+    ["sprint_shotgun-0"]    = {},
+    ["sprint_rifle-0"]      = {},
 }
 for k,v in pairs(queues) do
     for i=1, limit[k] do
@@ -59,97 +77,134 @@ for k,v in pairs(queues) do
     shuffle_table(queues[k])
 end
 
-function play_aim_sound(movement, wpn_kind, volume, frequency)
-    local class = wpn_kind .. movement
-    local sound = sound_object("weapons\\_rattle\\" .. class .. queues[class][count[class]])
+local cached_sec
+local ini_cas = ini_file_ex("plugins\\grok_casings_sounds_weapons.ltx")
+local wpn = {
+    weight = 3.3,
+    aim_time = 0.25,
+    volume = 0.5,
+    frequency = 1,
+    kind = "w_rifle",
+    class = "rifle-0",
+    sclass = "sprint_rifle-0",
+}
+function get_wpn_params(weapon)
+    if not weapon then return end
+    local sec = weapon:section()
+    if not cached_sec or sec ~= cached_sec then
+        cached_sec     = sec
+        wpn.weight     = ini_sys:r_string_ex(sec, "inv_weight") or 3.3
+        wpn.aim_time   = ini_sys:r_string_ex(sec, "zoom_rotate_time") or 0.25
+        wpn.volume     = 0.5 --(0.25 + weight * 0.025)
+        wpn.frequency  = clamp(0.25 / wpn.aim_time, 0.8, 1.2)
+        wpn.kind       = SYS_GetParam(0, sec, "kind") or "w_rifle"
+        wpn.class      = wpn_kinds[wpn.kind] or wpn_kinds["w_rifle"]
+        -- special case for magazine fed shotguns
+        if wpn.kind == "w_shotgun" and not SYS_GetParam(0, sec, "tri_state_reload") then wpn.class = wpn_kinds["w_rifle"] end
+        -- special case for self loading snipers
+        -- reads GAMMA casings sounds .ltx to check if weapon has delayed ejection (manual action)
+        if wpn.kind == "w_sniper" and not ini_cas:r_float_ex(sec, "eject_delay") then wpn.class = wpn_kinds["w_rifle"] end
+        wpn.sclass = "sprint_" .. wpn.class
+    end
+end
+
+function play_aim_sound(volume, frequency)
+    local sound = sound_object("weapons\\_rattle\\" .. wpn.class .. queues[wpn.class][count[wpn.class]])
     sound:play(db.actor, 0, sound_object.s2d)
     sound.volume = volume or 0.5
     sound.frequency = frequency or 1
+    --printf("[eft_rattle] %s | volume: %s, frequency: %s", wpn.class .. queues[wpn.class][count[wpn.class]], volume, frequency)
 
-    count[class] = count[class] + 1
-    if count[class] > limit[class] then
-        count[class] = 1
-        shuffle_table(queues[class])
+    count[wpn.class] = count[wpn.class] + 1
+    if count[wpn.class] > limit[wpn.class] then
+        count[wpn.class] = 1
+        shuffle_table(queues[wpn.class])
     end
 end
 
-local cached_sec
-local wpn_kind = "rifle"
-local volume, frequency = 0.5, 1
-local weight, aim_time = 3.3, 0.25
+function play_sprint_rattle_sound(volume, frequency)
+    local sound = sound_object("weapons\\_rattle\\" .. wpn.sclass .. queues[wpn.sclass][count[wpn.sclass]])
+    sound:play(db.actor, 0, sound_object.s2d)
+    sound.volume = volume or 0.5
+    sound.frequency = frequency or 1
+    --printf("[eft_rattle] %s | volume: %s, frequency: %s", wpn.sclass .. queues[wpn.sclass][count[wpn.sclass]], volume, frequency)
 
-function get_wpn_params(wpn)
-    if not wpn then return end
-    local sec = wpn:section()
-    if not cached_sec or sec ~= cached_sec then
-        cached_sec = sec
-        wpn_kind   = wpn_kinds[SYS_GetParam(0, sec, "kind")] or "rifle"
-        weight     = ini_sys:r_string_ex(sec, "inv_weight") or 3.3
-        aim_time   = ini_sys:r_string_ex(sec, "zoom_rotate_time") or 0.25
-        volume     = (0.25 + weight * 0.025)
-        frequency  = clamp(0.25 / aim_time, 0.8, 1.2)
+    count[wpn.sclass] = count[wpn.sclass] + 1
+    if count[wpn.sclass] > limit[wpn.sclass] then
+        count[wpn.sclass] = 1
+        shuffle_table(queues[wpn.sclass])
     end
 end
 
-function actor_on_weapon_zoom_in(wpn)
+function actor_on_weapon_zoom_in(weapon)
     if opt_aim_rattle then
-        get_wpn_params(wpn)
-        play_aim_sound("_aim_in_", wpn_kind, volume * volume_aim_rattle * 0.8, frequency)
+        get_wpn_params(weapon)
+        play_aim_sound(wpn.volume * volume_aim_rattle * 0.8, wpn.frequency)
     end
 end
 
-function actor_on_weapon_zoom_out(wpn)
+function actor_on_weapon_zoom_out(weapon)
     if opt_aim_rattle then
-        get_wpn_params(wpn)
-        play_aim_sound("_aim_out_", wpn_kind, volume * volume_aim_rattle * 0.8, frequency)
+        get_wpn_params(weapon)
+        play_aim_sound(wpn.volume * volume_aim_rattle * 0.8, wpn.frequency)
     end
 end
 
-function actor_on_weapon_zoom_type_changed(wpn, previous, current)
+function actor_on_weapon_zoom_type_changed(weapon, previous, current)
     if opt_aim_rattle then
-        get_wpn_params(wpn)
+        get_wpn_params(weapon)
         -- UBGL on
         if current == 2 then
-            play_aim_sound("_aim_in_", wpn_kind, volume * volume_aim_rattle * 0.6, frequency)
+            play_aim_sound(wpn.volume * volume_aim_rattle * 0.6, wpn.frequency)
         -- UBGL off
         elseif previous == 2 then
-            play_aim_sound("_aim_out_", wpn_kind, volume * volume_aim_rattle * 0.6, frequency)
+            play_aim_sound(wpn.volume * volume_aim_rattle * 0.6, wpn.frequency)
         -- alt aim on
         elseif current == 1 and axr_main.weapon_is_zoomed then
-            play_aim_sound("_aim_in_", wpn_kind, volume * volume_aim_rattle * 0.6, frequency)
+            play_aim_sound(wpn.volume * volume_aim_rattle * 0.6, wpn.frequency)
         -- alt aim off
         elseif current == 0 and axr_main.weapon_is_zoomed then
-            play_aim_sound("_aim_out_", wpn_kind, volume * volume_aim_rattle * 0.6, frequency)
+            play_aim_sound(wpn.volume * volume_aim_rattle * 0.6, wpn.frequency)
         end
     end
 end
 
-function actor_on_weapon_raise(wpn)
+function actor_on_weapon_raise(weapon)
     if opt_lower_raise_rattle then
-        get_wpn_params(wpn)
-        play_aim_sound("_aim_in_", wpn_kind, volume * volume_lower_raise_rattle, 1)
+        get_wpn_params(weapon)
+        play_aim_sound(wpn.volume * volume_lower_raise_rattle, 1)
     end
 end
 
-function actor_on_weapon_lower(wpn)
+function actor_on_weapon_lower(weapon)
     if opt_lower_raise_rattle then
-        get_wpn_params(wpn)
-        play_aim_sound("_aim_out_", wpn_kind, volume * volume_lower_raise_rattle, 1)
+        get_wpn_params(weapon)
+        play_aim_sound(wpn.volume * volume_lower_raise_rattle, 1)
     end
 end
 
 local wct_raised = false
 play_sound = weapon_cover_tilt_rattle.play_sound
-function weapon_cover_tilt_rattle.play_sound(dir, wpn, coeff)
-    if not weapon_cover_tilt.get_setting("tilt_rattle") or not wpn then return end
-    get_wpn_params(wpn)
+function weapon_cover_tilt_rattle.play_sound(dir, weapon, coeff)
+    if not weapon_cover_tilt.get_setting("tilt_rattle") or not weapon then return end
+    get_wpn_params(weapon)
 
     if wct_raised then
-        play_aim_sound("_aim_out_", wpn_kind, volume * volume_lower_raise_rattle, clamp(1.25 - weight * 0.0625, 0.8, 1.2))
+        play_aim_sound(wpn.volume * volume_lower_raise_rattle, clamp(1.25 - wpn.weight * 0.0625, 0.8, 1.2))
     else
-        play_aim_sound("_aim_in_", wpn_kind, volume * volume_lower_raise_rattle, clamp(1.25 - weight * 0.0625, 0.8, 1.2))
+        play_aim_sound(wpn.volume * volume_lower_raise_rattle, clamp(1.25 - wpn.weight * 0.0625, 0.8, 1.2))
     end
     wct_raised = not wct_raised
+end
+
+function actor_on_footstep(material, power, hud_view, flags)
+    local active_item = db.actor:active_item()
+    if not active_item or (active_item and not IsWeapon(active_item)) then return end
+
+    if opt_sprint_rattle and IsMoveState('mcSprint') and game.actor_weapon_lowered() then
+        get_wpn_params(active_item)
+        play_sprint_rattle_sound(wpn.volume * volume_sprint_rattle, 1)
+    end
 end
 
 function on_game_start()
@@ -158,6 +213,7 @@ function on_game_start()
     RegisterScriptCallback("actor_on_weapon_zoom_type_changed", actor_on_weapon_zoom_type_changed)
     RegisterScriptCallback("actor_on_weapon_raise", actor_on_weapon_raise)
     RegisterScriptCallback("actor_on_weapon_lower", actor_on_weapon_lower)
+    RegisterScriptCallback("actor_on_footstep", actor_on_footstep)
     RegisterScriptCallback("on_option_change", load_settings)
     load_settings()
 end
