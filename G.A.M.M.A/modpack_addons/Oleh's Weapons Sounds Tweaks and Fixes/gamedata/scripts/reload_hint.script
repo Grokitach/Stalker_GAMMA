@@ -8,14 +8,18 @@
 -- Patched for vanilla ammo system and added MCM settings
 -- Added jamming feedback
 -- oleh5230, 25.10.24
--- Last edit: 01.08.25
+-- Last edit: 29.11.25
 
 local enabled = false
 local volume = 1
 local charged_guns = {}
 
 function load_mcm_options()
-if ui_mcm and grok_casings_sounds_mcm then
+    if ui_mcm and oleh_sounds_mcm then
+        enabled = ui_mcm.get("oleh_sounds/weapons/enabled_reload_hint")
+        volume = ui_mcm.get("oleh_sounds/weapons/volume_reload_hint") or 1
+    -- old MCM compatibility
+    elseif ui_mcm and grok_casings_sounds_mcm then
         enabled = ui_mcm.get("grok_casings_sounds/enabled_reload_hint")
         volume = ui_mcm.get("grok_casings_sounds/volume_reload_hint") or 1
     end
@@ -28,6 +32,25 @@ local classes = {
     ["w_rifle"]     = "rifle",
     ["w_sniper"]    = "sniper"
 }
+
+local cached_sec
+local class = "rifle"
+
+function get_wpn_params(wpn)
+    if not wpn then return end
+    local sec = wpn:section()
+    if not cached_sec or sec ~= cached_sec then
+        cached_sec  = sec
+        class       = classes[SYS_GetParam(0, sec, "kind")] or "rifle"
+
+        -- bullet_bones may be used for box mag fed weapons
+        --if SYS_GetParam(0, sec, "bullet_bones") then class = "mg" end
+        local upgr_tree = SYS_GetParam(0, sec, "upgrades")
+        if upgr_tree and (string.find(upgr_tree,"_pkm") or string.find(upgr_tree,"_m249")) then
+            class = "mg"
+        end
+    end
+end
 
 function play_hint_sound(sound_path)
     if not sound_path then return end
@@ -44,9 +67,7 @@ function actor_on_weapon_fired(obj, wpn, ammo_elapsed)
     if not sec then return end
     local wpn_id = wpn:id()
     local mag_size = 1
-    local class = classes[SYS_GetParam(0, sec, "kind")] or "rifle"
-    -- bullet_bones may be used for box mag fed weapons
-    --if SYS_GetParam(0, sec, "bullet_bones") then class = "mg" end
+    get_wpn_params(wpn)
 
     if magazine_binder and magazine_binder.get_data then
         local data = magazine_binder.get_data(wpn_id)
@@ -78,10 +99,8 @@ function actor_on_weapon_jammed(wpn, jam_type)
     --printf("actor_on_weapon_jammed: %s, %s", wpn, jam_type)
     local sec = wpn and wpn:section()
     local wpn_id = wpn and wpn:id()
+    get_wpn_params(wpn)
     if sec and charged_guns[wpn_id] then
-        local class = classes[SYS_GetParam(0, sec, "kind")] or "rifle"
-        if SYS_GetParam(0, sec, "bullet_bones") then class = "mg" end
-
         play_hint_sound("reload_hint\\" .. class .. "\\OutofAmmo")
         if camera_reanim_project then game.play_hud_anm("camera_effects\\jammed_crp.anm", 2, 2, 3, false, false) end
         charged_guns[wpn_id] = false
