@@ -1,53 +1,124 @@
--- FastTransfer - Nitpicker's Modpack
--- Last modified: 2021.08.29
--- https://github.com/Ishmaeel/NitpickerModpack
---
-last_url = nil
-enabled = {actor_bag = true, npc_bag = true, actor_trade = true, actor_trade_bag = true, npc_trade = true, npc_trade_bag = true}
+-- FastTransfer Optimized 
+-- ChatGPT was used
+
+local last_slot = -1
+local last_bag = nil
+local last_move_time = 0
+
+local cooldown_small = 5
+local cooldown_stack = 50
+
+local transfer_lock = false
+
+local key_state = key_state
+local time_global = time_global
+
+local LSHIFT = DIK_keys.DIK_LSHIFT
+local RSHIFT = DIK_keys.DIK_RSHIFT
+
+local inv = nil
+
+local enabled = {
+	actor_bag = true,
+	npc_bag = true,
+	actor_trade = true,
+	actor_trade_bag = true,
+	npc_trade = true,
+	npc_trade_bag = true
+}
 
 function Ishy_On_Hover(self, idx)
-    if idx and enabled[self.ID] then
-        local shift = key_state(DIK_keys.DIK_LSHIFT) ~= 0 or key_state(DIK_keys.DIK_RSHIFT) ~= 0
-        if shift then
-            local move_info = {bag = self.ID, idx = idx, ts = math.floor(time_global() / 1000)}
-            new_url = move_info.bag .. "_" .. move_info.idx .. "_" .. move_info.ts
+	if not idx then
+		return Base_On_Hover(self, idx)
+	end
 
-            if last_url == new_url then
-                return
-            end
-            last_url = new_url
+	if transfer_lock then
+		return
+	end
 
-            CreateTimeEvent("Ishy_On_Hover", "Move_Items_Delayed", 0.001, Move_Items_Delayed, move_info)
-            return
-        end
-    end
+	-- SHIFT check
+	if key_state(LSHIFT) == 0 and key_state(RSHIFT) == 0 then
+		last_slot = -1
+		last_bag = nil
+		return Base_On_Hover(self, idx)
+	end
 
-    Base_On_Hover(self, idx)
+	local bag = self.ID
+
+	if not enabled[bag] then
+		return Base_On_Hover(self, idx)
+	end
+
+	-- même slot
+	if last_slot == idx and last_bag == bag then
+		return
+	end
+
+	last_slot = idx
+	last_bag = bag
+
+	local now = time_global()
+
+	if now - last_move_time < cooldown_small then
+		return
+	end
+	
+	Move_Items_Fast(bag, idx)
 end
 
-function Move_Items_Delayed(move_info)
-    if move_info then
-        bag = move_info.bag
-        idx = move_info.idx
+function Move_Items_Fast(bag, idx)
+	if transfer_lock then
+		return
+	end
 
-        self = ui_inventory.GUI
+	transfer_lock = true
 
-        local obj = self.CC[bag]:GetObj(idx)
-        bag, idx = self:Picker_Ownership(bag, idx, obj)
+	if not inv then
+		inv = ui_inventory.GUI
+	end
 
-        if self:Cond_Move(obj, bag) then
-            if self:Cond_Childs(obj, bag) then
-                self:Action_Move_All(obj, bag)
-            else
-                self:Action_Move(obj, bag)
-            end
-        end
-    end
+	local container = inv.CC[bag]
+	if not container then
+		transfer_lock = false
+		return
+	end
 
-    return true
+	local obj = container:GetObj(idx)
+	if not obj then
+		transfer_lock = false
+		return
+	end
+
+	utils_ui.UICellContainer.On_Hover = Base_On_Hover
+
+	bag, idx = inv:Picker_Ownership(bag, idx, obj)
+
+	local stack_transfer = false
+
+	if bag and inv:Cond_Move(obj, bag) then
+
+		if inv:Cond_Childs(obj, bag) then
+			stack_transfer = true
+			inv:Action_Move_All(obj, bag)
+		else
+			inv:Action_Move(obj, bag)
+		end
+
+	end
+
+	if stack_transfer then
+		last_move_time = time_global() + cooldown_stack
+	else
+		last_move_time = time_global()
+	end
+
+	utils_ui.UICellContainer.On_Hover = Ishy_On_Hover
+
+	transfer_lock = false
 end
 
 function on_game_start()
-    Base_On_Hover = utils_ui.UICellContainer.On_Hover
-    utils_ui.UICellContainer.On_Hover = Ishy_On_Hover
+	inv = ui_inventory.GUI
+	Base_On_Hover = utils_ui.UICellContainer.On_Hover
+	utils_ui.UICellContainer.On_Hover = Ishy_On_Hover
 end
