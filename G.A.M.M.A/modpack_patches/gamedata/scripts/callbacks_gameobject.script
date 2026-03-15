@@ -475,37 +475,6 @@ _G.CHudItem__OnStateSwitch = function(obj, new_state, old_state)
 	SendScriptCallback("actor_on_item_state_switch", obj, new_state, old_state)
 end
 
--- Improve NPCs pathfinding by reducing actual anomaly damage radius
--- Works only when npc:get_enable_anomalies_pathfinding() == true or ai_die_in_anomalies cvar is 1
-function is_outside_damage_radius(zone, obj)
-	local se_zone = alife_object(zone:id())
-	if not se_zone then
-		return false
-	end
-
-	local data = utils_stpk.get_anom_zone_data(se_zone)
-	if not (data and data.shapes[1] and data.shapes[1].radius) then
-		return false
-	end
-
-	local radius = data.shapes[1].radius
-	local damage_radius = math.max(radius - 1.1, 1)
-	local damage_radius_sqr = damage_radius * damage_radius
-	local dist_sqr = zone:position():distance_to_sqr(obj:position())
-	local res = dist_sqr > damage_radius_sqr
-	return res
-end
-
-function anomaly_on_before_activate(zone, obj, flags)
-	if obj:id() ~= AC_ID 
-	and (IsStalker(obj) or IsMonster(obj))
-	and obj:alive()
-	and is_outside_damage_radius(zone, obj)
-	then
-		flags.ret_value = false
-	end
-end
-
 -- NLTP_ASHES: Trigger actor_on_item_put_in_box callback when moving item to stash from slot
 function ActorMenu_on_item_after_move(npc_id, obj, mode, bag_from)
 	local box = level.object_by_id(npc_id)
@@ -514,82 +483,21 @@ function ActorMenu_on_item_after_move(npc_id, obj, mode, bag_from)
     end
 end
 
--- Prefetch HUD visual when moving item to slot
-function actor_item_to_slot_prefetch(item)
-	local hudSec = SYS_GetParam(0, item:section(), "hud")
-	if hudSec then
-		local visual = SYS_GetParam(0, hudSec, "item_visual")
-		if visual then
-			game.prefetch_model(visual)
-		end
-	end
+-- Generic server object on register
+AddScriptCallback("server_object_on_register")
+_G.CSE_ALifeDynamicObject_on_register = function(id)
+	SendScriptCallback("server_object_on_register", alife_object(id))
 end
 
--- Prefetch current items
-function actor_on_first_update_prefetch()
-	db.actor:iterate_inventory(function(npc, item)
-		local ui_texture = SYS_GetParam(0, item:section(), "icons_texture", "ui\\ui_icon_equipment")
-		game.prefetch_texture(ui_texture)
-
-		if item_backpack.is_in_slot(item) then
-			local hudSec = SYS_GetParam(0, item:section(), "hud")
-			if hudSec then
-				local visual = SYS_GetParam(0, hudSec, "item_visual")
-				if visual then
-					game.prefetch_model(visual)
-				end
-			end
-		end
-	end, db.actor)
-end
-
--- Update ranks on first update
-function actor_on_first_update_calculate_rankings()
-	pda.calculate_rankings()
-end
-
--- Force update close enough traders
-local function t2c(t)
-	if not t then return nil end
-	local ct = game.CTime()
-	ct:set(t.Y,t.M,t.D,t.h,t.m,t.s,t.ms)
-	return ct
-end
-
-function npc_on_update(npc)
-	if npc:position():distance_to_sqr(db.actor:position()) < 30^2 then
-		-- Copy checks from trade_manager with fixed restock time, fixes GAMMA
-		local id = npc:id()
-		local tm = trade_manager.get_trade_profile(id)
-		if not tm.cfg_ltx then 
-			return
-		end 
-		
-		local config = trade_manager.get_trade_cfg(tm.cfg_ltx)
-		if not config then
-			return
-		end
-
-		local restock_time = math.max(game_difficulties.get_eco_factor("restock") or 24, 12)
-		if (tm.resupply_time and game.get_game_time():diffSec(t2c(tm.resupply_time)) < (restock_time * 3600))  then
-			return
-		end
-
-		trade_manager.update(npc)
-	end
+-- Generic server object on unregister
+AddScriptCallback("server_object_on_unregister")
+_G.CSE_ALifeDynamicObject_on_unregister = function(id)
+	SendScriptCallback("server_object_on_unregister", alife_object(id))
 end
 
 function on_game_start()
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
-	RegisterScriptCallback("actor_on_first_update", actor_on_first_update_calculate_rankings)
-
-	-- Prefetch callbacks. Disabled for now, conflict with SSS
-	-- RegisterScriptCallback("actor_item_to_slot", actor_item_to_slot_prefetch)
-	-- RegisterScriptCallback("actor_on_first_update", actor_on_first_update_prefetch)
-	
-	RegisterScriptCallback("npc_on_update", npc_on_update)
 	RegisterScriptCallback("ActorMenu_on_item_after_move", ActorMenu_on_item_after_move)
-	RegisterScriptCallback("anomaly_on_before_activate", anomaly_on_before_activate)
 	RegisterScriptCallback("game_object_on_net_spawn", game_object_on_net_spawn)
 	RegisterScriptCallback("game_object_on_net_destroy", game_object_on_net_destroy)
 end

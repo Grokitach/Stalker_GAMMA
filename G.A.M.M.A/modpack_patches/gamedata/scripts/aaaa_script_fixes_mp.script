@@ -626,19 +626,21 @@ function pda.calculate_rankings()
 	
 	-- check all stalker server objects
 	for i, _ in pairs(db.offline_objects) do
-		local se_obj = sim:object(i)
-		if (se_obj and IsStalker(nil,se_obj:clsid()) and se_obj:alive() and se_obj:community() ~= "zombied" and se_obj:community() ~= "trader") then
-			-- Check if object has a story id, if it does they are probably unique
-			local sid = story_objects.story_id_by_object_id[se_obj.id]
-			if not (sid) then
-				t[se_obj.id] = se_obj:rank()
+		if i ~= 65535 then
+			local se_obj = sim:object(i)
+			if (se_obj and IsStalker(nil,se_obj:clsid()) and se_obj:alive() and se_obj:community() ~= "zombied" and se_obj:community() ~= "trader") then
+				-- Check if object has a story id, if it does they are probably unique
+				local sid = story_objects.story_id_by_object_id[se_obj.id]
+				if not (sid) then
+					t[se_obj.id] = se_obj:rank()
+				end
 			end
 		end
 	end
 	
 	local size_t = 0
 	local coc_ranking_list = pda.coc_ranking_list
-	local coc_ranking_array_size = pda.coc_ranking_array_size
+	local coc_ranking_array_size = pda.coc_ranking_array_size or 100
 
 	-- sort by highest rank first
 	for id, rank in spairs(t, sort_func_values_descend) do
@@ -673,4 +675,135 @@ function trade_manager.trade_init(npc, cfg)
     if not trade_profile then return end
     
     trade_profile.resupply_time = reup_time
+end
+
+-- Prefetch HUD visual when moving item to slot
+function actor_item_to_slot_prefetch(item)
+	local hudSec = SYS_GetParam(0, item:section(), "hud")
+	if hudSec then
+		local visual = SYS_GetParam(0, hudSec, "item_visual")
+		if visual then
+			game.prefetch_model(visual)
+		end
+	end
+end
+
+-- Prefetch current items
+function actor_on_first_update_prefetch()
+	db.actor:iterate_inventory(function(npc, item)
+		local ui_texture = SYS_GetParam(0, item:section(), "icons_texture", "ui\\ui_icon_equipment")
+		game.prefetch_texture(ui_texture)
+
+		if item_backpack.is_in_slot(item) then
+			local hudSec = SYS_GetParam(0, item:section(), "hud")
+			if hudSec then
+				local visual = SYS_GetParam(0, hudSec, "item_visual")
+				if visual then
+					game.prefetch_model(visual)
+				end
+			end
+		end
+	end, db.actor)
+end
+
+-- Update ranks on first update
+function actor_on_first_update_calculate_rankings()
+	pda.calculate_rankings()
+end
+
+-- Force update close enough traders
+local function t2c(t)
+	if not t then return nil end
+	local ct = game.CTime()
+	ct:set(t.Y,t.M,t.D,t.h,t.m,t.s,t.ms)
+	return ct
+end
+
+function npc_on_update_force_trader_update(npc)
+	if npc:position():distance_to_sqr(db.actor:position()) < 30^2 then
+		-- Copy checks from trade_manager with fixed restock time, fixes GAMMA
+		local id = npc:id()
+		local tm = trade_manager.get_trade_profile(id)
+		if not tm.cfg_ltx then 
+			return
+		end 
+		
+		local config = trade_manager.get_trade_cfg(tm.cfg_ltx)
+		if not config then
+			return
+		end
+
+		local restock_time = math.max(game_difficulties.get_eco_factor("restock") or 24, 12)
+		if (tm.resupply_time and game.get_game_time():diffSec(t2c(tm.resupply_time)) < (restock_time * 3600))  then
+			return
+		end
+
+		trade_manager.update(npc)
+	end
+end
+
+-- Improve NPCs pathfinding by reducing actual anomaly damage radius
+-- Works only when npc:get_enable_anomalies_pathfinding() == true or ai_die_in_anomalies cvar is 1
+function is_outside_damage_radius(zone, obj)
+	local se_zone = alife_object(zone:id())
+	if not se_zone then
+		return false
+	end
+
+	local data = utils_stpk.get_anom_zone_data(se_zone)
+	if not (data and data.shapes[1] and data.shapes[1].radius) then
+		return false
+	end
+
+	local radius = data.shapes[1].radius
+	local damage_radius = math.max(radius - 1.1, 1)
+	local damage_radius_sqr = damage_radius * damage_radius
+	local dist_sqr = zone:position():distance_to_sqr(obj:position())
+	local res = dist_sqr > damage_radius_sqr
+	return res
+end
+
+function anomaly_on_before_activate_pathfinding(zone, obj, flags)
+	if obj:id() ~= AC_ID 
+	and (IsStalker(obj) or IsMonster(obj))
+	and obj:alive()
+	and is_outside_damage_radius(zone, obj)
+	then
+		flags.ret_value = false
+	end
+end
+
+-- When object is added to alife after game load, remove stale data from tables
+function server_object_on_register_remove_stale_data(se_obj)
+	local id = se_obj.id
+	bind_item.item_uses[id] = nil
+	bind_item.item_condition[id] = nil
+	item_parts.clear_parts_con(id)
+end
+
+function actor_on_first_update_register_callbacks()
+	RegisterScriptCallback("server_object_on_register", server_object_on_register_remove_stale_data)
+end
+
+-- Perform luagc cleanup
+function luagc_cleanup()
+	printf("~[luagc_cleanup] collectgarbage before=%sKb",collectgarbage("count")*1024)
+	collectgarbage("collect")
+	collectgarbage("collect")
+	if jit and jit.flush then jit.flush() end
+	printf("~[luagc_cleanup] collectgarbage after=%sKb",collectgarbage("count")*1024)
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update_calculate_rankings)
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update_register_callbacks)
+
+	-- Prefetch callbacks. Disabled for now, conflict with SSS
+	-- RegisterScriptCallback("actor_item_to_slot", actor_item_to_slot_prefetch)
+	-- RegisterScriptCallback("actor_on_first_update", actor_on_first_update_prefetch)
+	
+	RegisterScriptCallback("npc_on_update", npc_on_update_force_trader_update)
+	RegisterScriptCallback("anomaly_on_before_activate", anomaly_on_before_activate_pathfinding)
+
+	RegisterScriptCallback("on_loading_screen_key_prompt", luagc_cleanup)
 end

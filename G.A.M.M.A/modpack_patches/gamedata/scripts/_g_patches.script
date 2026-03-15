@@ -13,6 +13,9 @@ local table_insert 	= table.insert
 local table_remove 	= table.remove
 
 local math_huge		= math.huge
+local math_floor	= math.floor
+local math_max		= math.max
+local math_min		= math.min
 
 local tostring 		= tostring
 local tonumber 		= tonumber
@@ -209,7 +212,7 @@ end
 
 -- Postpone on next n tick
 _G.nextTick = function(f, n)
-	n = math.floor(math.max(n or 1, 1))
+	n = math_floor(math_max(n or 1, 1))
 	AddUniqueCall(function()
 		if n == 1 then
 			return f()
@@ -640,19 +643,19 @@ _G.alife_clone_weapon = function(se_obj, section, parent_id)
             copy_table(m_data_se[se_obj_new.id], m_data_se[se_obj.id])
             m_data_se[se_obj_new.id].name = se_obj_new:name() -- alife_storage_manager uses name as validation incase se_unregister is missed. which can happen. 
         end
-        
+                 
+        -- Register the new weapon.
+        alife_record(se_obj_new,true) 
+        se_obj_new = alife():register(se_obj_new) -- register deletes and respawns the object
+
         -- Clone parts states
         if item_parts then
             item_parts.copy_parts_con(se_obj.id, se_obj_new.id)
             item_parts.clear_parts_con(se_obj.id)
         end
-        
+
         -- Release the old weapon.
-        alife_record(se_obj_new,true)
         alife_release(se_obj)
-        
-        -- Register the new weapon.
-        se_obj_new = alife():register(se_obj_new) -- register deletes and respawns the object
     end
     
     return se_obj_new
@@ -711,3 +714,140 @@ _G.log = function(str)
         LuaPanda.printToVSCode(str,1,2)
     end
 end
+
+_G.nil_func = function() return nil end
+
+-- Custom order via order parameter (t, a, b) as default spairs
+local sift_down_order = function(t, keys, idx, end_idx, order)
+    local hole_idx = idx
+    local sifting_key = keys[hole_idx]
+    local half_idx = math_floor(end_idx / 2)
+    
+    while hole_idx <= half_idx do
+        local child = hole_idx * 2
+        
+        if child < end_idx and order(t, keys[child + 1], keys[child]) then
+            child = child + 1
+        end
+        
+        if order(t, keys[child], sifting_key) then
+            keys[hole_idx] = keys[child]
+            hole_idx = child
+        else
+            break
+        end
+    end
+    keys[hole_idx] = sifting_key
+end
+
+-- Default ascending order
+local sift_down_default = function(t, keys, idx, end_idx)
+    local hole_idx = idx
+    local sifting_key = keys[hole_idx]
+    local half_idx = math_floor(end_idx / 2)
+    
+    while hole_idx <= half_idx do
+        local child = hole_idx * 2
+        
+        if child < end_idx and keys[child + 1] < keys[child] then
+            child = child + 1
+        end
+        
+        if keys[child] < sifting_key then
+            keys[hole_idx] = keys[child]
+            hole_idx = child
+        else
+            break
+        end
+    end
+    keys[hole_idx] = sifting_key
+end
+
+-- Min-Heap based spairs
+-- Supports early break without sorting whole table
+-- Faster retrieval of the first item
+_G.hspairs = function(t, order)
+    -- collect the keys
+    local n = 0
+    local keys = {}
+    for k in pairs(t) do
+    	n = n + 1
+        keys[n] = k
+    end
+
+    -- Return if table is empty
+    if n == 0 then
+    	return nil_func
+    end
+
+    -- If there is only one item, very simple iterator that returns the first item
+    if n == 1 then
+        local done = false
+        return function()
+            if done then return nil end
+            done = true
+            return keys[1], t[keys[1]]
+        end
+    end
+
+    -- Use order if its provided
+    local sift_down = order and sift_down_order or sift_down_default
+
+    -- Build the Heap: O(N)
+    for i = math_floor(n / 2), 1, -1 do
+        sift_down(t, keys, i, n, order)
+    end
+
+    -- return the iterator function
+    return function()
+        if n == 0 then return nil end
+        
+        local best_key = keys[1]
+        keys[1] = keys[n]
+        keys[n] = nil
+        n = n - 1
+        
+        if n > 0 then
+            sift_down(t, keys, 1, n, order)
+        end
+        
+        return best_key, t[best_key]
+    end
+end
+
+-- Replace spairs with hspairs
+_G.spairs = hspairs
+
+-- Always return a copy of these global variables to prevent modification in scripts
+local constTable = {
+	VEC_ZERO = function() return vector():set(0,0,0) end,
+	VEC_X = function() return vector():set(1,0,0) end,
+	VEC_Y = function() return vector():set(0,1,0) end,
+	VEC_Z = function() return vector():set(0,0,1) end,
+}
+_G.VEC_ZERO = nil
+_G.VEC_X = nil
+_G.VEC_Y = nil
+_G.VEC_Z = nil
+
+local old_mt_g = getmetatable(_G) or {}
+local old_index_g = old_mt_g.__index
+
+setmetatable(_G, {
+    __index = function(t, key)
+    	if constTable[key] then
+    		return constTable[key]()
+    	end
+
+        -- Fallback to old metatable
+        if type(old_index_g) == "function" then
+            return old_index_g(t, key)
+        elseif type(old_index_g) == "table" then
+            return old_index_g[key]
+        end
+
+        return rawget(t, key)
+    end,
+
+    __newindex = old_mt_g.__newindex or rawset
+})
