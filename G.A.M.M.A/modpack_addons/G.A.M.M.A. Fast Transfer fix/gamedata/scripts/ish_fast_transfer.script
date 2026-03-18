@@ -1,17 +1,18 @@
--- FastTransfer Optimized 
--- ChatGPT was used
+-- FastTransfer Optimized (Batched)
+-- ChatGPT was used, optimized for Anomaly engine limits
 
+local level_object_by_id = level.object_by_id
 local last_slot = -1
 local last_bag = nil
-local last_move_time = 0
+local batch_size = 10
+--local last_move_time = 0
 
-local cooldown_small = 5
-local cooldown_stack = 50
+--local cooldown_small = 5
 
-local transfer_lock = false
+--local transfer_lock = false
 
 local key_state = key_state
-local time_global = time_global
+--local time_global = time_global
 
 local LSHIFT = DIK_keys.DIK_LSHIFT
 local RSHIFT = DIK_keys.DIK_RSHIFT
@@ -32,9 +33,9 @@ function Ishy_On_Hover(self, idx)
 		return Base_On_Hover(self, idx)
 	end
 
-	if transfer_lock then
-		return
-	end
+--	if transfer_lock then
+--		return
+--	end
 
 	-- SHIFT check
 	if key_state(LSHIFT) == 0 and key_state(RSHIFT) == 0 then
@@ -49,7 +50,7 @@ function Ishy_On_Hover(self, idx)
 		return Base_On_Hover(self, idx)
 	end
 
-	-- même slot
+	-- same slot
 	if last_slot == idx and last_bag == bag then
 		return
 	end
@@ -57,21 +58,21 @@ function Ishy_On_Hover(self, idx)
 	last_slot = idx
 	last_bag = bag
 
-	local now = time_global()
+--	local now = time_global()
 
-	if now - last_move_time < cooldown_small then
-		return
-	end
-	
+--	if now - last_move_time < cooldown_small then
+--		return
+--	end
+
 	Move_Items_Fast(bag, idx)
 end
 
 function Move_Items_Fast(bag, idx)
-	if transfer_lock then
-		return
-	end
+--	if transfer_lock then
+--		return
+--	end
 
-	transfer_lock = true
+--	transfer_lock = true
 
 	if not inv then
 		inv = ui_inventory.GUI
@@ -79,13 +80,13 @@ function Move_Items_Fast(bag, idx)
 
 	local container = inv.CC[bag]
 	if not container then
-		transfer_lock = false
+--		transfer_lock = false
 		return
 	end
 
 	local obj = container:GetObj(idx)
 	if not obj then
-		transfer_lock = false
+--		transfer_lock = false
 		return
 	end
 
@@ -93,28 +94,57 @@ function Move_Items_Fast(bag, idx)
 
 	bag, idx = inv:Picker_Ownership(bag, idx, obj)
 
-	local stack_transfer = false
-
 	if bag and inv:Cond_Move(obj, bag) then
 
 		if inv:Cond_Childs(obj, bag) then
-			stack_transfer = true
-			inv:Action_Move_All(obj, bag)
+			-- BATCH TRANSFER LOGIC
+			local ci = inv.CC[bag]:GetCell_ID(obj:id())
+			local items_to_move = {}
+			for id, _ in pairs(ci.childs) do
+				table.insert(items_to_move, id)
+			end
+			table.insert(items_to_move, obj:id())
+
+			local total_items = #items_to_move
+			local current_idx = 1
+
+			CreateTimeEvent("ish_fast_transfer", "batch_" .. tostring(obj:id()), 0, function()
+				-- Safety measure : cancel transfer and unlock if inventory is closed
+				if not inv or not inv:IsShown() then
+--					transfer_lock = false
+					return true
+				end
+
+				for i = 1, batch_size do
+					if current_idx > total_items then
+						-- transfer is finished, lock is removed
+--						transfer_lock = false
+						return true
+					end
+
+					local item_id = items_to_move[current_idx]
+					local item_obj = level_object_by_id(item_id)
+					if item_obj then
+						inv:Action_Move(item_obj, bag)
+					end
+					current_idx = current_idx + 1
+				end
+
+				return false
+			end)
+
 		else
+			-- Simple transfer of one item
 			inv:Action_Move(obj, bag)
+--			last_move_time = time_global()
+--			transfer_lock = false -- unlocked immediately
 		end
-
-	end
-
-	if stack_transfer then
-		last_move_time = time_global() + cooldown_stack
 	else
-		last_move_time = time_global()
+		-- Cancelled transfer
+--		transfer_lock = false
 	end
 
 	utils_ui.UICellContainer.On_Hover = Ishy_On_Hover
-
-	transfer_lock = false
 end
 
 function on_game_start()
