@@ -718,7 +718,7 @@ end
 _G.nil_func = function() return nil end
 
 -- Custom order via order parameter (t, a, b) as default spairs
-local sift_down_order = function(t, keys, idx, end_idx, order)
+local sift_down_order = function(keys, idx, end_idx, t, order)
     local hole_idx = idx
     local sifting_key = keys[hole_idx]
     local half_idx = math_floor(end_idx / 2)
@@ -741,7 +741,7 @@ local sift_down_order = function(t, keys, idx, end_idx, order)
 end
 
 -- Default ascending order
-local sift_down_default = function(t, keys, idx, end_idx)
+local sift_down_default = function(keys, idx, end_idx)
     local hole_idx = idx
     local sifting_key = keys[hole_idx]
     local half_idx = math_floor(end_idx / 2)
@@ -761,6 +761,16 @@ local sift_down_default = function(t, keys, idx, end_idx)
         end
     end
     keys[hole_idx] = sifting_key
+end
+
+local function safe_order(order)
+	return function(t, a, b)
+		local va = t[a]
+	    local vb = t[b]
+	    if va == nil then return false end -- 'a' is nil, so 'b' is "better"
+	    if vb == nil then return true end  -- 'b' is nil, so 'a' is "better"
+	    return order(t, a, b)
+	end
 end
 
 -- Min-Heap based spairs
@@ -786,32 +796,44 @@ _G.hspairs = function(t, order)
         return function()
             if done then return nil end
             done = true
-            return keys[1], t[keys[1]]
+            local val = t[keys[1]]
+            -- Safety check in case the single item was deleted
+            if val ~= nil then 
+                return keys[1], val 
+            end
         end
     end
 
     -- Use order if its provided
+    if order then
+    	order = safe_order(order)
+    end
     local sift_down = order and sift_down_order or sift_down_default
 
     -- Build the Heap: O(N)
     for i = math_floor(n / 2), 1, -1 do
-        sift_down(t, keys, i, n, order)
+        sift_down(keys, i, n, t, order)
     end
 
     -- return the iterator function
     return function()
-        if n == 0 then return nil end
-        
-        local best_key = keys[1]
-        keys[1] = keys[n]
-        keys[n] = nil
-        n = n - 1
-        
-        if n > 0 then
-            sift_down(t, keys, 1, n, order)
-        end
-        
-        return best_key, t[best_key]
+    	while n > 0 do
+	        local best_key = keys[1]
+            local val = t[best_key]
+
+            keys[1] = keys[n]
+            keys[n] = nil
+            n = n - 1
+	        
+	        if n > 0 then
+	            sift_down(keys, 1, n, t, order)
+	        end
+	        
+	        if val ~= nil then
+                return best_key, val
+            end
+	    end
+	    return nil
     end
 end
 
@@ -832,22 +854,18 @@ _G.VEC_Z = nil
 
 local old_mt_g = getmetatable(_G) or {}
 local old_index_g = old_mt_g.__index
+old_mt_g.__index = function(t, key)
+	if constTable[key] then
+		return constTable[key]()
+	end
 
-setmetatable(_G, {
-    __index = function(t, key)
-    	if constTable[key] then
-    		return constTable[key]()
-    	end
+    -- Fallback to old metatable
+    if type(old_index_g) == "function" then
+        return old_index_g(t, key)
+    elseif type(old_index_g) == "table" then
+        return old_index_g[key]
+    end
 
-        -- Fallback to old metatable
-        if type(old_index_g) == "function" then
-            return old_index_g(t, key)
-        elseif type(old_index_g) == "table" then
-            return old_index_g[key]
-        end
-
-        return rawget(t, key)
-    end,
-
-    __newindex = old_mt_g.__newindex or rawset
-})
+    return rawget(t, key)
+end
+setmetatable(_G, old_mt_g)
