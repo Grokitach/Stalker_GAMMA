@@ -1,0 +1,95 @@
+local try_to_add_member_cooldown = 86400 * 1	-- game seconds (86400 = 1 in game day)
+local add_member_chance = 0.65						-- chance to add member (0.35 = 35%)
+local max_squad_count = 3									-- dont spawn if squad already at this size
+
+local saved_time
+local ctime_to_t = utils_data.CTime_to_table
+local t_to_ctime = utils_data.CTime_from_table
+
+function xcvb_add_member(squad)
+	-- squad online, is random sim squad, squad size < max_squad_count
+	if squad.online then return end
+	if not (string.find(squad:section_name(), "sim_squad")) then return end
+	if squad:npc_count() >= max_squad_count then return end
+
+	-- skip random if its guard
+	local skip_rnd = false
+	if guards_spawner and guards_spawner.guarded_smarts then
+		for smart_name, t in pairs(guards_spawner.guarded_smarts) do
+			if skip_rnd then break end
+			for idx, squad_id in ipairs(t) do
+				if squad_id == squad.id then
+					skip_rnd = true
+					break
+				end
+			end
+		end
+	end
+
+	if (not skip_rnd and math.random() > add_member_chance) then return end
+	if axr_companions.companion_squads[squad.id] ~= nil then return end		-- just in case
+
+	-- get squad positions
+	local commander = alife_object(squad:commander_id())
+	local pos = commander.position
+	local lvid = commander.m_level_vertex_id
+	local gvid = commander.m_game_vertex_id
+
+	-- get squad smart
+	local squad_smart = squad.smart_id and SIMBOARD.smarts[squad.smart_id].smrt
+	if not squad_smart then return end
+
+	-- get npc to spawn section
+	local random_spawn = ini_sys:r_string_ex(squad:section_name(), "npc_random")
+	if not random_spawn then return end
+
+	random_spawn = parse_names(random_spawn)
+	local random_sec = random_spawn[math.random(1, #random_spawn)]
+
+--	printf("----- xcvb adding npc: [%s] to squad [%s] id: [%s] -----", random_sec, squad:section_name(), squad.id)
+--	printf("-- old squad_size: [%s] --", squad:npc_count())
+--	level.map_add_object_spot_ser(squad.id, "secondary_task_location", "")
+
+	-- add and setup new npc
+	local new_member_id = squad:add_squad_member(random_sec, pos,  lvid, gvid)
+	local se_obj = new_member_id and alife_object(new_member_id)
+	if (se_obj) then
+		squad_smart:register_npc(se_obj)
+		SIMBOARD:setup_squad_and_group(se_obj)
+	end
+
+	squad:update()
+
+--	printf("-- new squad_size: [%s] --", squad:npc_count())
+end
+
+function actor_on_update()
+	if not saved_time then return end
+
+	local cur_time = game.get_game_time()
+	if cur_time:diffSec(t_to_ctime(saved_time)) < try_to_add_member_cooldown then return end
+
+	for id, _ in pairs(SIMBOARD.squads) do
+		local squad = alife_object(id)
+		if squad and squad.commander_id then
+			xcvb_add_member(squad)
+		end
+	end
+
+	saved_time = ctime_to_t(cur_time)
+
+end
+
+function save_state(m_data)
+	m_data.saved_time = saved_time
+end
+
+function load_state(m_data)
+	saved_time = m_data.saved_time or (ctime_to_t(game.get_game_time()))
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
+end
