@@ -1,0 +1,124 @@
+local FLAG_NAME = "safespawn_active_on_transition"
+local silo_data = {} 
+
+function get_config(key)
+    --DEFAULTS
+    local defaults = {
+        ["show_messages"] = true,
+        ["duration"] = 30,
+        ["duration_min"] = 10,
+        ["duration_max"] = 60,
+        ["random_duration"] = false,
+        ["radius"] = 5,
+        ["debug"] = false
+    }
+    if ui_mcm then
+        local val = ui_mcm.get("safespawn/" .. key)
+        if val ~= nil then return val end
+    end
+    return defaults[key]
+end
+
+function on_game_start()
+    RegisterScriptCallback("on_level_changing", function()
+        if db.actor then
+            db.actor:give_info_portion(FLAG_NAME)
+        end
+    end)
+
+    RegisterScriptCallback("actor_on_first_update", function()
+        if has_alife_info(FLAG_NAME) then
+            disable_info(FLAG_NAME)
+            --1 sec delay to ensure A-Life is online
+            CreateTimeEvent("SafeSpawn", "ExecuteSilo", 1, perform_silo)
+        end
+    end)
+end
+
+function perform_silo()
+    local actor = db.actor
+    if not actor then return true end
+
+    local RADIUS = get_config("radius")
+    local SHOW_MSG = get_config("show_messages")
+    local DEBUG = get_config("debug")
+
+    --Duration
+    local final_duration = get_config("duration")
+    if get_config("random_duration") then
+        local d_min = get_config("duration_min")
+        local d_max = get_config("duration_max")
+        final_duration = math.random(math.min(d_min, d_max), math.max(d_min, d_max))
+    end
+
+    if DEBUG and SHOW_MSG then
+        news_manager.send_tip(actor, "Safe Spawn: Hook Activated. Radius: " .. RADIUS .. "m", nil, "default", 4000)
+    end
+
+    local pos = actor:position()
+    local dist_sqr = RADIUS * RADIUS
+    local count = 0
+    silo_data = {}
+
+    for i=1, 65534 do
+        local se_obj = alife_object(i)
+        if se_obj and IsStalker(se_obj) and se_obj:alive() then
+            local npc = level.object_by_id(se_obj.id)
+            if npc and npc:relation(actor) == game_object.enemy then
+                if se_obj.position:distance_to_sqr(pos) <= dist_sqr then
+                    
+                    -- Record State
+                    table.insert(silo_data, {
+                        id = se_obj.id,
+                        pos = vector():set(se_obj.position),
+                        lvid = se_obj.m_level_vertex_id,
+                        gvid = se_obj.m_game_vertex_id
+                    })
+
+                    npc:set_enemy(nil) 
+                    
+                    -- Limbo
+                    local limbo_pos = vector():set(se_obj.position)
+                    limbo_pos.y = limbo_pos.y - 200
+                    npc:set_npc_position(limbo_pos)
+                    
+                    se_obj:can_switch_online(false)
+                    se_obj:can_switch_offline(true)
+                    
+                    count = count + 1
+                end
+            end
+        end
+    end
+
+    if count > 0 then
+        if SHOW_MSG then
+            news_manager.send_tip(actor, "SafeSpawn: " .. count .. " hostile(s) siloed for " .. final_duration .. "s.", nil, "default", 7000)
+        end
+        CreateTimeEvent("SafeSpawn", "ExecuteRestore", final_duration, restore_silo)
+    end
+    return true
+end
+
+function restore_silo()
+    local SHOW_MSG = get_config("show_messages")
+    local count = 0
+    for _, data in ipairs(silo_data) do
+        local se_obj = alife_object(data.id)
+        local npc = level.object_by_id(data.id)
+        if se_obj then
+            se_obj:can_switch_online(true)
+            se_obj:can_switch_offline(false)
+            if npc then npc:set_npc_position(data.pos) end
+            se_obj.position = data.pos
+            se_obj.m_level_vertex_id = data.lvid
+            se_obj.m_game_vertex_id = data.gvid
+            count = count + 1
+        end
+    end
+    if SHOW_MSG and count > 0 then
+        news_manager.send_tip(db.actor, "SafeSpawn: Hostiles have arrived.", nil, "default", 5000)
+    end
+    silo_data = {}
+    return true
+end
