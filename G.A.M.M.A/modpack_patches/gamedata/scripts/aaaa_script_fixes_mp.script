@@ -724,6 +724,10 @@ function npc_on_update_force_trader_update(npc)
 		-- Copy checks from trade_manager with fixed restock time, fixes GAMMA
 		local id = npc:id()
 		local tm = trade_manager.get_trade_profile(id)
+		if not tm then
+			return
+		end
+		
 		if not tm.cfg_ltx then 
 			return
 		end 
@@ -785,6 +789,112 @@ function actor_on_first_update_register_callbacks()
 	RegisterScriptCallback("server_object_on_register", server_object_on_register_remove_stale_data)
 end
 
+-- Fix state_mgr_animation.delayed_attach to not spam events
+-- Auto-attach newly created item for special animation
+-- requires axr_main function CreateTimeEvent
+state_mgr_animation.delayed_attach = function(id)
+	if not id then
+		return true
+	end
+	if not alife_object(id) then
+		return true
+	end
+
+	local itm = level.object_by_id(id)
+	if itm then
+		itm:enable_attachable_item(true)
+		return true
+	end
+	return false
+end
+
+-- Same for ui_debug_main
+ui_debug_main.delayed_attach = function(id)
+	if not id then
+		return true
+	end
+	if not alife_object(id) then
+		return true
+	end
+
+	local itm = level.object_by_id(id)
+	if itm then
+		itm:enable_attachable_item(true)
+		ui_debug_main._attached = itm:id()
+		return true
+	end
+	return false
+end
+
+-- Fix ui_enemy_health.cs_remove spamming in time events because the wrapper function for time event doesn't return true
+ui_enemy_health_cs_remove = ui_enemy_health.cs_remove
+ui_enemy_health.cs_remove = function()
+	ui_enemy_health_cs_remove()
+	RemoveTimeEvent(0, "enemy_health_remove")
+	return true
+end
+
+-- Attempt for safer DynamicNewsManager
+DynamicNewsManagerInit = dynamic_news_manager.DynamicNewsManager.__init
+dynamic_news_manager.DynamicNewsManager.__init = function(self)
+	DynamicNewsManagerInit(self)
+	RegisterScriptCallback("game_object_on_net_destroy", self)
+
+	if self.response and type(self.response) == "table" then
+		local who = self.response["who"]
+		self.response["who"] = nil
+		setmetatable(self.response, {
+			__newindex = function(t, key, value)
+				if key == "who" then
+					if type(value) == "userdata" and type(value.id) == "function" then
+						rawset(t, "__responseId", value:id())
+						rawset(t, "__responseValue", nil)
+					else
+						rawset(t, "__responseId", nil)
+						rawset(t, "__responseValue", value)
+					end
+				else
+					rawset(t, key, value)
+				end
+			end,
+			__index = function(t, key)
+				if key == "who" then
+					local responseId = rawget(t, "__responseId")
+					local responseValue = rawget(t, "__responseValue")
+
+					if responseId then
+						return level.object_by_id(responseId)
+					end
+
+					return responseValue
+				else
+					return rawget(t, key)
+				end
+			end
+		})
+		self.response["who"] = who
+	end
+end
+
+dynamic_news_manager.DynamicNewsManager.CleanObjects = function(self, id)
+	if self.loot then
+		for i = #self.loot, 1, -1 do
+			local item = self.loot[i]
+			if type(item) == "userdata" and item:id() == id then
+				table.remove(self.loot, i)
+			end
+		end
+	end
+
+	if self.response and self.response["who"] and type(self.response["who"]) == "userdata" and self.response["who"]:id() == id then
+		self.response["who"] = nil
+	end
+end
+
+dynamic_news_manager.DynamicNewsManager.game_object_on_net_destroy = function(self, obj)
+	self:CleanObjects(obj:id())
+end
+
 -- Perform luagc cleanup
 function luagc_cleanup()
 	printf("~[luagc_cleanup] collectgarbage before=%sKb",collectgarbage("count")*1024)
@@ -805,5 +915,6 @@ function on_game_start()
 	RegisterScriptCallback("npc_on_update", npc_on_update_force_trader_update)
 	RegisterScriptCallback("anomaly_on_before_activate", anomaly_on_before_activate_pathfinding)
 
+	-- Force Lua GC and flush LuaJIT trace cache after "first update" calls which will be never executed again
 	RegisterScriptCallback("on_loading_screen_key_prompt", luagc_cleanup)
 end

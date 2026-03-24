@@ -16,10 +16,13 @@ local math_huge		= math.huge
 local math_floor	= math.floor
 local math_max		= math.max
 local math_min		= math.min
+local math_random 	= math.random
 
 local tostring 		= tostring
 local tonumber 		= tonumber
 local unpack 		= unpack
+local select 		= select
+local time_global	= time_global
 
 _G.printf_me = function(s, ...)
 	printf("[Modded Exes] " .. s, ...)
@@ -716,6 +719,7 @@ _G.log = function(str)
 end
 
 _G.nil_func = function() return nil end
+_G.less_func = function(a, b) return a < b end
 
 -- Custom order via order parameter (t, a, b) as default spairs
 local sift_down_order = function(keys, idx, end_idx, t, order)
@@ -725,9 +729,10 @@ local sift_down_order = function(keys, idx, end_idx, t, order)
     
     while hole_idx <= half_idx do
         local child = hole_idx * 2
+        local right = child + 1
         
-        if child < end_idx and order(t, keys[child + 1], keys[child]) then
-            child = child + 1
+        if child < end_idx and order(t, keys[right], keys[child]) then
+            child = right
         end
         
         if order(t, keys[child], sifting_key) then
@@ -748,9 +753,10 @@ local sift_down_default = function(keys, idx, end_idx)
     
     while hole_idx <= half_idx do
         local child = hole_idx * 2
+        local right = child + 1
         
-        if child < end_idx and keys[child + 1] < keys[child] then
-            child = child + 1
+        if child < end_idx and keys[right] < keys[child] then
+            child = right
         end
         
         if keys[child] < sifting_key then
@@ -776,6 +782,7 @@ end
 -- Min-Heap based spairs
 -- Supports early break without sorting whole table
 -- Faster retrieval of the first item
+-- Initially faster than vanilla spairs but might lose performance due to GC strain
 _G.hspairs = function(t, order)
     -- collect the keys
     local n = 0
@@ -837,8 +844,687 @@ _G.hspairs = function(t, order)
     end
 end
 
--- Replace spairs with hspairs
-_G.spairs = hspairs
+-- Iterative Merge Sort based spairs
+-- Minimize amount of comparisons, wins over vanilla spairs because everything is in JIT
+-- Loses early break ability compared to hspairs
+local mspairs_order = function(t, order)
+    -- collect the keys
+    local n = 0
+    local keys = {}
+    for k in pairs(t) do
+    	n = n + 1
+        keys[n] = k
+    end
+
+    -- Return if table is empty
+    if n == 0 then
+    	return nil_func
+    end
+
+    -- If there is only one item, very simple iterator that returns the first item
+    if n == 1 then
+        local done = false
+        return function()
+            if done then return nil end
+            done = true
+            local val = t[keys[1]]
+            -- Safety check in case the single item was deleted
+            if val ~= nil then 
+                return keys[1], val 
+            end
+        end
+    end
+
+    -- Use order if its provided
+    order = safe_order(order)
+
+    local buffer = {}
+    local size = 1
+    
+    -- Bottom-up merge: size doubles each iteration (1, 2, 4, 8...)
+    while size < n do
+        for left = 1, n, size * 2 do
+            local mid = math_min(left + size - 1, n)
+            local right = math_min(left + size * 2 - 1, n)
+            
+            -- Merge keys[left..mid] and keys[mid+1..right] into buffer
+            local i, j, k = left, mid + 1, left
+            while i <= mid and j <= right do
+                if order(t, keys[i], keys[j]) then
+                    buffer[k] = keys[i]
+                    i = i + 1
+                else
+                    buffer[k] = keys[j]
+                    j = j + 1
+                end
+                k = k + 1
+            end
+            
+            while i <= mid do
+                buffer[k] = keys[i]
+                i = i + 1
+                k = k + 1
+            end
+            
+            while j <= right do
+                buffer[k] = keys[j]
+                j = j + 1
+                k = k + 1
+            end
+        end
+        
+        -- Swap keys and buffer for the next pass
+        -- This is faster than copying elements back
+        keys, buffer = buffer, keys
+        size = size * 2
+    end
+
+    local idx = 0
+    return function()
+        while idx < n do
+            idx = idx + 1
+            local k = keys[idx]
+            local v = t[k]
+            
+            -- If the item still exists in the table, return it
+            if v ~= nil then
+                return k, v
+            end
+            -- If v is nil (deleted mid-iteration), the loop continues to next key
+        end
+        return nil
+    end
+end
+
+local mspairs_default = function(t)
+    -- collect the keys
+    local n = 0
+    local keys = {}
+    for k in pairs(t) do
+    	n = n + 1
+        keys[n] = k
+    end
+
+    -- Return if table is empty
+    if n == 0 then
+    	return nil_func
+    end
+
+    -- If there is only one item, very simple iterator that returns the first item
+    if n == 1 then
+        local done = false
+        return function()
+            if done then return nil end
+            done = true
+            local val = t[keys[1]]
+            -- Safety check in case the single item was deleted
+            if val ~= nil then 
+                return keys[1], val 
+            end
+        end
+    end
+
+    local buffer = {}
+    local size = 1
+    
+    -- Bottom-up merge: size doubles each iteration (1, 2, 4, 8...)
+    while size < n do
+        for left = 1, n, size * 2 do
+            local mid = math_min(left + size - 1, n)
+            local right = math_min(left + size * 2 - 1, n)
+            
+            -- Merge keys[left..mid] and keys[mid+1..right] into buffer
+            local i, j, k = left, mid + 1, left
+            while i <= mid and j <= right do
+                if keys[i] < keys[j] then
+                    buffer[k] = keys[i]
+                    i = i + 1
+                else
+                    buffer[k] = keys[j]
+                    j = j + 1
+                end
+                k = k + 1
+            end
+            
+            while i <= mid do
+                buffer[k] = keys[i]
+                i = i + 1
+                k = k + 1
+            end
+            
+            while j <= right do
+                buffer[k] = keys[j]
+                j = j + 1
+                k = k + 1
+            end
+        end
+        
+        -- Swap keys and buffer for the next pass
+        -- This is faster than copying elements back
+        keys, buffer = buffer, keys
+        size = size * 2
+    end
+
+    local idx = 0
+    return function()
+        while idx < n do
+            idx = idx + 1
+            local k = keys[idx]
+            local v = t[k]
+            
+            -- If the item still exists in the table, return it
+            if v ~= nil then
+                return k, v
+            end
+            -- If v is nil (deleted mid-iteration), the loop continues to next key
+        end
+        return nil
+    end
+end
+_G.mspairs = function(t, order)
+	if order then
+		return mspairs_order(t, order)
+	else
+		return mspairs_default(t)
+	end
+end
+
+-- If some script called spairs without order function, use merge spairs, much faster, otherwise use heap spairs
+_G.spairs = function(t, order)
+	if order then
+		return hspairs(t, order)
+	else
+		return mspairs_default(t)
+	end
+end
+
+-- Simpler is_empty
+_G.is_empty = function(t)
+	if not t then return true end
+	return next(t) == nil
+end
+
+-- Shuffle table, Fisher-Yates shuffle
+_G.shuffle_table = function(t)
+   for i = #t, 2, -1 do
+        local j = math_random(i)
+        t[i], t[j] = t[j], t[i]
+    end
+end
+
+-- Simpler size_table
+_G.size_table = function(t)
+	local n = 0
+	for _ in pairs(t) do
+		n = n + 1
+	end
+	return n
+end
+
+-- Reservoir sampling random key table
+_G.random_key_table = function(t)
+	local result_key = nil
+    local counter = 0
+    
+    for k in pairs(t) do
+        counter = counter + 1
+        -- On the 1st item, math_random(1) is always 1 (100% chance)
+        -- On the 2nd item, math_random(2) == 1 is 50% chance, etc.
+        if math_random(counter) == 1 then
+            result_key = k
+        end
+    end
+    
+    return result_key
+end
+
+-- Random choice without allocating tables
+_G.random_choice = function(...)
+	local n = select("#", ...) -- Get the count of arguments
+    if n > 0 then
+        local r = math_random(n)
+        return (select(r, ...)) -- Return the r-th argument directly
+    end
+end
+
+-- Indexed Min-Heap, supports fast lookup for removal and updates
+-- Supports only unique numbers, table and userdata pointers
+_G.MinHeap = function(order, copyFrom)
+	local self = {
+		__order = order or (copyFrom and copyFrom.__order or less_func),
+		__data = copyFrom and dup_table(copyFrom.__data) or {},
+		__indices = {},
+	}
+
+	-- Internal: Swap two elements and update their stored indices
+	self.__swap = function(self, i, j)
+	    local heap = self.__data
+	    local indices = self.__indices
+
+	    local a, b = heap[i], heap[j]
+	    indices[a] = j
+	    indices[b] = i
+	    heap[i], heap[j] = b, a
+	end
+
+	self.sift_up_index = function(self, idx)
+	    local heap = self.__data
+	    local indices = self.__indices
+	    local order = self.__order
+
+	    local hole_idx = idx
+	    local sifting_node = heap[hole_idx]
+
+	    while hole_idx > 1 do
+	        local parent_idx = math_floor(hole_idx / 2)
+	        local parent_node = heap[parent_idx]
+
+	        if order(sifting_node, parent_node) then
+	            heap[hole_idx] = parent_node
+	            indices[parent_node] = hole_idx
+	            hole_idx = parent_idx
+	        else
+	            break
+	        end
+	    end
+
+	    heap[hole_idx] = sifting_node
+	    indices[sifting_node] = hole_idx
+	end
+
+	self.sift_up = function(self, node)
+		local indices = self.__indices
+		if not indices[node] then
+			callstack()
+			printf("~[MinHeap] trying to sift up not indexed node, push instead")
+			return self:push(node)
+		end
+		self:sift_up_index(indices[node])
+	end
+
+	self.sift_down_index = function(self, idx)
+	    local heap = self.__data
+	    local indices = self.__indices
+	    local order = self.__order
+
+	    local end_idx = #heap
+	    local hole_idx = idx
+	    local sifting_node = heap[hole_idx]
+	    local half_idx = math_floor(end_idx / 2)
+
+	    while hole_idx <= half_idx do
+	        local child_idx = hole_idx * 2
+	        local right_idx = child_idx + 1
+	        
+	        if child_idx < end_idx and order(heap[right_idx], heap[child_idx]) then
+	            child_idx = right_idx
+	        end
+	        
+	        if order(heap[child_idx], sifting_node) then
+	        	local node_moving_up = heap[child_idx]
+	            heap[hole_idx] = node_moving_up
+	            indices[node_moving_up] = hole_idx
+	            hole_idx = child_idx
+	        else
+	            break
+	        end
+	    end
+
+	    heap[hole_idx] = sifting_node
+	    indices[sifting_node] = hole_idx
+	end
+
+	self.sift_down = function(self, node)
+		local indices = self.__indices
+		if not indices[node] then
+			callstack()
+			printf("~[MinHeap] trying to sift down not indexed node, push instead")
+			return self:push(node)
+		end
+		self:sift_down_index(indices[node])
+	end
+
+	self.update_index = function(self, idx)
+        local heap = self.__data
+	    local order = self.__order
+
+        local parent = math_floor(idx / 2)
+        -- If the new value is smaller than its parent, move it up
+        if idx > 1 and order(heap[idx], heap[parent]) then
+            self:sift_up_index(idx)
+        else
+            -- Otherwise, try to move it down
+            self:sift_down_index(idx)
+        end
+    end
+
+    self.update = function(self, node)
+    	local indices = self.__indices
+    	if not indices[node] then
+    		callstack()
+			printf("~[MinHeap] trying update not indexed node, push instead")
+			return self:push(node)
+		end
+    	self:update_index(indices[node])
+	end
+
+	self.push = function(self, node)
+		local heap = self.__data
+	    local indices = self.__indices
+
+		if indices[node] then
+			callstack()
+			printf("~[MinHeap] trying to push existing node, update instead")
+			return self:update(node)
+		end
+
+	    local n = #heap + 1
+	    heap[n] = node
+	    indices[node] = n
+	    self:sift_up_index(n)
+	end
+
+	self.remove_index = function(self, idx)
+	    local heap = self.__data
+	    local node_to_remove = heap[idx]
+	    if not node_to_remove then return end
+
+	    local indices = self.__indices
+	    local order = self.__order	    
+
+	    local n = #heap
+
+	    if idx == n then
+	        heap[n] = nil
+	        indices[node_to_remove] = nil
+	    else
+	        self:__swap(idx, n)
+	        heap[n] = nil
+	        indices[node_to_remove] = nil
+
+	        -- The element swapped into 'idx' might need to move up or down
+	        local parent = math_floor(idx / 2)
+	        if idx > 1 and order(heap[idx], heap[parent]) then
+	            self:sift_up_index(idx)
+	        else
+	            self:sift_down_index(idx)
+	        end
+	    end
+	end
+
+	self.remove = function(self, node)
+		local indices = self.__indices
+		if not indices[node] then
+			return
+		end
+	    self:remove_index(indices[node])
+	end
+
+	self.peek = function(self)
+	    return self.__data[1]
+	end
+
+	self.pop = function(self)
+		local d = self.__data[1]
+		self:remove_index(1)
+		return d
+	end
+
+	-- For validation purposes, returned value must be equal (==) to node
+	self.get = function(self, node)
+		return self.__data[self.__indices[node]]
+	end
+
+	self.rebuild = function(self)
+	    local heap = self.__data
+	    local indices = self.__indices
+
+	    local n = #heap
+
+	    for k in pairs(indices) do indices[k] = nil end
+	    
+	    -- Floyd's Build-Heap algorithm:
+	    -- We start from the last non-leaf node (n/2) and sift down to the root.
+	    for i = math_floor(n / 2), 1, -1 do
+	        self:sift_down_index(i)
+	    end
+	end
+
+	self.size = function(self)
+	    return #self.__data
+	end
+
+	self.copy = function(self)
+		return MinHeap(nil, self)
+	end
+
+	self.to_table = function(self)
+		local t = dup_table(self.__data)
+		table.sort(t, self.__order)
+		return t
+	end
+
+	self.validate = function(self)
+		local heap = self.__data
+	    local indices = self.__indices
+	    local order = self.__order
+
+	    local size = #heap
+	    local valid = true
+
+	    for i = 1, size do
+	    	local node = heap[i]
+	    	local index = indices[node]
+
+	        -- 1. Check Index Consistency
+	        if index ~= i then
+	            valid = false
+	            printf("![MinHeap] Index Mismatch: Node thinks it is at index %s, but it's actually at %s", index, i)
+	        end
+
+	        -- 2. Check Heap Property (Parent <= Child)
+	        if i > 1 then
+	            local parent_idx = math_floor(i / 2)
+	            if order(node, heap[parent_idx]) then
+	                valid = false
+	                printf("![MinHeap] Heap Property Violation: Child %s is sooner than Parent %s", i, parent_idx)
+	            end
+	        end
+	    end
+
+	    return valid
+	end
+
+	if #self.__data > 0 then
+		self:rebuild()
+	end
+
+	return self
+end
+
+-- Optimized time events, using min heap to peek only closest event to come
+-- Designed to fully reimplement existing timed events with all its quirks
+local ev_queue = {}
+local ev_order_func = function(a, b) return a.timer < b.timer end
+local ev_heap = MinHeap(ev_order_func)
+local ev_heap_validate = function()
+	local valid = ev_heap:validate()
+	if not valid then
+		print_tip("ev_heap is not valid!")
+	end
+end
+
+_G.CreateTimeEvent = function(ev_id,act_id,timer,f,...)
+	if not f then
+		callstack()
+		printf("![CreateTimeEvent] attempt to push nil instead of function, abort")
+		return
+	end
+
+	if not ev_queue[ev_id] then
+		ev_queue[ev_id] = {}
+	end
+
+	if not ev_queue[ev_id][act_id] then
+		local node = {
+	        ev_id = ev_id,
+	        act_id = act_id,
+	        timer = time_global() + timer * 1000,
+	        f = f,
+	        p = select("#", ...) > 0 and {...} or nil -- Force nil
+	    }
+		ev_queue[ev_id][act_id] = node
+		ev_heap:push(node)
+	end
+end
+_G.RemoveTimeEvent = function(ev_id,act_id)
+	if ev_queue[ev_id] and ev_queue[ev_id][act_id] then
+		local node = ev_queue[ev_id][act_id]
+		ev_heap:remove(node)
+		ev_queue[ev_id][act_id] = nil
+	end
+end
+_G.ResetTimeEvent = function(ev_id,act_id,timer)
+	if ev_queue[ev_id] and ev_queue[ev_id][act_id] then
+		local node = ev_queue[ev_id][act_id]
+		node.timer = time_global() + timer * 1000
+		ev_heap:update(node)
+	end
+end
+local ev_reinsert = {}
+_G.ProcessEventQueue = function(force)
+	-- While sleep is active, postpone all events so they wont fire all at once when flag is down
+	if has_alife_info("sleep_active") then
+		for event_id, actions in pairs(ev_queue) do
+			for action_id, node in pairs(actions) do
+				node.timer = node.timer + device().time_delta
+			end
+		end
+		return false
+	end
+
+	local tg = time_global()
+
+	-- ev_heap_validate()
+
+    while ev_heap:size() > 0 do
+        local node = ev_heap:peek()
+
+        -- Check only if timer is strictly greater than tg to prevent infinite loop if event creates new events with 0 delay
+        if not force and tg <= node.timer then
+            break
+        end
+
+        -- Event can create new event or reset events that will change the position of node in the heap
+        -- So remove current node explicitly instead of popping
+        -- Possible outcomes for f(unpack(p)) that needs to be addressed. ev_queue and ev_heap MUST contain same nodes, so not only check ids, but identity (==) check as well
+        --[[
+			* returns true, if calls createTimeEvent with the same id, create is ignored, event removed - PASS
+			* returns false, if calls createTimeEvent with the same id, create is ignored, event stays for next frame - PASS
+			* returns true, if calls createTimeEvent with the different id, works, PASS
+			* returns false, if calls createTimeEvent with the different id, works, PASS
+			* returns true, if calls ResetTimeEvent with the same id, node is updated in heap, then removed, removed from ev_queue as well, PASS 
+			* returns false, if calls ResetTimeEvent with the same id, node is updated in heap. If node.timer is greater than before, don't reinsert, it handled itself. Otherwise, removed, then added to reinsert, then reinserted. Originally, only timer is updated. On paper should be PASS but needs more testing
+			* returns true, if calls ResetTimeEvent with the different id, works, PASS
+			* returns false, if calls ResetTimeEvent with the different id, works, PASS
+			* returns true, if calls RemoveTimeEvent with the same id, node tries to be removed twice but gets caught in :remove method, then removed from ev_queue, PASS
+			* returns false, if calls RemoveTimeEvent with the same id, node tries to be removed twice but gets caught in :remove method, then added into reinsert. So in reinsert we need to check if the node is in ev_queue
+			* returns true, if calls RemoveTimeEvent with the different id, works, PASS
+			* returns false, if calls RemoveTimeEvent with the different id, works, PASS
+        ]]
+        local timer = node.timer
+        local result
+		if node.p then
+        	result = node.f(unpack(node.p))
+        else
+        	result = node.f()
+        end
+        
+        if result == true then
+        	-- Remove current node and remove potential node created if Remove->Create by the same id in the same event happened. If they both point to the same node, :remove will handle that
+        	-- print_tip("executing %s:%s:%s, result true", node.ev_id, node.act_id, timer)
+        	ev_heap:remove(node)
+        	ev_heap:remove(ev_queue[node.ev_id][node.act_id])
+        	ev_queue[node.ev_id][node.act_id] = nil
+        else
+        	-- If called reset on itself, and still in ev_queue by the same node, do nothing, it handled reinsertion by itself
+        	if ev_queue[node.ev_id][node.act_id] == node and node.timer > timer then
+        		-- print_tip("executing %s:%s:%s, result false, event reset itself, skipping, timers %s->%s", node.ev_id, node.act_id, timer, timer, node.timer)
+        	else
+	        	-- print_tip("executing %s:%s:%s, result false, to reinsert", node.ev_id, node.act_id, timer)
+	        	ev_heap:remove(node)
+	        	table_insert(ev_reinsert, node)
+	        end
+        end
+        -- ev_heap_validate()
+    end
+
+    for i = #ev_reinsert, 1, -1 do
+    	local node = ev_reinsert[i]
+    	-- Push only same node that in ev_queue, to prevent Remove->Create case
+    	if ev_queue[node.ev_id][node.act_id] == node then
+    		-- print_tip("try reinserting %s:%s:%s, success", node.ev_id, node.act_id, node.timer)
+    		ev_heap:push(node)
+    	else
+    		-- print_tip("try reinserting %s:%s:%s, event is not in ev_queue, skip", node.ev_id, node.act_id, node.timer)
+    	end
+        ev_reinsert[i] = nil
+    end
+
+    -- ev_heap_validate()
+
+    return false
+end
+_G.ProcessEventQueueState = function(m_data, save)
+	if (save) then
+		m_data.event_queue = ev_queue
+	else
+		ev_queue = m_data.event_queue or ev_queue
+		ev_heap = MinHeap(ev_order_func)
+        for ev_id, actions in pairs(ev_queue) do
+            for act_id, node in pairs(actions) do
+                node.ev_id = ev_id
+                node.act_id = act_id
+                ev_heap:push(node)
+            end
+        end
+	end
+end
+_G.PrintTimeEvents = function()
+	local h = ev_heap:copy()
+	local n = 0
+	local valid = ev_heap:validate()
+	while h:size() > 0 do
+		n = n + 1
+		printf("[%s]", n)
+
+		local node = h:pop()
+		if not (ev_queue[node.ev_id] and ev_queue[node.ev_id][node.act_id]) then
+			printf("![PrintTimeEvents] unknown time event NOT in ev_queue")
+			valid = false
+		end
+		print_r(node)
+	end
+
+	local n1 = 0
+	for event_id, actions in pairs(ev_queue) do
+		for action_id, node in pairs(actions) do
+			n1 = n1 + 1
+
+			local heap_node = ev_heap:get(node)
+			if heap_node ~= node then
+                printf("![PrintTimeEvents] event in ev_queue is NOT in heap, ev_id %s, act_id %s", event_id, action_id)
+                print_r(heap_node)
+                print_r(node)
+				valid = false
+            end
+		end
+	end
+	printf("%s[PrintTimeEvents] validation %s", valid and "" or "!", valid and "success" or "error")
+end
+
+-- Disable old `optimized_time_events.script`
+_G.optimized_time_events = {}
 
 -- Always return a copy of these global variables to prevent modification in scripts
 local constTable = {

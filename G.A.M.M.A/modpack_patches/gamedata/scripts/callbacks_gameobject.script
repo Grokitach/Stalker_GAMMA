@@ -32,22 +32,6 @@ function game_object_on_net_spawn(obj)
 end
 function game_object_on_net_destroy(obj)
 	gameobjects_registry[obj:id()] = nil
-
-	-- Fix dynamic_news_manager loot table
-	local instance = dynamic_news_manager and dynamic_news_manager.get_dynamic_news and dynamic_news_manager.get_dynamic_news()
-	if instance and instance.loot then
-		for i = #instance.loot, 1, -1 do
-			local item = instance.loot[i]
-			if type(item) == "userdata" and item:id() == obj:id() then
-				table.remove(instance.loot, i)
-			end
-		end
-	end
-
-	-- Fix self.response containing deleted object
-	if instance and instance.response and instance.response["who"] and type(instance.response["who"]) == "userdata" and instance.response["who"]:id() == obj:id() then
-		instance.response["who"] = nil
-	end
 end
 
 -- Game objects iterator
@@ -493,6 +477,81 @@ end
 AddScriptCallback("server_object_on_unregister")
 _G.CSE_ALifeDynamicObject_on_unregister = function(id)
 	SendScriptCallback("server_object_on_unregister", alife_object(id))
+end
+
+-- If this is called, Lua called an exported LuaBind method that will result in engine getting a fatal error, leading to semibroken Lua state, ie. "Busy Hands" 
+AddScriptCallback("on_luabind_fatal_error")
+local LuaFatalErrorUIInstance = nil
+local on_luabind_fatal_error_triggered = false
+_G.COnLuaBindFatalError = function(offender)
+	if on_luabind_fatal_error_triggered then
+		return
+	end
+	on_luabind_fatal_error_triggered = true
+
+	SendScriptCallback("on_luabind_fatal_error", offender)
+	exec_console_cmd("save " .. (user_name() or "") .. " - tempsave")
+
+	LuaFatalErrorUIInstance = LuaFatalErrorUI(offender)
+	LuaFatalErrorUIInstance:Show()
+end
+
+class "LuaFatalErrorUI" (CUIScriptWnd)
+function LuaFatalErrorUI:__init(offender) super()
+	self:SetWndRect(Frect():set(0,0,1024,768))
+	self:SetAutoDelete(true)
+
+	self.message_box = CUIMessageBoxEx()
+	self.offender = offender:gsub("%d.*(%[Lua%] ).*[/\\]", "%1")
+	self:Register(self.message_box, "LuaFatalErrorUI_msg_box")
+
+	self:InitCallBacks()
+	self:InitControls()
+	self:AllowWorkInPause(true)
+	self:AllowMovement(true)
+	self:AllowCursor(true)
+
+	self.message_box:AllowWorkInPause(true)
+	self.message_box:AllowMovement(true)
+	self.message_box:AllowCursor(true)
+
+	device():pause(true)
+end
+
+function LuaFatalErrorUI:__finalize()
+end
+
+function LuaFatalErrorUI:InitCallBacks()
+	self:AddCallback("LuaFatalErrorUI_msg_box", ui_events.MESSAGE_BOX_COPY_CLICKED, self.OnMsgCopy, self)
+	self:AddCallback("LuaFatalErrorUI_msg_box", ui_events.MESSAGE_BOX_YES_CLICKED, self.OnMsgYes, self)
+	self:AddCallback("LuaFatalErrorUI_msg_box", ui_events.MESSAGE_BOX_NO_CLICKED, self.OnMsgNo, self)
+end
+
+function LuaFatalErrorUI:InitControls()
+	self.message_box:InitMessageBox("message_box_lua_fatal_error")
+
+	local msg_str = game.translate_string("st_lua_fatal_error")
+	msg_str = msg_str:gsub("(%[Lua%] ).*[/\\]", "%1")
+	local str = strformat(msg_str, self.offender)
+	self.message_box:SetText(str)
+end
+
+function LuaFatalErrorUI:Show()
+    self.message_box:ShowDialog(true)
+end
+
+function LuaFatalErrorUI:OnMsgCopy()
+	device():pause(false)
+	exec_console_cmd("disconnect")
+end
+
+function LuaFatalErrorUI:OnMsgYes()
+	device():pause(false)
+    exec_console_cmd("load " .. (user_name() or "") .. " - tempsave")
+end
+
+function LuaFatalErrorUI:OnMsgNo()
+	device():pause(false)
 end
 
 function on_game_start()
