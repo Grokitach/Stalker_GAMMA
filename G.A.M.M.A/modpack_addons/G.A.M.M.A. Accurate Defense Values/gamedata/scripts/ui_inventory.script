@@ -1,3 +1,4 @@
+
 --[[
 
 - Tronex
@@ -14,17 +15,6 @@ Modes:
 --]]
 
 display_supply_level = true
-
--- Optimisations : mise en cache locale des appels globaux et C++ fréquents
-local math_floor         = math.floor
-local math_ceil          = math.ceil
-local time_global        = time_global
-local level_object_by_id = level.object_by_id
-local SYS_GetParam       = SYS_GetParam
-local IsWeapon           = IsWeapon
-local IsOutfit           = IsOutfit
-local IsArtefact         = IsArtefact
-local IsItem             = IsItem
 
 local enable_feature        = true
 local enable_item_picker	= true
@@ -61,16 +51,6 @@ local clr_bars_text = {
 
 local perc = "%"
 
-local object_cache = {}
-
-function get_object(id)
-    local obj = object_cache[id]
-    if not obj then
-        obj = level_object_by_id(id)
-        object_cache[id] = obj
-    end
-    return obj
-end
 
 -- UI events
 local K_Timer   = false
@@ -86,7 +66,8 @@ local in_actor_inv = utils_item.in_actor_inv
 local in_npc_inv = utils_item.in_npc_inv
 
 function InvRoundStats(x)
-	return math_floor(x + 0.5)
+	rounded = x + 0.5 - (x + 0.5) % 1
+	return rounded
 end
 
 function keybind_pass()
@@ -144,21 +125,31 @@ function start(mode, obj)
 		GUI = UIInventory()
 	end
 	
-	if GUI and not GUI:IsShown() and keybind_pass() then
-		local mode_config = {
-			inventory = function() change_last_mode(1) GUI:IMode_Init() end,
-			loot      = function() change_last_mode(4) GUI:LMode_Init(obj) end,
-			trade     = function() change_last_mode(2) GUI:TMode_Init(obj) end,
-			repair    = function() change_last_mode(3) GUI:RMode_Init(obj) end,
-		}
-		
-		local mode_func = mode_config[mode]
-		if mode_func then
-			mode_func()
-			GUI:ShowDialog(true)
-			_GUIs_keyfree["UIInventory"] = false
-			Register_UI("UIInventory","ui_inventory")
+	if (GUI) and (not GUI:IsShown()) and keybind_pass() then
+		if mode == "inventory" then
+			change_last_mode(1)
+			GUI:IMode_Init()
+			
+		elseif mode == "loot" then
+			change_last_mode(4)
+			GUI:LMode_Init(obj)
+			
+		elseif mode == "trade" then
+			change_last_mode(2)
+			GUI:TMode_Init(obj)
+			
+		elseif mode == "repair" then
+			change_last_mode(3)
+			GUI:RMode_Init(obj)
+			
 		end
+		
+		GUI:ShowDialog(true)
+--[[Bartoche70 for my addon Bart's New Sorting Tabs	because "Keypad 0" toggle hud in inventory	
+		--_GUIs_keyfree["UIInventory"] = true
+--]]
+		_GUIs_keyfree["UIInventory"] = false
+		Register_UI("UIInventory","ui_inventory")
 	end
 end
 
@@ -186,11 +177,11 @@ function UIInventory:__init() super()
 	self.update_items	 = {}
 
 	self.tg_info  	     = nil
-	self.tg_info_step  	 = 25 --[ms]
+	self.tg_info_step  	 = 2 --[ms]
 	self.tg_inv  		 = 0 --[ms]
 	self.tg_inv_step  	 = 100 --[ms]
 	self.tg_stats        = 0
-	self.tg_stats_step   = 3250 --[ms]
+	self.tg_stats_step   = 2000 --[ms]
 	self.tg_hint         = nil
 	self.tg_hint_step    = 1000 --[ms]
 	self.tg_m1		     = 0
@@ -268,15 +259,15 @@ function UIInventory:__init() super()
 	
 	-- Item properties
 	self.properties = {
-		["use"]             = { index= 1 ,  name= "st_use",                     mode= {"inventory"},				cont= {"actor_bag"},                    precondition1= {"Cond_Use"},                                               	   action= {"Action_Use"} },
-		["attach_1"]        = { index= 2 ,  name_func= {"Name_Attach",1},       mode= {"inventory"},				cont= {"actor_bag"},                    precondition1= {"Cond_Attach",1},                                              action= {"Action_Attach",1} },
+		["use"]             = { index= 1 ,  name= "st_use",                    mode= {"inventory"},				cont= {"actor_bag"},                    precondition1= {"Cond_Use"},                                               	   action= {"Action_Use"} },
+		["attach_1"]        = { index= 2 ,  name_func= {"Name_Attach",1},      mode= {"inventory"},				cont= {"actor_bag"},                    precondition1= {"Cond_Attach",1},                                              action= {"Action_Attach",1} },
 		["attach_2"]        = { index= 3 ,  name_func= {"Name_Attach",2},      mode= {"inventory"},				cont= {"actor_bag"},                    precondition1= {"Cond_Attach",2},                                              action= {"Action_Attach",2} },
 		["attach_3"]        = { index= 4 ,  name_func= {"Name_Attach",3},      mode= {"inventory"},				cont= {"actor_bag"},                    precondition1= {"Cond_Attach",3},                                              action= {"Action_Attach",3} },
 		["to_slot"]         = { index= 5 ,  name_func= {"Name_Equip"},         mode= {"inventory"},				cont= {"actor_bag"},                    precondition1= {"Cond_Equip"},                                                 action= {"Action_Equip"} },
 		["to_ruck"]         = { index= 6 ,  name_func= {"Name_UnEquip"},	   mode= {"inventory","trade"},		cont= {"actor_equ","actor_belt"}, 					                                                                   action= {"Action_UnEquip"} },
-		["move"]            = { index= 7 ,  name_func= {"Name_Move"},          mode= {"loot","trade"},			cont= {"actor_equ","actor_belt","actor_bag","actor_trade_bag","actor_trade","npc_bag","npc_trade","npc_trade_bag"},   precondition1= {"Cond_Move"},                         action= {"Action_Move"} },
+		["move"]            = { index= 7 ,  name_func= {"Name_Move"},          mode= {"loot","trade"},			cont= {"actor_equ","actor_belt","actor_bag","actor_trade_bag","actor_trade","npc_bag","npc_trade","npc_trade_bag"},   precondition1= {"Cond_Move"},                        action= {"Action_Move"} },
 		["move_all"]        = { index= 8 ,  name= "st_move_all",               mode= {"loot","trade"},			cont= {"actor_equ","actor_belt","actor_bag","actor_trade_bag","actor_trade","npc_bag","npc_trade","npc_trade_bag"},   precondition1= {"Cond_Childs"}, precondition2= {"Cond_Move"},          action= {"Action_Move_All"} },
-		["donate"]          = { index= 9 ,  name= "st_donate",                 mode= {"trade"},					cont= {"actor_trade_bag","actor_trade"},precondition1= {"Cond_NotQuest"},                                           	   action= {"Action_Donate"} },
+		["donate"]          = { index= 9 ,  name= "st_donate",                 mode= {"trade"},					cont= {"actor_trade_bag","actor_trade"},precondition1= {"Cond_NotQuest"},                                          	   action= {"Action_Donate"} },
 		["unload"]          = { index= 10,  name= "st_unload_magazine",        mode= {"loot","inventory"},		cont= {"actor_equ","actor_bag","npc_bag"}, precondition1= {"Cond_Unload"},                                             action= {"Action_Unload"} },
 		["custom_1"]        = { index= 11,  name_func= {"Name_Custom",1},      mode_func= {"Mode_Custom",1},	cont_func= {"Cont_Custom",1},   		precondition1= {"Name_Custom",1 },                                             action= {"Action_Custom",1} },
 		["custom_2"]        = { index= 12,  name_func= {"Name_Custom",2},      mode_func= {"Mode_Custom",2},	cont_func= {"Cont_Custom",2},   		precondition1= {"Name_Custom",2 },                                             action= {"Action_Custom",2} },
@@ -412,7 +403,7 @@ function UIInventory:InitControls()
 	self.npc_up_community            = xml:InitTextWnd("npc:community", self.npc_up_dialog)
 	self.npc_up_community_overlay 	  = xml:InitStatic("player:community_overlay", self.npc_up_dialog)
 	self.npc_up_rank         	  	  = xml:InitTextWnd("npc:rank", self.npc_up_dialog)
-	self.npc_up_rank_icon         	  = xml:InitStatic("npc:rank_icon", self.npc_up_dialog)
+	self.npc_up_rank_icon      	  = xml:InitStatic("npc:rank_icon", self.npc_up_dialog)
 	self.npc_up_icon              = xml:InitStatic("upgrade:icon", self.npc_up_dialog)
 	self.npc_up_money             = xml:InitTextWnd("upgrade:money", self.npc_up_dialog)
 	self.npc_up_scheme            = xml:InitScrollView("upgrade:scheme", self.npc_up_dialog)
@@ -424,7 +415,7 @@ function UIInventory:InitControls()
 	self.npc_community_icon    = xml:InitStatic("npc:community_icon", self.npc_dialog)
 	self.npc_up_community_icon    = xml:InitStatic("upgrade:community_icon", self.npc_up_dialog)
 		
-	self.equ_dialog               = xml:InitStatic("equipment", self)
+	self.equ_dialog            	  = xml:InitStatic("equipment", self)
 	self.equ_background		      = xml:InitStatic("equipment:background", self.equ_dialog)
 	
 	-- Slots
@@ -740,7 +731,7 @@ end
 
 function UIInventory:CheckItem(obj, msg)
 	if (type(obj) == "number") then
-		obj = level_object_by_id(obj)
+		obj = level.object_by_id(obj)
 	end
 	if (not obj) then
 		callstack()
@@ -754,7 +745,7 @@ end
 
 function UIInventory:GetPartner()
 	if self.npc_id then
-		return (db.storage[self.npc_id] and db.storage[self.npc_id].object or level_object_by_id(self.npc_id))
+		return (db.storage[self.npc_id] and db.storage[self.npc_id].object or level.object_by_id(self.npc_id))
 	end
 end
 
@@ -1027,7 +1018,7 @@ function UIInventory:Cond_Move(obj, bag, temp, bag_to)
 	end
 	
 	if (self.mode == "loot") then
-		local npc = self.npc_id and get_object(self.npc_id)
+		local npc = self.npc_id and get_object_by_id(self.npc_id)
 		return npc and true or false
 		
 	elseif (self.mode == "trade") then
@@ -1158,7 +1149,7 @@ end
 function UIInventory:Action_Donate(obj, bag)
 	obj = self:CheckItem(obj,"Action_Donate")
 	
-	local npc = self.npc_id and get_object(self.npc_id)
+	local npc = self.npc_id and get_object_by_id(self.npc_id)
 	if (not npc) then
 		return
 	end
@@ -1170,7 +1161,7 @@ function UIInventory:Action_Move(obj, bag)
 	obj = self:CheckItem(obj,"Action_Move")
 	
 	if (self.mode == "loot") then
-		local npc = self.npc_id and get_object(self.npc_id)
+		local npc = self.npc_id and get_object_by_id(self.npc_id)
 		if (not npc) then
 			return
 		end
@@ -1355,7 +1346,7 @@ function UIInventory:Action_Drop(obj, bag)
 	obj = self:CheckItem(obj,"Action_Drop")
 
 	db.actor:drop_item(obj)
-	--self:PlaySND(snd_drop_item)
+	self:PlaySND(snd_drop_item)
 	itms_manager.play_item_sound(obj)
 end
 
@@ -1364,7 +1355,7 @@ function UIInventory:Action_Drop_All(obj, bag)
 	
 	local ci = self.CC[bag]:GetCell_ID(obj:id())
 	for id,_ in pairs(ci.childs) do
-		local obj_c = level_object_by_id(id)
+		local obj_c = level.object_by_id(id)
 		if obj_c then
 			db.actor:drop_item(obj_c)
 		end
@@ -1381,19 +1372,18 @@ function UIInventory:UpdateInfo(go)
 	-- Update timer
 	-- Timer ensures that info update happens only once when something change, regardless of how many calls are done
 	-- pass (go) as true to update instantly
-	local tg = time_global()
-	local go = false
+		
 	if (not go) then
 		if (self.update_info) then
 			self.update_info = false
-			self.tg_info = tg
+			self.tg_info = time_global()
 			return
 		end
 	
 		if (not self.tg_info) then
 			return
 		end
-		if (tg < self.tg_info + self.tg_info_step) then
+		if (time_global() < self.tg_info + self.tg_info_step) then
 			return
 		end
 	end
@@ -1643,7 +1633,6 @@ function UIInventory:UpdateInventories()
 	end
 end
 
-
 function UIInventory:UpdateItems()
 	for i,bag in ipairs(self.update_bags) do
 		local cc = self.CC[bag]
@@ -1841,7 +1830,7 @@ function UIInventory:UpdateStats()
 		health_color = clr_bars_text[2]  
 	end
 
-	self.stat["health"].text:SetText(strformat("%s%s", math_floor(player_health * 100), perc))
+	self.stat["health"].text:SetText(strformat("%s%s", math.floor(player_health * 100), perc))
 	self.stat["health"].text:SetTextColor(health_color)
 	self.stat["health"].bar:SetProgressPos( clamp( actor.health, 0, 1) )
 	local radia_val = ((self.stat_outfit["radia"] + self.stat_helm["radia"]))
@@ -1861,12 +1850,13 @@ function UIInventory:UpdateStats()
 			self.stat["radia"].text_bonus:SetTextColor(clr_bars_text[1])
 			radia_bonus_symbol = "+"
 		end
-		self.stat["radia"].text_bonus:SetText(strformat("%s%s%s", radia_bonus_symbol, math_ceil(radia_bonus * 10000), perc))
+		self.stat["radia"].text_bonus:SetText(strformat("%s%s%s", radia_bonus_symbol, math.ceil(radia_bonus * 10000), perc))
 	else
 		self.stat["radia"].text_bonus:SetText()
 	end
 	
 	-- This part is for GAMMA actor damage balancer to display protection as % in UI.
+	
 	local get_protection = grok_actor_damage_balancer.get_protection
 	
 	local s_hit = hit()
@@ -1880,54 +1870,54 @@ function UIInventory:UpdateStats()
 	
 	s_hit.type = hit.chemical_burn
 	local acid_val, acid_bonus = get_protection(s_hit,s_hit.bone_id)
-	self.stat["acid"].text:SetText(strformat("%s%s", math_ceil(acid_val * 100), perc))
+	self.stat["acid"].text:SetText(strformat("%s%s", math.ceil(acid_val * 100), perc))
 	self.stat["acid"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, acid_bonus * 100 , perc))
 
 
 	s_hit.type = hit.shock
 	local shock_val, shock_bonus = get_protection(s_hit,s_hit.bone_id)
-	self.stat["shock"].text:SetText(strformat("%s%s", math_ceil(shock_val * 100), perc))
+	self.stat["shock"].text:SetText(strformat("%s%s", math.ceil(shock_val * 100), perc))
 	self.stat["shock"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, shock_bonus * 100 , perc))
 
 
 	s_hit.type = hit.burn
 	local fire_val, fire_bonus = get_protection(s_hit,s_hit.bone_id)
-	self.stat["fire"].text:SetText(strformat("%s%s", math_ceil(fire_val * 100), perc))
+	self.stat["fire"].text:SetText(strformat("%s%s", math.ceil(fire_val * 100), perc))
 	self.stat["fire"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, fire_bonus * 100, perc))
 
 
 	s_hit.type = hit.telepatic
 	local psi_val, psi_bonus = get_protection(s_hit,s_hit.bone_id)
-	self.stat["psi"].text:SetText(strformat("%s%s", math_ceil(psi_val * 100), perc))
+	self.stat["psi"].text:SetText(strformat("%s%s", math.ceil(psi_val * 100), perc))
 	self.stat["psi"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, psi_bonus *100, perc))
 
 
 	s_hit.type = hit.wound
 	local wound_val, wound_bonus = get_protection(s_hit,s_hit.bone_id)
-	self.stat["wound"].text:SetText(strformat("%s%s", math_ceil(wound_val *100), perc))
-	self.stat["wound"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, math_ceil(wound_bonus * 100), perc))
+	self.stat["wound"].text:SetText(strformat("%s%s", math.ceil(wound_val *100), perc))
+	self.stat["wound"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, math.ceil(wound_bonus * 100), perc))
 
 	s_hit.type = hit.wound
 	local wound_val, wound_bonus = get_protection(s_hit,s_hit.bone_id)
-	self.stat["wound"].text:SetText(strformat("%s%s", math_ceil(wound_val *100), perc))
-	self.stat["wound"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, math_ceil(wound_bonus * 100), perc))
+	self.stat["wound"].text:SetText(strformat("%s%s", math.ceil(wound_val *100), perc))
+	self.stat["wound"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, math.ceil(wound_bonus * 100), perc))
 
 	s_hit.type = hit.explosion
 	local explosion_val, explosion_bonus = get_protection(s_hit,s_hit.bone_id)
-	self.stat["explosion"].text:SetText(strformat("%s%s", math_ceil(explosion_val *100), perc))
-	self.stat["explosion"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, math_ceil(explosion_bonus * 100), perc))
+	self.stat["explosion"].text:SetText(strformat("%s%s", math.ceil(explosion_val *100), perc))
+	self.stat["explosion"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, math.ceil(explosion_bonus * 100), perc))
 
 	s_hit.type = hit.strike
 	local strike_val, strike_bonus = get_protection(s_hit,s_hit.bone_id)
-	self.stat["strike"].text:SetText(strformat("%s%s", math_ceil(strike_val *100), perc))
-	self.stat["strike"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, math_ceil(strike_bonus * 100), perc))
+	self.stat["strike"].text:SetText(strformat("%s%s", math.ceil(strike_val *100), perc))
+	self.stat["strike"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, math.ceil(strike_bonus * 100), perc))
 
 	s_hit.type = hit.fire_wound
 	local fire_wound_val, fire_wound_bonus,tmp1,tmp2,armor_br = get_protection(s_hit,s_hit.bone_id, 12)
-	self.stat["fire_wound"].text:SetText(strformat("%s%s", math_ceil(fire_wound_val * 100), perc))
-	self.stat["fire_wound"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, math_ceil(fire_wound_bonus * 100), perc))
-	self.stat["fire_wound"].text_bonus2:SetText(strformat("%s%s%s", bonus_symbol, math_ceil(fire_wound_bonus * 100), perc))
-	self.stat["br_class"].text:SetText(strformat("%s", math_ceil(armor_br *100)))
+	self.stat["fire_wound"].text:SetText(strformat("%s%s", math.ceil(fire_wound_val * 100), perc))
+	self.stat["fire_wound"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, math.ceil(fire_wound_bonus * 100), perc))
+	self.stat["fire_wound"].text_bonus2:SetText(strformat("%s%s%s", bonus_symbol, math.ceil(fire_wound_bonus * 100), perc))
+	self.stat["br_class"].text:SetText(strformat("%s", math.ceil(armor_br *100)))
 	
 
 	local h_hit = hit()
@@ -1945,7 +1935,7 @@ function UIInventory:UpdateStats()
 	local satiety = actor:cast_Actor():conditions():GetSatiety()
 	satiety = (satiety - 0.1)		-- 5.7
 --	self.stat["power"].bar:SetProgressPos( clamp( satiety , 0, 0.2) )
-	self.stat["power"].text:SetText(strformat("%s%s", math_floor(clamp( satiety , 0, 1) * 1.123  * 100), perc))
+	self.stat["power"].text:SetText(strformat("%s%s", math.floor(clamp( satiety , 0, 1) * 1.123  * 100), perc))
 
 	-- Thirst Bar
 	local thirst = actor_status_thirst.get_last_drink()
@@ -1953,7 +1943,7 @@ function UIInventory:UpdateStats()
 	thirst = thirst_red_icon - thirst
 	thirst = (thirst / thirst_red_icon)
 --	self.stat["thirst"].bar:SetProgressPos( clamp( thirst, 0, 0.185))
-	self.stat["thirst"].text:SetText(strformat("%s%s", math_floor(clamp( thirst, 0, 1) * 100), perc))
+	self.stat["thirst"].text:SetText(strformat("%s%s", math.floor(clamp( thirst, 0, 1) * 100), perc))
 
 	-- Sleep bar
 	local sleep = actor_status_sleep.get_last_sleep()
@@ -1961,7 +1951,7 @@ function UIInventory:UpdateStats()
 	sleep = sleep_red_icon - sleep
 	sleep = (sleep / sleep_red_icon)
 --	self.stat["sleep"].bar:SetProgressPos( clamp( sleep, 0, 0.185))
-	self.stat["sleep"].text:SetText(strformat("%s%s", math_floor(clamp( sleep, 0, 1) * 100), perc))
+	self.stat["sleep"].text:SetText(strformat("%s%s", math.floor(clamp( sleep, 0, 1) * 100), perc))
 
 
 -- Blinking Icons
@@ -2055,7 +2045,7 @@ function UIInventory:On_Sort(ii, ignore)
 		self:TMode_ResetInventories(true)
 		
 		for id,_ in pairs(actor_trade_ids) do
-			local obj = level_object_by_id(id)
+			local obj = level.object_by_id(id)
 			if obj then
 				--cc_a1:AddItem(obj)
 				cc_a2:RemoveItem(obj)
@@ -2063,7 +2053,7 @@ function UIInventory:On_Sort(ii, ignore)
 		end
 		
 		for id,_ in pairs(npc_trade_ids) do
-			local obj = level_object_by_id(id)
+			local obj = level.object_by_id(id)
 			if obj then
 				--cc_b1:AddItem(obj)
 				cc_b2:RemoveItem(obj)
@@ -2129,7 +2119,7 @@ function UIInventory:Picker_Refresh()
 	
 	for id,_ in pairs(inv) do
 		if (not list[id]) then
-			local obj = level_object_by_id(id)
+			local obj = level.object_by_id(id)
 			if obj then
 				cc:AddItem(obj, obj:section())
 			end
@@ -2223,7 +2213,7 @@ function UIInventory:Picker_Toggle(bag, idx, update_mode, force_hide)
 		return
 	end
 	
-	local obj = level_object_by_id(ci.ID)
+	local obj = level.object_by_id(ci.ID)
 	if (not obj) then
 		self:Print(nil, "Picker_Toggle(%s, %s) | cell has no object -> hide", bag, idx)
 		self:Picker_Update(true)
@@ -2243,7 +2233,7 @@ function UIInventory:Picker_Toggle(bag, idx, update_mode, force_hide)
 	local t = {}
 	t[#t+1] = obj
 	for id,_ in pairs(ci.childs) do
-		t[#t+1] = level_object_by_id(id)
+		t[#t+1] = level.object_by_id(id)
 	end
 
 	if self.mode == "trade" then
@@ -2480,7 +2470,7 @@ function UIInventory:LMode_RefreshInventories()
 		if (not inv_b[id]) then
 			cc_b:RemoveItem_byID(id)
 			if is_box and added[id] then
-				SendScriptCallback("actor_on_item_take_from_box", npc, level_object_by_id(id))
+				SendScriptCallback("actor_on_item_take_from_box", npc, level.object_by_id(id))
 			end
 		end
 	end
@@ -2506,7 +2496,7 @@ function UIInventory:LMode_PutAll()
 			local ci = cc:GetCell_ID(id)
 			if ci then
 				-- Transfer item
-				local obj = level_object_by_id(id)
+				local obj = level.object_by_id(id)
 				if self:Cond_Move(obj, "actor_bag") then
 					tot_weight = tot_weight + obj:weight()
 				end
@@ -2522,7 +2512,7 @@ function UIInventory:LMode_PutAll()
 	for id,idx in pairs(cc.indx_id) do
 		local ci = cc:GetCell_ID(id)
 		if ci then
-			local obj = level_object_by_id(id)
+			local obj = level.object_by_id(id)
 			if self:Cond_Move(obj, "actor_bag") then
 				self:Action_Move(obj, "actor_bag")
 			end
@@ -2550,7 +2540,7 @@ function UIInventory:LMode_TakeAll()
 		local ci = cc:GetCell_ID(id)
 		if ci then
 			-- Transfer item
-			local obj = level_object_by_id(id)
+			local obj = level.object_by_id(id)
 			if self:Cond_Move(obj, "npc_bag") then
 				self:Action_Move(obj, "npc_bag")
 			end
@@ -2637,7 +2627,7 @@ function UIInventory:TMode_RefreshInventories()
 	end
 	for id,idx in pairs(list_at) do
 		if (not inv_a[id]) then
-			local obj = level_object_by_id(id)
+			local obj = level.object_by_id(id)
 			if obj and (not in_actor_inv(obj)) then -- Important because trade bag is proccessed differently
 				cc_at:RemoveItem_byID(id)
 			end
@@ -2665,7 +2655,7 @@ function UIInventory:TMode_RefreshInventories()
 	--
 	for id,idx in pairs(list_bt) do
 		if (not inv_b[id]) then
-			local obj = level_object_by_id(id)
+			local obj = level.object_by_id(id)
 			if obj and (not in_npc_inv(npc, obj)) then -- Important because trade bag is proccessed differently
 				cc_bt:RemoveItem_byID(id)
 			end
@@ -2744,7 +2734,7 @@ function UIInventory:TMode_UpdatePrice(ele_txt, ele_btn, bag)
 	for idx,ci in pairs(cc.cell) do
 		tot_cost = tot_cost + cc:GetCellCost(ci)
 	end
-	tot_cost = math_floor(tot_cost)
+	tot_cost = math.floor(tot_cost)
 
 	ele_txt:SetText(tot_cost .. " RU")
 	ele_btn:Enable( tot_cost > 0 )
@@ -2772,7 +2762,7 @@ function UIInventory:TMode_Sell()
 	for idx,ci in pairs(cc.cell) do
 		tot_cost = tot_cost + cc:GetCellCost(ci)
 	end
-	tot_cost = math_floor(tot_cost)
+	tot_cost = math.floor(tot_cost)
 	
 	-- Don't processed if NPC doesn't have enough money
 	if npc:money() < tot_cost then
@@ -2786,7 +2776,7 @@ function UIInventory:TMode_Sell()
 	for id,idx in pairs(cc.indx_id) do
 		local ci = cc:GetCell_ID(id)
 		if ci then
-			self:On_Item_Exchange(db.actor, npc, level_object_by_id(id))
+			self:On_Item_Exchange(db.actor, npc, level.object_by_id(id))
 		end
 	end
 	
@@ -2819,7 +2809,7 @@ function UIInventory:TMode_Buy()
 	for idx,ci in pairs(cc.cell) do
 		tot_cost = tot_cost + cc:GetCellCost(ci)
 	end
-	tot_cost = math_floor(tot_cost)
+	tot_cost = math.floor(tot_cost)
 	
 	-- Don't processed if player doesn't have enough money
 	if db.actor:money() < tot_cost then
@@ -2833,7 +2823,7 @@ function UIInventory:TMode_Buy()
 	for id,idx in pairs(cc.indx_id) do
 		local ci = cc:GetCell_ID(id)
 		if ci then
-			self:On_Item_Exchange(npc, db.actor, level_object_by_id(id))
+			self:On_Item_Exchange(npc, db.actor, level.object_by_id(id))
 		end
 	end
 	
@@ -3080,7 +3070,7 @@ function UIInventory:RMode_UpgradeYes()
 	
 	
 	-- Install new upgrade
-	local obj = self.upgr.id and level_object_by_id(self.upgr.id)
+	local obj = self.upgr.id and level.object_by_id(self.upgr.id)
 	if (not obj) then
 		return
 	end
@@ -3184,7 +3174,7 @@ function UIInventory:RMode_OnRepair()
 		return
 	end
 	
-	local obj = level_object_by_id(self.upgr.id)
+	local obj = level.object_by_id(self.upgr.id)
 	if (not obj) then
 		return
 	end
@@ -3213,7 +3203,7 @@ function UIInventory:RMode_RepairYes()
 		return
 	end
 	
-	local obj = level_object_by_id(self.upgr.id)
+	local obj = level.object_by_id(self.upgr.id)
 	if (not obj) then
 		return
 	end
@@ -3765,7 +3755,7 @@ function UIInventory:On_Item_Update()
 	self:Print(nil, "On_Item_Update")
 
 	-- Update info
-	self.tg_inv = time_global() - self.tg_inv_step
+	self.tg_inv = time_global() - 30
 	self.update_info = true
 end
 
@@ -3817,19 +3807,17 @@ end
 function UIInventory:Update()
 	CUIScriptWnd.Update(self)
 	
-	local tg = time_global()
-	
 	-- Update all info: weight/prices/slots/bags/stats
 	self:UpdateInfo()
 
 	-- Update stats cycle
-	if (tg > self.tg_stats) then
-		self.tg_stats = tg + self.tg_stats_step
+	if (time_global() > self.tg_stats) then
+		self.tg_stats = time_global() + self.tg_stats_step
 		self:UpdateStats()
 	end
 	
 	-- Reinit loot mode (special case for boxes because they spawn items after opening inventory)
-	if self.box_init_update.state and (tg > self.box_init_update.tg) then
+	if self.box_init_update.state and (time_global() > self.box_init_update.tg) then
 		self:LMode_Init( self:GetPartner() )
 	end
 
@@ -3895,9 +3883,11 @@ show_full_stats = false
 
 function update_gui(gui)
 	if gui and gui.item_info then
-		gui:UpdateInfo(true)
-		if gui.item_info then
-			gui.item_info:Update(hovered_obj)
+		local self = gui
+		self:UpdateInfo(true)
+		if self.item_info then
+			local self = self.item_info
+			self:Update(hovered_obj)
 		end
 	end
 end
@@ -3984,8 +3974,8 @@ function UIInventory:OnKeyboard(dik, keyboard_action)
                         db.actor:activate_slot(8)
                     else
                         ActorMenu.get_pda_menu():ShowDialog(true)
-                    end
-                end          
+                        end
+                    end          
 								
 			-- Sort tabs
 			else
