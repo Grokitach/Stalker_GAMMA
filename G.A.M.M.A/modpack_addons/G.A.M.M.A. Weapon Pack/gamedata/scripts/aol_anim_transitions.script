@@ -70,6 +70,11 @@ table.sort(pattern_transitions, function(a,b) return a["priority"] < b["priority
 
 local previous_anms = {}
 
+-- oleh5230 edit To Do:
+-- unlocalize blacklist_table
+-- make into a monkeypatch (or copy the patch for Mags users)
+-- verify hud_section -> section check
+
 function set_strict_transition(anm_table, hud_section)
     -- Make sure item has transitions
     local item_transitions = transitions[hud_section]
@@ -92,6 +97,16 @@ function set_strict_transition(anm_table, hud_section)
         -- previous_anms[hud_section] = anm_table.anm_name
         return false
     end
+
+    -- oleh5230
+    -- Ignore sprint transitions if weapon is lower-sprint valid
+    -- hud section names are arbitrary, but this should cover all affected weapons in gamma
+    local section = string.gsub(hud_section, "_hud", "")
+    if not lower_weapon_sprint.blacklist_table[section] and (string.find(start_anm, "sprint") or string.find(end_anm, "sprint")) then
+        --printf("[aol_anim_transitions] lower sprint valid, omitting transition animation")
+        return false
+    end
+    -- oleh5230 end
 
     -- Re-add valid suffixes from previous mutations
     for i, anm_suffix in ipairs(valid_anims) do
@@ -122,6 +137,17 @@ function set_pattern_transition(anm_table, hud_section)
     local end_anm = anm_table.anm_name
     for _, transition in ipairs(item_transitions) do
         local transition_anm = transition["transition_anm"]
+
+        -- oleh5230
+        -- Ignore sprint transitions if weapon is lower-sprint valid
+        -- hud section names are arbitrary, but this should cover all affected weapons in gamma
+        local section = string.gsub(hud_section, "_hud", "")
+        if not lower_weapon_sprint.blacklist_table[section] and (string.find(start_anm, "sprint") or string.find(end_anm, "sprint")) then
+            --printf("[aol_anim_transitions] lower sprint valid, omitting transition animation")
+            return false
+        end
+        -- oleh5230 end
+
         -- Re-add valid suffixes from previous mutations
         for i, anm_suffix in ipairs(valid_anims) do
             if animation_common.has_animation(hud_section, transition_anm .. anm_suffix) then
