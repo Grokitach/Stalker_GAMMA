@@ -1,0 +1,86 @@
+-- Disables random Agroprom Underground transitions on first visit
+-- oleh5230, 29.03.26
+
+-- To Do
+-- verify task waypoints
+-- text edit
+-- manage exits to surface
+-- remove map spots?
+
+function randomize_transitions()
+	level_changer_list = {
+		--["agr_level_changer_to_underground_1"] = true, -- cave
+		["agr_level_changer_to_underground_2"] = true, -- manhole outside institute
+		["agr_level_changer_to_underground_3"] = true, -- stairway outside factory
+		["agr_level_changer_to_underground_4"] = true, -- manhole between factory tanks
+		["agr_level_changer_to_underground_5"] = true, -- institute manhole
+		["agr_level_changer_to_underground_6"] = true, -- manhole outside factory
+	}
+
+	space_restrictor_list = {
+		--["agr_space_restrictor_to_agr_ug_1"] = true,
+		["agr_space_restrictor_to_agr_ug_2"] = true,
+		["agr_space_restrictor_to_agr_ug_3"] = true,
+		["agr_space_restrictor_to_agr_ug_4"] = true,
+		["agr_space_restrictor_to_agr_ug_5"] = true,
+		["agr_space_restrictor_to_agr_ug_6"] = true,
+	}
+
+	-- unused
+	level_changer_exit_list = {
+		--["agru_level_changer_to_agroprom_1"] = true,
+		["agru_level_changer_to_agroprom_2"] = true,
+		["agru_level_changer_to_agroprom_3"] = true,
+		["agru_level_changer_to_agroprom_4"] = true,
+		["agru_level_changer_to_agroprom_5"] = true,
+		["agru_level_changer_to_agroprom_6"] = true,
+	}
+
+	-- leave one transition
+	local level_changer_keys = {}
+	for k in pairs(level_changer_list) do
+		table.insert(level_changer_keys, k)
+	end
+	table.sort(level_changer_keys)
+	local space_restrictor_keys = {}
+	for k in pairs(space_restrictor_list) do
+		table.insert(space_restrictor_keys, k)
+	end
+	table.sort(space_restrictor_keys)
+	local level_changer_exit_keys = {}
+	for k in pairs(level_changer_exit_list) do
+		table.insert(level_changer_exit_keys, k)
+	end
+	table.sort(level_changer_exit_keys)
+
+	local roll = math.random(#level_changer_keys)
+	level_changer_list[level_changer_keys[roll]] 			= false
+	space_restrictor_list[space_restrictor_keys[roll]] 		= false
+	level_changer_exit_list[level_changer_exit_keys[roll]]	= false
+
+	printf("[agroprom_underground_transition_randomizer] Selected transition: %s", roll)
+end
+
+function disable_transitions()
+	if has_alife_info("agroprom_underground_transitions_disabled") or not alife_storage_manager.get_state().opened_routes or level.name() ~= "l03_agroprom" then return end
+
+	printf("[agroprom_underground_transition_randomizer] Initialization...")
+	randomize_transitions()
+
+	for i = 1, 65534 do
+		local se_obj = alife_object(i)
+		if se_obj and se_obj.online and (level_changer_list[se_obj:name()] or space_restrictor_list[se_obj:name()] or level_changer_exit_list[se_obj:name()]) then
+			db.actor:give_info_portion("agroprom_underground_transitions_disabled")
+
+			printf("[agroprom_underground_transition_randomizer] Setting offline: %s, %s", se_obj:name(), se_obj.id)
+			alife():set_switch_online(se_obj.id, false)
+			alife():set_switch_offline(se_obj.id, true)
+			se_obj:switch_offline()
+			printf("[agroprom_underground_transition_randomizer] object ID %s online status: %s", se_obj.id, se_obj.online)
+		end
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", disable_transitions)
+end
