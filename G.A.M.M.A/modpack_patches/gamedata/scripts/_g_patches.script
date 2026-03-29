@@ -17,12 +17,28 @@ local math_floor	= math.floor
 local math_max		= math.max
 local math_min		= math.min
 local math_random 	= math.random
+local math_abs 		= math.abs
 
 local tostring 		= tostring
 local tonumber 		= tonumber
+local type 			= type
 local unpack 		= unpack
 local select 		= select
 local time_global	= time_global
+
+-- Patch pairs and ipairs to use methods from metatables if they are defined (Lua 5.2 functionality)
+local _p = pairs
+local _ip = ipairs
+_G.pairs = function(t, ...)
+    local m = getmetatable(t)
+    if not (m and m.__pairs) then return _p(t, ...) end
+    return m.__pairs(t, ...)
+end
+_G.ipairs = function(t, ...)
+    local m = getmetatable(t)
+    if not (m and m.__ipairs) then return _ip(t, ...) end
+    return m.__ipairs(t, ...)
+end
 
 _G.printf_me = function(s, ...)
 	printf("[Modded Exes] " .. s, ...)
@@ -1044,12 +1060,26 @@ _G.is_empty = function(t)
 	return next(t) == nil
 end
 
--- Shuffle table, Fisher-Yates shuffle
-_G.shuffle_table = function(t)
-   for i = #t, 2, -1 do
-        local j = math_random(i)
-        t[i], t[j] = t[j], t[i]
-    end
+-- Simpler iempty_table
+_G.iempty_table = function(t)
+	if not t then
+		return {}
+	end
+	for i = #t, 1, -1 do
+		t[i] = nil
+	end
+	return t
+end
+
+-- Simpler empty_table
+_G.empty_table = function(t)
+	if not t then
+		return {}
+	end
+	for k in pairs(t) do
+		t[k] = nil
+	end
+	return t
 end
 
 -- Simpler size_table
@@ -1085,6 +1115,81 @@ _G.random_choice = function(...)
         local r = math_random(n)
         return (select(r, ...)) -- Return the r-th argument directly
     end
+end
+
+-- Shuffle table, Fisher-Yates shuffle
+_G.shuffle_table = function(t)
+   for i = #t, 2, -1 do
+        local j = math_random(i)
+        t[i], t[j] = t[j], t[i]
+    end
+end
+
+-- get_object_by_id that uses gameobjects_registry, more reliable than db.storage
+_G.get_object_by_id = function(id)
+	if not (id and type(id) == "number") then
+		callstack()
+		printe("!ERROR get_object_by_id | id (%s) is invalid", id)
+		return
+	end
+	
+	if id == AC_ID then
+		return db.actor
+	end
+	
+	local obj = gameobjects_registry[id] or level.object_by_id(id)
+	if not obj then
+		callstack()
+		printe("!ERROR get_object_by_id | no game object recieved from id (%s)", id)
+		return
+	end
+	return obj
+end
+
+-- alife_object that uses server_objects_registry, less calls to engine unless necessary
+_G.alife_object = function(id)
+	if (id == nil or id >= 65535) then
+		callstack()
+		printe("!ALIFE OBJECT ID IS %s!",id)
+		return
+	end
+	return server_objects_registry[id] or alife():object(id)
+end
+
+-- alife_on_limit more accurate and prints more information
+_G.alife_on_limit = function()
+	local result = alife():object_count() > _ALIFE_WARNING
+	if result then
+		printe("![alife_on_limit] WARNING alife ID storage is almost filled: %s", _ALIFE_CNT)
+		local section_name_count = {}
+		for id, obj in pairs(server_objects_registry) do
+			local sec = obj:section_name()
+			section_name_count[sec] = (section_name_count[sec] or 0) + 1
+		end
+		printf("~[alife_on_limit] Top 5 bloat, maybe cleanup them?")
+		local i = 0
+		for sec, count in spairs(section_name_count, sort_func_values_descend) do
+			i = i + 1
+			printf("section %s, count %s", sec, count)
+			if i == 5 then
+				break
+			end
+		end
+	end
+	return result
+end
+
+-- Checks if float is nearly 0 with custom precision
+-- EPS defined below
+_G.fis_zero = function(val, eps)
+	eps = eps or EPS
+	return math_abs(val) < eps
+end
+
+-- Checks if floats are similar with custom precision
+_G.fsimilar = function(a, b, eps)
+	eps = eps or EPS
+	return math_abs(a - b) < eps
 end
 
 -- Indexed Min-Heap, supports fast lookup for removal and updates
@@ -1130,6 +1235,8 @@ _G.MinHeap = function(order, copyFrom)
 
 	    heap[hole_idx] = sifting_node
 	    indices[sifting_node] = hole_idx
+
+	    return self
 	end
 
 	self.sift_up = function(self, node)
@@ -1140,6 +1247,8 @@ _G.MinHeap = function(order, copyFrom)
 			return self:push(node)
 		end
 		self:sift_up_index(indices[node])
+
+		return self
 	end
 
 	self.sift_down_index = function(self, idx)
@@ -1172,6 +1281,8 @@ _G.MinHeap = function(order, copyFrom)
 
 	    heap[hole_idx] = sifting_node
 	    indices[sifting_node] = hole_idx
+
+	    return self
 	end
 
 	self.sift_down = function(self, node)
@@ -1182,6 +1293,8 @@ _G.MinHeap = function(order, copyFrom)
 			return self:push(node)
 		end
 		self:sift_down_index(indices[node])
+
+		return self
 	end
 
 	self.update_index = function(self, idx)
@@ -1196,6 +1309,8 @@ _G.MinHeap = function(order, copyFrom)
             -- Otherwise, try to move it down
             self:sift_down_index(idx)
         end
+
+        return self
     end
 
     self.update = function(self, node)
@@ -1206,6 +1321,8 @@ _G.MinHeap = function(order, copyFrom)
 			return self:push(node)
 		end
     	self:update_index(indices[node])
+
+    	return self
 	end
 
 	self.push = function(self, node)
@@ -1222,6 +1339,8 @@ _G.MinHeap = function(order, copyFrom)
 	    heap[n] = node
 	    indices[node] = n
 	    self:sift_up_index(n)
+
+	    return self
 	end
 
 	self.remove_index = function(self, idx)
@@ -1250,14 +1369,18 @@ _G.MinHeap = function(order, copyFrom)
 	            self:sift_down_index(idx)
 	        end
 	    end
+
+	    return self
 	end
 
 	self.remove = function(self, node)
 		local indices = self.__indices
 		if not indices[node] then
-			return
+			return self
 		end
 	    self:remove_index(indices[node])
+
+	    return self
 	end
 
 	self.peek = function(self)
@@ -1276,22 +1399,24 @@ _G.MinHeap = function(order, copyFrom)
 	end
 
 	self.rebuild = function(self)
-	    local heap = self.__data
-	    local indices = self.__indices
-
-	    local n = #heap
-
-	    for k in pairs(indices) do indices[k] = nil end
+		empty_table(self.__indices)
+		local n = #self.__data
 	    
 	    -- Floyd's Build-Heap algorithm:
 	    -- We start from the last non-leaf node (n/2) and sift down to the root.
 	    for i = math_floor(n / 2), 1, -1 do
 	        self:sift_down_index(i)
 	    end
+
+	    return self
 	end
 
 	self.size = function(self)
 	    return #self.__data
+	end
+
+	self.empty = function(self)
+		return #self.__data == 0
 	end
 
 	self.copy = function(self)
@@ -1526,32 +1651,130 @@ end
 -- Disable old `optimized_time_events.script`
 _G.optimized_time_events = {}
 
+-- OrderedTable, preserves insertion order and use it in pairs iteration
+-- Repeated assignments by the same key will NOT update the order
+_G.OrderedTable = function(t)
+	t = t or {}
+	local mt = getmetatable(t) or {}
+	if mt.__isOrderedTable then
+		return t
+	end
+	mt.__isOrderedTable = true
+
+	local keys = {}
+	local lookup = {}
+	local count = 0
+	for k in pairs(t) do
+		count = count + 1
+		keys[count] = k
+		lookup[k] = count
+	end
+
+	local newindex = mt.__newindex
+	mt.__newindex = function(t, key, value)
+		-- Don't do anything if key didn't exist and t[key] = nil happened
+		if value == nil then
+			-- Fallback to old metatable
+		    if type(newindex) == "function" then
+		        newindex(t, key, value)
+		    elseif type(newindex) == "table" then
+		        newindex[key] = value
+		    end
+			return
+		end
+
+		-- Update the order if t[key] = nil happened
+ 		local i = lookup[key]
+		if i then
+			table_remove(keys, i)
+			lookup[key] = nil
+		end
+
+		local count = #keys + 1
+		keys[count] = key
+		lookup[key] = count
+
+		-- Fallback to old metatable
+	    if type(newindex) == "function" then
+	        newindex(t, key, value)
+	    elseif type(newindex) == "table" then
+	        newindex[key] = value
+	    else
+	    	rawset(t, key, value)
+	    end
+	end
+
+	mt.__pairs = function(t, ...)
+		local i = 0
+		local len = #keys
+		return function()
+			while i <= len do
+				i = i + 1
+				local k = keys[i]
+				local v = t[k]
+				if v == nil and i <= len then
+					-- Clean stale data
+					table_remove(keys, i)
+					lookup[k] = nil
+					len = len - 1
+					i = i - 1
+				else
+					if v ~= nil then
+						-- If found stale data during iteration, adjust lookup by offset
+						lookup[k] = i
+						return k, v
+					end
+				end
+			end
+		end
+	end
+
+	setmetatable(t, mt)
+	return t
+end
+
 -- Always return a copy of these global variables to prevent modification in scripts
 local constTable = {
 	VEC_ZERO = function() return vector():set(0,0,0) end,
 	VEC_X = function() return vector():set(1,0,0) end,
 	VEC_Y = function() return vector():set(0,1,0) end,
 	VEC_Z = function() return vector():set(0,0,1) end,
+	EPS = function() return 0.0000001 end,
 }
 _G.VEC_ZERO = nil
 _G.VEC_X = nil
 _G.VEC_Y = nil
 _G.VEC_Z = nil
 
-local old_mt_g = getmetatable(_G) or {}
-local old_index_g = old_mt_g.__index
-old_mt_g.__index = function(t, key)
+local mt_g = getmetatable(_G) or {}
+local index_g = mt_g.__index
+local newindex_g = mt_g.__newindex
+mt_g.__index = function(t, key)
 	if constTable[key] then
 		return constTable[key]()
 	end
 
     -- Fallback to old metatable
-    if type(old_index_g) == "function" then
-        return old_index_g(t, key)
-    elseif type(old_index_g) == "table" then
-        return old_index_g[key]
+    if type(index_g) == "function" then
+        return index_g(t, key)
+    elseif type(index_g) == "table" then
+        return index_g[key]
+    else
+    	return rawget(t, key)
     end
-
-    return rawget(t, key)
 end
-setmetatable(_G, old_mt_g)
+mt_g.__newindex = function(t, key, value)
+	if constTable[key] then
+		return
+	end
+
+	-- Fallback to old metatable
+    if type(newindex_g) == "function" then
+        newindex_g(t, key, value)
+    elseif type(newindex_g) == "table" then
+        newindex_g[key] = value
+    else
+    	rawset(t, key, value)
+    end
+end
+setmetatable(_G, mt_g)

@@ -343,6 +343,7 @@ function ammo_aggregation_full(npc_id)
 	-- Wait for objects to come online if any needed
 	CreateTimeEvent("ammo_aggregation_full_wait_for_gobj", npc_id, 0, function()
 		local ammoObjectsBySection = {}
+		local needsRestart = false
 		for i = #ammoObjectIds, 1, -1 do
 			local id = ammoObjectIds[i]
 
@@ -350,47 +351,50 @@ function ammo_aggregation_full(npc_id)
 			if not alife_object(id) then
 				table.remove(ammoObjectIds, i)
 			else
-
-				-- If object is not online - try next frame
 				local obj = level.object_by_id(id)
-				if not obj then return false end
-
-				-- Replace damaged ammo with old, and wait until its online
-				if _NO_DAMAGED_AMMO and string.find(obj:section(), "verybad") then
-					local new_section = string.gsub(obj:section(), "verybad", "bad")
-					if ini_sys:section_exist(new_section) then
-						alife_release(obj)
-						table.remove(ammoObjectIds, i)
-						local new_obj = alife_create_item(new_section, npc, {ammo = obj:ammo_get_count()})
-						if new_obj then
-							table.insert(ammoObjectIds, new_obj.id)
-							return false
+				if not obj then
+					-- If object is not online - try next frame
+					needsRestart = true
+				else
+					-- Replace damaged ammo with old, and wait until its online
+					if _NO_DAMAGED_AMMO and string.find(obj:section(), "verybad") then
+						local new_section = string.gsub(obj:section(), "verybad", "bad")
+						if ini_sys:section_exist(new_section) then
+							alife_release(obj)
+							table.remove(ammoObjectIds, i)
+							local new_obj = alife_create_item(new_section, npc, {ammo = obj:ammo_get_count()})
+							if new_obj then
+								table.insert(ammoObjectIds, new_obj.id)
+								needsRestart = true
+							end
 						end
 					end
-				end
-				
-				-- Replace home-made buck ammo with regular type, and wait until its online
-				if (obj:section() == "ammo_12x70_buck_self") then
-					local new_section = "ammo_12x70_buck"
-					if ini_sys:section_exist(new_section) then
-						alife_release(obj)
-						table.remove(ammoObjectIds, i)
-						local new_obj = alife_create_item(new_section, npc, {ammo = obj:ammo_get_count()})
-						if new_obj then
-							table.insert(ammoObjectIds, new_obj.id)
-							return false
+					
+					-- Replace home-made buck ammo with regular type, and wait until its online
+					if obj:section() == "ammo_12x70_buck_self" then
+						local new_section = "ammo_12x70_buck"
+						if ini_sys:section_exist(new_section) then
+							alife_release(obj)
+							table.remove(ammoObjectIds, i)
+							local new_obj = alife_create_item(new_section, npc, {ammo = obj:ammo_get_count()})
+							if new_obj then
+								table.insert(ammoObjectIds, new_obj.id)
+								needsRestart = true
+							end
 						end
 					end
-				end
 
-				-- If object has less ammo count then possible, add it to process
-				if obj:ammo_get_count() < obj:ammo_box_size() then
-					local sec = obj:section()
-					ammoObjectsBySection[sec] = ammoObjectsBySection[sec] or {}
-					table.insert(ammoObjectsBySection[sec], obj)
-				end	
+					-- If object has less ammo count then possible, add it to process
+					if not needsRestart and obj:ammo_get_count() < obj:ammo_box_size() then
+						local sec = obj:section()
+						ammoObjectsBySection[sec] = ammoObjectsBySection[sec] or {}
+						table.insert(ammoObjectsBySection[sec], obj)
+					end	
+				end
 			end
 		end
+
+		if needsRestart then return false end
 
 		-- Process not full ammo boxes
 		for sec, objects in pairs(ammoObjectsBySection) do
