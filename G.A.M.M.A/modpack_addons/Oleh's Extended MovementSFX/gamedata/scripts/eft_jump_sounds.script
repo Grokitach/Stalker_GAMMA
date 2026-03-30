@@ -24,12 +24,12 @@ available_materials = {
     ["materials\\gravel"]              = "gravel_", -- Гравий
     ["materials\\metal"]               = "metal_", -- Монолитный метал, толстый кусок железа, танк
     ["materials\\metal_pipe"]          = "metal_", -- Металлическая труба
-    ["materials\\metal_plate"]         = "metal_thin_", -- Металлическая пластина (толщина 2-5см), Ступеньки
+    ["materials\\metal_plate"]         = "metal_", --"metal_thin_", -- Металлическая пластина (толщина 2-5см), Ступеньки
     ["materials\\sand"]                = "gravel_", -- Песок, насыпь
     ["materials\\setka_rabica"]        = "metal_", -- Сетка рабица, колючая проволока
     ["materials\\shifer"]              = "asphalt_", -- Шифер
     ["materials\\stucco"]              = "asphalt_", -- штукатурка
-    ["materials\\tin"]                 = "metal_thin_", -- Жесть, крыша домов
+    ["materials\\tin"]                 = "metal_", --"metal_thin_", -- Жесть, крыша домов
     ["materials\\tree_trunk"]          = "wood_", -- Дерево (ствол)
     ["materials\\water"]               = "water_", -- Вода
     ["materials\\water_radiation"]     = "water_", -- Вода
@@ -59,19 +59,36 @@ local jump_sound, land_sound
 local volume = 0.5
 local enabled = true
 
+local servo_volume = 0.5
+local servo_enabled = true
+local exo_classes = {
+    ["outfit_exo_proto"]    = "light",
+    ["outfit_exo"]          = "medium",
+    ["outfit_exo_nosorog"]  = "heavy",
+}
+
 function actor_on_jump()
     if not enabled then return end
+    local outfit_class = oleh_sound_utils.get_outfit_class()
 
     local material = available_materials[get_material()]
     if not material then return false end
-    jump_sound = sound_object("jump\\jump_" .. material .. math.random(3))
+    jump_sound = sound_object("jump\\jump_" .. material .. math.random(5))
     jump_sound:play(db.actor, 0, sound_object.s2d)
     jump_sound.volume = volume
+
+    -- play exo servo sounds
+    if servo_enabled and exo_classes[outfit_class] then
+        local sound = sound_object("exo-gear-walk-jump-land\\servo_exo_jump_" .. exo_classes[outfit_class])
+        sound:play(db.actor, 0, sound_object.s2d)
+        sound.volume = servo_volume
+    end
 end
 
 function actor_on_land(landing_speed)
     if not enabled then return end
     print_dbg("landing_speed: %s", landing_speed)
+    local outfit_class = oleh_sound_utils.get_outfit_class()
 
     -- hack for speed set to 0 by fake geometry
     if landing_speed == 0 then landing_speed = 6.66 end
@@ -82,10 +99,17 @@ function actor_on_land(landing_speed)
         land_sound:play(db.actor, 0, sound_object.s2d)
         land_sound.volume = volume * (landing_speed / 5)
     end
+
+    -- play exo servo sounds
+    if servo_enabled and exo_classes[outfit_class] then
+        local sound = sound_object("exo-gear-walk-jump-land\\servo_exo_land_" .. exo_classes[outfit_class])
+        sound:play(db.actor, 0, sound_object.s2d)
+        sound.volume = servo_volume
+    end
 end
 
 local function get_highest_value(tbl)
-    local max_key = tbl[1]
+    local max_key
     local max_value = 0
     for k,v in pairs(tbl) do
         if v and v > max_value then
@@ -164,12 +188,16 @@ end
 
 function on_option_change()
     if ui_mcm and oleh_sounds_mcm then
-        enabled = ui_mcm.get("oleh_sounds/movement/enabled_jump_sounds")
-	    volume  = ui_mcm.get("oleh_sounds/movement/volume_jump_sounds") or 0.5
+        enabled         = ui_mcm.get("oleh_sounds/movement/enabled_jump_sounds")
+	    volume          = ui_mcm.get("oleh_sounds/movement/volume_jump_sounds") or 0.5
+        servo_enabled   = ui_mcm.get("oleh_sounds/movement/enabled_servo_sounds")
+        servo_volume    = ui_mcm.get("oleh_sounds/movement/volume_servo_sounds") or 0.5
     -- old MCM compatibility
     elseif ui_mcm and extended_movement_sounds_mcm then
-        enabled = ui_mcm.get("extended_movement_sounds/enabled_jump_sounds")
-	    volume  = ui_mcm.get("extended_movement_sounds/volume_jump_sounds") or 0.5
+        enabled         = ui_mcm.get("extended_movement_sounds/enabled_jump_sounds")
+	    volume          = ui_mcm.get("extended_movement_sounds/volume_jump_sounds") or 0.5
+        servo_enabled   = ui_mcm.get("extended_movement_sounds/enabled_servo_sounds")
+        servo_volume    = ui_mcm.get("extended_movement_sounds/volume_servo_sounds") or 0.5
     end
 end
 
