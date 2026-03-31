@@ -91,15 +91,6 @@ function load_mcm_options()
     else
         mat_to_sound["water"] = "_water_"
     end
-    if not enabled then
-        printf("Grok's Casing Falling Sounds are disabled in MCM, unregistering callbacks")
-        UnregisterScriptCallback("actor_on_footstep",actor_on_footstep)
-        UnregisterScriptCallback("actor_on_weapon_fired",actor_on_weapon_fired)
-        UnregisterScriptCallback("actor_on_hud_animation_play", actor_on_hud_animation_play)
-    end
-    if enabled and not ubgl_enabled then
-        UnregisterScriptCallback("actor_on_hud_animation_play",actor_on_hud_animation_play)
-    end
 end
 
 function actor_on_footstep(material, power, hud_view, flags)
@@ -147,6 +138,7 @@ end
 
 -- play casing sound after shot
 function actor_on_weapon_fired(obj, wpn)
+    if not enabled then return end
 	if obj and wpn and not IsMelee(wpn) then
 
         if not last_weapon_id or last_weapon_id ~= wpn:id() then
@@ -211,8 +203,9 @@ end
 
 -- offset casing collision point
 function offset_casing_sound(pos, dir, offset)
-    _offset = str_explode(offset,",")
-    offset_x, offset_z = _offset[1], _offset[2]
+    local _offset = str_explode(offset,",")
+    local offset_x = tonumber(_offset[1]) or 1.33
+    local offset_z = tonumber(_offset[2]) or 0.5
 
     pos.x = pos.x + dir.z * offset_x + dir.x * offset_z
     pos.z = pos.z - dir.x * offset_x + dir.z * offset_z
@@ -221,6 +214,7 @@ end
 
 -- play casing sound during UBGL reload
 function actor_on_hud_animation_play(anm_table, wpn)
+    if not ubgl_enabled then return end
     --printf("%s", anm_table.anm_name)
     if anm_table.anm_name == "anm_reload_g" and wpn then
         local wpn_sec = wpn:section()
