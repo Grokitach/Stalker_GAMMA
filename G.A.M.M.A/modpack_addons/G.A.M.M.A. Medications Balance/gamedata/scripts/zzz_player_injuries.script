@@ -1281,10 +1281,7 @@ local function actor_on_footstep(material,power,hud_view,flags)
 		local file
 		local sound_play = math.random(1,100)
 		if (hit_power > 0) and (state_cooldown < time_global()) and (sound_play <= 13) then
-			file = actor_on_footstep_sound_file(sound_play)
-
-			file_to_say = sound_object( file )
-			file_to_say:play(db.actor,0,sound_object.s2d)
+			play_actor_on_footstep_voice_over(sound_play)
 
 			level.add_pp_effector("blur_bhs.ppe", math.random(655808, 655820), false)
 
@@ -1299,18 +1296,21 @@ local function actor_on_footstep(material,power,hud_view,flags)
 
 end
 
-function actor_on_footstep_sound_file(sound_play)
+function play_actor_on_footstep_voice_over(sound_play)
 	if not zzz_player_injuries_mcm.get_config("new_voice_sounds") then
-		return "actor\\pain_" .. sound_play
+		file = "actor\\pain_" .. sound_play
+	else
+		local helmet = (db.actor:item_in_slot(12) or db.actor:get_current_outfit())
+		if helmet then
+			muffle = "m_"
+		else
+			muffle = ""
+		end
+		file =  "bhs\\" .. muffle .. "pain_" .. sound_play
 	end
 
-	local helmet = (db.actor:item_in_slot(12) or db.actor:get_current_outfit())
-	if helmet then
-		muffle = "m_"
-	else
-		muffle = ""
-	end
-	return "bhs\\" .. muffle .. "pain_" .. sound_play
+	file_to_say = sound_object( file )
+	file_to_say:play(db.actor,0,sound_object.s2d)
 end
 ------------------------------------------------------------------------------------------
 ------------------------------------------------------------------------------------------
