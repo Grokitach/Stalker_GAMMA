@@ -20,6 +20,7 @@ local effects_mult = 1 -- Divide this by maxhp and damagescale multipliers. Exam
 local prev_time = nil
 local head_tbl = {}
 local tinnitus_play = false
+local chance_damage_on_footstep = zzz_player_injuries_mcm.get_config("chance_damage_on_footstep")
 
 function save_state(m_data)
     m_data.head_tbl = head_tbl
@@ -41,6 +42,7 @@ function on_option_change()
 	if r(head_tbl.volume) ~= r(ui_options.get("sound/general/master_volume")) then
 		head_tbl.volume = (ui_options.get("sound/general/master_volume"))
 	end
+	chance_damage_on_footstep = zzz_player_injuries_mcm.get_config("chance_damage_on_footstep")
 end
 
 -- shameful steal from arti
@@ -1278,10 +1280,9 @@ local function actor_on_footstep(material,power,hud_view,flags)
 		hit_power = (l_leg_power + r_leg_power) / 2
 
 	--	printf("hit_power: " .. (hit_power))
-		local file
-		local sound_play = math.random(1,100)
-		if (hit_power > 0) and (state_cooldown < time_global()) and (sound_play <= 13) then
-			play_actor_on_footstep_voice_over(sound_play)
+		local chance_to_damage = math.random(1,100)
+		if (hit_power > 0) and (state_cooldown < time_global()) and (chance_to_damage <= chance_damage_on_footstep) then
+			play_actor_on_footstep_voice_over()
 
 			level.add_pp_effector("blur_bhs.ppe", math.random(655808, 655820), false)
 
@@ -1296,7 +1297,8 @@ local function actor_on_footstep(material,power,hud_view,flags)
 
 end
 
-function play_actor_on_footstep_voice_over(sound_play)
+function play_actor_on_footstep_voice_over()
+	local sound_play = math.random(1,13)
 	if not zzz_player_injuries_mcm.get_config("new_voice_sounds") then
 		file = "actor\\pain_" .. sound_play
 	else
