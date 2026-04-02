@@ -1,0 +1,220 @@
+-- plays player footstep sounds - oleh5230, 17.08.25
+-- Last edit: 09.10.25
+
+local debug = false
+
+local step_enabled = true
+local step_volume = 0.5
+local gear_enabled = true
+local gear_volume = 0.5
+
+-- gear rustle parameters per outfit class
+-- [<outfit_class>] = {<directory_path>, <sample_number>, <directory_path2>, <sample_number2>, ... }
+gear_rustle = {
+    ["default"]             = {"cloth\\cloth_", 38},
+
+    ["outfit_novice"]       = {"gear-rustle\\tac_gear_", 81, "cloth\\cloth_", 38},
+    ["outfit_light"]        = {"gear-rustle\\tac_gear_", 81, "cloth\\cloth_", 38},
+    ["outfit_medium"]       = {"gear-rustle\\tac_gear_", 81, "cloth\\cloth_", 38},
+    ["outfit_heavy"]        = {"gear-rustle\\tac_gear_", 81, "cloth\\cloth_", 38},
+
+    ["outfit_exo_proto"]    = {"gear-rustle\\tac_gear_", 81, "cloth\\cloth_", 38}, -- "exo-gear-light\\light_sero_", 20
+    ["outfit_exo"]          = {"gear-rustle\\tac_gear_", 81, "cloth\\cloth_", 38}, --, "exo-gear-light\\light_sero_", 20
+    ["outfit_exo_nosorog"]  = {"gear-rustle\\tac_gear_", 81, "cloth\\cloth_", 38}, --, "exo-gear-heavy\\heavy_servo_", 20
+}
+
+local servo_volume = 0.5
+local servo_enabled = true
+local exo_count = true
+local exo_classes = {
+    ["outfit_exo_proto"]    = "light_",
+    ["outfit_exo"]          = "medium_",
+    ["outfit_exo_nosorog"]  = "medium_",
+}
+
+-- number of footstep sound files (samples) per move state
+limit = {
+    ["run_"] = 8,
+    ["sprint_"] = 8,
+    ["walk_"] = 6,
+    ["prone_"] = 6,
+    ["ladder_"] = 4,
+    ["n_"] = 6,
+}
+
+count = {
+    ["run_"] = 1,
+    ["sprint_"] = 1,
+    ["walk_"] = 1,
+    ["prone_"] = 1,
+    ["ladder_"] = 1,
+    ["n_"] = 1,
+}
+
+-- create sample queues to mitigate the issue of same sample playing multiple time in a row
+queues = {
+    ["run_"] = {},
+    ["sprint_"] = {},
+    ["walk_"] = {},
+    ["prone_"] = {},
+    ["ladder_"] = {},
+    ["n_"] = {},
+}
+for k,v in pairs(queues) do
+    for i=1, limit[k] do
+        table.insert(queues[k], i)
+    end
+    shuffle_table(queues[k])
+end
+
+function actor_on_footstep(material, power, hud_view, flags)
+    --flags.ret_value = false -- uncomment to disable engine footstep sounds
+    if not step_enabled then return end
+    local outfit_class = oleh_sound_utils.get_outfit_class()
+
+    local move_state, volume = get_move_state()
+    count[move_state] = count[move_state] + 1
+    if count[move_state] > limit[move_state] then
+        count[move_state] = 1
+        shuffle_table(queues[move_state])
+    end
+    -- for k,v in pairs(queues) do
+    --     local str = k
+    --     for a,b in ipairs(queues[k]) do
+    --         str = str .. b
+    --     end
+    --     print_dbg("%s", str)
+    -- end
+
+    -- play footstep sound
+    material = available_materials[material] or available_materials["default"]
+    local sound = sound_object("footstep\\" .. move_state .. material .. queues[move_state][count[move_state]])
+    print_dbg("footstep_sounds: %s, power: %s", "footstep\\" .. move_state .. material .. queues[move_state][count[move_state]], power)
+    sound:play(db.actor, 0, sound_object.s2d)
+    sound.volume = volume * step_volume * 2
+
+    -- play gear rustle sounds
+    if gear_enabled then
+        for i = 1, 10, 2 do
+            local directory = gear_rustle[outfit_class][i]
+            local limit = gear_rustle[outfit_class][i + 1]
+            if directory and limit then
+                sound = sound_object(directory .. math.random(limit))
+                sound:play(db.actor, 0, sound_object.s2d)
+                sound.volume = volume * gear_volume
+                --print_dbg("%s, %s, %s", outfit_class, directory, limit)
+            else
+                break
+            end
+        end
+    end
+
+    -- play exo servo sounds
+    if servo_enabled and exo_classes[outfit_class] then
+        sound = sound_object("exo-gear-walk-jump-land\\servo_exo_walk_" .. exo_classes[outfit_class] .. (exo_count and 2 or 1))
+        sound:play(db.actor, 0, sound_object.s2d)
+        sound.volume = servo_volume
+        exo_count = not exo_count
+    end
+end
+
+function get_move_state()
+    local move_state = "run_"
+    local accel_state = IsMoveState('mcAccel')
+    local volume = 0.4
+
+    if IsMoveState('mcSprint') then
+        move_state = "sprint_"
+        volume = 1
+
+    elseif IsMoveState('mcCrouch') then
+        move_state = "crouch_"
+        volume = 0.2
+        if accel_state then
+            move_state = "prone_"
+            volume = 0
+        end
+
+    elseif accel_state then
+        move_state = "walk_"
+        volume = 0.2
+
+    elseif IsMoveState('mcClimb') then
+        move_state = "ladder_"
+        volume = 0.5
+    end
+
+    -- return move_state
+    return "n_", volume
+end
+
+function load_settings()
+    if ui_mcm and oleh_sounds_mcm then
+        step_enabled    = ui_mcm.get("oleh_sounds/movement/enabled_footstep_sounds")
+	    step_volume     = ui_mcm.get("oleh_sounds/movement/volume_footstep_sounds") or 0.5
+        gear_enabled    = ui_mcm.get("oleh_sounds/movement/enabled_gear_rustle_sounds")
+        gear_volume     = ui_mcm.get("oleh_sounds/movement/volume_gear_rustle_sounds") or 0.5
+        servo_enabled   = ui_mcm.get("oleh_sounds/movement/enabled_servo_sounds")
+        servo_volume    = ui_mcm.get("oleh_sounds/movement/volume_servo_sounds") or 0.5
+    -- old mcm compatibility
+    elseif ui_mcm and extended_movement_sounds then
+        step_enabled    = ui_mcm.get("extended_movement_sounds/enabled_footstep_sounds")
+	    step_volume     = ui_mcm.get("extended_movement_sounds/volume_footstep_sounds") or 0.5
+        gear_enabled    = ui_mcm.get("extended_movement_sounds/enabled_gear_rustle_sounds")
+        gear_volume     = ui_mcm.get("extended_movement_sounds/volume_gear_rustle_sounds") or 0.5
+        servo_enabled   = ui_mcm.get("extended_movement_sounds/enabled_servo_sounds")
+        servo_volume    = ui_mcm.get("extended_movement_sounds/volume_servo_sounds") or 0.5
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_footstep", actor_on_footstep)
+    RegisterScriptCallback("on_option_change", load_settings)
+    load_settings()
+end
+
+available_materials = {
+    ["default"]                        = "default_",
+    ["materials\\asphalt"]             = "asphalt_", -- Асфальт
+    ["materials\\bricks"]              = "concrete_", -- Кирпичная стена
+    ["materials\\bush"]                = "bush_", -- Кусты, крона деревьев, камышы, листья 
+    ["materials\\bush_sux"]            = "bush_", -- Кусты, крона деревьев, камышы, листья сухие
+    ["materials\\cloth"]               = "grass_", -- Ткань
+    ["materials\\concrete"]            = "concrete_", -- Монолитный бетон
+    ["materials\\death"]               = "earth_", -- Смертоносная земля (нестандартный материал)
+    ["materials\\dirt"]                = "earth_", -- Мокрая грязь, болото 
+    ["materials\\earth"]               = "earth_", -- Сухая твердая земля (стандартный материал)
+    ["materials\\earth_death"]         = "earth_", -- Сухая твердая земля (нестандартный материал)
+    ["materials\\earth_slide"]         = "earth_", -- Сухая твердая земля (стандартный материал)
+    ["materials\\flooring_tile"]       = "tile_", -- Плитка, кафель
+    ["materials\\glass"]               = "tile_", -- Стекло
+    ["materials\\grass"]               = "grass_", -- Земля, покрытая травой
+    ["materials\\gravel"]              = "gravel_", -- Гравий
+    ["materials\\metal"]               = "metal_", -- Монолитный метал, толстый кусок железа, танк
+    ["materials\\metal_pipe"]          = "metal_", -- Металлическая труба
+    ["materials\\metal_plate"]         = "metal_", -- Металлическая пластина (толщина 2-5см), Ступеньки
+    ["materials\\sand"]                = "gravel_", -- Песок, насыпь
+    ["materials\\setka_rabica"]        = "metal_plate_", -- Сетка рабица, колючая проволока
+    ["materials\\shifer"]              = "tile_", -- Шифер
+    ["materials\\stucco"]              = "asphalt_", -- штукатурка
+    ["materials\\tin"]                 = "metal_", -- Жесть, крыша домов
+    ["materials\\tree_trunk"]          = "wood_", -- Дерево (ствол)
+    ["materials\\water"]               = "water_", -- Вода
+    ["materials\\water_radiation"]     = "water_", -- Вода
+    ["materials\\wood"]                = "wood_", -- Деревянная поверхность, деревянный пол, деревянные ступеньки
+    ["materials\\wooden_board"]        = "wood_", -- Деревянная доска (толщина 2-5см), деревянный вагон, ящик
+    ["materials\\occ"]                 = "wood_", -- Материал для оклюжен геометрии
+    ["materials\\fake"]                = "default_", -- Материал для колижена (нет звука, следов от пуль, теней)
+    ["materials\\fake_ladders"]        = "default_", -- невидимая лестница
+    ["materials\\fake_ladders_woods"]  = "default_", -- невидимая деревянная лестница
+    ["materials\\fake_slide"]          = "default_", -- Материал для колижена (нет звука, следов от пуль, теней)
+
+    ["objects\\large_furniture"]       = "wood_", -- Red Forest tunnel planks
+    ["objects\\large_metal_trash"]     = "metal_", -- Limansk bridge
+}
+
+function print_dbg(...)
+	if debug then
+		printf(...)
+	end
+end
