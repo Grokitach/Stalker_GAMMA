@@ -44,8 +44,8 @@ local servo_enabled = true
 local servo_volume = 0.5
 local exo_classes = {
     ["outfit_exo_proto"]    = "light_",
-    ["outfit_exo"]          = "medium_",
-    ["outfit_exo_nosorog"]  = "heavy_",
+    ["outfit_exo"]          = "",
+    ["outfit_exo_nosorog"]  = "",
 }
 
 -- create sample queues to mitigate the issue of same sample playing multiple time in a row
@@ -131,6 +131,16 @@ function play_sound(movement, volume)
     end
     --print_dbg("movement_sounds // movement: %s volume: %s", movement, volume)
 
+    -- play exo servo sounds
+    if servo_enabled and exo_classes[outfit_class] then
+        local num = movement == "stand" and 2 or movement == "crouch" and 1 or nil
+        if num then
+            sound = sound_object("exo-gear-walk-jump-land\\exo_crouch_stand_" .. exo_classes[outfit_class] .. math.random(9))
+            sound:play(db.actor, 0, sound_object.s2d)
+            sound.volume = servo_volume * 0.5
+        end
+    end
+
     --[[ apparently can cause crashes
     -- Exo servo sounds
     if exo_servo_sounds then
@@ -178,6 +188,9 @@ function load_settings()
     lookout_toggle  = get_console_cmd(1,"g_lookout_toggle") or false
 
     if ui_mcm and oleh_sounds_mcm then
+        servo_enabled   = ui_mcm.get("oleh_sounds/movement/enabled_servo_sounds")
+        servo_volume    = ui_mcm.get("oleh_sounds/movement/volume_servo_sounds") or 0.5
+
         volume_settings = {
             ["crouch"]      = ui_mcm.get("oleh_sounds/movement/volume_stance_sounds")   or 0.5,
             ["stand"]       = ui_mcm.get("oleh_sounds/movement/volume_stance_sounds")   or 0.5,
@@ -192,6 +205,9 @@ function load_settings()
         }
     -- old MCM compatibility
     elseif ui_mcm and extended_movement_sounds_mcm then
+        servo_enabled   = ui_mcm.get("extended_movement_sounds/enabled_servo_sounds")
+        servo_volume    = ui_mcm.get("extended_movement_sounds/volume_servo_sounds") or 0.5
+
         volume_settings = {
             ["crouch"]      = ui_mcm.get("extended_movement_sounds/volume_stance_sounds")   or 0.5,
             ["stand"]       = ui_mcm.get("extended_movement_sounds/volume_stance_sounds")   or 0.5,
