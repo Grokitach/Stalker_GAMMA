@@ -34,9 +34,14 @@ function ui_workshop.UIWorkshopCraft:UpdateItem (n, sec, amount, result, toolkit
 		self.itm_name[n]:SetText(name)
 		self.itm_num[n]:SetTextColor(GetARGB(250, 255, 50, 50)) --GetARGB(200, 255, 50, 20)
 
+		local belt_ids = {}
+		db.actor:iterate_belt( function(owner, arty)
+			belt_ids[arty:id()] = true
+		end)
+    		
 		-- Collect valid items
 		local function search(temp, item)
-			if (item:section() == sec) and (not parts_id[item:id()]) then
+			if (item:section() == sec) and (not parts_id[item:id()]) and (not belt_ids[item:id()]) then
 				local cnt = IsItem("multiuse",nil,item) and item:get_remaining_uses() or 1
 				parts_id[item:id()] = cnt
 			end
@@ -149,6 +154,13 @@ function ui_workshop.UIWorkshopCraft:UpdateItem (n, sec, amount, result, toolkit
 				self.craft_allow[n] = true
 			end
 			self.itm_num[n]:SetText(tostring(count) .. "/" .. tostring(amt))
+		end
+
+		-- Removal of belt artefacts
+		for id,cnt in pairs(parts_id) do
+			if belt_ids[id] then
+				parts_id[id] = nil
+			end
 		end
 
 		-- Store items id
