@@ -1,0 +1,242 @@
+--custom taskboard ui
+local xml
+
+gui = nil
+function get_ui()
+	gui = gui or pda_taskboard_tab(pda_taskboard)
+	return gui
+end
+
+-- Constructor.
+class "pda_taskboard_tab" (CUIScriptWnd)
+function pda_taskboard_tab:__init(backend)
+	super(backend)
+	self.backend = backend
+	self:InitControls()
+end
+
+function pda_taskboard_tab:__finalize()
+	gui = nil
+end
+
+-- Initialise the interface.
+function pda_taskboard_tab:InitControls()
+	self:SetWndRect(Frect():set(0, 0, 1024, 768))
+
+	-- self:SetAutoDelete(true)
+
+	-- Main frame.
+	xml = CScriptXmlInit()
+	xml:ParseFile("pda_taskboard.xml")
+	self.frame = xml:InitFrame("frame_main", self)
+	xml:InitFrame("frame_button_refresh", self.frame)
+	xml:InitFrame("frame_category_list", self.frame)
+
+	-- Refresh tasks button
+	self.btn_refresh_tasks = xml:Init3tButton("btn_refresh", self.frame)
+	self:Register(self.btn_refresh_tasks, "btn_refresh")
+	self:AddCallback("btn_refresh", ui_events.BUTTON_CLICKED, self.OnBtnRefreshClicked, self)
+
+	--stalker list
+	self.category_list = xml:InitListBox("category_list", self.frame)
+	self:Register(self.category_list, "category_list")
+	self:AddCallback("category_list", ui_events.LIST_ITEM_CLICKED, self.OnCategoryClicked, self)
+
+	--task list
+	self.task_list = xml:InitListBox("task_list", self.frame)
+	self:Register(self.task_list, "task_list")
+	self:AddCallback("task_list", ui_events.LIST_ITEM_CLICKED, self.OnTaskClicked, self)
+end
+
+
+function pda_taskboard_tab:OnBtnRefreshClicked()
+	--reset ui
+	self.task_list:RemoveAll()
+	--update data
+	self.backend.refresh_tasks()
+	--draw data
+	CreateTimeEvent("ui_pda_taskboard_tab", "DrawTaskboard", 0.05, function ()
+		self:DrawCategoryList()
+		return true
+	end)
+end
+
+
+function pda_taskboard_tab:DrawCategoryList()
+	self.category_list:RemoveAll()
+	local data = self.backend.get_data()
+	local sorted_keys = self.backend.get_sorted_keys()
+
+	for key_index, key in ipairs(sorted_keys) do
+		local item = category_list_element(key)
+		self.category_list:AddExistingItem(item)
+	end
+	
+	-- for effect_name, effect_table in pairs(data) do
+	-- 	local item = category_list_element(effect_name)
+	-- 	self.category_list:AddExistingItem(item)
+	-- end
+end
+
+
+function pda_taskboard_tab:OnCategoryClicked()
+	local item = self.category_list:GetSelectedItem()
+	if not item then
+		return
+	end
+	self:RefreshTaskList(item.category_name)
+end
+
+
+function pda_taskboard_tab:RefreshTaskList(category_name)
+	self.task_list:RemoveAll()
+	local item = self.category_list:GetSelectedItem()
+	if not item then
+		return
+	end
+	local data = self.backend.get_data()
+	for task_index, task in ipairs(data[category_name]) do
+		local npc = level.object_by_id(task.npc_id)
+		if npc then
+			local reached_limit = dialogs.has_tasks_by_npc(npc)
+			local task_details = self.backend.get_details(task) or {}
+			local item_task = task_list_element(task.task_id, task, task_details, reached_limit)
+			self.task_list:AddExistingItem(item_task)
+		end
+	end
+end
+
+
+function pda_taskboard_tab:OnTaskClicked()
+	local item_category = self.category_list:GetSelectedItem()
+	local item_task = self.task_list:GetSelectedItem()
+
+	if not (item_category and item_task) then
+		return
+	end
+
+	if item_task.is_blocked then
+		return
+	end
+
+	local item_index = self.task_list:GetSelectedIndex() + 1 --list index starts from 0 unlike lua tables that start from 1
+	local npc_id = self.backend.get_data()[item_category.category_name][item_index].npc_id
+	self.backend.accept_task(item_task.task_id, npc_id)
+	table.remove(self.backend.get_data()[item_category.category_name], item_index)
+	self:RefreshTaskList(item_category.category_name)
+
+	if is_empty(self.backend.get_data()[item_category.category_name]) then
+		self.backend.get_data()[item_category.category_name] = nil
+		self:DrawCategoryList()
+	end
+end
+
+--- --------------------------------------------------------------------------
+--- npc element
+--- --------------------------------------------------------------------------
+class "category_list_element" (CUIListBoxItem)
+
+function category_list_element:__init(category) super(category)
+	self.category_name = category
+
+	self.frame = xml:InitFrame("category_card", self)
+	self.bg = xml:InitFrame("category_card_bg", self.frame)
+	self.category_icon = xml:InitStatic("category_card_icon", self.frame)
+	self.category_icon:InitTexture("ui_inGame2_pda_taskboard_custom_category_" .. category)
+	self.category_name_label = xml:InitTextWnd("category_card_name", self.frame)
+	local text_category_name = game.translate_string("st_pda_caption_" .. category)
+	self.category_name_label:SetText(text_category_name)
+end
+
+function category_list_element:__finalize()
+end
+
+--- --------------------------------------------------------------------------
+--- task element
+--- --------------------------------------------------------------------------
+class "task_list_element" (CUIListBoxItem)
+
+function task_list_element:__init(task_id, task_info, task_details, is_blocked) super(task_id, task_info, task_details, is_blocked)
+	self.task_id = task_id
+	self.is_blocked = is_blocked
+
+	self.frame = xml:InitFrame("task_card", self)
+
+	--setup background
+	if not self.is_blocked then
+		self.bg = xml:InitFrame("task_card_bg", self.frame)
+	else
+		self.bg = xml:InitFrame("task_card_bg_blocked", self.frame)
+	end
+
+	local npc = level.object_by_id(task_info.npc_id)
+	local npc_icon_name = npc and npc:character_icon() or "ui\\ui_noise"
+	--setup icon npc
+	self.npc_icon = xml:InitStatic("task_card_npc_icon", self.frame)
+	self.npc_icon:InitTexture(npc_icon_name)
+	--setup text npc
+	self.npc_info = xml:InitTextWnd("task_card_npc_info", self.frame)
+	local npc_name = npc:character_name()
+	local npc_community = npc:character_community()
+	local npc_info = npc_name .. " - " .. game.translate_string("ui_st_community") .. ": " .. game.translate_string(npc_community)
+	self.npc_info:SetText(npc_info)
+	--setup icon details
+	self.icon = xml:InitStatic("task_card_icon", self.frame)
+	self.icon:InitTexture(task_details.task_icon or "ui\\ui_noise")
+	--setup text details
+	self.text_details = xml:InitTextWnd("task_details", self.frame)
+	local details = "\\n" .. (task_details.task_title or "") .. " - " .. (string.gsub(task_details.task_details or "", "\\n ", "\\n"))
+	self.text_details:SetText(details)
+	--setup text description
+	
+	--setup text description
+	-- 1. Initialisation systématique de la ScrollView attachée à la frame
+	self.scrollbar_description = xml:InitScrollView("task_description_scrollbar", self.frame)
+	
+	-- 2. Initialisation du texte sans parent (nil) car il va être géré par la ScrollView
+	self.text_description = xml:InitTextWnd("task_description", nil)
+	self.text_description:SetText(task_info.task_description or "")
+	
+	-- 3. Ajustement de la taille de la boîte de texte à son contenu
+	self.text_description:AdjustHeightToText()
+	
+	-- 4. Ajout du texte à la ScrollView (le 'true' active l'auto-delete pour éviter les fuites de mémoire)
+	self.scrollbar_description:AddWindow(self.text_description, true)
+end
+
+function task_list_element:__finalize()
+end
+
+--- -----------------------------------------------------
+--- system callbacks
+--- 
+--- moved callbacks here, because fatal error mod is trying to override on_key_release
+--- -----------------------------------------------------
+
+function on_key_release(key)
+    if key == pda_taskboard.config.taskboard_key then
+        local pda_menu = ActorMenu.get_pda_menu()
+        local pda3d = get_console_cmd(1,"g_3d_pda")
+        if not (pda_menu:IsShown()) and db.actor:item_in_slot(8) then
+            if (pda3d) then
+                db.actor:activate_slot(8)
+            else
+                pda_menu:ShowDialog(true)
+            end
+
+            pda_menu:SetActiveSubdialog("eptTaskboard")
+        elseif (pda_menu:IsShown()) then
+            if (pda3d) then
+                db.actor:activate_slot(0)
+            else
+                pda_menu:HideDialog()
+            end
+        end
+    end
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_game_load", pda_taskboard.load_settings)
+	RegisterScriptCallback("on_option_change", pda_taskboard.load_settings)
+	RegisterScriptCallback("on_key_release",on_key_release)
+end
