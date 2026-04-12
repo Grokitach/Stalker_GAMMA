@@ -61,6 +61,15 @@ end
 local ini_eff = ini_file("plugins\\grok_bo_enhanced_recoil.ltx")
 function get_weapon_recoil(obj, sec)
 	if obj then
+		local zoom_cam_dispersion = 0
+		local zoom_cam_dispersion_inc = 0
+		local recoil_s = 0
+		local recoil_s_cnt = 0
+		local recoil_e = 0
+		local disp_factor = 0
+		local enhanced_cam_factor = 0
+		local max_recoil_to_normalize = 0.036036
+		
 		local cobj = obj:cast_Weapon()
 		if (not cobj) then 
 			return 0 
@@ -95,45 +104,27 @@ function get_weapon_recoil(obj, sec)
 			--tbl.e[#tbl.e + 1] = __e
 		end
 		
-		local cam_dispersion = utils_item.get_param(sec, obj and obj:id(), "cam_dispersion", "float", true) or 0
-		local cam_dispersion_inc = utils_item.get_param(sec, obj and obj:id(), "cam_dispersion_inc", "float", true) or 0
 		local zoom_cam_dispersion = utils_item.get_param(sec, obj and obj:id(), "zoom_cam_dispersion", "float", true) or 0 
 		local zoom_cam_dispersion_inc = utils_item.get_param(sec, obj and obj:id(), "zoom_cam_dispersion_inc", "float", true) or 0
-		
-		local disp = (cam_dispersion + zoom_cam_dispersion)
-		local inc = (cam_dispersion_inc + zoom_cam_dispersion_inc)
-		local recoil_b = (disp + inc) / 2.0
-		
-		local recoil_s = 0
-		local recoil_s_cnt = 0
+
 		for i = 1, #tbl.s do
 			recoil_s = recoil_s + tonumber(tbl.s[i])
 			recoil_s_cnt = recoil_s_cnt + 1
 		end
 		recoil_s = (recoil_s / recoil_s_cnt)
+
+		local recoil_e = tonumber(tbl.e[6]) or 1
 		
-		local recoil_e = 0
-		local recoil_e_cnt = 0
-		for i = 1, #tbl.e do
-			recoil_e = recoil_e + tonumber(tbl.e[i])
-			recoil_e_cnt = recoil_e_cnt + 1
+		local disp_factor = 1 / ( zoom_cam_dispersion )
+		local enhanced_cam_factor = 1 / ( recoil_s + recoil_s + recoil_s + recoil_e )
+
+		-- printf("/// Recoil config: Disp = %s + %s / Cam = %s + %s", zoom_cam_dispersion, zoom_cam_dispersion_inc * 0.1, recoil_s, recoil_e)
+
+
+		final_recoil = ( disp_factor * enhanced_cam_factor ) * 100
+		if final_recoil < 1 then
+			final_recoil = 1
 		end
-		recoil_e = (recoil_e / recoil_e_cnt)
-		
-		--[[
-		-- NOTE:
-		--
-		-- WHEN USED WITH BETTER UPGRADES FROM THE DLTX MINIMOD REPOSITORY, 
-		-- weapons with really low recoil stats like the AR-15 can go into 
-		-- the negatives, usually within the first or second recoil upgrades.
-		--
-		-- Keep this in mind before reporting "-0" recoil guns!
-		-- - Momopate
-		--]]
-		
-		-- return (zoom_cam_dispersion * tonumber(tbl.s[1]) * tonumber(tbl.e[1]) * 100.0)
-		end_recoil = recoil_b * recoil_s * recoil_e * 100.0
-		final_recoil = (450 + end_recoil * 5.0) / end_recoil * 5.0
 		return (final_recoil)
 	end
 end
