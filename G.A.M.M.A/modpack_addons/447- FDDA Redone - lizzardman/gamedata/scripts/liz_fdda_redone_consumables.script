@@ -165,8 +165,21 @@ function check_ready(cell)
     end
 end
 
+-- use is prohibited in strich helmet mode enable
 
 function perform_item_use(obj)
+    -- helmet check
+    if mcm_strict_mode_enabled then
+        local helmet = db.actor:item_in_slot(12)
+        if helmet and (ini_eff:r_bool_ex(obj:section(), "helm") == false) then
+            -- msg from the xml file
+            local msg = game.translate_string("st_fdda_helmet_protection_msg")
+            actor_menu.set_msg(1, msg, 3)
+            return 
+        end
+    end
+
+
     local obj_id = obj:id()
 
     if items_in_use[obj_id] then return end
@@ -201,26 +214,6 @@ function perform_item_use(obj)
             --- if item was not consumed it means that we interrupted item usage
             items_in_use[self.item:id()] = nil
             db.actor:eat(db.actor:object("items_anm_dummy"))
-        end
-    end
-
-    --auto unequip
-    if mcm_unequip_helmet and mcm_strict_mode_enabled then
-        if ini_eff:r_bool_ex(obj:section(), "helm") == false then
-            if zz_liz_fdda_redone_headgear_animations_strict_helmets.is_have_helmet() then
-                local helmet = db.actor:item_in_slot(12)
-                if helmet then
-                    if not lam2.get_action_with_tag("headgear_animation") then
-                        liz_fdda_redone_headgear_animations_hotkey.set_last_helmet(helmet)
-                        liz_fdda_redone_headgear_animations.on_toggle_unequip(helmet)
-                    end
-                else
-                    items_in_use[obj_id] = nil
-                    hide_hud_inventory()
-                    actor_menu.set_msg(1, game.translate_string("liz_ha_text_cant_consume_item"), 3)
-                    return
-                end
-            end
         end
     end
 
