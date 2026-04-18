@@ -1,8 +1,12 @@
 -- oleh5230, 03.04.26
 -- credits: Diazzz for the idea
 
+-- add UGBL?
+
 local volume = 1
 local volume_sil = 1
+local volume_npc = 1
+local volume_sil_npc = 1
 
 local gunfire = {
     ["sndShot"] = true,
@@ -28,19 +32,34 @@ local gunfire_sil = {
 }
 
 function on_before_play_hud_sound(alias, parent, result)
+    --printf("on_before_play_hud_sound: %s %s %s", alias, parent, result)
     if parent and parent:id() == AC_ID then
         if gunfire[alias] then
             result.volume_mult = volume
         elseif gunfire_sil[alias] then
             result.volume_mult = volume_sil
         end
+    else
+        if alias == "sndShot" then
+            result.volume_mult = volume_npc
+        elseif alias == "sndSilencerShot" then
+            result.volume_mult = volume_sil_npc
+        end
     end
 end
 
 function load_mcm_options()
     if ui_mcm and oleh_sounds_mcm then
-        volume      = ui_mcm.get("oleh_sounds/weapons/volume_gunfire") or 1
-        volume_sil  = ui_mcm.get("oleh_sounds/weapons/volume_gunfire_sil") or 1
+        volume          = ui_mcm.get("oleh_sounds/weapons/volume_gunfire") or 1
+        volume_sil      = ui_mcm.get("oleh_sounds/weapons/volume_gunfire_sil") or 1
+        volume_npc      = ui_mcm.get("oleh_sounds/weapons/volume_gunfire_npc") or 1
+        volume_sil_npc  = ui_mcm.get("oleh_sounds/weapons/volume_gunfire_sil_npc") or 1
+    -- old MCM compatibility
+    elseif ui_mcm and grok_casings_sounds_mcm then
+        volume          = ui_mcm.get("grok_casings_sounds/volume_gunfire") or 1
+        volume_sil      = ui_mcm.get("grok_casings_sounds/volume_gunfire_sil") or 1
+        volume_npc      = ui_mcm.get("grok_casings_sounds/volume_gunfire_npc") or 1
+        volume_sil_npc  = ui_mcm.get("grok_casings_sounds/volume_gunfire_sil_npc") or 1
     end
 end
 
