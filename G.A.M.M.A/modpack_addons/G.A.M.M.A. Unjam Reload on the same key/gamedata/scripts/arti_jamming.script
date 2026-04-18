@@ -30,13 +30,19 @@ local TRIGGER_JAM = {10, 2}
 local PARTS_JAM = {30, 2}
 local guarantee_not_jam = true
 local SALE_PART_MIN = 51
--- use to block inputs while animations / unjam logic fires
+-- use to block inputs while unjam logic fires
 local block_repeat = false
 
 get_config = a_arti_jamming_mcm.get_config
 
 d_flag      		= false
 local d_key       	= "DIK_LMENU" -- Saftey key hold (Left Alt)
+
+-- oleh5230
+-- use to block inputs during unjam animations
+anim_playing = false
+unjam_motion_mark = false
+-- oleh5230 end
 
 -------------------
 -- SECTION utils --
@@ -303,9 +309,9 @@ local last_time = nil
 local function actor_on_update()
 
 	-- overheat checks
-	if cgd.heat ~= nil and db.actor:active_item() and cgd.has_parts then
-		manage_overheat(db.actor:active_item())
-	end
+	-- if cgd.heat ~= nil and db.actor:active_item() and cgd.has_parts then
+	-- 	manage_overheat(db.actor:active_item())
+	-- end
 	-- we don't need to check too often. maybe once a second
 	local tg = time_global()
 	if not last_time then last_time = tg end
@@ -313,42 +319,44 @@ local function actor_on_update()
 	last_time = tg + 1000
 	
 	local gun = db.actor:active_item()
-	if gun and gun:id() ~= cgd.id then
-		if not has_parts(gun) then
-			empty_table(cgd.parts)
-			empty_table(cgd)
-			cgd.id = gun:id()
-			cgd.has_parts = false
-			cgd.fullAuto = false
-			print_dbg("Current gun (no parts) changed to %s (%s)", cgd.id, gun:section())
-		else
-			cgd.id = gun:id()
-			cgd.has_parts = true
-			print_dbg("Current gun changed to %s (%s)", cgd.id, gun:section())
+	if not gun then return end
 
-			local section = gun:section()
-			cgd.current_gun_shot_dec 	= section and SYS_GetParam(2, section, "condition_shot_dec") or 0.0008
-			cgd.misfire_start_prob 		= section and SYS_GetParam(2, section, "misfire_start_prob") or 0.003
-			cgd.silencer_status 		= section and SYS_GetParam(2, section, "silencer_status") or false
+	if not has_parts(gun) then
+		empty_table(cgd.parts)
+		empty_table(cgd)
+		cgd.id = gun:id()
+		cgd.has_parts = false
+		cgd.fullAuto = false
+		print_dbg("Current gun (no parts) changed to %s (%s)", cgd.id, gun:section())
+		return false
+	end
 
-			local fire_modes = SYS_GetParam(0, gun:section(), "fire_modes") or "1"
-			local fire_table = invert_table(str_explode(fire_modes, ","))
-			cgd.fullAuto = fire_table["-1"] ~= nil
-			cgd.parts = {}
-			cgd.heat = 0
-			local saved_parts = item_parts.get_parts_con(gun, nil, true)
-			for k, v in pairs(saved_parts) do
-				print_dbg("Part: %s, condition of part: %s", k, v)
-				if is_trigger(k) then
-					cgd.trigger_name = k
-				end
-				if is_barrel(k) then
-					cgd.barrel_con = v
-					cgd.barrel_name = k
-				elseif is_part(k) then
-					cgd.parts[k] = v
-				end
-			end
+	cgd.id = gun:id()
+	cgd.has_parts = true
+	print_dbg("Current gun changed to %s (%s)", cgd.id, gun:section())
+
+	local section = gun:section()
+	cgd.current_gun_shot_dec 	= section and SYS_GetParam(2, section, "condition_shot_dec") or 0.0008
+	cgd.misfire_start_prob 		= section and SYS_GetParam(2, section, "misfire_start_prob") or 0.003
+	cgd.silencer_status 		= section and SYS_GetParam(2, section, "silencer_status") or false
+
+	local fire_modes = SYS_GetParam(0, gun:section(), "fire_modes") or "1"
+	local fire_table = invert_table(str_explode(fire_modes, ","))
+	cgd.fullAuto = fire_table["-1"] ~= nil
+	cgd.parts = {}
+	cgd.heat = 0
+
+	local saved_parts = item_parts.get_parts_con(gun, nil, true)
+	for k, v in pairs(saved_parts) do
+		print_dbg("Part: %s, condition of part: %s", k, v)
+		if is_trigger(k) then
+			cgd.trigger_name = k
+		end
+		if is_barrel(k) then
+			cgd.barrel_con = v
+			cgd.barrel_name = k
+		elseif is_part(k) then
+			cgd.parts[k] = v
 		end
 	end
 end
@@ -461,11 +469,10 @@ function get_jam_chance(wpn)
 				
 			if jc then
 				return jc / 1000 * 100
-			else
-				return 0
 			end
 		end
 	end
+	return 0
 end
 
 -- oleh5230
@@ -480,7 +487,7 @@ end
 -- oleh5230 end
 
 -- Randomly damage 1 part of the weapon by DAMAGE, skipping barrels
-local function damage_part(wpn)
+function damage_part(wpn)
 	local to_damage = random_key_table(cgd.parts)
 	local part_con = cgd.parts[to_damage]
 	-- oleh5230: no damage random roll
@@ -581,6 +588,7 @@ end
 -- if you are not passing current, return just 1
 -- eval returns multiplier, pass false gives just level
 function get_overheat_modifier(weapon, eval)
+	--[[
 	local id = weapon:id()
 	if eval == nil then eval = true end
 	if id ~= cgd.id then return 1 end
@@ -589,6 +597,8 @@ function get_overheat_modifier(weapon, eval)
 	if heat_severity > 0 then 
 		return eval and overheat_data.damage[heat_severity] or heat_severity
 	else return eval and 1 or 0 end 
+	]]
+	return 1
 end
 
 -- return overheat base amount (factor in section and suppressor)
@@ -1114,8 +1124,11 @@ function on_game_start()
 	RegisterScriptCallback("actor_on_weapon_fired",actor_on_weapon_fired)
 	RegisterScriptCallback("actor_on_weapon_reload",actor_on_weapon_reload)
 	RegisterScriptCallback("actor_on_update",actor_on_update)
-	RegisterScriptCallback("npc_on_before_hit",npc_on_before_hit)
-	RegisterScriptCallback("monster_on_before_hit",monster_on_before_hit)
+	-- oleh5230
+	-- handled in grok_bo
+	--RegisterScriptCallback("npc_on_before_hit",npc_on_before_hit)
+	--RegisterScriptCallback("monster_on_before_hit",monster_on_before_hit)
+	-- oleh5230 end
 	RegisterScriptCallback("ActorMenu_on_item_focus_receive", get_jam_chance)
 	exec_console_cmd("bind wpn_reload kF10")
 
