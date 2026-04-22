@@ -1,0 +1,1062 @@
+artefact_item_generation = {
+    ["af_mincer_meat"] = { "grease", "grease", "meat_pseudodog", "meat_pseudodog", "meat_flesh", "meat_flesh", "meat_boar", "meat_boar", "meat_dog", "meat_dog", "meat_dog", "meat_lurker", "meat_lurker", "meat_psysucker", "meat_bloodsucker", "meat_chimera" },
+    ["af_ice"] = { "mineral_water", "water_drink" },
+    ["af_sponge"] = { "flask" },
+    ["af_pin"] = { "prt_i_wood" },
+    ["af_gravi"] = { "prt_i_fasteners", "prt_i_scrap" },
+    ["af_baloon"] = { "vodka", "vodka", "vodka", "vodka2", "vodka2", "vodka2", "bottle_metal", "bottle_metal", "vodka_quality", "tea" },
+    ["af_cristall"] = { "prt_i_copper", "prt_i_transistors", "prt_i_resistors", "prt_i_capacitors" },
+    ["af_fire"] = { "powder_1", "powder_1", "powder_1", "powder_2", "powder_2", "powder_3" },
+    ["af_fireball"] = { "bullet_r7", "bullet_r7", "bullet_r7_ap", "bullet_r5", "bullet_r5", "bullet_r5_ap", "bullet_pistol", "bullet_pistol", "bullet_pistol_ap", "bullet_shotgun", "bullet_shotgun", "bullet_shotgun_ap" },
+    ["af_misery_bread"] = { "bread" },
+    ["af_death_lamp"] = { "af_vyvert", "af_empty", "af_full_empty", "af_pin", "af_cristall", "af_lobster_eyes", "af_fireball", "af_gravi", "af_gold_fish", "af_ring", "af_electra_moonlight", "af_sponge", "af_electra_flash", "af_ice", "af_eye", "af_fire", "af_baloon", "af_fuzz_kolobok", "af_glass", "af_dummy_dummy", "af_black_spray", "af_bat", "af_serofim" },
+}
+
+artefact_item_generation_hours = {
+    ["af_mincer_meat"] = 4,
+    ["af_ice"] = 6,
+    ["af_sponge"] = 6,
+    ["af_pin"] = 2,
+    ["af_gravi"] = 1,
+    ["af_baloon"] = 6,
+    ["af_cristall"] = 6,
+    ["af_fire"] = 3,
+    ["af_fireball"] = 3,
+    ["af_misery_bread"] = 24,
+    ["af_death_lamp"] = 24,
+}
+
+artefact_item_generation_degradation_per_hour = {
+    ["af_mincer_meat"] = 0.028,
+    ["af_ice"] = 0.014,
+    ["af_sponge"] = 0.014,
+    ["af_pin"] = 0.014,
+    ["af_gravi"] = 0.014,
+    ["af_baloon"] = 0.014,
+    ["af_cristall"] = 0.014,
+    ["af_fire"] = 0.014,
+    ["af_fireball"] = 0.014,
+    ["af_misery_bread"] = nil,
+    ["af_death_lamp"] = nil,
+}
+
+local callbacks_registered = false
+local HARV_DEBUG = true
+local DISPLAY_EVENT_NS = "hf_artifact_harvester"
+local STASH_EVENT_NS = "hf_artifact_harvester_stash"
+local STASH_OPEN_RETRY_DELAY = 0.1
+local STASH_OPEN_MAX_RETRIES = 20
+local DISPLAY_POS_OFFSET = vector():set(0, 0.40, 0)
+local DISPLAY_ANGLE_OFFSET_DEG = vector():set(0, 0, 0)
+local DEG_TO_RAD = 0.017453292519943295769236907684886
+local UPDATE_INTERVAL_SEC = 10.0
+local MIN_ACTIVE_CONDITION = 0.01
+local HARVESTER_LOOP_SND = [[gadgets_gamma_sounds\artifact_harvester_humm]]
+local HARVESTER_OPEN_SND = [[gadgets_gamma_sounds\artifact_harvester_opening]]
+local DIGIT_MESH_TENS = 20
+local DIGIT_MESH_ONES = 19
+local TEX_PREFIX = "items\\mtl_display_counter_nixie_"
+local TEX_OFF = "items\\mtl_display_counter_nixie_off"
+local harvester_displays = harvester_displays or {}
+local harvester_stashes = harvester_stashes or {}
+local stash_to_harvester = stash_to_harvester or {}
+local world_item_patch_applied = false
+local harvester_wrappers = {}
+local read_ini_string
+local is_harvester_section
+
+local valid_actor_bags = {}
+if EDDListType then
+    valid_actor_bags[EDDListType.iActorBag] = true
+    valid_actor_bags[EDDListType.iActorSlot] = true
+    if EDDListType.iActorBelt ~= nil then
+        valid_actor_bags[EDDListType.iActorBelt] = true
+    end
+end
+
+local function get_data(obj_id)
+    return hf_obj_manager.get_data(obj_id) or {}
+end
+
+local function set_stash_mapping(harvester_id, stash_id)
+    if not harvester_id then
+        return
+    end
+
+    local old_stash = harvester_stashes[harvester_id]
+    if old_stash and old_stash ~= stash_id then
+        stash_to_harvester[old_stash] = nil
+    end
+
+    if stash_id then
+        harvester_stashes[harvester_id] = stash_id
+        stash_to_harvester[stash_id] = harvester_id
+    else
+        harvester_stashes[harvester_id] = nil
+    end
+end
+
+local function get_harvester_storage_section(harvester_obj)
+    if not harvester_obj then
+        return nil
+    end
+    local ok, value = pcall(function()
+        return ini_sys:r_string_ex(harvester_obj:section(), "integrated_storage")
+    end)
+    if ok then
+        return value
+    end
+    return nil
+end
+
+local function is_valid_inv_box(se_obj)
+    if not se_obj then
+        return false
+    end
+    if not IsInvbox then
+        return true
+    end
+    local ok, is_box = pcall(function()
+        return IsInvbox(nil, se_obj:clsid())
+    end)
+    return ok and is_box == true
+end
+
+local function ensure_stash_online(stash_id)
+    if not stash_id then
+        return nil
+    end
+
+    local se = alife_object(stash_id)
+    if not se or not is_valid_inv_box(se) then
+        return nil
+    end
+
+    pcall(function() alife():set_switch_online(stash_id, true) end)
+    pcall(function() alife():set_switch_offline(stash_id, false) end)
+    return stash_id
+end
+
+local function get_or_create_harvester_stash(harvester_obj, allow_create)
+    if not harvester_obj then
+        return nil
+    end
+
+    local harvester_id = harvester_obj:id()
+    local stash_id = harvester_stashes[harvester_id]
+    if stash_id then
+        stash_id = ensure_stash_online(stash_id)
+        if stash_id then
+            set_stash_mapping(harvester_id, stash_id)
+            return stash_id
+        end
+        set_stash_mapping(harvester_id, nil)
+    end
+
+    if not allow_create then
+        return nil
+    end
+
+    local stash_section = get_harvester_storage_section(harvester_obj)
+    if not stash_section or stash_section == "" then
+        return nil
+    end
+
+    local pos = vector():set(harvester_obj:position())
+    pos.y = pos.y - 50
+    local se_stash = alife_create(
+        stash_section,
+        pos,
+        harvester_obj:level_vertex_id(),
+        harvester_obj:game_vertex_id()
+    )
+    if not se_stash or not is_valid_inv_box(se_stash) then
+        return nil
+    end
+
+    stash_id = ensure_stash_online(se_stash.id)
+    if not stash_id then
+        return nil
+    end
+
+    set_stash_mapping(harvester_id, stash_id)
+    return stash_id
+end
+
+local function find_harvester_id_by_stash(stash_id)
+    if not stash_id then
+        return nil
+    end
+
+    local hid = stash_to_harvester[stash_id]
+    if hid then
+        return hid
+    end
+
+    for harvester_id, mapped_stash_id in pairs(harvester_stashes) do
+        if mapped_stash_id == stash_id then
+            stash_to_harvester[stash_id] = harvester_id
+            return harvester_id
+        end
+    end
+
+    return nil
+end
+
+local function resolve_harvester_id(case_id)
+    if not case_id then
+        return nil
+    end
+
+    local case_obj = get_object_by_id(case_id)
+    if case_obj and is_harvester_section(case_obj:section()) then
+        return case_id
+    end
+
+    return find_harvester_id_by_stash(case_id)
+end
+
+local function cleanup_harvester_stash(harvester_id, give_to_actor)
+    if not harvester_id then
+        return
+    end
+
+    local stash_id = harvester_stashes[harvester_id]
+    if not stash_id then
+        return
+    end
+
+    local stash_obj = get_object_by_id(stash_id)
+    if stash_obj and give_to_actor and db.actor then
+        local ids = {}
+        stash_obj:iterate_inventory_box(function(t, item_obj)
+            if item_obj then
+                t[#t + 1] = item_obj:id()
+            end
+        end, ids)
+
+        for _, item_id in ipairs(ids) do
+            local item_obj = get_object_by_id(item_id)
+            if item_obj then
+                pcall(function()
+                    stash_obj:transfer_item(item_obj, db.actor)
+                end)
+            end
+        end
+    end
+
+    pcall(function() alife_release_id(stash_id) end)
+    set_stash_mapping(harvester_id, nil)
+end
+
+local function use_harvester_container(stash_id, tries)
+    tries = (tonumber(tries) or 0) + 1
+    local box = stash_id and level.object_by_id(stash_id)
+    if box then
+        hide_hud_inventory()
+        box:use(db.actor)
+        return true
+    end
+    if tries >= STASH_OPEN_MAX_RETRIES then
+        harv_dbg("open stash failed after retries stash=%s", tostring(stash_id))
+        return true
+    end
+    CreateTimeEvent(
+        STASH_EVENT_NS,
+        "open_retry_" .. tostring(stash_id),
+        STASH_OPEN_RETRY_DELAY,
+        use_harvester_container,
+        stash_id,
+        tries
+    )
+    return true
+end
+
+local function get_active_id(d)
+    local id = tonumber(d and d.artifact_item_id)
+    if id and id > 0 then
+        return id
+    end
+    return nil
+end
+
+local function get_active_section(d)
+    local sec = d and d.artifact_section
+    if sec and sec ~= "" then
+        return sec
+    end
+    return nil
+end
+
+local function harv_dbg(fmt, ...)
+    if not HARV_DEBUG then
+        return
+    end
+    if printf then
+        printf("[artifact_harvester] " .. string.format(fmt, ...))
+    end
+end
+
+local function set_data(obj_id, fields)
+    hf_obj_manager.update_data(obj_id, fields)
+end
+
+local function clear_active(obj_id)
+    -- nil keys are dropped from Lua tables, so use explicit sentinel values.
+    set_data(obj_id, {
+        artifact_item_id = 0,
+        artifact_section = "",
+        artifact_condition = 0,
+        progress_sec = 0,
+    })
+end
+
+local function refresh_wrapper_sound(case_id)
+    local wrp = harvester_wrappers[case_id]
+    if wrp then
+        if wrp.refresh_sound_state then
+            wrp:refresh_sound_state()
+        end
+    end
+end
+
+local function clear_wrapper_display(case_id)
+    local wrp = harvester_wrappers[case_id]
+    if wrp and wrp.apply_display_number then
+        wrp:apply_display_number(0, false)
+    end
+end
+
+local function digit_texture(d)
+    if d == nil then
+        return TEX_OFF
+    end
+    return string.format("%s%d", TEX_PREFIX, d)
+end
+
+local function get_display_entry(case_id)
+    return harvester_displays[case_id]
+end
+
+local function freeze_display_item(world_id, item_id)
+    local obj = level.object_by_id(world_id)
+    local phys = obj and obj:get_physics_shell()
+    if phys then
+        phys:freeze()
+        return true
+    end
+    return false
+end
+
+local function remove_display(case_id)
+    local entry = get_display_entry(case_id)
+    if not entry then
+        return
+    end
+
+    if entry.world_id then
+        local se = alife_object(entry.world_id)
+        if se then
+            alife_release(se)
+        end
+        RemoveTimeEvent(DISPLAY_EVENT_NS, "freeze_" .. entry.world_id)
+    end
+
+    harvester_displays[case_id] = nil
+end
+
+local function spawn_display(case_id, item_id, item_sec)
+    if not (case_id and item_id and item_sec) then
+        return
+    end
+
+    local case_obj = get_object_by_id(case_id)
+    local se_case = alife_object(case_id)
+    if not case_obj or not se_case then
+        return
+    end
+
+    remove_display(case_id)
+
+    local base_pos = vector():set(case_obj:position())
+    local case_angle = vector():set(se_case.angle)
+    local case_q = aol_rotation.Quaternion(case_angle)
+
+    local pos_offset = vector():set(DISPLAY_POS_OFFSET)
+    pos_offset = case_q:rotate_vector(pos_offset)
+    base_pos:add(pos_offset)
+
+    local lv = db.actor and db.actor:level_vertex_id() or 0
+    local gv = db.actor and db.actor:game_vertex_id() or 0
+    local world_se_obj = alife_create_item(item_sec, { base_pos, lv, gv })
+    if not world_se_obj then
+        return
+    end
+
+    local ang_offset = vector():set(DISPLAY_ANGLE_OFFSET_DEG):mul(DEG_TO_RAD)
+    local disp_q = aol_rotation.Quaternion(ang_offset)
+    world_se_obj.angle = disp_q:multiply(case_q):to_euler_angles()
+
+    if utils_stpk and utils_stpk.get_weapon_data and utils_stpk.set_weapon_data then
+        local ok_data, data = pcall(function() return utils_stpk.get_weapon_data(world_se_obj) end)
+        if ok_data and data then
+            local remove_flags = 16 + 128
+            local flag_mask = bit_not(remove_flags)
+            data.object_flags = bit_and(data.object_flags, flag_mask)
+            pcall(function() utils_stpk.set_weapon_data(data, world_se_obj) end)
+        end
+    end
+
+    if release_item_manager and release_item_manager.unmark_item then
+        pcall(function() release_item_manager.unmark_item(world_se_obj.id) end)
+    end
+
+    harvester_displays[case_id] = {
+        world_id = world_se_obj.id,
+        item_id = item_id,
+        section = item_sec
+    }
+
+    CreateTimeEvent(DISPLAY_EVENT_NS, "freeze_" .. world_se_obj.id, 0, freeze_display_item, world_se_obj.id, item_id)
+    harv_dbg("spawn_display case=%s world=%s item=%s", tostring(case_id), tostring(world_se_obj.id), tostring(item_id))
+end
+
+local function sync_display_for_active(case_id, d)
+    local active_id = get_active_id(d)
+    local active_sec = get_active_section(d)
+    local entry = get_display_entry(case_id)
+
+    if not active_id or not active_sec then
+        if entry then
+            remove_display(case_id)
+        end
+        return
+    end
+
+    if entry and entry.item_id == active_id and entry.section == active_sec then
+        return
+    end
+
+    spawn_display(case_id, active_id, active_sec)
+end
+
+local function get_time_elapsed()
+    return game.get_game_time():diffSec(level.get_start_time())
+end
+
+local function is_valid_artifact_section(section)
+    return section and artefact_item_generation[section] ~= nil
+end
+
+read_ini_string = function(section, key)
+    local ok, value = pcall(function()
+        return ini_sys:r_string_ex(section, key)
+    end)
+    if ok then
+        return value
+    end
+    return nil
+end
+
+is_harvester_section = function(section)
+    if not section then
+        return false
+    end
+
+    if section == "placeable_artifact_harvester" then
+        return true
+    end
+
+    return read_ini_string(section, "script_binding") == "bind_artifact_harvester.init"
+end
+
+function open_harvester_stash(obj_id)
+    local harvester_obj = obj_id and get_object_by_id(obj_id)
+    if not harvester_obj then
+        return
+    end
+
+    local stash_id = get_or_create_harvester_stash(harvester_obj, true)
+    if not stash_id then
+        return
+    end
+
+    local snd_open = sound_object(HARVESTER_OPEN_SND)
+    if snd_open then
+        local pos = harvester_obj:position()
+        snd_open:play_at_pos(harvester_obj, pos, 0, sound_object.s3d)
+    end
+
+    CreateTimeEvent(
+        STASH_EVENT_NS,
+        "open_" .. tostring(obj_id),
+        STASH_OPEN_RETRY_DELAY,
+        use_harvester_container,
+        stash_id,
+        0
+    )
+end
+
+local function ensure_defaults(obj_id)
+    local d = get_data(obj_id)
+    local patch = nil
+
+    if d.progress_sec == nil then
+        patch = patch or {}
+        patch.progress_sec = 0
+        d.progress_sec = 0
+    end
+
+    if d.last_time_sec == nil then
+        patch = patch or {}
+        patch.last_time_sec = get_time_elapsed()
+        d.last_time_sec = patch.last_time_sec
+    end
+
+    if patch then
+        set_data(obj_id, patch)
+    end
+
+    return d
+end
+
+local function get_item_condition_and_setter(item_id)
+    if not item_id then
+        return nil, nil
+    end
+
+    local obj = get_object_by_id(item_id)
+    if obj then
+        local ok_get, cond = pcall(function() return obj:condition() end)
+        if ok_get and cond ~= nil then
+            return tonumber(cond) or 0, function(v)
+                pcall(function() obj:set_condition(v) end)
+            end
+        end
+    end
+
+    local se = alife_object(item_id)
+    if se and se.m_fCondition ~= nil then
+        return tonumber(se.m_fCondition) or 0, function(v)
+            se.m_fCondition = v
+        end
+    end
+
+    return nil, nil
+end
+
+local function remove_item_by_id(item_id)
+    if item_id then
+        pcall(function() alife_release_id(item_id) end)
+    end
+end
+
+local function can_reach_first_spawn(item_section, item_id)
+    if not (item_section and item_id) then
+        return false
+    end
+
+    local interval_h = tonumber(artefact_item_generation_hours[item_section]) or 0
+    if interval_h <= 0 then
+        return false
+    end
+
+    local degrade_raw = artefact_item_generation_degradation_per_hour[item_section]
+    if degrade_raw == nil then
+        return true
+    end
+
+    local degrade_h = tonumber(degrade_raw) or 0
+    if degrade_h <= 0 then
+        return true
+    end
+
+    local cond = select(1, get_item_condition_and_setter(item_id))
+    cond = tonumber(cond) or 0
+    if cond <= MIN_ACTIVE_CONDITION then
+        return false
+    end
+
+    local time_to_first = interval_h * 3600.0
+    local time_to_death = ((cond - MIN_ACTIVE_CONDITION) / degrade_h) * 3600.0
+    return time_to_death >= time_to_first
+end
+
+local function process_elapsed(stash_obj, obj_id, d, elapsed_sec)
+    local artifact_id = get_active_id(d)
+    local artifact_sec = get_active_section(d)
+    if not artifact_id or not artifact_sec then
+        return
+    end
+
+    local outputs = artefact_item_generation[artifact_sec]
+    local interval_h = tonumber(artefact_item_generation_hours[artifact_sec]) or 0
+    local degrade_raw = artefact_item_generation_degradation_per_hour[artifact_sec]
+    local has_degradation = degrade_raw ~= nil
+    local degrade_h = has_degradation and (tonumber(degrade_raw) or 0) or 0
+    if not outputs or #outputs == 0 or interval_h <= 0 then
+        return
+    end
+
+    local cond = tonumber(d.artifact_condition)
+    local cond_actual, cond_setter = get_item_condition_and_setter(artifact_id)
+    if cond_actual ~= nil then
+        cond = cond_actual
+    end
+    if cond == nil then
+        cond = 1.0
+    end
+    if cond < MIN_ACTIVE_CONDITION then
+        cond = MIN_ACTIVE_CONDITION
+    end
+
+    -- At minimum condition the artifact becomes inert (no generation/degradation).
+    if cond <= MIN_ACTIVE_CONDITION then
+        if cond_setter then
+            cond_setter(MIN_ACTIVE_CONDITION)
+        end
+        set_data(obj_id, {
+            artifact_condition = MIN_ACTIVE_CONDITION,
+            progress_sec = 0,
+        })
+        return
+    end
+
+    local effective_elapsed = elapsed_sec
+    if has_degradation and degrade_h > 0 then
+        local sec_to_min = ((cond - MIN_ACTIVE_CONDITION) / degrade_h) * 3600.0
+        if sec_to_min <= 0 then
+            if cond_setter then
+                cond_setter(MIN_ACTIVE_CONDITION)
+            end
+            set_data(obj_id, {
+                artifact_condition = MIN_ACTIVE_CONDITION,
+                progress_sec = 0,
+            })
+            return
+        end
+        if effective_elapsed > sec_to_min then
+            effective_elapsed = sec_to_min
+        end
+    end
+
+    local progress = tonumber(d.progress_sec) or 0
+    local interval_sec = interval_h * 3600
+    local total = progress + effective_elapsed
+    local cycles = math.floor(total / interval_sec)
+    progress = total - (cycles * interval_sec)
+
+    for _ = 1, cycles do
+        local pick = outputs[math.random(1, #outputs)]
+        if pick then
+            pcall(function() alife_create_item(pick, stash_obj) end)
+        end
+    end
+
+    if has_degradation then
+        cond = cond - (effective_elapsed / 3600.0) * degrade_h
+        if cond < MIN_ACTIVE_CONDITION then cond = MIN_ACTIVE_CONDITION end
+        if cond > 1 then cond = 1 end
+    end
+
+    if cond_setter then
+        cond_setter(cond)
+    end
+
+    local patch = {
+        progress_sec = progress,
+        artifact_condition = cond,
+    }
+
+    if cond <= MIN_ACTIVE_CONDITION then
+        patch.artifact_condition = MIN_ACTIVE_CONDITION
+        patch.progress_sec = 0
+    end
+
+    set_data(obj_id, patch)
+end
+
+local function is_production_running(d)
+    local active_id = get_active_id(d)
+    local active_sec = get_active_section(d)
+    if not active_id or not active_sec then
+        return false
+    end
+
+    if not alife_object(active_id) then
+        return false
+    end
+
+    local outputs = artefact_item_generation[active_sec]
+    local interval_h = tonumber(artefact_item_generation_hours[active_sec]) or 0
+    if not outputs or #outputs == 0 or interval_h <= 0 then
+        return false
+    end
+
+    local cond = select(1, get_item_condition_and_setter(active_id))
+    if cond == nil then
+        cond = tonumber(d.artifact_condition) or 0
+    end
+    return (tonumber(cond) or 0) > MIN_ACTIVE_CONDITION
+end
+
+local function get_progress_percent_0_99(d)
+    local active_sec = get_active_section(d)
+    if not active_sec then
+        return nil
+    end
+
+    local interval_h = tonumber(artefact_item_generation_hours[active_sec]) or 0
+    if interval_h <= 0 then
+        return nil
+    end
+
+    if not is_production_running(d) then
+        return nil
+    end
+
+    local progress = tonumber(d.progress_sec) or 0
+    if progress < 0 then
+        progress = 0
+    end
+
+    local ratio = progress / (interval_h * 3600.0)
+    if ratio < 0 then ratio = 0 end
+    if ratio > 1 then ratio = 1 end
+    return math.floor(ratio * 99)
+end
+
+local function on_item_before_move(flags, case_id, item, mode, bag_from)
+    if not (flags and case_id and item and mode == "loot") then
+        return
+    end
+
+    local harvester_id = resolve_harvester_id(case_id)
+    if not harvester_id then
+        return
+    end
+
+    if not valid_actor_bags[bag_from] then
+        return
+    end
+
+    local d = ensure_defaults(harvester_id)
+    local existing_id = get_active_id(d)
+    harv_dbg(
+        "before_move case=%s item=%s(%s) mode=%s bag_from=%s existing=%s",
+        tostring(case_id),
+        tostring(item:id()),
+        tostring(item:section()),
+        tostring(mode),
+        tostring(bag_from),
+        tostring(existing_id)
+    )
+
+    local sec = item:section()
+    if not is_valid_artifact_section(sec) then
+        harv_dbg("before_move block: invalid artifact section=%s", tostring(sec))
+        flags.ret_value = false
+        actor_menu.set_msg(1, "Only configured artifacts can be inserted.", 3)
+        return
+    end
+
+    if not can_reach_first_spawn(sec, item:id()) then
+        harv_dbg("before_move block: item=%s sec=%s cannot reach first spawn", tostring(item:id()), tostring(sec))
+        flags.ret_value = false
+        actor_menu.set_msg(1, "Artifact condition is too low for one production cycle.", 3)
+        return
+    end
+
+    if existing_id then
+        local exists = alife_object(existing_id) ~= nil
+        local cond = select(1, get_item_condition_and_setter(existing_id))
+        if (not exists) or (cond ~= nil and cond <= 0) then
+            harv_dbg(
+                "before_move clearing stale lock existing=%s exists=%s cond=%s",
+                tostring(existing_id), tostring(exists), tostring(cond)
+            )
+            clear_active(harvester_id)
+            refresh_wrapper_sound(harvester_id)
+            clear_wrapper_display(harvester_id)
+            existing_id = nil
+        end
+    end
+
+    if existing_id and existing_id ~= item:id() then
+        harv_dbg(
+            "before_move block: existing=%s incoming=%s",
+            tostring(existing_id), tostring(item:id())
+        )
+        flags.ret_value = false
+        actor_menu.set_msg(1, "This harvester accepts exactly one input artifact.", 3)
+    end
+end
+
+local function on_item_after_move(case_id, item, mode, bag_from)
+    if not (case_id and item and mode == "loot") then
+        return
+    end
+
+    local harvester_id = resolve_harvester_id(case_id)
+    if not harvester_id then
+        return
+    end
+
+    local d = ensure_defaults(harvester_id)
+    local item_id = item:id()
+    local item_sec = item:section()
+    harv_dbg(
+        "after_move case=%s item=%s(%s) mode=%s bag_from=%s existing=%s",
+        tostring(case_id),
+        tostring(item_id),
+        tostring(item_sec),
+        tostring(mode),
+        tostring(bag_from),
+        tostring(get_active_id(d))
+    )
+
+    if is_valid_artifact_section(item_sec) then
+        if valid_actor_bags[bag_from] then
+            -- Inserted from actor into harvester.
+            if not get_active_id(d) then
+                local cond = select(1, get_item_condition_and_setter(item_id))
+                harv_dbg("after_move set active item=%s sec=%s cond=%s", tostring(item_id), tostring(item_sec), tostring(cond))
+                set_data(harvester_id, {
+                    artifact_item_id = item_id,
+                    artifact_section = item_sec,
+                    artifact_condition = cond or 1.0,
+                    progress_sec = 0,
+                })
+                spawn_display(harvester_id, item_id, item_sec)
+                refresh_wrapper_sound(harvester_id)
+            else
+                harv_dbg("after_move insert ignored: active already set to %s", tostring(get_active_id(d)))
+            end
+        elseif get_active_id(d) and get_active_id(d) == item_id then
+            -- Tracked artifact moved out of harvester.
+            harv_dbg("after_move clear active item=%s moved out", tostring(item_id))
+            clear_active(harvester_id)
+            remove_display(harvester_id)
+            refresh_wrapper_sound(harvester_id)
+            clear_wrapper_display(harvester_id)
+            return
+        else
+            local cond = select(1, get_item_condition_and_setter(item_id))
+            if cond and cond <= 0 then
+                -- Ignore dead artifacts moved around by the game.
+                return
+            end
+        end
+    end
+end
+
+local function ensure_callbacks_registered()
+    if callbacks_registered then
+        return
+    end
+    callbacks_registered = true
+
+    RegisterScriptCallback("ActorMenu_on_item_before_move", on_item_before_move)
+    RegisterScriptCallback("ActorMenu_on_item_after_move", on_item_after_move)
+    RegisterScriptCallback("actor_on_item_before_pickup", harvester_actor_on_item_before_pickup)
+    RegisterScriptCallback("game_object_on_net_spawn", harvester_game_object_on_net_spawn)
+    RegisterScriptCallback("save_state", harvester_save_state)
+    RegisterScriptCallback("load_state", harvester_load_state)
+
+    if not world_item_patch_applied then
+        world_item_patch_applied = true
+        local base_is_world_item = game_setup.is_world_item
+        function game_setup.is_world_item(id)
+            for _, entry in pairs(harvester_displays) do
+                if entry and entry.world_id == id then
+                    return true
+                end
+            end
+            return base_is_world_item(id)
+        end
+    end
+end
+
+function harvester_actor_on_item_before_pickup(obj, flags)
+    if not (obj and flags) then
+        return
+    end
+    local id = obj:id()
+    for _, entry in pairs(harvester_displays) do
+        if entry and entry.world_id == id then
+            flags.ret_value = false
+            return
+        end
+    end
+end
+
+function harvester_game_object_on_net_spawn(se_obj)
+    if not se_obj then
+        return
+    end
+    local id = se_obj:id()
+    for _, entry in pairs(harvester_displays) do
+        if entry and entry.world_id == id then
+            CreateTimeEvent(DISPLAY_EVENT_NS, "freeze_" .. id, 0, freeze_display_item, id, entry.item_id)
+            return
+        end
+    end
+end
+
+function harvester_save_state(m_data)
+    m_data.harvester_displays = harvester_displays
+    m_data.harvester_stashes = harvester_stashes
+end
+
+function harvester_load_state(m_data)
+    harvester_displays = m_data.harvester_displays or {}
+    harvester_stashes = m_data.harvester_stashes or {}
+    stash_to_harvester = {}
+    for hid, sid in pairs(harvester_stashes) do
+        stash_to_harvester[sid] = hid
+    end
+end
+
+function on_game_start()
+    ensure_callbacks_registered()
+end
+
+function init(obj)
+    ensure_callbacks_registered()
+    obj:bind_object(artifact_harvester_wrapper(obj).binder)
+end
+
+class "artifact_harvester_wrapper" (bind_hf_base.hf_binder_wrapper)
+
+function artifact_harvester_wrapper:__init(obj)
+    super(obj)
+    local obj_id = self.object:id()
+    local d = ensure_defaults(obj_id)
+    self.snd_hum = sound_object(HARVESTER_LOOP_SND)
+    harvester_wrappers[obj_id] = self
+    self.accum_t = UPDATE_INTERVAL_SEC
+    self.force_sound_restart = true
+    self.accum_t = 0 
+    sync_display_for_active(obj_id, d)
+    self:apply_display_number(0, false)
+end
+
+function artifact_harvester_wrapper:refresh_sound_state()
+    local d = get_data(self.object:id())
+    local should_run = is_production_running(d)
+    if should_run then
+        if self.snd_hum then
+            if self.force_sound_restart then
+                pcall(function() self.snd_hum:stop() end)
+            end
+            if self.force_sound_restart or not self.snd_hum:playing() then
+                local pos = self.object:position()
+                self.snd_hum:play_at_pos(
+                    self.object,
+                    pos,
+                    0,
+                    sound_object.s3d + sound_object.looped
+                )
+                self.snd_hum.volume = 0.3
+            end
+            self.force_sound_restart = false
+        end
+    else
+        if self.snd_hum and self.snd_hum:playing() then
+            self.snd_hum:stop()
+        end
+    end
+end
+
+function artifact_harvester_wrapper:apply_display_number(value, powered)
+    if powered then
+        local n = math.floor(tonumber(value) or 0)
+        if n < 0 then n = 0 end
+        if n > 99 then n = 99 end
+
+        local tens = math.floor(n / 10)
+        local ones = n % 10
+--        self.object:set_shader(DIGIT_MESH_TENS, [[models\lightplanes]], digit_texture(tens))
+--       self.object:set_shader(DIGIT_MESH_ONES, [[models\lightplanes]], digit_texture(ones))
+--    else
+--        self.object:set_shader(DIGIT_MESH_TENS, [[models\model]], TEX_OFF)
+--        self.object:set_shader(DIGIT_MESH_ONES, [[models\model]], TEX_OFF)
+    end
+end
+
+function artifact_harvester_wrapper:refresh_progress_display()
+    local d = get_data(self.object:id())
+    local pct = get_progress_percent_0_99(d)
+    if pct == nil then
+        self:apply_display_number(0, false)
+    else
+        self:apply_display_number(pct, true)
+    end
+end
+
+function artifact_harvester_wrapper:update(delta)
+    bind_hf_base.hf_binder_wrapper.update(self, delta)
+
+    local dt = delta
+    if dt > 1.0 then
+        dt = dt / 1000.0
+    end
+    self.accum_t = (self.accum_t or 0) + dt
+    if self.accum_t < UPDATE_INTERVAL_SEC then
+        return
+    end
+    self.accum_t = 0
+
+    local obj_id = self.object:id()
+    local d = ensure_defaults(obj_id)
+
+    -- Do not iterate object inventory here: some runtime object states are not
+    -- CInventoryOwner and spam engine logs. Track via callbacks + item existence.
+    local active_id = get_active_id(d)
+    local active_sec = get_active_section(d)
+
+    if active_id and not alife_object(active_id) then
+        clear_active(obj_id)
+        remove_display(obj_id)
+        self:refresh_sound_state()
+        self:apply_display_number(0, false)
+        set_data(obj_id, {
+            last_time_sec = get_time_elapsed(),
+        })
+        return
+    end
+
+    local now_sec = get_time_elapsed()
+    local last_sec = tonumber(d.last_time_sec) or now_sec
+    if now_sec < last_sec then
+        last_sec = now_sec
+    end
+
+    local elapsed = now_sec - last_sec
+    if elapsed > 0 and active_id and active_sec then
+        local stash_id = get_or_create_harvester_stash(self.object, false)
+        local stash_obj = stash_id and get_object_by_id(stash_id)
+        if stash_obj then
+            process_elapsed(stash_obj, obj_id, d, elapsed)
+            self:refresh_progress_display()
+        end
+    end
+
+    set_data(obj_id, { last_time_sec = now_sec })
+    local d_after = get_data(obj_id)
+    sync_display_for_active(obj_id, d_after)
+    self:refresh_sound_state()
+end
+
+function artifact_harvester_wrapper:net_destroy()
+    local obj_id = self.object:id()
+    if self.snd_hum and self.snd_hum:playing() then
+        self.snd_hum:stop()
+    end
+    cleanup_harvester_stash(obj_id, true)
+    clear_active(obj_id)
+    remove_display(obj_id)
+    self:apply_display_number(0, false)
+    harvester_wrappers[obj_id] = nil
+    bind_hf_base.hf_binder_wrapper.net_destroy(self)
+end
