@@ -534,6 +534,23 @@ utils_item.has_scope = function(section)
 	end
 end
 
+-- Fix broken location_types table in sim_squad_scripted
+-- The original builds: location_types[mask_string] = mask_string  (e.g. ["255,255,255,000"] = "255,255,255,000")
+-- But set_location_types_section() looks up by section name  (e.g. location_types["stalker_terrain"])
+-- Unlocalized via unlocalizer_modded_exes_sim_squad_scripted.ltx, repopulated here
+do
+	local lt = sim_squad_scripted.location_types
+	if lt then
+	    empty_table(lt)
+		local locations_ini = ini_file("misc\\smart_terrain_masks.ltx")
+		locations_ini:section_for_each(function(section)
+			local a, key, val = locations_ini:r_line_ex(section, 0, "", "")
+			lt[section] = key
+			return false
+		end)
+	end
+end
+
 -- Fix for returning wrong scope section on detaching
 function item_weapon.detach_scope(weapon)
 	-- Return if the weapon is not valid.
@@ -904,6 +921,42 @@ function luagc_cleanup()
 	printf("~[luagc_cleanup] collectgarbage after=%sKb",collectgarbage("count")*1024)
 end
 
+-- Fix: prevent level_vertex_id bookmark from warping squad members.
+--
+-- When a squad member goes offline, net_destroy writes
+-- db.offline_objects[id].level_vertex_id from the NPC's last online position.
+-- For squad members this causes a bug: system advances se_obj.position during
+-- offline travel, but the bookmark stays frozen at the old position. On next
+-- online transition, the motivator/bind_monster reads it and warps the NPC
+-- back, undoing all offline travel progress.
+--
+-- Fix: monkey-patch motivator_binder:net_destroy and generic_object_binder:net_destroy
+-- to clear the bookmark after the original write.
+local function fix_squad_offline_teleport()
+	-- Stalker binder (xr_motivator.script)
+	local orig_motivator_net_destroy = xr_motivator.motivator_binder.net_destroy
+	xr_motivator.motivator_binder.net_destroy = function(self)
+		local id = self.object and self.object:id()
+		local in_squad = self.squad ~= nil
+		orig_motivator_net_destroy(self)
+		if in_squad and id and db.offline_objects[id] then
+			db.offline_objects[id].level_vertex_id = nil
+		end
+	end
+
+	-- Monster binder (bind_monster.script)
+	local orig_monster_net_destroy = bind_monster.generic_object_binder.net_destroy
+	bind_monster.generic_object_binder.net_destroy = function(self)
+		local id = self.object and self.object:id()
+		local se = id and alife_object(id)
+		local in_squad = se and se.group_id and se.group_id ~= 65535
+		orig_monster_net_destroy(self)
+		if in_squad and id and db.offline_objects[id] then
+			db.offline_objects[id].level_vertex_id = nil
+		end
+	end
+end
+
 function on_game_start()
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update_calculate_rankings)
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update_register_callbacks)
@@ -911,10 +964,12 @@ function on_game_start()
 	-- Prefetch callbacks. Disabled for now, conflict with SSS
 	-- RegisterScriptCallback("actor_item_to_slot", actor_item_to_slot_prefetch)
 	-- RegisterScriptCallback("actor_on_first_update", actor_on_first_update_prefetch)
-	
+
 	RegisterScriptCallback("npc_on_update", npc_on_update_force_trader_update)
 	RegisterScriptCallback("anomaly_on_before_activate", anomaly_on_before_activate_pathfinding)
 
 	-- Force Lua GC and flush LuaJIT trace cache after "first update" calls which will be never executed again
 	RegisterScriptCallback("on_loading_screen_key_prompt", luagc_cleanup)
+
+	fix_squad_offline_teleport()
 end
