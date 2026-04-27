@@ -16,44 +16,49 @@ function itms_manager.use_package_random(obj)
 	local min_items 	= tonumber(ts[1]) or 4
 	local max_items 	= tonumber(ts[2]) or 6
 	local chance		= tonumber(ts[3]) or 50
-	local shuffle_flag	= ts[4] or false
-	if shuffle_flag then shuffle_table(t) end
-	printf("[use_package_random] %s min: %s max: %s chance: %s shuffle: %s", sec, min_items, max_items, chance, shuffle_flag)
+	local type			= ts[4]
+	printf("[use_package_random] %s min: %s max: %s chance: %s type: %s", sec, min_items, max_items, chance, type)
 
 	local pick = {}
-	for i=1,#t do
-		if (#pick < max_items) and (math.random(100) < chance) then
-			pick[#pick+1] = t[i]
+	if type and type == "ammo" then
+		local ammo_type = t[math.random(#t)]
+		local ammo_amount = pistol_ammo[ammo_type] and max_items or min_items
+		for i=1,ammo_amount do
+			pick[#pick+1] = ammo_type
 		end
-	end
+	else
+		for i=1,#t do
+			if (#pick < max_items) and (math.random(100) < chance) then
+				pick[#pick+1] = t[i]
+			end
+		end
 
-	-- if too few picks, fill with random items until minimum threshold is reached
-	if #pick < min_items then
-		printf("[use_package_random] not enough items, backup fill")
-		for i=#pick, min_items do
-			table.insert(pick, t[math.random(#t)])
+		-- if too few picks, fill with random items until minimum threshold is reached
+		if #pick < min_items then
+			printf("[use_package_random] not enough items, backup fill")
+			for i = #pick + 1, min_items do
+				table.insert(pick, t[math.random(#t)])
+			end
 		end
 	end
+	pick = #pick > 1 and pick or {"money_5000"}
 
 	utils_item.delay_event(pick, {obj:id()}, "package_content", true, 5)
 end
 
-ammo_package = {
-	["quest_package_1"] = true,
-	["quest_package_6"] = true,
-	["quest_package_7"] = true,
-	["quest_package_8"] = true,
-	["quest_tb_package_1"] = true,
-	["quest_tb_package_6"] = true,
-	["quest_tb_package_7"] = true,
-	["quest_tb_package_8"] = true,
-}
-
-big_ammo_package = {
-	["quest_package_1"] = true,
-	["quest_package_6"] = true,
-	["quest_package_7"] = true,
-	["quest_tb_package_1"] = true,
-	["quest_tb_package_6"] = true,
-	["quest_tb_package_7"] = true,
+pistol_ammo = {
+	["ammo_9x18_ap"] = true,
+	["ammo_9x18_fmj"] = true,
+	["ammo_9x18_pmm"] = true,
+	["ammo_9x19_ap"] = true,
+	["ammo_9x19_fmj"] = true,
+	["ammo_9x19_pbp"] = true,
+	["ammo_11.43x23_fmj"] = true,
+	["ammo_11.43x23_hydro"] = true,
+	["ammo_5.7x28_ss195"] = true,
+	["ammo_5.7x28_ss190"] = true,
+	["ammo_7.62x25_p"] = true,
+	["ammo_7.62x25_ps"] = true,
+	["ammo_357_hp_mag"] = true,
+	["ammo_9x21_sp10"] = true,
 }
