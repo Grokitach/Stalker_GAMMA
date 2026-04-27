@@ -1,0 +1,59 @@
+-- Prepare ini files
+ini_manager = ini_manager or ini_file("items\\settings\\itms_manager.ltx")
+
+use_package_random = itms_manager.use_package_random
+function itms_manager.use_package_random(obj)
+	local sec = obj:section()
+	local content = ini_manager:r_string_ex("package_content",sec)
+	if not content then return end
+	local t = str_explode(content,",")
+
+	local settings = ini_manager:r_string_ex("package_settings",sec)
+	local ts = {}
+	if settings then
+		ts = str_explode(settings,",")
+	end
+	local min_items 	= tonumber(ts[1]) or 4
+	local max_items 	= tonumber(ts[2]) or 6
+	local chance		= tonumber(ts[3]) or 50
+	local shuffle_flag	= ts[4] or false
+	if shuffle_flag then shuffle_table(t) end
+	printf("[use_package_random] %s min: %s max: %s chance: %s shuffle: %s", sec, min_items, max_items, chance, shuffle_flag)
+
+	local pick = {}
+	for i=1,#t do
+		if (#pick < max_items) and (math.random(100) < chance) then
+			pick[#pick+1] = t[i]
+		end
+	end
+
+	-- if too few picks, fill with random items until minimum threshold is reached
+	if #pick < min_items then
+		printf("[use_package_random] not enough items, backup fill")
+		for i=#pick, min_items do
+			table.insert(pick, t[math.random(#t)])
+		end
+	end
+
+	utils_item.delay_event(pick, {obj:id()}, "package_content", true, 5)
+end
+
+ammo_package = {
+	["quest_package_1"] = true,
+	["quest_package_6"] = true,
+	["quest_package_7"] = true,
+	["quest_package_8"] = true,
+	["quest_tb_package_1"] = true,
+	["quest_tb_package_6"] = true,
+	["quest_tb_package_7"] = true,
+	["quest_tb_package_8"] = true,
+}
+
+big_ammo_package = {
+	["quest_package_1"] = true,
+	["quest_package_6"] = true,
+	["quest_package_7"] = true,
+	["quest_tb_package_1"] = true,
+	["quest_tb_package_6"] = true,
+	["quest_tb_package_7"] = true,
+}
