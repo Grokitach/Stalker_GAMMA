@@ -6,7 +6,7 @@ local jammin = sound_object("jammin")
 local gun_sounds = {}
 local overheat_data = {}
 -- associate jammed guns to type of jam
-local jammed_guns 	= {}
+jammed_guns 	= {}
 --[[
 	properties:
 	id: id of current weapon, if applicable
@@ -42,6 +42,7 @@ local d_key       	= "DIK_LMENU" -- Saftey key hold (Left Alt)
 -- use to block inputs during unjam animations
 anim_playing = false
 unjam_motion_mark = false
+actor_lower_weapon = game.actor_lower_weapon
 -- oleh5230 end
 
 -------------------
@@ -185,6 +186,8 @@ function play_anim(weapon, anim, sound)
 		end
 		block_repeat = true
 		anim_playing = true
+		-- temporarily disable lower weapon sprint (overrides unjam animation)
+		lower_weapon_sprint.game.actor_lower_weapon = function(flag) return end
 
 		local hud = weapon and ini_sys:r_string_ex(weapon:section(), "hud")
 		if not (hud and anim) then return end
@@ -236,6 +239,7 @@ function unset(id)
 	-- unjam gun when animation ends
 	block_repeat = false
 	anim_playing = false
+	lower_weapon_sprint.game.actor_lower_weapon = actor_lower_weapon
 	local active_item = db.actor:active_item()
 	if id and active_item and id == active_item:id() or unjam_motion_mark then
 		print_dbg("unset")
