@@ -380,7 +380,7 @@ end
 
 function keep_item(npc, item) -- The function is called for each item, and decide if this item should stay or get released.
 	if not (item) then
-		return 
+		return
 	end 
 	
 	-- Keep whitelisted items from death manager
@@ -388,7 +388,7 @@ function keep_item(npc, item) -- The function is called for each item, and decid
 	local item_id = item:id()
 	
 	if (always_keep_item[section]) then 
-		return 
+		return
 	end 
 	
 	
@@ -481,6 +481,19 @@ function keep_item(npc, item) -- The function is called for each item, and decid
 			return
 		end
 	end
+
+	-- oleh5230
+	-- Release delivery packages and detectors
+	if string.find(section,"quest_package") then
+		alife_release(se_item)
+		return
+	end
+
+	if section == "detector_advanced" or section == "detector_elite" or section == "detector_scientific" then
+		alife_release(se_item)
+		return
+	end
+	--oleh5230 end
 	
 	--[[
 	local temp = not (death_ini:line_exist("exclude_from_multi",section)) and diff_multi or 1
@@ -500,7 +513,6 @@ function keep_item(npc, item) -- The function is called for each item, and decid
 	
 	--alife_release(se_item)
 end
-
 
 -------------------------------
 -- WEAPONS
@@ -820,8 +832,34 @@ function get_condition_by_rank(rank,coef)
 	return con
 end
 
+rare_armors = {
+	["army_nosorog_outfit"] = true,	       
+	["freedom_nosorog_outfit"] = true,	       
+	["isg_nosorog_outfit"] = true,	  
+	["merc_nosorog_outfit"] = true,	     
+	["monolith_nosorog_outfit"] = true,	 
+	["dolg_nosorog_outfit"] = true,		
+}
+
 function validate_drop(section)
 	local outfit_drop_mode = game_difficulties.get_eco_factor("outfit_drops") or 2
+
+	-- oleh5230 
+	-- GAMMA stuff
+	if rare_armors[section] then
+		if math.random(100) > 15 then
+			--printf("[death_manager] nosorog despawned")
+			return false
+		end
+	end
+	
+	if section == "helm_spartan" then
+		if math.random(100) > 50 then
+			--printf("[death_manager] spartan helm despawned")
+			return false
+		end
+	end
+	-- oleh5230 end
 	
 	-- Progressive.  Drop outfits and helmets according to player rank
 	if (outfit_drop_mode == 2) then 
