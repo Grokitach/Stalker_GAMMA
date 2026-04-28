@@ -1,0 +1,64 @@
+-- Prepare ini files
+ini_manager = ini_manager or ini_file("items\\settings\\itms_manager.ltx")
+
+use_package_random = itms_manager.use_package_random
+function itms_manager.use_package_random(obj)
+	local sec = obj:section()
+	local content = ini_manager:r_string_ex("package_content",sec)
+	if not content then return end
+	local t = str_explode(content,",")
+
+	local settings = ini_manager:r_string_ex("package_settings",sec)
+	local ts = {}
+	if settings then
+		ts = str_explode(settings,",")
+	end
+	local min_items 	= tonumber(ts[1]) or 4
+	local max_items 	= tonumber(ts[2]) or 6
+	local chance		= tonumber(ts[3]) or 50
+	local type			= ts[4]
+	printf("[use_package_random] %s min: %s max: %s chance: %s type: %s", sec, min_items, max_items, chance, type)
+
+	local pick = {}
+	if type and type == "ammo" then
+		local ammo_type = t[math.random(#t)]
+		local ammo_amount = pistol_ammo[ammo_type] and max_items or min_items
+		for i=1,ammo_amount do
+			pick[#pick+1] = ammo_type
+		end
+	else
+		for i=1,#t do
+			if (#pick < max_items) and (math.random(100) < chance) then
+				pick[#pick+1] = t[i]
+			end
+		end
+
+		-- if too few picks, fill with random items until minimum threshold is reached
+		if #pick < min_items then
+			printf("[use_package_random] not enough items, backup fill")
+			for i = #pick + 1, min_items do
+				table.insert(pick, t[math.random(#t)])
+			end
+		end
+	end
+	pick = #pick > 1 and pick or {"money_5000"}
+
+	utils_item.delay_event(pick, {obj:id()}, "package_content", true, 5)
+end
+
+pistol_ammo = {
+	["ammo_9x18_ap"] = true,
+	["ammo_9x18_fmj"] = true,
+	["ammo_9x18_pmm"] = true,
+	["ammo_9x19_ap"] = true,
+	["ammo_9x19_fmj"] = true,
+	["ammo_9x19_pbp"] = true,
+	["ammo_11.43x23_fmj"] = true,
+	["ammo_11.43x23_hydro"] = true,
+	["ammo_5.7x28_ss195"] = true,
+	["ammo_5.7x28_ss190"] = true,
+	["ammo_7.62x25_p"] = true,
+	["ammo_7.62x25_ps"] = true,
+	["ammo_357_hp_mag"] = true,
+	["ammo_9x21_sp10"] = true,
+}
