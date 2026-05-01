@@ -1,0 +1,585 @@
+local NO_TRADER_MSG = "No trader found nearby."
+local UI_STARTUP_SND = [[gadgets_gamma_sounds\trading_computer_startup]]
+local ui_startup_sound = sound_object(UI_STARTUP_SND)
+local TRADE_UI_REFRESH_EVENT_NS = "hf_trading_computer_ui"
+local TRADE_UI_REFRESH_DELAY_SEC = 1.0 -- Adjustable delay for post-trade inventory refresh.
+local MAX_TRADER_DISTANCE = 150.0 -- Meters; set to nil to disable range limit.
+
+local function get_data(obj_id)
+    if not obj_id or not hf_obj_manager then
+        return {}
+    end
+    return hf_obj_manager.get_data(obj_id) or {}
+end
+
+local function set_data(obj_id, fields)
+    if not obj_id or not hf_obj_manager then
+        return
+    end
+    hf_obj_manager.update_data(obj_id, fields)
+end
+
+local function inventory_refresh_safe(mode)
+    mode = tonumber(mode) or 1
+
+    if not (actor_menu and actor_menu.get_last_mode) then
+        return true
+    end
+    if actor_menu.get_last_mode() == 0 then
+        return true
+    end
+
+    local inventory = GetActorMenu and GetActorMenu() or nil
+    if not inventory then
+        return true
+    end
+
+    if mode == 1 and inventory.On_Sort and inventory.sort_btn then
+        local sort = nil
+        for i = 1, #inventory.sort_btn do
+            if inventory.sort_btn[i]:GetCheck() then
+                sort = i
+            end
+        end
+        inventory:On_Sort(sort or 1, false)
+    else
+        inventory.update_info = true
+    end
+
+    return true
+end
+
+local function queue_trade_inventory_refresh()
+    if not CreateTimeEvent then
+        return
+    end
+
+    if ResetTimeEvent then
+        ResetTimeEvent(TRADE_UI_REFRESH_EVENT_NS, "refresh", TRADE_UI_REFRESH_DELAY_SEC)
+    end
+
+    CreateTimeEvent(
+        TRADE_UI_REFRESH_EVENT_NS,
+        "refresh",
+        TRADE_UI_REFRESH_DELAY_SEC,
+        inventory_refresh_safe,
+        1
+    )
+end
+
+local function get_actor()
+    if db and db.actor then
+        return db.actor
+    end
+    return nil
+end
+
+local function can_open_inventory_hud()
+    if hide_hud_inventory then
+        return hide_hud_inventory()
+    end
+    return true
+end
+
+
+local function is_emission_or_psi_storm()
+    local function safe_call(fn)
+        local ok, res = pcall(fn)
+        return ok and res == true
+    end
+
+    if xr_conditions then
+        if xr_conditions.surge_started and safe_call(xr_conditions.surge_started) then
+            return true
+        end
+        if xr_conditions.psi_storm_started and safe_call(xr_conditions.psi_storm_started) then
+            return true
+        end
+    end
+
+    if surge_manager then
+        if surge_manager.is_started and safe_call(surge_manager.is_started) then
+            return true
+        end
+        if surge_manager.SurgeManager and surge_manager.SurgeManager.started then
+            local ok = safe_call(function() return surge_manager.SurgeManager:started() end)
+            if ok then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+function is_connection_blocked()
+    return is_emission_or_psi_storm()
+end
+
+local function is_enemy_to_actor(npc, actor)
+    if not npc or not actor then
+        return false
+    end
+
+    local ok_rel, rel = pcall(function() return npc:relation(actor) end)
+    if ok_rel then
+    end
+    if ok_rel and rel == game_object.enemy then
+        return true
+    end
+
+    return false
+end
+
+local function is_companion_or_actor_squad_member(npc)
+    if not npc then
+        return false
+    end
+
+    local ok_info, has_companion_info = pcall(function()
+        return npc:has_info("npcx_is_companion")
+    end)
+    if ok_info then
+    end
+    if ok_info and has_companion_info then
+        return true
+    end
+
+    return false
+end
+
+trader_to_blacklist = {
+	["sar2_arena_manager"] = true,
+	["bar_informator_mlr"] = true,
+	["bar_arny"] = true,
+	["bar_arena_manager"] = true,
+}
+
+local function is_valid_trader(npc)
+    if not npc then
+        return false
+    end
+
+    local ok_cls, cls = pcall(function() return npc:clsid() end)
+    if ok_cls then
+    end
+    if not ok_cls or not cls then
+        return false
+    end
+
+    local is_trader_class = IsTrader and IsTrader(nil, cls)
+    local is_stalker_class = IsStalker and IsStalker(nil, cls)
+    if not is_trader_class and not is_stalker_class then
+        return false
+    end
+
+    local is_trader = false
+
+    if is_trader_class then
+        is_trader = true
+    else
+        local ok_go_trader, go_trader = pcall(function() return npc:is_trader() end)
+        if ok_go_trader then
+        end
+        if ok_go_trader and go_trader == true then
+            is_trader = true
+        end
+
+        if not is_trader and utils_obj and utils_obj.is_trader then
+            local ok_trader, util_is_trader = pcall(function() return utils_obj.is_trader(npc) end)
+            if ok_trader then
+            end
+            is_trader = ok_trader and util_is_trader == true
+            if is_trader then
+            end
+        end
+    end
+
+    if not is_trader then
+        return false
+    end
+
+    if is_companion_or_actor_squad_member(npc) then
+        return false
+    end
+
+    local actor = get_actor()
+    if actor and is_enemy_to_actor(npc, actor) then
+        return false
+    end
+
+    local ok_alive, alive = pcall(function() return npc:alive() end)
+    if ok_alive then
+    end
+    if not ok_alive or alive ~= true then
+        return false
+    end
+	
+	if trader_to_blacklist[npc:section()] then
+		return false
+	end
+
+    return true
+end
+
+local function get_online_object(id)
+    if not id then
+        return nil
+    end
+    local st = db and db.storage and db.storage[id]
+    if st and st.object then
+        return st.object
+    end
+    local ok_obj, obj = pcall(function() return level.object_by_id(id) end)
+    if ok_obj then
+        return obj
+    end
+    return nil
+end
+
+local function is_se_trader(se_obj)
+    if not se_obj then
+        return false
+    end
+
+    local ok_cls, cls = pcall(function() return se_obj:clsid() end)
+    if ok_cls then
+    end
+    if not ok_cls or not cls then
+        return false
+    end
+
+    if IsTrader and IsTrader(nil, cls) then
+        return true
+    end
+
+    if IsStalker and IsStalker(nil, cls) then
+        local ok_comm, community = pcall(function() return se_obj:community() end)
+        if ok_comm then
+        end
+        if ok_comm and community == "trader" then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function resolve_trade_ini(npc)
+    local id = npc and npc:id()
+    if not id then
+        return nil, false
+    end
+
+    local st = db and db.storage and db.storage[id]
+    if not st then
+        return nil, false
+    end
+
+    local function read_trade(ini, section_logic)
+        if not ini or not section_logic then
+            return nil
+        end
+        local ok_trade, trade_ini = pcall(function()
+            return ini:r_string_ex(section_logic, "trade")
+        end)
+        if ok_trade then
+        end
+        if ok_trade and trade_ini and trade_ini ~= "" then
+            return trade_ini
+        end
+        return "items\\trade\\trade_generic.ltx"
+    end
+
+    local trade_ini = read_trade(st.ini, st.section_logic)
+    if trade_ini then
+        return trade_ini, true
+    end
+
+    if st.loaded_ini_filename and st.loaded_section_logic then
+        local ok_ini, loaded_ini = pcall(function() return ini_file(st.loaded_ini_filename) end)
+        if ok_ini and loaded_ini then
+            trade_ini = read_trade(loaded_ini, st.loaded_section_logic)
+            if trade_ini then
+                return trade_ini, true
+            end
+        end
+    end
+
+    if st.ini_filename and (st.section_logic or st.loaded_section_logic) then
+        local ok_ini, ini_obj = pcall(function() return ini_file(st.ini_filename) end)
+        if ok_ini and ini_obj then
+            trade_ini = read_trade(ini_obj, st.section_logic or st.loaded_section_logic)
+            if trade_ini then
+                return trade_ini, true
+            end
+        end
+    end
+
+    if st.section_logic or st.loaded_section_logic then
+        return "items\\trade\\trade_generic.ltx", true
+    end
+
+    return nil, false
+end
+
+local function prepare_trade_state(npc, actor)
+    if not npc or not actor then
+        return false
+    end
+
+    if trade_manager then
+        pcall(function() trade_manager.update(npc, false) end)
+        return true
+    end
+
+    return true
+end
+
+local function open_trade_with_trader_id(trader_id)
+    local actor = get_actor()
+    if not actor then
+        return
+    end
+
+    local npc = get_online_object(trader_id)
+    if npc and is_valid_trader(npc) then
+        local name = "unknown"
+        pcall(function() name = npc:name() end)
+        local ready = prepare_trade_state(npc, actor)
+        if ready then
+            local ok_trade = pcall(function()
+                npc:start_trade(actor)
+            end)
+            if ok_trade then
+                queue_trade_inventory_refresh()
+                return
+            end
+        end
+    end
+
+    if actor_menu and actor_menu.set_msg then
+        actor_menu.set_msg(1, NO_TRADER_MSG, 3)
+    end
+end
+
+local function get_display_name(obj, fallback_id)
+    local name = nil
+    if obj then
+        local ok_char, char_name = pcall(function() return obj:character_name() end)
+        if ok_char and char_name and char_name ~= "" then
+            name = char_name
+        end
+        if not name then
+            local ok_name, obj_name = pcall(function() return obj:name() end)
+            if ok_name and obj_name and obj_name ~= "" then
+                name = obj_name
+            end
+        end
+    end
+    if not name then
+        name = "Trader #" .. tostring(fallback_id or 0)
+    end
+    return name
+end
+
+local function role_from_text(name, section, trade_ini)
+    local blob = string.lower(
+        tostring(name or "") .. " " ..
+        tostring(section or "") .. " " ..
+        tostring(trade_ini or "")
+    )
+
+    if string.find(blob, "medic", 1, true) or string.find(blob, "medik", 1, true) or string.find(blob, "doctor", 1, true) then
+        return "Medic"
+    end
+    if string.find(blob, "mechanic", 1, true) or string.find(blob, "technician", 1, true) or string.find(blob, "tech", 1, true) then
+        return "Technician"
+    end
+    if string.find(blob, "barman", 1, true) or string.find(blob, "bartender", 1, true) then
+        return "Barman"
+    end
+    if string.find(blob, "scientist", 1, true) then
+        return "Scientist"
+    end
+    if string.find(blob, "trader", 1, true) then
+        return "Trader"
+    end
+
+    return "Trader"
+end
+
+local function get_trader_role(obj)
+    if not obj then
+        return "Trader"
+    end
+
+    local name = nil
+    local section = nil
+    local trade_ini = nil
+
+    pcall(function() name = obj:name() end)
+    pcall(function() section = obj:section() end)
+
+    local ok_trade, ini_path, ready = pcall(function()
+        local path, rdy = resolve_trade_ini(obj)
+        return path, rdy
+    end)
+    if ok_trade and ready and ini_path then
+        trade_ini = ini_path
+    end
+
+    return role_from_text(name, section, trade_ini)
+end
+
+local function collect_trader_candidates(actor, max_count)
+    local actor_pos = actor and actor:position()
+    if not actor_pos then
+        return {}
+    end
+
+    local out = {}
+    local seen = {}
+    max_count = math.max(1, tonumber(max_count) or 64)
+
+    local function add_candidate(id, src_obj, dist)
+        if not id or seen[id] then
+            return
+        end
+        if dist ~= nil then
+            dist = tonumber(dist)
+        end
+        if MAX_TRADER_DISTANCE and dist and dist < math.huge and dist > MAX_TRADER_DISTANCE then
+            return
+        end
+        seen[id] = true
+        out[#out + 1] = {
+            id = id,
+            name = get_display_name(src_obj, id),
+            role = get_trader_role(src_obj),
+            distance = dist or math.huge,
+        }
+    end
+
+    for id, st in pairs(db.storage or {}) do
+        local obj = st and st.object
+        if obj and id ~= actor:id() and is_valid_trader(obj) then
+            local ok_dist, dist = pcall(function()
+                return obj:position():distance_to(actor_pos)
+            end)
+            add_candidate(id, obj, ok_dist and dist or nil)
+        end
+    end
+
+    for id = 1, 65534 do
+        if #out >= max_count then
+            break
+        end
+        if not seen[id] then
+            local se_obj = alife_object(id)
+            if se_obj and id ~= actor:id() and is_se_trader(se_obj) then
+                local obj = get_online_object(id)
+                if obj and is_valid_trader(obj) then
+                    local ok_dist, d = pcall(function()
+                        return obj:position():distance_to(actor_pos)
+                    end)
+                    add_candidate(id, obj, ok_dist and d or nil)
+                end
+            end
+        end
+    end
+
+    table.sort(out, function(a, b)
+        if a.distance ~= b.distance then
+            return a.distance < b.distance
+        end
+        return tostring(a.name) < tostring(b.name)
+    end)
+
+    if #out > max_count then
+        local trimmed = {}
+        for i = 1, max_count do
+            trimmed[i] = out[i]
+        end
+        out = trimmed
+    end
+
+    return out
+end
+
+function get_trader_candidates(max_count)
+    local actor = get_actor()
+    if not actor then
+        return {}
+    end
+    return collect_trader_candidates(actor, max_count)
+end
+
+function get_last_selected_trader(obj_id)
+    local d = get_data(obj_id)
+    local id = tonumber(d.last_trader_id)
+    if id and id > 0 then
+        return id
+    end
+    return nil
+end
+
+function set_last_selected_trader(obj_id, trader_id)
+    if not obj_id then
+        return
+    end
+    trader_id = tonumber(trader_id)
+    if trader_id and trader_id > 0 then
+        set_data(obj_id, { last_trader_id = trader_id })
+    end
+end
+
+function play_ui_startup_sound()
+    if not ui_startup_sound then
+        return
+    end
+
+    local actor = get_actor()
+    if not actor then
+        return
+    end
+
+    local pos = actor:position()
+    ui_startup_sound:play_no_feedback(
+        actor,
+        sound_object.s3d,
+        0,
+        pos,
+        1,
+        1
+    )
+end
+
+function open_trade_by_id(trader_id)
+    local actor = get_actor()
+    if not actor then
+        return
+    end
+    if not can_open_inventory_hud() then
+        return
+    end
+
+    trader_id = tonumber(trader_id)
+    if not trader_id then
+        return
+    end
+    open_trade_with_trader_id(trader_id)
+end
+
+function init(obj)
+    obj:bind_object(trading_computer_wrapper(obj).binder)
+end
+
+class "trading_computer_wrapper" (bind_hf_base.hf_binder_wrapper)
+
+function trading_computer_wrapper:__init(obj)
+    super(obj)
+end
+
+
+
