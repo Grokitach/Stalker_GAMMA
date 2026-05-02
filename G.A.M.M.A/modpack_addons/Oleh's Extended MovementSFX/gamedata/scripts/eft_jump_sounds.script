@@ -43,6 +43,7 @@ available_materials = {
 }
 
 fake_materials = {
+    ["materials\\death"]               = true, -- Смертоносная земля (нестандартный материал)
     ["materials\\occ"]                 = true, -- Материал для оклюжен геометрии
     ["materials\\fake"]                = true, -- Материал для колижена (нет звука, следов от пуль, теней)
     ["materials\\fake_ladders"]        = true, -- невидимая лестница
@@ -87,13 +88,13 @@ end
 
 function actor_on_land(landing_speed)
     if not enabled then return end
-    print_dbg("landing_speed: %s", landing_speed)
     local outfit_class = oleh_sound_utils.get_outfit_class()
 
     -- hack for speed set to 0 by fake geometry
     if landing_speed == 0 then landing_speed = 6.66 end
+    print_dbg("landing_speed: %s", landing_speed)
 	if landing_speed > 2 then
-        local material = available_materials[get_material()]
+        local material = available_materials[get_material(true)]
         if not material then return false end
         land_sound = sound_object("landing\\landing_" .. material .. math.random(3))
         land_sound:play(db.actor, 0, sound_object.s2d)
@@ -123,15 +124,16 @@ end
 local function ray_cast(pos, dir, range, visualize)
     local ray = demonized_geometry_ray.geometry_ray({
         ray_range = range or 0.5,
-        flags = 1 + 2 + 4 + 8,
-        visualize = visualize or false
+        flags = 3, --1 + 2 + 4 + 8,
+        ignore_object = db.actor,
+        visualize = debug and visualize or false,
     })
     return ray:get(pos, dir).result.material_name
 end
 
--- vertical x-shaped raycast pattern
--- radius is slightly smaller than player collision box (bubble?)
--- when editing y-offset, edit inversed ray offset too
+-- vertical x-shaped raycast pattern;
+-- radius is slightly smaller than player collision box (bubble?);
+-- when editing y-offset, edit inversed ray offset too;
 -- [index] = {x, y, z, range}
 ray_cast_offsets = {
     [1] = {0, 1.0, 0, 1.25},
@@ -141,49 +143,54 @@ ray_cast_offsets = {
     [5] = {-0.225, 0.25, -0.225, 0.5},
 }
 
-function get_material()
+function get_material(print)
     local pos = db.actor:position()
-    local dir = vector():set(0, -1, 0)
     local material
-    local material_table = {}
+    local ray_hits = {}
 
     for k,v in pairs(ray_cast_offsets) do
-        material = ray_cast(vector():set(pos.x + v[1], pos.y + v[2], pos.z + v[3]), vector():set(0, -1, 0), v[4], debug)
+        material = ray_cast(vector():set(pos.x + v[1], pos.y + v[2], pos.z + v[3]), vector():set(0, -1, 0), v[4], print)
 
         -- short circuit if centre ray hits water
         if k == 1 and water_materials[material] then return material end
 
         -- inversed ray cast to hit surfaces covered by fake geometry
         if fake_materials[material] then
-            material = ray_cast(vector():set(pos.x, pos.y - 0.5, pos.z), vector():set(0, 1, 0), 0.5, debug)
+            local inv_material = ray_cast(vector():set(pos.x, pos.y - 0.5, pos.z), vector():set(0, 1, 0), 0.5, print)
+            if inv_material then material = inv_material end
         end
 
         -- select material with most hits
-        if material or fake_materials[material] then
-            if not material_table[material] then
-                material_table[material] = 1
+        if material then
+            if not ray_hits[material] then
+                ray_hits[material] = 1
             else
-                material_table[material] = material_table[material] + 1
+                ray_hits[material] = ray_hits[material] + 1
             end
         end
     end
-    for k,v in pairs(material_table) do
-        print_dbg("raycast result: %s %s", k,v)
-    end
 
-    local final_material = get_highest_value(material_table)
-    if final_material then
-        --print_dbg("selected material: %s", final_material)
-        return final_material
-    else
-        -- backup horizontal plus-shaped ray cast
-        final_material = ray_cast(vector():set(pos.x + 0.225, pos.y - 0.001, pos.z), vector():set(-1, 0, 0), 0.45, debug)
-        if not final_material then
-            final_material = ray_cast(vector():set(pos.x, pos.y - 0.001, pos.z + 0.225), vector():set(0, 0, -1), 0.45, debug)
-        end
-        print_dbg("backup material: %s", final_material)
-        return final_material
-    end
+    -- if print then
+    --     for k,v in pairs(ray_hits) do
+    --         print_dbg("raycast result: %s %s", k,v)
+    --     end
+    -- end
+
+    -- local final_material = get_highest_value(ray_hits)
+    -- if final_material then
+    --     --print_dbg("selected material: %s", final_material)
+    --     return final_material
+    -- else
+    --     -- backup horizontal plus-shaped ray cast
+    --     final_material = ray_cast(vector():set(pos.x + 0.225, pos.y - 0.001, pos.z), vector():set(-1, 0, 0), 0.45, debug)
+    --     if not final_material then
+    --         final_material = ray_cast(vector():set(pos.x, pos.y - 0.001, pos.z + 0.225), vector():set(0, 0, -1), 0.45, debug)
+    --     end
+    --     print_dbg("backup material: %s", final_material)
+    --     return final_material
+    -- end
+
+    return get_highest_value(ray_hits)
 end
 
 function on_option_change()
