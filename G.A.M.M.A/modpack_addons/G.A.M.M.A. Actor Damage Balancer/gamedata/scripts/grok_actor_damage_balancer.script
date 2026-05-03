@@ -715,23 +715,24 @@ function shit_booster(shit, bone_id, k_ap)
 	local pbadamage = hit(shit)
 	PBA_a_obh(pbadamage, bone_id, flags)
 	shit.power = pbadamage.power
-
-	protection_premitigation = ( 1 - premitigation ) * ( 1 - player_protection )
-	damage = shit.power * ( 1 - premitigation ) * ( 1 - player_protection )
-
+	
 	-- Body part damage multiplier (already applied by engine in shit.power)
 	local body_part = hitboxes[bone_id]
 	local body_part_mult = hitbox_mult[body_part] or 1.0
-	damage = damage * body_part_mult
+	shit.power = shit.power * body_part_mult
+
+	protection_premitigation = ( 1 - premitigation ) * ( 1 - player_protection )
+	damage = shit.power * ( 1 - premitigation ) * ( 1 - player_protection )
+	
+	printf('//Hit in bone %s by damages: %s', hitboxes[bone_id], shit.power)
+	printf('//BRC Mitigation by BRC = %s | Flat protection = %s | Combined protection = %s', premitigation, player_protection, protection_premitigation)
+	printf('//Damage to actor = %s', damage)
 
 	-- Resolve mechanic, survive with few hp instead of dying from huge hits
 	if damage >= actor.health and actor.health >= 0.65 then
-		--printf("/// avoided one shot - last chance")
+		printf('///Avoided one shot')
 		damage = actor.health - 0.25
 	end
-	printf('//Hit by %s damages in %s bone', shit.power, hitboxes[bone_id])
-	printf('//BRC Mitigation by BRC = %s | Flat protection = %s | Combined protection = %s', premitigation, player_protection, protection_premitigation)
-	printf('damage to actor = %s', damage)
 
 	if zzz_player_injuries and zzz_player_injuries_mcm then
 		zzz_player_injuries.actor_on_hit_callback(bone_id)
