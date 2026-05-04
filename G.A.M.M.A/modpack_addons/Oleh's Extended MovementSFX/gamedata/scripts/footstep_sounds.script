@@ -10,17 +10,18 @@ local gear_volume = 0.5
 
 -- gear rustle parameters per outfit class
 -- [<outfit_class>] = {<directory_path>, <sample_number>, <directory_path2>, <sample_number2>, ... }
+gear_rustle_limit = 2
 gear_rustle = {
-    ["default"]             = {"cloth\\cloth_", 38},
+    ["default"]             = {"cloth\\cloth_", "gear_rattle\\gear_rattle_"},
 
-    ["outfit_novice"]       = {"gear-rustle\\tac_gear_", 81, "cloth\\cloth_", 38},
-    ["outfit_light"]        = {"gear-rustle\\tac_gear_", 81, "cloth\\cloth_", 38},
-    ["outfit_medium"]       = {"gear-rustle\\tac_gear_", 81, "cloth\\cloth_", 38},
-    ["outfit_heavy"]        = {"gear-rustle\\tac_gear_", 81, "cloth\\cloth_", 38},
+    ["outfit_novice"]       = {"cloth\\cloth_", "gear_rattle\\gear_rattle_"},
+    ["outfit_light"]        = {"cloth\\cloth_", "gear_rattle\\gear_rattle_"},
+    ["outfit_medium"]       = {"cloth\\cloth_", "gear_rattle\\gear_rattle_"},
+    ["outfit_heavy"]        = {"cloth\\cloth_", "gear_rattle\\gear_rattle_"},
 
-    ["outfit_exo_proto"]    = {"gear-rustle\\tac_gear_", 81, "cloth\\cloth_", 38}, -- "exo-gear-light\\light_sero_", 20
-    ["outfit_exo"]          = {"gear-rustle\\tac_gear_", 81, "cloth\\cloth_", 38}, --, "exo-gear-light\\light_sero_", 20
-    ["outfit_exo_nosorog"]  = {"gear-rustle\\tac_gear_", 81, "cloth\\cloth_", 38}, --, "exo-gear-heavy\\heavy_servo_", 20
+    ["outfit_exo_proto"]    = {"cloth\\cloth_", "gear_rattle\\gear_rattle_"}, -- "exo-gear-light\\light_sero_", 20
+    ["outfit_exo"]          = {"cloth\\cloth_", "gear_rattle\\gear_rattle_"}, --, "exo-gear-light\\light_sero_", 20
+    ["outfit_exo_nosorog"]  = {"cloth\\cloth_", "gear_rattle\\gear_rattle_"}, --, "exo-gear-heavy\\heavy_servo_", 20
 }
 
 local servo_volume = 0.5
@@ -43,6 +44,9 @@ limit = {
     ["wood_hand-0"] = 6,
     ["wood_foot-0"] = 6,
     ["n_"] = 6,
+
+    ["cloth\\cloth_"] = 6,
+    ["gear_rattle\\gear_rattle_"] = 6,
 }
 
 count = {
@@ -55,6 +59,9 @@ count = {
     ["wood_hand-0"] = 1,
     ["wood_foot-0"] = 1,
     ["n_"] = 1,
+
+    ["cloth\\cloth_"] = 1,
+    ["gear_rattle\\gear_rattle_"] = 1,
 }
 
 -- create sample queues to mitigate the issue of same sample playing multiple time in a row
@@ -68,6 +75,9 @@ queues = {
     ["wood_hand-0"] = {},
     ["wood_foot-0"] = {},
     ["n_"] = {},
+
+    ["cloth\\cloth_"] = {},
+    ["gear_rattle\\gear_rattle_"] = {},
 }
 for k,v in pairs(queues) do
     for i=1, limit[k] do
@@ -79,7 +89,7 @@ end
 function actor_on_footstep(material, power, hud_view, flags)
     --flags.ret_value = false -- uncomment to disable engine footstep sounds
     if not step_enabled then return end
-    local outfit_class = oleh_sound_utils.get_outfit_class()
+    local outfit_class = oleh_sound_utils.get_outfit_class() or "default"
 
     local move_state, volume = "n_", 1
     move_state, volume = get_move_state()
@@ -94,14 +104,21 @@ function actor_on_footstep(material, power, hud_view, flags)
 
     -- play gear rustle sounds
     if gear_enabled then
-        for i = 1, 10, 2 do
-            local directory = gear_rustle[outfit_class][i]
-            local limit = gear_rustle[outfit_class][i + 1]
-            if directory and limit then
-                local sound = sound_object(directory .. math.random(limit))
+        for i = 1, gear_rustle_limit do
+            local class = gear_rustle[outfit_class][i]
+            local weight = db.actor:get_total_weight()
+            local weight_volume = i == 1 and 0.5 or weight and clamp(weight/100, 0.25, 1) or 1
+            if class then
+                local sound = sound_object(class .. queues[class][count[class]])
                 sound:play(db.actor, 0, sound_object.s2d)
-                sound.volume = volume * gear_volume * 0.5
-                print_dbg("%s, %s, %s", outfit_class, directory, limit)
+                sound.volume = weight_volume * volume * gear_volume
+                --printf("outfit_class: %s, %s, volume: %s", outfit_class, class .. queues[class][count[class]], sound.volume)
+
+                count[class] = count[class] + 1
+                if count[class] > limit[class] then
+                    count[class] = 1
+                    shuffle_table(queues[class])
+                end
             else
                 break
             end
@@ -245,11 +262,11 @@ end
 available_materials = {
     ["default"]                        = "default_",
     ["materials\\asphalt"]             = "asphalt_", -- Асфальт
-    ["materials\\bricks"]              = "concrete_", -- Кирпичная стена
+    ["materials\\bricks"]              = "tile_", -- Кирпичная стена
     ["materials\\bush"]                = "bush_", -- Кусты, крона деревьев, камышы, листья 
     ["materials\\bush_sux"]            = "bush_", -- Кусты, крона деревьев, камышы, листья сухие
-    ["materials\\cloth"]               = "grass_", -- Ткань
-    ["materials\\concrete"]            = "concrete_", -- Монолитный бетон
+    ["materials\\cloth"]               = "default_", -- Ткань
+    ["materials\\concrete"]            = "tile_", -- Монолитный бетон
     ["materials\\death"]               = "earth_", -- Смертоносная земля (нестандартный материал)
     ["materials\\dirt"]                = "earth_", -- Мокрая грязь, болото 
     ["materials\\earth"]               = "earth_", -- Сухая твердая земля (стандартный материал)
@@ -261,12 +278,12 @@ available_materials = {
     ["materials\\gravel"]              = "gravel_", -- Гравий
     ["materials\\metal"]               = "metal_", -- Монолитный метал, толстый кусок железа, танк
     ["materials\\metal_pipe"]          = "metal_", -- Металлическая труба
-    ["materials\\metal_plate"]         = "metal_", -- Металлическая пластина (толщина 2-5см), Ступеньки
+    ["materials\\metal_plate"]         = "metal_plate_", -- Металлическая пластина (толщина 2-5см), Ступеньки
     ["materials\\sand"]                = "gravel_", -- Песок, насыпь
     ["materials\\setka_rabica"]        = "metal_plate_", -- Сетка рабица, колючая проволока
     ["materials\\shifer"]              = "tile_", -- Шифер
     ["materials\\stucco"]              = "asphalt_", -- штукатурка
-    ["materials\\tin"]                 = "metal_", -- Жесть, крыша домов
+    ["materials\\tin"]                 = "metal_plate_", -- Жесть, крыша домов
     ["materials\\tree_trunk"]          = "wood_", -- Дерево (ствол)
     ["materials\\water"]               = "water_", -- Вода
     ["materials\\water_radiation"]     = "water_", -- Вода
@@ -279,13 +296,14 @@ available_materials = {
     ["materials\\fake_slide"]          = "default_", -- Материал для колижена (нет звука, следов от пуль, теней)
 
     ["objects\\large_furniture"]       = "wood_", -- Red Forest tunnel planks
-    ["objects\\large_metal_trash"]     = "metal_", -- Limansk bridge
+    ["objects\\large_metal_trash"]     = "metal_plate_", -- Limansk bridge
 }
 
 ladder_materials = {
     ["materials\\metal"]               = "metal_", -- Монолитный метал, толстый кусок железа, танк
     ["materials\\metal_pipe"]          = "metal_", -- Металлическая труба
     ["materials\\metal_plate"]         = "metal_", -- Металлическая пластина (толщина 2-5см), Ступеньки
+    ["materials\\tin"]                 = "metal_", -- Жесть, крыша домов
 
     ["materials\\wood"]                = "wood_", -- Деревянная поверхность, деревянный пол, деревянные ступеньки
     ["materials\\wooden_board"]        = "wood_", -- Деревянная доска (толщина 2-5см), деревянный вагон, ящик

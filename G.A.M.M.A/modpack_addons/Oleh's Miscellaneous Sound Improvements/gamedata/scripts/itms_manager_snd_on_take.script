@@ -1,10 +1,12 @@
 -- oleh5230, 18.11.25
--- Last edit: 09.12.25
+-- Last edit: 03.05.26
 debug = false
 
 local timeout_tg = 0
 local timeout_duration = 1
 local def_timeout_duration = 1
+
+local ini_parts = itms_manager.ini_parts
 
 function itms_manager.print_dbg(txt, ...)
 	if debug then
@@ -57,7 +59,7 @@ snd_on_take = {
 	["fabric"]				= {"interface\\items\\inv_items_fabric_",1,2},
 	["powder"]				= {"interface\\items\\inv_items_generic_",1,2},
 
-	["junk"]				= {"interface\\items\\inv_items_junk_1"},
+	["junk"]				= {"interface\\items\\inv_items_misc_1"},
 	["jar"]  				= {"interface\\items\\inv_items_jar_1"},
 	["cont"]				= {"interface\\items\\inv_items_cont_1"},
 	["matchbox"]			= {"interface\\items\\inv_items_matchbox_1"},
@@ -150,7 +152,6 @@ function itms_manager.play_item_sound(item, vol)
 	time_snd_prev = time_g
 end
 
-local time_snd_prev2 = 0
 function itms_manager.play_use_sound(item, vol)
 	if (not item) then
 		printe("!ERROR itms_manager_snd_on_take | play_use_sound | no object recieved!")
@@ -175,11 +176,71 @@ function itms_manager.play_use_sound(item, vol)
 	end
 
 	local time_g = time_global()
-	if snd_obj and (time_g > time_snd_prev2 + 200) then
+	if snd_obj and (time_g > time_snd_prev + 200) then
 		snd_obj:play(db.actor,0,sound_object.s2d)
 		snd_obj.volume = vol and base_vol * vol or base_vol
 	end
-	time_snd_prev2 = time_g
+	time_snd_prev = time_g
+end
+
+function item_parts.play_disassembly_snd(path, vol)
+	if (not path) then
+		return
+	end
+
+	local snd_obj = sound_object(path)
+	local time_g = time_global()
+	if snd_obj and (time_g > time_snd_prev + 200) then
+		snd_obj:play(db.actor,0,sound_object.s2d)
+		snd_obj.volume = vol or 1
+	end
+	time_snd_prev = time_g
+end
+
+disassembly_outfit = item_parts.disassembly_outfit
+function item_parts.disassembly_outfit(obj, obj_d)
+	if not ui_options.get("video/player/animations") then
+		itms_manager.timeout_snd_on_take()
+		item_parts.play_disassembly_snd("interface\\inv_disassemble_cloth")
+	end
+	disassembly_outfit(obj, obj_d)
+end
+
+disassembly_weapon = item_parts.disassembly_weapon
+function item_parts.disassembly_weapon(obj, obj_d)
+	if not ui_options.get("video/player/animations") then
+		itms_manager.timeout_snd_on_take()
+		item_parts.play_disassembly_snd("interface\\inv_disassemble_weapon")
+	end
+	disassembly_weapon(obj, obj_d)
+end
+
+device_parts = {
+	"prt_i_capacitors",
+	"prt_i_transistors",
+	"prt_i_resistors",
+	-- "prt_i_copper",
+}
+
+disassembly_item = item_parts.disassembly_item
+function item_parts.disassembly_item(obj, obj_d)
+	disassembly_item(obj, obj_d)
+	if obj and not ui_options.get("video/player/animations") then
+		local parts = ini_parts:r_string_ex("nor_parts_list",obj:section())
+		local is_device = false
+		if not parts then return end
+
+		for i in pairs(device_parts) do
+			if string.find(parts,device_parts[i]) then
+				is_device = true
+				break
+			end
+		end
+		if not is_device then return end
+
+		itms_manager.timeout_snd_on_take()
+		item_parts.play_disassembly_snd("interface\\inv_disassemble_device")
+	end
 end
 
 -- fix for items spawned after opening a container
@@ -199,13 +260,13 @@ function GUI_on_hide(name)
 	-- fix for ammo spawned by ammo wheel 
 	if name == "UIWheelAmmo" then
 		itms_manager.print_dbg("UIWheelAmmo timeout")
-		itms_manager.timeout_snd_on_take()
+		itms_manager.timeout_snd_on_take(50)
 
 	-- patch for mutant skinning (to not interfere with FDDAR)
 	elseif name == "UIMutantLoot" then
 		if ui_mcm and ui_mcm.get("fddar/skinning/enable") then
 			itms_manager.print_dbg("UIMutantLoot timeout")
-			itms_manager.timeout_snd_on_take()
+			itms_manager.timeout_snd_on_take(50)
 		end
 	end
 end
@@ -213,7 +274,7 @@ end
 -- fix for items spawned upon item use (to not interfere with FDDA)
 function actor_on_item_use()
 	itms_manager.print_dbg("actor_on_item_use timeout")
-	itms_manager.timeout_snd_on_take()
+	itms_manager.timeout_snd_on_take(50)
 end
 
 -- fix for headgear/backpack equip (to not interfere with FDDAR)
