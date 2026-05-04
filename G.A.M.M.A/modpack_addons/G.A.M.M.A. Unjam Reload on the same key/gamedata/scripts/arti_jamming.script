@@ -385,9 +385,15 @@ local function calculate_jam(wpn, old_ammo)
 
 	-- jam chance. if we roll this twice, upgraded to severe jam
 	local jam_chance = math_floor(mechanism_cond/count) or 0
-	if cgd.fullAuto then jam_chance = jam_chance / 2 end
+	--if cgd.fullAuto then jam_chance = jam_chance / 2 end
 	jam_chance = jam_chance * get_config("jamchance")
 	jam_chance = jam_chance * get_overheat_modifier(wpn)
+
+	-- oleh5230: jam chance differs between weapons
+	if cgd.current_gun_shot_dec then
+		jam_chance = jam_chance * cgd.current_gun_shot_dec * 666
+	end
+
 	-- also apply condition
 	local cond = wpn:condition()
 	if cond < 1 then
@@ -461,6 +467,11 @@ function get_jam_chance(wpn)
 			jc = jc * get_config("jamchance")
 			jc = jc * get_overheat_modifier(wpn)
 
+			-- oleh5230: jam chance differs between weapons
+			if cgd.current_gun_shot_dec then
+				jc = jc * cgd.current_gun_shot_dec * 666
+			end
+
 			-- also apply condition
 			local jc_cond = 0.83
 
@@ -472,7 +483,7 @@ function get_jam_chance(wpn)
 			end
 				
 			if jc then
-				return jc / 1000 * 100
+				return clamp(jc / 1000 * 100, 0, 100)
 			end
 		end
 	end
