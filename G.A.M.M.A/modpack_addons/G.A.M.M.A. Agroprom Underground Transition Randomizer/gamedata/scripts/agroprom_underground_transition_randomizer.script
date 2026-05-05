@@ -2,16 +2,14 @@
 -- oleh5230, 29.03.26
 
 -- To Do
--- verify task waypoints (military questline)
 -- texts edit?
--- manage exits
 
 local agr_ug_transitions = {}
 
 function randomize_transitions()
 	if has_alife_info("agroprom_underground_transitions_selected") then return end
 
-	agr_ug_transitions.level_changer_list = {
+	agr_ug_transitions.level_changer_list_to_delete = {
 		--["agr_level_changer_to_underground_1"] = true, -- cave
 		["agr_level_changer_to_underground_2"] = true, -- manhole outside institute
 		["agr_level_changer_to_underground_3"] = true, -- stairway outside factory
@@ -20,9 +18,27 @@ function randomize_transitions()
 		["agr_level_changer_to_underground_6"] = true, -- manhole outside factory
 	}
 
-	agr_ug_transitions.space_restrictor_list = {
+	agr_ug_transitions.space_restrictor_list_to_delete = {
 		--["agr_space_restrictor_to_agr_ug_1"] = true,
 		["agr_space_restrictor_to_agr_ug_2"] = true,
+		["agr_space_restrictor_to_agr_ug_3"] = true,
+		["agr_space_restrictor_to_agr_ug_4"] = true,
+		["agr_space_restrictor_to_agr_ug_5"] = true,
+		["agr_space_restrictor_to_agr_ug_6"] = true,
+	}
+
+	agr_ug_transitions.level_changer_list = {
+		--["agr_level_changer_to_underground_1"] = true, -- cave
+		--["agr_level_changer_to_underground_2"] = true, -- manhole outside institute
+		["agr_level_changer_to_underground_3"] = true, -- stairway outside factory
+		["agr_level_changer_to_underground_4"] = true, -- manhole between factory tanks
+		["agr_level_changer_to_underground_5"] = true, -- institute manhole
+		["agr_level_changer_to_underground_6"] = true, -- manhole outside factory
+	}
+
+	agr_ug_transitions.space_restrictor_list = {
+		--["agr_space_restrictor_to_agr_ug_1"] = true,
+		--["agr_space_restrictor_to_agr_ug_2"] = true,
 		["agr_space_restrictor_to_agr_ug_3"] = true,
 		["agr_space_restrictor_to_agr_ug_4"] = true,
 		["agr_space_restrictor_to_agr_ug_5"] = true,
@@ -56,9 +72,9 @@ function randomize_transitions()
 	table.sort(level_changer_exit_keys)
 
 	local roll = math.random(#level_changer_keys)
-	agr_ug_transitions.level_changer_list[level_changer_keys[roll]] 			= false
-	agr_ug_transitions.space_restrictor_list[space_restrictor_keys[roll]] 		= false
-	agr_ug_transitions.level_changer_exit_list[level_changer_exit_keys[roll]]	= false
+	agr_ug_transitions.level_changer_list_to_delete[level_changer_keys[roll]] 			= false
+	agr_ug_transitions.space_restrictor_list_to_delete[space_restrictor_keys[roll]]		= false
+	agr_ug_transitions.level_changer_exit_list[level_changer_exit_keys[roll]]			= false
 
 	for i = 1, 65534 do
 		local se_obj = alife_object(i)
@@ -81,7 +97,7 @@ function disable_transitions()
 		printf("[agroprom_underground_transition_randomizer] Initialization...")
 		for i = 1, 65534 do
 			local se_obj = alife_object(i)
-			if se_obj and se_obj.online and (agr_ug_transitions.level_changer_list[se_obj:name()] or agr_ug_transitions.space_restrictor_list[se_obj:name()]) then
+			if se_obj and se_obj.online and (agr_ug_transitions.level_changer_list_to_delete[se_obj:name()] or agr_ug_transitions.space_restrictor_list_to_delete[se_obj:name()]) then
 				printf("[agroprom_underground_transition_randomizer] Setting offline: %s, %s", se_obj:name(), se_obj.id)
 				alife():set_switch_online(se_obj.id, false)
 				alife():set_switch_offline(se_obj.id, true)
@@ -90,6 +106,19 @@ function disable_transitions()
 			end
 		end
 		db.actor:give_info_portion("agroprom_underground_entrances_disabled")
+
+	elseif not has_alife_info("agroprom_underground_anomaly_released") and level.name() == "l03u_agr_underground" then
+
+		printf("[agroprom_underground_transition_randomizer] Initialization...")
+		for i = 1, 65534 do
+			local se_obj = alife_object(i)
+			if se_obj and se_obj:name() == "kat2_zone_buzz_0015" then
+				alife_release(se_obj)
+				printf("[agroprom_underground_transition_randomizer] object %s %s released", se_obj:name(), se_obj.id)
+			end
+		end
+		db.actor:give_info_portion("agroprom_underground_anomaly_released")
+	end
 
 	--[[
 	elseif not has_alife_info("agroprom_underground_exits_disabled") and level.name() == "l03u_agr_underground" then
@@ -107,7 +136,6 @@ function disable_transitions()
 		end
 		db.actor:give_info_portion("agroprom_underground_exits_disabled")
 	]]
-	end
 end
 
 task_functor.valid_agr_ug_transition = function(task_id,field,p,tsk)
