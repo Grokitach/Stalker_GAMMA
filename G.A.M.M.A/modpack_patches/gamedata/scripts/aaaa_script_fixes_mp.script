@@ -634,46 +634,48 @@ function smart_terrain.se_smart_terrain:task()
 end
 
 -- Remove stutter when raising PDA by iterating actual se_stalker and se_monster objects instead of whole alife
-function pda.calculate_rankings()
-	local t = {}
-	local sim = alife()
+if pda.coc_ranking_list then
+	function pda.calculate_rankings()
+		local t = {}
+		local sim = alife()
 
-	-- add actor to list
-	t[0] = sim:actor():rank()
-	
-	-- check all stalker server objects
-	for i, _ in pairs(db.offline_objects) do
-		if i ~= 65535 then
-			local se_obj = sim:object(i)
-			if (se_obj and IsStalker(nil,se_obj:clsid()) and se_obj:alive() and se_obj:community() ~= "zombied" and se_obj:community() ~= "trader") then
-				-- Check if object has a story id, if it does they are probably unique
-				local sid = story_objects.story_id_by_object_id[se_obj.id]
-				if not (sid) then
-					t[se_obj.id] = se_obj:rank()
+		-- add actor to list
+		t[0] = sim:actor():rank()
+		
+		-- check all stalker server objects
+		for i, _ in pairs(db.offline_objects) do
+			if i ~= 65535 then
+				local se_obj = sim:object(i)
+				if (se_obj and IsStalker(nil,se_obj:clsid()) and se_obj:alive() and se_obj:community() ~= "zombied" and se_obj:community() ~= "trader") then
+					-- Check if object has a story id, if it does they are probably unique
+					local sid = story_objects.story_id_by_object_id[se_obj.id]
+					if not (sid) then
+						t[se_obj.id] = se_obj:rank()
+					end
 				end
 			end
 		end
-	end
-	
-	local size_t = 0
-	local coc_ranking_list = pda.coc_ranking_list
-	local coc_ranking_array_size = pda.coc_ranking_array_size or 100
+		
+		local size_t = 0
+		local coc_ranking_list = pda.coc_ranking_list
+		local coc_ranking_array_size = pda.coc_ranking_array_size or 100
 
-	-- sort by highest rank first
-	for id, rank in spairs(t, sort_func_values_descend) do
-		size_t = size_t + 1
-		coc_ranking_list[size_t] = id
-		if (id == AC_ID) then
-			pda.actor_rank_place = size_t
+		-- sort by highest rank first
+		for id, rank in spairs(t, sort_func_values_descend) do
+			size_t = size_t + 1
+			coc_ranking_list[size_t] = id
+			if (id == AC_ID) then
+				pda.actor_rank_place = size_t
+			end
 		end
+		-- Trim excessive data
+		for i = coc_ranking_array_size, size_t + 1, -1 do
+			coc_ranking_list[i] = nil
+		end
+		
+		-- force actor into last visible slot + 1 on ranking list
+		coc_ranking_list[coc_ranking_array_size+1] = 0
 	end
-	-- Trim excessive data
-	for i = coc_ranking_array_size, size_t + 1, -1 do
-		coc_ranking_list[i] = nil
-	end
-	
-	-- force actor into last visible slot + 1 on ranking list
-	coc_ranking_list[coc_ranking_array_size+1] = 0
 end
 
 -- Saloeater: Fix/trade manager resupply sync
@@ -912,15 +914,6 @@ dynamic_news_manager.DynamicNewsManager.game_object_on_net_destroy = function(se
 	self:CleanObjects(obj:id())
 end
 
--- Perform luagc cleanup
-function luagc_cleanup()
-	printf("~[luagc_cleanup] collectgarbage before=%sKb",collectgarbage("count")*1024)
-	collectgarbage("collect")
-	collectgarbage("collect")
-	if jit and jit.flush then jit.flush() end
-	printf("~[luagc_cleanup] collectgarbage after=%sKb",collectgarbage("count")*1024)
-end
-
 -- Fix: prevent level_vertex_id bookmark from warping squad members.
 --
 -- When a squad member goes offline, net_destroy writes
@@ -955,6 +948,233 @@ local function fix_squad_offline_teleport()
 			db.offline_objects[id].level_vertex_id = nil
 		end
 	end
+end
+
+-- Disable caching in utils_item, with extra setters exported it will have wrong data
+utils_item.check_cache = function(...)
+	return false
+end
+
+-- Actually persistent weather
+-- Storing last weather file, current weather file and interpolation between them from engine
+-- On load first force apply previous weather, then apply new weather but not forced, then apply interpolation
+level_weathers_WeatherManager_load_state = level_weathers.WeatherManager.load_state
+level_weathers.WeatherManager.load_state = function(self, m_data, ...)
+	level_weathers_WeatherManager_load_state(self, m_data, ...)
+	if not (m_data.weather_manager) then 
+		return
+	end
+	self.weather_file_saved = m_data.weather_manager.weather_file
+	self.last_weather_file = m_data.weather_manager.last_weather_file
+	self.weather_weight = m_data.weather_manager.weather_weight
+	self.last_cycle = m_data.weather_manager.last_cycle
+	self.cycle_saved = m_data.weather_manager.cycle
+	self.next_weather_saved = m_data.weather_manager.next_weather
+	self.curr_weather_saved = m_data.weather_manager.curr_weather
+	self.preset_saved = m_data.weather_manager.preset
+	printf("WeatherManager.load_state loading fields self.weather_file %s, self.last_weather_file %s, self.weather_weight %s, self.cycle %s, self.last_cycle %s, self.next_weather %s, self.curr_weather %s", self.weather_file_saved, self.last_weather_file, self.weather_weight, self.cycle, self.last_cycle, self.next_weather_saved, self.curr_weather_saved)
+end
+
+level_weathers_WeatherManager_save_state = level_weathers.WeatherManager.save_state
+level_weathers.WeatherManager.save_state = function(self, m_data, ...)
+	level_weathers_WeatherManager_save_state(self, m_data, ...)
+	m_data.weather_manager.last_weather_file = self.last_weather_file
+	m_data.weather_manager.weather_file = self.weather_file
+	m_data.weather_manager.weather_weight = level.get_weather_weight()
+	m_data.weather_manager.last_cycle = self.last_cycle
+	m_data.weather_manager.next_weather = self.next_weather
+	m_data.weather_manager.curr_weather = self.curr_weather	
+	printf("WeatherManager.save_state saving fields self.weather_file %s, self.last_weather_file %s, self.weather_weight %s, self.cycle %s, self.last_cycle %s, self.next_weather %s, self.curr_weather %s", self.weather_file, self.last_weather_file, level.get_weather_weight(), self.cycle, self.last_cycle, self.next_weather, self.curr_weather)
+end
+
+level_weathers_WeatherManager_select_weather = level_weathers.WeatherManager.select_weather
+level_weathers.WeatherManager.select_weather = function(self, now, ...)
+	if not self.from_reset then
+		self.last_weather_file = self.weather_file
+	end
+	if self.forced_weather_change_on_time_change then
+		self.last_weather_file = nil
+	end
+	level_weathers_WeatherManager_select_weather(self, now, ...)
+end
+
+level_weathers_WeatherManager_get_next_weather_cycle = level_weathers.WeatherManager.get_next_weather_cycle
+level_weathers.WeatherManager.get_next_weather_cycle = function(self, curr_weather, ...)
+	self.last_cycle = curr_weather
+	return level_weathers_WeatherManager_get_next_weather_cycle(self, curr_weather, ...)
+end
+
+level_weathers_WeatherManager_get_curr_weather = level_weathers.WeatherManager.get_curr_weather
+level_weathers.WeatherManager.get_curr_weather = function(self, ...)
+	-- if self.last_cycle then
+	-- 	local weight = level.get_weather_weight()
+	-- 	if weight < 0.5 then
+	-- 		return self.last_cycle
+	-- 	else
+	-- 		return self.cycle
+	-- 	end
+	-- end
+	return level_weathers_WeatherManager_get_curr_weather(self, ...)
+end
+
+function level_weathers.WeatherManager:select_custom_weather(now, custom_weather_file, smooth, custom_cycle, custom_next_weather, custom_preset)
+	printf("select_custom_weather (%s) | current hour: %s", tostring(now), tostring(level.get_time_hours()) )
+	
+	-- get type ("atmosfear","indoor","[default]")
+	local weather_valid = false
+	local weather_cycle
+	local wthr = self.weatherType
+	if not (wthr) then 
+		return
+	end
+	
+	-- if its atmosfear, pick proper event
+	if (wthr == "atmosfear") then
+		weather_valid = true
+		local level_name = level.name()
+		
+		-- transition weather
+		if (self.transition_period == true) then
+			wthr = wthr .. "_transition"
+			weather_cycle = "cloudy"
+			self.transition_period = false
+			
+		-- pre-surge weather
+		elseif (self.pre_blowout_period == true) then
+			wthr = wthr .. "_pre_blowout"
+			weather_cycle = "pre_blowout"
+			self.pre_blowout_period = false
+			
+		-- normal weather
+		else 
+			if not (self.cycle) then
+				self.cycle = "clear"
+			end
+			
+			weather_cycle = custom_cycle or self.cycle
+			wthr = wthr .. "_" .. weather_cycle
+		end
+	end
+	
+	self.levelWeather = wthr -- save for transition periods
+
+	-- get proper weather name
+	if custom_preset then
+		self.preset = custom_preset
+	end
+	self.last_weather_file = self.weather_file
+	self.weather_file = nil
+	if weather_valid then
+		
+		-- pick weather preset
+		if self.presets[weather_cycle] then
+			if self.preset and self.presets[weather_cycle][self.preset] then
+				self.weather_file = self.preset
+			else
+				self.preset = random_key_table(self.presets[weather_cycle])
+				self.weather_file = self.preset
+			end
+			
+		elseif (weather_cycle == "pre_blowout") then
+			self.weather_file = random_key_table(self.presets_pre_blowout)
+		end
+
+		if custom_preset then
+			self.preset = custom_preset
+		end
+		
+		-- pick moon phase, and large maps profiles
+		if (weather_cycle == "clear") or (weather_cycle == "partly") then
+			--[[
+			if big_maps[level.name()] then
+				self.weather_file = self.weather_file .. "_large"
+			end
+			--]]
+			
+			--self.weather_file = self.weather_file .. "_0" --self:get_moon_phase()
+		end
+		
+		-- set up current and next weather, used for many things like distant storms/Meteorites/DOF
+		if now then
+			self.curr_weather = custom_next_weather or self.preset
+			self.next_weather = self.preset
+		else
+			self.curr_weather = self.next_weather
+			self.next_weather = self.preset
+		end
+	else
+		self.weather_file = wthr
+	end
+	
+	-- hour correction
+	if now then
+		self.last_hour = level.get_time_hours()
+		self.next_hour = self.last_hour + 1
+		if (self.next_hour > 23) then
+			self.next_hour = self.next_hour - 24
+		end
+	end
+	
+	-- reset forced weather call
+	if self.forced_weather_change_on_time_change then
+		now = true
+		self.forced_weather_change_on_time_change = false
+	end
+
+	if custom_weather_file then
+		self.weather_file = custom_weather_file
+	end
+		
+	-- apply weather change
+	if (self.weather_fx) then
+		printf("select_custom_weather (%s) | weather_fx: %s", tostring(now), tostring(self.weather_fx))
+		level.start_weather_fx_from_time(self.weather_fx, self.wfx_time)
+		self.weather_fx = nil 
+		self.wfx_time = 0
+	else
+		if (not self.weather_file) then
+			printe("! level_weathers: self.weather_file not generated!")
+		elseif (weather.is_paused()) then
+			printf("~ level_weathers: weather didn't set because lerping is paused in engine")
+		else
+			printf("select_custom_weather (%s) | self.weather_file: %s", tostring(now), tostring(self.weather_file))
+			if smooth then
+				level.set_weather_smooth(self.weather_file)
+			else
+				level.set_weather(self.weather_file, now)
+			end
+		end
+	end
+	
+	-- Set brightness
+	self:set_brightness_boosts()
+	
+	printf("select_custom_weather (%s) | cycle: %s - preset: %s - curr_weather: %s - next_weather: %s", tostring(now), weather_cycle, self.preset, self.curr_weather, self.next_weather)
+end
+
+level_weathers_WeatherManager_reset = level_weathers.WeatherManager.reset
+level_weathers.WeatherManager.reset = function(self, ...)
+	self.from_reset = true
+	local wfx = self.weather_fx
+	level_weathers_WeatherManager_reset(self, ...)
+	self.from_reset = false
+
+	local enabled = ui_options.get("video/weather/persistent_weather")
+	-- printf([[ui_options.get("video/weather/persistent_weather") = %s]], enabled)
+	if enabled and self.weather_file_saved and self.last_weather_file and self.weather_weight and self.weather_file_saved ~= self.last_weather_file and not (wfx) then
+		self:select_custom_weather(true, self.last_weather_file, false, self.last_cycle, self.curr_weather_saved, self.preset_saved)
+	    self:select_custom_weather(false, self.weather_file_saved, true, nil, nil, self.preset_saved)
+	    level.set_weather_weight(self.weather_weight)
+	end
+end
+
+-- Perform luagc cleanup
+function luagc_cleanup()
+	printf("~[luagc_cleanup] collectgarbage before=%sKb",collectgarbage("count")*1024)
+	collectgarbage("collect")
+	collectgarbage("collect")
+	if jit and jit.flush then jit.flush() end
+	printf("~[luagc_cleanup] collectgarbage after=%sKb",collectgarbage("count")*1024)
 end
 
 function on_game_start()
