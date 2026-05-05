@@ -76,6 +76,35 @@ function set_jam_status(id, status)
 	jammed_guns[id] = status
 end
 
+-- oleh5230
+-- get_jam_status placeholder
+function get_jam_status(id)
+	return jammed_guns[id] == 3 and JamType.DoubleFeed or jammed_guns[id] == 2 and arti_jamming.JamType.FailureToEject or nil
+end
+
+JamType = {}
+JamType.OK = {
+	anim = check_anim,
+	no_anim = check_simple
+}
+JamType.Misfire = {
+	anim = unjam_anim,
+	no_anim = unjam_simple
+}
+JamType.FailureToEject = {
+	anim = unjam_anim,
+	no_anim = unjam_simple
+}
+JamType.DoubleFeed = {
+	anim = unjam_super_anim,
+	no_anim = unjam_super_simple
+}
+JamType.Classic = {
+	anim = unjam_replace_anim,
+	no_anim = unjam_replace_simple
+}
+-- oleh5230 end
+
 local can_swear = true
 
 --gun jam play swearing sound
@@ -386,14 +415,14 @@ local function calculate_jam(wpn, old_ammo)
 	-- jam chance. if we roll this twice, upgraded to severe jam
 	local jam_chance = math_floor(mechanism_cond/count) or 0
 	--if cgd.fullAuto then jam_chance = jam_chance / 2 end
-	jam_chance = jam_chance * get_config("jamchance")
-	jam_chance = jam_chance * get_overheat_modifier(wpn)
 
 	-- oleh5230: jam chance differs between weapons
 	if cgd.current_gun_shot_dec then
 		jam_chance = jam_chance * cgd.current_gun_shot_dec * 666
 	end
 
+	jam_chance = jam_chance * get_config("jamchance")
+	jam_chance = jam_chance * get_overheat_modifier(wpn)
 	-- also apply condition
 	local cond = wpn:condition()
 	if cond < 1 then
@@ -464,13 +493,10 @@ function get_jam_chance(wpn)
 			-- jam chance. if we roll this twice, upgraded to severe jam
 			local jc = math_floor(jc_mechanism_cond/jc_count) or 0
 				
+			-- oleh5230: jam chance differs between weapons
+			jc = jc * SYS_GetParam(2, wpn:section(), "condition_shot_dec", 0.0008) * 666
 			jc = jc * get_config("jamchance")
 			jc = jc * get_overheat_modifier(wpn)
-
-			-- oleh5230: jam chance differs between weapons
-			if cgd.current_gun_shot_dec then
-				jc = jc * cgd.current_gun_shot_dec * 666
-			end
 
 			-- also apply condition
 			local jc_cond = 0.83
