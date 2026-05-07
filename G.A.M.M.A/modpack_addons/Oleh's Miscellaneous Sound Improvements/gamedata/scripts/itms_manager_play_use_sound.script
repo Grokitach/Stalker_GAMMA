@@ -1,0 +1,120 @@
+-- oleh5230, 18.11.25
+-- Last edit: 07.05.26
+debug = false
+
+local ini_parts = itms_manager.ini_parts
+
+function itms_manager.print_dbg(txt, ...)
+	if debug then
+		printf("[itms_manager_snd_on_use] " .. txt, ...)
+	end
+end
+
+snd_on_use = {
+	["cap"]					= {"interface\\items_use\\cap_1"},
+
+	["glue"]				= {"interface\\items_use\\glue_1"},
+	["scissors"]			= {"interface\\items_use\\scissors_1"},
+	["tape"]				= {"interface\\items_use\\tape_1"},
+	["parts_fabric"]		= {"interface\\items_use\\parts_fabric_1"},
+
+	["oil"]					= {"interface\\items_use\\oil_1"},
+	["spray"]				= {"interface\\items_use\\spray_1"},
+	["parts_metal"]			= {"interface\\items_use\\parts_metal_1"},
+
+	["clean"]				= {"interface\\items_use\\clean_1"},
+	["file"]				= {"interface\\items_use\\file_1"},
+	["sharp"]				= {"interface\\items_use\\sharp_1"},
+}
+
+local time_snd_prev = 0
+function itms_manager.play_use_sound(item, vol)
+	if (not item) then
+		printe("!ERROR itms_manager_snd_on_take | play_use_sound | no object recieved!")
+		return
+	end
+
+	local snd_type = SYS_GetParam(0,item:section(),"snd_on_use")
+	if not (snd_type and snd_type ~= "") then
+		return
+	end
+
+	local snd = snd_on_use[snd_type]
+	if (not snd) then
+		return
+	end
+
+	local snd_obj
+	if (#snd == 1) then
+		snd_obj = sound_object(snd[1])
+	else
+		snd_obj = sound_object(snd[1] .. tostring(math.random(snd[2],snd[3])))
+	end
+
+	local time_g = time_global()
+	if snd_obj and (time_g > time_snd_prev + 200) then
+		snd_obj:play(db.actor,0,sound_object.s2d)
+		snd_obj.volume = vol or 1
+	end
+	time_snd_prev = time_g
+end
+
+function item_parts.play_disassembly_snd(path, vol)
+	if (not path) then
+		return
+	end
+
+	local snd_obj = sound_object(path)
+	local time_g = time_global()
+	if snd_obj and (time_g > time_snd_prev + 200) then
+		snd_obj:play(db.actor,0,sound_object.s2d)
+		snd_obj.volume = vol or 1
+	end
+	time_snd_prev = time_g
+end
+
+disassembly_outfit = item_parts.disassembly_outfit
+function item_parts.disassembly_outfit(obj, obj_d)
+	if not ui_options.get("video/player/animations") and itms_manager.timeout_snd_on_take then
+		itms_manager.timeout_snd_on_take(50)
+		item_parts.play_disassembly_snd("interface\\inv_disassemble_cloth")
+	end
+	disassembly_outfit(obj, obj_d)
+end
+
+disassembly_weapon = item_parts.disassembly_weapon
+function item_parts.disassembly_weapon(obj, obj_d)
+	if not ui_options.get("video/player/animations") and itms_manager.timeout_snd_on_take then
+		itms_manager.timeout_snd_on_take(50)
+		item_parts.play_disassembly_snd("interface\\inv_disassemble_weapon")
+	end
+	disassembly_weapon(obj, obj_d)
+end
+
+device_parts = {
+	"prt_i_capacitors",
+	"prt_i_transistors",
+	"prt_i_resistors",
+	-- "prt_i_copper",
+}
+
+disassembly_item = item_parts.disassembly_item
+function item_parts.disassembly_item(obj, obj_d)
+	disassembly_item(obj, obj_d)
+	if obj and not ui_options.get("video/player/animations") and itms_manager.timeout_snd_on_take then
+		local parts = ini_parts:r_string_ex("nor_parts_list",obj:section())
+		local is_device = false
+		if not parts then return end
+
+		for i in pairs(device_parts) do
+			if string.find(parts,device_parts[i]) then
+				is_device = true
+				break
+			end
+		end
+		if not is_device then return end
+
+		itms_manager.timeout_snd_on_take(50)
+		item_parts.play_disassembly_snd("interface\\inv_disassemble_device")
+	end
+end
