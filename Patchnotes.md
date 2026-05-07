@@ -1,3 +1,281 @@
+# **GAMMA 0.9.5**
+ 
+## Engine
+- MT-TEST_2026.5.5 Engine version by Demonized
+- Disabled 1st Person Legs mod to use In Engine version instead
+
+## Newly added addons
+- Spatial Audio Rework by Kute (indoor reverb)
+- Dark Signal Amplified Footsteps Extended by Shrike
+- Addition GIMP to the modlist
+- Procedural Movement Animations - party_50 + The Doctor CoP style move…
+- NPE update to v0.2.10
+- Scrunkly's Collection of Mods added
+- Inventory Open Lag Reducer by Sea-Ex added
+- Thicc Russian Scopes - Napolemon added
+- Laser Settings - Borksy added
+- PDA Map Location Labels and Faction Icons - mmmint added + MCM option…
+- Lower Weapon Sprint Optimized + Black list guns list for lower sprint optimized 
+- Oflin's and Noot Noot's Pointless Yellow Task Recoloring DLTX
+- Inventory Antifreeze - Demonized added
+- Spatial Audio Rework - Kute added
+- Craft From Stashes - tetrider added
+- Hideout Cat for Hideout Furniture - DoktorDauerfeuer added
+- Hideout Gadgets - DoktorDauerfeuer added
+- Arena Crowd Sound Reactions Restored - MFB added
+- TARP Tent Apparatus Remains Positioned - zorius added
+- Precomputed Gasmask Noise - SoulCrystal & LVutner added
+- Tasks Guide Spot - SaloEater added
+- Custom iTheon's PDA Taskboard - lizzardman added with a slightly bett… 
+- Voiced Actor Refined and related improvements - SaloEater
+- Squad Filler - xcvb added
+- Non linear ADS added with MCM config
+- Alife plus and xlib - damian_sirbu + MCM setup
+- Cypret's SafeSpawn added, replaces Spawning Shenanigans Prevention
+- Interaction Dot Marks enabled again since the performance impact is n… 
+- Fast Pistol Swap - Verdatim added
+- Escape From Tarkov MTS-255 Shotgun Revolver - frostychun added as 20x70 accurate shotgun
+- A_triangle's NPC Weapon Position Tweak added
+- Billwa's Weapon Collection + MAC10 Quality Control added for MAC10 (9… 
+- tetrider_craft_from_stashes.v1.0.3
+- SVT-40 'n AVT-40 by Blackgrowl added
+- MSBS Grot - Bert added
+- Uzi family - SoulCrystal added
+- Fair Autocomplete Tasks Enhanced - Priler added + MCM config (cancels… 
+
+## Audio
+- Distant gunfire audio rework @oleh5230
+- GAMMA Weapon Sounds updated to version 3.0.4 @oleh5230
+- Added item disassembly, weapon attachments and ladder climbing sounds @oleh5230
+- Fixed item pickup sounds playing during FDDA animations, reloads etc. @oleh5230 
+- New inventory and player movement audio @oleh5230
+- New bullet crack and weapon rattle sounds @oleh5230
+- Consumable animation sounds by Shrike - oleh5230
+- "Gunfire Volume" setting slider - oleh5230
+- Removed some ambient soundtracks - oleh5230
+- More common SanctusSyntH tracks
+
+## Visual
+- reverting hands to old THAP to have better match with body armors
+
+## Gunplay
+- 3D ballistics activated by default now since 3DSSG now supports it
+- Fixed many missing enhanced recoil profiles.
+- Heavily reduced recoil of AUG 9x19 and made it more rare (same as mp5sd)
+- Buffed 9x18 caliber (more damage, bit less pen)
+- Rebalanced some 9x18 pistols and some 9x19 smg recoil
+- Stakeout 20x70 recoil reduce
+- Draco ISG aim animation fix
+- UBGL key to LALT
+- vssk aim fix for new 3DSSG version
+- Manual action guns RoF update - oleh5230
+- UDP9 RPM increase
+- Better static breathing animation speed for guns
+- Laser Settings Default config for all guns
+- Sawn offs in pistol slot but with higher dispersion
+- Global weapon sprint transition animation fix
+- Buffed RAPTR across the board
+- mosin slight rebalance
+- reduced stakeout dispersion
+- Jam Probability differs between weapon depending on RPM - oleh5230
+- Glock 19 has 15 rounds now
+- svt as C type again
+- Reduced MP412 hipfire recoil
+- MP5K rework (only FMJ rounds, kit at nato lv2)
+- CAR15 has 700 RPM
+- Rebalanced shotguns a bit (MP153, MP155, MP133, Remington)
+
+## Gameplay
+- Clear Sky and Duty are now enemies
+	- script to set clear sky living legend path to alt
+	- No more csky in Rostok
+	- Duty and Army now occupies zat_b5 smart (Ranger Station)
+	- Cheap Swamp guide routes to Yantar and Jupiter instead of Bar and Agr… 
+	- Marsh guide text edits
+	- Fixed Dolg <> Csky relations for actor and drx questline honcho pick
+	- Better introduction to main quest by Vorinin since Clear Sky and Duty… 
+- Upgrades Overhaul:
+	- Upgrades kits needed overhaul based on armor, helmet and weapons repa… 
+	- MP7, SVDS, SVD and Chim Hunter upgrade trees changed
+	- SVT Upgrade changes (no 7.62x39, no 7.62x54PP)
+	- Durability upgrades reduce armor degradation
+	- Removal of ACE caliber change upgrade
+	- Removed Kiparis upgrade to 9x19
+- Artefacts changes:
+	- Slightly rebalanced artefacts (mainly full empty)
+	- Artefacts despawn after 5 in game days if not picked (considered stuck)
+	- Much higher chance of dynamic anomalies artefacts spawn, but more T0 artefacts spawn there
+- Edited transparency threshold for stalkers so it's not as easy for NPCs to shoot the player through bushes while remaining balanced.
+- Block food/drinks consumption instead of auto-unequipping helmet (FDD… 
+- Decoy phantoms spawn when psy health is low but they do not cause Psy damage (spooks) - SaloEater
+- Increased range to be able to save around campfires
+
+## Balance
+- Armor Overhaul:
+	- Outfits & BRC System Complete Rebalance
+	- max res caps to 90%
+	- BRC Mitigation limited to 90% max
+	- Remove BR% from plates, added strike res to higher tiers
+	- Boar pelt gives +2BRC, +4% BRC mitigation, Pseudogiant pelt gives +4/+8%
+	- Kogot and Ear give +3% BRC premitigation each (stacks)
+	- BR Class Premitigation stat display in inventory
+- Artefacts rebalance:
+	- Moonlight shock and telepatic caps +10
+	- Compass BR% cap increased by 5% to 15%
+	- Slight boost to regular field artefacts spawn
+- Mutant and NPC Spawns rebalance:
+	- Chimera duo/trio replaced by 1 chimera + 2 pseudodogs, stronger chime… 
+	- More pseudodogs in the north
+	- Bit more pseudodogs in TC
+	- Bit more renegades in the north start maps
+	- South chimera are easier (weak, normal or normal2), north chimera are… 
+- Reduce machine gun turrets accuracy - oleh5230
+- Few changes to scopes availability in Nato vs WP
+- Proper armors stash tiers with the rebalance
+- SVD SVU Type D + faster RPM + a bit more common
+- SVD as tier 3 in stashes
+- Bit more rare SV98 because of the integrated scope
+- TOZ106 as Type A repair
+- more rare BRN
+- Poltergeists as predatory_day + bigger squads + more common flame polter
+- wpn_rpk74_16_drum as D tier
+- MAC10 repair type as shotgun
+- Mac10 convert to 9x19 instead of .45
+
+## UI
+- Removed damage stats from gun display
+- removed weapon "max range" stat
+- Better recoil stat
+- Armors display Novice repair property in their icon
+- Better recoil control calculation
+
+## Crafting
+- Exo batteries craft recipe from gauss ammo
+- Glowsticks and tarpaulin give plastic. Fieldcooker gives more scraps … 
+- Less plastic needed for medkits, no plastic for stimpaks, syr… 
+- Metal mags give much more paper
+- Crafting artefact using low cond artefact fix
+- Artefacts on Belt cannot be used for crafting
+- Artefact melter does not use belt artefacts and the UI properly reset… 
+- Increased wood parts from items disassembly (easier hideout furniture…  - oleh5230
+
+## Economy
+- Reduced prices of most gun upgrade kits
+- Balanced scopes prices with the help of lemon041339_12708
+- Parts added to gunsmith and medic toolkits
+- Ecologs sell Gauss Ammo at Supply Tier 4
+- Gauss Ammo alternative crafting recipe (1 ring or 2 dummy_battery for… 
+- trading_computer added to several traders including mechanics, at var… 
+- 9mm silencer at WP traders
+- Increased price of T3 artefact recipe book (36k > 99k)
+- Increased cost and crafting cost of type D cleaning kit and repair ki… 
+- Increase exo and heavy repair kits costs and crafting costs
+- Removed AI packs from Ecolog traders
+- Bit less armors in stashes
+
+## Progression
+- Randomized Agroprom Underground entrance - oleh5230
+- Starting Loadouts changes:
+	- MT255 for Duty, Bandit and Renegade, at 600, Stakeout for loner at 550  - oleh5230
+	- No glock hornet for freedom in starting loadout
+	- Rebalanced starting loadout armors
+	- Reworked all starting loadout pistols for each faction
+	- Reduced extra ammo costs
+- Tasks changes:
+	- Tasks money rewards depend on targeted map
+	- Rebalanced certain assault tasks to target bigger squads and more dangerous mutants
+	- Increased money rewards for Artefact Hunters Quests
+	- Fetch quests won't pick belt artefacts for completion
+	- Remove multiple weapon fetch tasks
+	- RF/delivery package loot rework - oleh5230
+	- Add Anomalous Study task failure penalty
+	- Utility fetch tasks reward scaling increase + increased cost of guita… 
+	- Assault tasks for stalkers target squads of 2 or more
+	- more diverse assault and fetch tasks
+	- Eliminate apex predator rare task added
+	- Avoid quest stashes to be on the same level than actor
+- South / North population balance upon receiving the psy helmet to better tier the population across the Zone following the storyline progression
+- Craftable Medic and Ammo toolkits + increased base items recipes costs
+- Reduced green parts chance, reduced jam chance
+- More ammo for sale at north traders
+- Less random weapon parts degradation - oleh5230
+- Slower barrel degradation - oleh5230
+- Much less tanky ghost zombie from swamp quest
+- Goodwill decrease for opposite faction on task completion improved an… 
+- harsher goodwill penalties for freedom <> dolg tasks
+- Patches are worth a bit more money and can be sold for a higher price… 
+- KS23s as C tier - oleh5230
+- Slightly easier expert tools in the north
+- drug kits spawn more in the south in yellow stashes, ammo kit a bit m… 
+
+## Tutorials
+- Catspaw's Timed Tutorial Prompts added and configured for GAMMA Tutorials. The player will now be able to choose to check the bey pressing a keybind, or ignore them or dimiss them. 
+- Render Distance disclaimer update - oleh5230
+
+## Bugfix
+
+- 265- NPCs Die in Emissions for Real - TheMrDemonized Disabled, could … 
+- Fix medics dropping trade inventories as loot - oleh5230
+- Fixed Sin increased AP res (10%)
+- Starting locations text fixes
+- Remove Nosorog despawn latency - oleh5230
+- arti_jamming:587 tentative crash fix - oleh5230
+- potential crash fix for Useful Idiots
+- smart_terrain.script:1491 crash fix
+- Fix for weapon section identification in grok_bo.script 
+- smart_terrain.script:1492 crash fix - oleh5230
+- fix Vinca overriding bandage effect
+- UI PDA Taskboard fixes (long tasks scroll + fixed overlapping text)
+- potential fix for bug with crafted artefacts not being at the right c… 
+- Fixed some north smart terrains spawns
+- Better seed system for loot stabilizer
+- prevent infinity time event loops
+- Replace negative complete_task_inc_goodwill with complete_task_dec_go…  - ProTriforcer
+- Add complete_task_dec_goodwill to xr_effects.script - SaloEater
+- Fixed log spam error tasks_recover_item_on_corpse line 102 kill_if_on… 
+- Stop other tools working as basickit - FoxEternal
+- simulation tasks 122-126 text fixes
+- Tasks 123 124 125 text fix
+- special character ' fix in certain st_quests_general.xml dialogues
+- tasks 123 124 125 russian translation
+- Disabled safe artifact melting since artefacts don't emit rads anymore
+- tasks 123 124 125 description in russian and english
+- Weapon trade blacklist update
+- Fixed rare crash when semenov dies during his task
+- fix for error smr_loot.script:345
+- arti_jamming:475 crash fix
+- Weapon Cover Tilt fix for activation after sprint and during sprint b… 
+- Removed smart reticle by default
+- pda.script line 524 crash fix
+- Afterglow crash fix disabled by default to avoid issues
+- fixed xr_meet.script(462) crash and disabled trading for all NPCs (tr… 
+- aol_anim_transitions:145 crash fix - oleh5230
+- Better Artefacts Hunter Russian text by demyanich and english transla… 
+- dotmarks/dmarkmods/hf_add_primary_pickup = false to avoid pickup ani… 
+- Potential fix for pda.script:524 crash, likely from AlifePlus debug.
+- xr_danger potential crash fix & swedenvikings21
+- task_functor:391 crash fix - oleh5230
+- tasks_measure.se_target crash fix - oleh5230
+- surge_manager_ignore_npc crash fix - oleh5230
+- Crash fix - ui_inventory.script:2201: attempt to index field 'ico' (a… 
+
+## Performance
+- grok_gotta_go_fast script performance increase
+- callbacks_gameobject optimisation crash fix
+- Updated Meatchunk prefetcher (17Gb required minimum, half NPC models …  - oleh5230
+- reduced rostok population
+- Meat spoiling performance fix (once every 10s instead of every frame)
+- Optimised inventory management and items transfers
+
+## Check ?
+- Changed items_cooking.ltx 
+- Redotix99's Walking Reanimation
+- 335- Auto-Stacking Items - Zatura disabled for performance reasons
+- Fixed stutter when pulling PDA by switching pda.calculate_rankings to… 
+
+_________________________
+
+
 # **S.T.A.L.K.E.R. G.A.M.M.A. 0.9.4 Patch Notes**  
 
 ## **Engine update**
