@@ -8,10 +8,17 @@ local step_volume = 0.5
 local gear_enabled = true
 local gear_volume = 0.5
 
--- gear rustle parameters per outfit class
--- [<outfit_class>] = {<directory_path>, <sample_number>, <directory_path2>, <sample_number2>, ... }
-gear_rustle_limit = 2
-gear_rustle = {
+local servo_volume = 0.5
+local servo_enabled = true
+local exo_count = true
+local exo_classes = {
+    ["outfit_exo_proto"]    = "light_",
+    ["outfit_exo"]          = "medium_",
+    ["outfit_exo_nosorog"]  = "medium_",
+}
+
+-- extra sounds per outfit class
+extra_sounds = {
     ["default"]             = {"cloth\\cloth_", "gear_rattle\\gear_rattle_"},
 
     ["outfit_novice"]       = {"cloth\\cloth_", "gear_rattle\\gear_rattle_"},
@@ -22,15 +29,6 @@ gear_rustle = {
     ["outfit_exo_proto"]    = {"cloth\\cloth_", "gear_rattle\\gear_rattle_"}, -- "exo-gear-light\\light_sero_", 20
     ["outfit_exo"]          = {"cloth\\cloth_", "gear_rattle\\gear_rattle_"}, --, "exo-gear-light\\light_sero_", 20
     ["outfit_exo_nosorog"]  = {"cloth\\cloth_", "gear_rattle\\gear_rattle_"}, --, "exo-gear-heavy\\heavy_servo_", 20
-}
-
-local servo_volume = 0.5
-local servo_enabled = true
-local exo_count = true
-local exo_classes = {
-    ["outfit_exo_proto"]    = "light_",
-    ["outfit_exo"]          = "medium_",
-    ["outfit_exo_nosorog"]  = "medium_",
 }
 
 -- number of footstep sound files (samples) per move state
@@ -93,34 +91,38 @@ function actor_on_footstep(material, power, hud_view, flags)
 
     local move_state, volume = "n_", 1
     move_state, volume = get_move_state()
-    -- for k,v in pairs(queues) do
-    --     local str = k
-    --     for a,b in ipairs(queues[k]) do
-    --         str = str .. b
-    --     end
-    --     print_dbg("%s", str)
-    -- end
     material = available_materials[material] or available_materials["default"]
 
-    -- play gear rustle sounds
-    if gear_enabled then
-        for i = 1, gear_rustle_limit do
-            local class = gear_rustle[outfit_class][i]
-            local weight = db.actor:get_total_weight()
-            local weight_volume = i == 1 and 0.5 or weight and clamp(weight/100, 0.25, 1) or 1
-            if class then
-                local sound = sound_object(class .. queues[class][count[class]])
-                sound:play(db.actor, 0, sound_object.s2d)
-                sound.volume = weight_volume * volume * gear_volume
-                --printf("outfit_class: %s, %s, volume: %s", outfit_class, class .. queues[class][count[class]], sound.volume)
+    -- play cloth sounds
+    local cloth = extra_sounds[outfit_class][1]
+    if cloth then
+        local sound = sound_object(cloth .. queues[cloth][count[cloth]])
+        sound:play(db.actor, 0, sound_object.s2d)
+        sound.volume = volume * step_volume * 0.75
+        --printf("%s, volume: %s", cloth .. queues[cloth][count[cloth]], sound.volume)
 
-                count[class] = count[class] + 1
-                if count[class] > limit[class] then
-                    count[class] = 1
-                    shuffle_table(queues[class])
-                end
-            else
-                break
+        count[cloth] = count[cloth] + 1
+        if count[cloth] > limit[cloth] then
+            count[cloth] = 1
+            shuffle_table(queues[cloth])
+        end
+    end
+
+    -- play gear rattle sounds
+    if gear_enabled then
+        local gear = extra_sounds[outfit_class][2]
+        local weight = db.actor:get_total_weight()
+        local weight_volume = weight and clamp(weight/100, 0.25, 1) or 1
+        if gear then
+            local sound = sound_object(gear .. queues[gear][count[gear]])
+            sound:play(db.actor, 0, sound_object.s2d)
+            sound.volume = weight_volume * volume * gear_volume
+            --printf("%s, volume: %s", gear .. queues[gear][count[gear]], sound.volume)
+
+            count[gear] = count[gear] + 1
+            if count[gear] > limit[gear] then
+                count[gear] = 1
+                shuffle_table(queues[gear])
             end
         end
     end
@@ -261,7 +263,7 @@ end
 
 available_materials = {
     ["default"]                        = "default_",
-    ["materials\\asphalt"]             = "asphalt_", -- Асфальт
+    ["materials\\asphalt"]             = "concrete_", -- Асфальт
     ["materials\\bricks"]              = "tile_", -- Кирпичная стена
     ["materials\\bush"]                = "bush_", -- Кусты, крона деревьев, камышы, листья 
     ["materials\\bush_sux"]            = "bush_", -- Кусты, крона деревьев, камышы, листья сухие
@@ -282,7 +284,7 @@ available_materials = {
     ["materials\\sand"]                = "gravel_", -- Песок, насыпь
     ["materials\\setka_rabica"]        = "metal_plate_", -- Сетка рабица, колючая проволока
     ["materials\\shifer"]              = "tile_", -- Шифер
-    ["materials\\stucco"]              = "asphalt_", -- штукатурка
+    ["materials\\stucco"]              = "concrete_", -- штукатурка
     ["materials\\tin"]                 = "metal_plate_", -- Жесть, крыша домов
     ["materials\\tree_trunk"]          = "wood_", -- Дерево (ствол)
     ["materials\\water"]               = "water_", -- Вода
