@@ -1,5 +1,27 @@
 # **GAMMA 0.9.5**
- 
+
+## General description of the update
+
+GAMMA 0.9.5 has been in development for a long time. This patch is huge; however, it doesn't really bring any major new content to the core game. These features will be developed for later patches that will bring us closer to 1.0, including: boss fights, new story content, and randomized XLabs reruns for glorious rewards through the crafting of artifacts with spatiotemporal rifting properties.
+
+Regarding performance, GAMMA now uses the test branch of the MultiThreading (MT) modification of the Anomaly engine by Demonized (currently version MT-TEST_2026.5.5). Depending on your rig, you should have much better performance overall and fewer stutters. Many performance improvements were made regarding the inventory, with the Inventory Open Lag Reducer by Sea-Ex and Inventory Antifreeze by Demonized, along with fast transfer code optimizations. Some scripts running every frame were optimized as well to use other, less demanding callbacks. Some of the newly added features impact performance slightly, and these will be investigated further after the 0.9.5 patch release.
+
+For GAMMA 0.9.5, one of the largest and long-awaited new features is the complete overhaul of all armor stats from the ground up. This includes a lot of changes that can't be documented one by one. From the hours of testing and fine-tuning, it brings better progression for armor and more involved choices for the player to find outfits that actually fit their own playstyle. There's no "best suit"; they all come with pros and cons, and it's up to how you like to play to prioritize certain types of suits. A big change was also made to the BRC system (BR Class—how bullets penetrate your armor). BRC now gives you additional multiplicative protection on top of the BR%. Bullet damage thus depends on two "defense buckets" that you can both increase based on your belt attachments. You can choose to either build your ballistic resistance around BRC and its associated mitigation (BRC Mitigation%) or simply stick to stacking BR%, or try to increase both at the same time. This new way of calculating bullet penetration makes BRC a long-lasting system that is useful to invest in and that is much easier to build than BR% regarding the crafting of artifacts.
+
+The Upgrade system has been overhauled by changing the upgrade kit tiers to be used based on weapon, armor, and helmet types: the higher the item repair tier, the higher the tier of upgrade kits needed. This means that novice and light armor, as well as type A weapons, mostly need T1 upgrade kits, while Exos and Type D weapons need more T3 upgrade kits. On top of that, most caliber conversion upgrades for guns have been changed or removed to avoid balance issues.
+
+In terms of gameplay and progression, armor repair kits have been gated a bit more, with more expensive crafting for the Heavy Repair kit and much more expensive Exo Repair kit crafting and costs. This should properly tier armor changes and put more emphasis on acquiring good armor in each tier and upgrading them based on the new upgrade logic. Also, Clear Sky and Duty are now enemies. This is accompanied by many changes to accommodate this new reality, which is based on canon STALKER Clear Sky events, with Scar choosing to align with Freedom rather than Duty in the world of GAMMA. Many changes have been brought to mutant squads and population management in relation to story progression. For one, packs of chimeras should be rarer in the north. Moreover, as you progress with the story, the south will progressively become emptier as the north gets more populated, which should improve the tasking shifts as well.
+
+Regarding tasks, dynamic task balance has been reworked across the board, with rewards depending on the targeted maps, so the further north the task, the better the rewards. Tasks also received better targeting logic to ensure actual squads are targeted by elimination tasks rather than a single individual. New tasks were added, guiding tasks are now visible on the map thanks to SaloEater, and tasks can no longer be "stolen" by other stalkers (the task is canceled without penalty because someone else took the bounty faster than you). Capture enemy document tasks cannot be on the same map as the task giver, and more.
+
+For the Hideout, based on the work of DoktorDauerfeuer, new hideout equipment with gameplay implications has been added. A trading computer that you can buy from the Ecologists and Mechanics allows you to access traders allied to your true faction in a 150m radius. Another item, the artifact harvester, allows you to place an artifact in it, which is then degraded to passively generate items, with results depending on the artifact. Outcomes range from wood parts to mutant meat to ammo crafting materials, up to... other artifacts.
+
+Guns have been improved noticeably based on the work of AndTheHeroIs through his "GAMMA Immaculate Munition Pack" (GIMP) and 3D Shader Scopes for GAMMA (3DSSG) mods, notably based on weapon models from Kmack, Meowie, and many other modders. The changes have been further tweaked and balanced for GAMMA, with a particular emphasis on weapon upgrade kits that provide nice conversions and improvements to existing "mid" weapons. For instance, a simple PM pistol can turn into a fast-firing, low-recoil, large-magazine pistol with a laser module; the Kiparis can turn into a 50-round magazine beast; and the AUG 9mm can have a long-range thermal scope for much cheaper than any other thermal kit. Many new weapons have been added to GAMMA, like the MAC10, MSBS Grot, HK23, SVT40, and more. Many weapon animations have been improved. Shotguns have been rebalanced a bit based on new models and animation sets, and sawn-offs now fit pistol slots. Moreover, 3D ballistics have been turned on by default, meaning guns will shoot where the barrel is aiming, which puts more emphasis on using lasers for hip firing. Laser rendering has been improved based on the Laser Settings addon by Borksy, which makes the laser size change and dim based on target distance. Weapon handling has been changed thanks to the work of Verdatim: swapping to pistols is now much faster than swapping to other guns, and aiming down sights plays a little shouldering animation with a speed depending on the gun type, handling stat, and weapon weight. Gun repair types have been changed a bit. Finally, using a new engine feature, UBGL usage is now tied to a specific key: Left Alt.
+
+The audio was improved with better gun and inventory sounds by Oleh, as well as indoor spatial audio with reverb according to room size.
+
+As usual, many, many bugfixes were made, with important fixes to how artifact crafting is handled to avoid weird crafting results and how artifacts are managed regarding tasks to avoid fully upgraded, equipped artifacts being handed over to NPCs.
+
 ## Engine
 - MT-TEST_2026.5.5 Engine version by Demonized
 - Disabled 1st Person Legs mod to use In Engine version instead
@@ -8,7 +30,7 @@
 - Spatial Audio Rework by Kute (indoor reverb)
 - Dark Signal Amplified Footsteps Extended by Shrike
 - Addition GIMP to the modlist
-- Procedural Movement Animations - party_50 + The Doctor CoP style move…
+- Procedural Movement Animations - party_50 + The Doctor CoP style movement animation
 - NPE update to v0.2.10
 - Scrunkly's Collection of Mods added
 - Inventory Open Lag Reducer by Sea-Ex added
@@ -26,22 +48,22 @@
 - TARP Tent Apparatus Remains Positioned - zorius added
 - Precomputed Gasmask Noise - SoulCrystal & LVutner added
 - Tasks Guide Spot - SaloEater added
-- Custom iTheon's PDA Taskboard - lizzardman added with a slightly bett… 
+- Custom iTheon's PDA Taskboard - lizzardman added with a slightly better UI 
 - Voiced Actor Refined and related improvements - SaloEater
 - Squad Filler - xcvb added
 - Non linear ADS added with MCM config
 - Alife plus and xlib - damian_sirbu + MCM setup
 - Cypret's SafeSpawn added, replaces Spawning Shenanigans Prevention
-- Interaction Dot Marks enabled again since the performance impact is n… 
+- Interaction Dot Marks enabled again since the performance impact is now mostly fixed
 - Fast Pistol Swap - Verdatim added
 - Escape From Tarkov MTS-255 Shotgun Revolver - frostychun added as 20x70 accurate shotgun
 - A_triangle's NPC Weapon Position Tweak added
-- Billwa's Weapon Collection + MAC10 Quality Control added for MAC10 (9… 
+- Billwa's Weapon Collection + MAC10 Quality Control added for MAC10 as 9x18 
 - tetrider_craft_from_stashes.v1.0.3
 - SVT-40 'n AVT-40 by Blackgrowl added
 - MSBS Grot - Bert added
 - Uzi family - SoulCrystal added
-- Fair Autocomplete Tasks Enhanced - Priler added + MCM config (cancels… 
+- Fair Autocomplete Tasks Enhanced - Priler added + MCM config (cancels bounty tasks in which you weren't involved)
 
 ## Audio
 - Distant gunfire audio rework @oleh5230
@@ -90,12 +112,12 @@
 	- script to set clear sky living legend path to alt
 	- No more csky in Rostok
 	- Duty and Army now occupies zat_b5 smart (Ranger Station)
-	- Cheap Swamp guide routes to Yantar and Jupiter instead of Bar and Agr… 
+	- Cheap Swamp guide routes to Yantar and Jupiter instead of Bar and Agroprom
 	- Marsh guide text edits
 	- Fixed Dolg <> Csky relations for actor and drx questline honcho pick
-	- Better introduction to main quest by Vorinin since Clear Sky and Duty… 
+	- Better introduction to main quest by Vorinin
 - Upgrades Overhaul:
-	- Upgrades kits needed overhaul based on armor, helmet and weapons repa… 
+	- Upgrades kits needed overhaul based on armor, helmet and weapons repair type
 	- MP7, SVDS, SVD and Chim Hunter upgrade trees changed
 	- SVT Upgrade changes (no 7.62x39, no 7.62x54PP)
 	- Durability upgrades reduce armor degradation
@@ -106,7 +128,7 @@
 	- Artefacts despawn after 5 in game days if not picked (considered stuck)
 	- Much higher chance of dynamic anomalies artefacts spawn, but more T0 artefacts spawn there
 - Edited transparency threshold for stalkers so it's not as easy for NPCs to shoot the player through bushes while remaining balanced.
-- Block food/drinks consumption instead of auto-unequipping helmet (FDD… 
+- Block food/drinks consumption instead of auto-unequipping helmet if FDDA helmet restriction is activated. 
 - Decoy phantoms spawn when psy health is low but they do not cause Psy damage (spooks) - SaloEater
 - Increased range to be able to save around campfires
 
@@ -116,7 +138,7 @@
 	- max res caps to 90%
 	- BRC Mitigation limited to 90% max
 	- Remove BR% from plates, added strike res to higher tiers
-	- Boar pelt gives +2BRC, +4% BRC mitigation, Pseudogiant pelt gives +4/+8%
+	- Boar pelt and  Pseudogiant pelt give BRC and BRC mitigation
 	- Kogot and Ear give +3% BRC premitigation each (stacks)
 	- BR Class Premitigation stat display in inventory
 - Artefacts rebalance:
@@ -124,11 +146,11 @@
 	- Compass BR% cap increased by 5% to 15%
 	- Slight boost to regular field artefacts spawn
 - Mutant and NPC Spawns rebalance:
-	- Chimera duo/trio replaced by 1 chimera + 2 pseudodogs, stronger chime… 
+	- Chimera duo/trio replaced by 1 chimera + 2 pseudodogs
 	- More pseudodogs in the north
 	- Bit more pseudodogs in TC
 	- Bit more renegades in the north start maps
-	- South chimera are easier (weak, normal or normal2), north chimera are… 
+	- South chimera are easier (weak, normal or normal2), north chimera are stronger
 - Reduce machine gun turrets accuracy - oleh5230
 - Few changes to scopes availability in Nato vs WP
 - Proper armors stash tiers with the rebalance
@@ -151,20 +173,20 @@
 
 ## Crafting
 - Exo batteries craft recipe from gauss ammo
-- Glowsticks and tarpaulin give plastic. Fieldcooker gives more scraps … 
-- Less plastic needed for medkits, no plastic for stimpaks, syr… 
+- Glowsticks and tarpaulin give plastic. Fieldcooker gives more scraps
+- Less plastic needed for medkits, no plastic for stimpaks, syringe etc
 - Metal mags give much more paper
 - Crafting artefact using low cond artefact fix
 - Artefacts on Belt cannot be used for crafting
-- Artefact melter does not use belt artefacts and the UI properly reset… 
-- Increased wood parts from items disassembly (easier hideout furniture…  - oleh5230
+- Artefact melter does not use belt artefacts and the UI properly reset
+- Increased wood parts from items disassembly (easier hideout furniture crafting)  - oleh5230
 
 ## Economy
 - Reduced prices of most gun upgrade kits
 - Balanced scopes prices with the help of lemon041339_12708
 - Parts added to gunsmith and medic toolkits
 - Ecologs sell Gauss Ammo at Supply Tier 4
-- Gauss Ammo alternative crafting recipe (1 ring or 2 dummy_battery for… 
+- Gauss Ammo alternative crafting recipes
 - trading_computer added to several traders including mechanics, at var… 
 - 9mm silencer at WP traders
 - Increased price of T3 artefact recipe book (36k > 99k)
@@ -212,6 +234,16 @@
 - Catspaw's Timed Tutorial Prompts added and configured for GAMMA Tutorials. The player will now be able to choose to check the bey pressing a keybind, or ignore them or dimiss them. 
 - Render Distance disclaimer update - oleh5230
 
+
+## Performance
+- grok_gotta_go_fast script performance increase
+- callbacks_gameobject optimisation crash fix
+- Updated Meatchunk prefetcher (17Gb required minimum)
+- reduced rostok population
+- Meat spoiling performance fix (once every 10s instead of every frame)
+- Optimised inventory management and items transfers
+
+
 ## Bugfix
 
 - 265- NPCs Die in Emissions for Real - TheMrDemonized Disabled, could … 
@@ -248,7 +280,7 @@
 - Removed smart reticle by default
 - pda.script line 524 crash fix
 - Afterglow crash fix disabled by default to avoid issues
-- fixed xr_meet.script(462) crash and disabled trading for all NPCs (tr… 
+- fixed xr_meet.script(462) crash and disabled trading for all NPCs
 - aol_anim_transitions:145 crash fix - oleh5230
 - Better Artefacts Hunter Russian text by demyanich and english transla… 
 - dotmarks/dmarkmods/hf_add_primary_pickup = false to avoid pickup ani… 
@@ -258,20 +290,6 @@
 - tasks_measure.se_target crash fix - oleh5230
 - surge_manager_ignore_npc crash fix - oleh5230
 - Crash fix - ui_inventory.script:2201: attempt to index field 'ico' (a… 
-
-## Performance
-- grok_gotta_go_fast script performance increase
-- callbacks_gameobject optimisation crash fix
-- Updated Meatchunk prefetcher (17Gb required minimum, half NPC models …  - oleh5230
-- reduced rostok population
-- Meat spoiling performance fix (once every 10s instead of every frame)
-- Optimised inventory management and items transfers
-
-## Check ?
-- Changed items_cooking.ltx 
-- Redotix99's Walking Reanimation
-- 335- Auto-Stacking Items - Zatura disabled for performance reasons
-- Fixed stutter when pulling PDA by switching pda.calculate_rankings to… 
 
 _________________________
 
