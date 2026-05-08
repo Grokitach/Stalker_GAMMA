@@ -18,7 +18,7 @@ For the Hideout, based on the work of DoktorDauerfeuer, new hideout equipment wi
 
 Guns have been improved noticeably based on the work of AndTheHeroIs through his "GAMMA Immaculate Munition Pack" (GIMP) and 3D Shader Scopes for GAMMA (3DSSG) mods, notably based on weapon models from Kmack, Meowie, and many other modders. The changes have been further tweaked and balanced for GAMMA, with a particular emphasis on weapon upgrade kits that provide nice conversions and improvements to existing "mid" weapons. For instance, a simple PM pistol can turn into a fast-firing, low-recoil, large-magazine pistol with a laser module; the Kiparis can turn into a 50-round magazine beast; and the AUG 9mm can have a long-range thermal scope for much cheaper than any other thermal kit. Many new weapons have been added to GAMMA, like the MAC10, MSBS Grot, HK23, SVT40, and more. Many weapon animations have been improved. Shotguns have been rebalanced a bit based on new models and animation sets, and sawn-offs now fit pistol slots. Moreover, 3D ballistics have been turned on by default, meaning guns will shoot where the barrel is aiming, which puts more emphasis on using lasers for hip firing. Laser rendering has been improved based on the Laser Settings addon by Borksy, which makes the laser size change and dim based on target distance. Weapon handling has been changed thanks to the work of Verdatim: swapping to pistols is now much faster than swapping to other guns, and aiming down sights plays a little shouldering animation with a speed depending on the gun type, handling stat, and weapon weight. Gun repair types have been changed a bit. Finally, using a new engine feature, UBGL usage is now tied to a specific key: Left Alt.
 
-The audio was improved with better gun and inventory sounds by Oleh, as well as indoor spatial audio with reverb according to room size.
+The audio was improved with better gun and inventory sounds by Oleh, new movement sounds, as well as indoor spatial audio with reverb according to room size.
 
 As usual, many, many bugfixes were made, with important fixes to how artifact crafting is handled to avoid weird crafting results and how artifacts are managed regarding tasks to avoid fully upgraded, equipped artifacts being handed over to NPCs.
 
@@ -66,16 +66,16 @@ As usual, many, many bugfixes were made, with important fixes to how artifact cr
 - Fair Autocomplete Tasks Enhanced - Priler added + MCM config (cancels bounty tasks in which you weren't involved)
 
 ## Audio
-- Distant gunfire audio rework @oleh5230
-- GAMMA Weapon Sounds updated to version 3.0.4 @oleh5230
-- Added item disassembly, weapon attachments and ladder climbing sounds @oleh5230
-- Fixed item pickup sounds playing during FDDA animations, reloads etc. @oleh5230 
-- New inventory and player movement audio @oleh5230
-- New bullet crack and weapon rattle sounds @oleh5230
+- Distant gunfire audio rework - oleh5230
+- GAMMA Weapon Sounds updated to version 3.0.4 - oleh5230
+- Added item disassembly, weapon attachments and ladder climbing sounds - oleh5230
+- Fixed item pickup sounds playing during FDDA animations, reloads etc. - oleh5230 
+- New inventory and player movement audio - oleh5230
+- New bullet crack and weapon rattle sounds - oleh5230
 - Consumable animation sounds by Shrike - oleh5230
-- "Gunfire Volume" setting slider - oleh5230
+- Added "Gunfire Volume" setting slider - oleh5230
 - Removed some ambient soundtracks - oleh5230
-- More common SanctusSyntH tracks
+- More common SanctusSyntH ambient tracks
 
 ## Visual
 - reverting hands to old THAP to have better match with body armors
@@ -86,36 +86,33 @@ As usual, many, many bugfixes were made, with important fixes to how artifact cr
 - Heavily reduced recoil of AUG 9x19 and made it more rare (same as mp5sd)
 - Buffed 9x18 caliber (more damage, bit less pen)
 - Rebalanced some 9x18 pistols and some 9x19 smg recoil
-- Stakeout 20x70 recoil reduce
+- Ithaca M37 Stakeout 20x70 recoil and dispersion reduced
 - Draco ISG aim animation fix
 - UBGL key to LALT
 - vssk aim fix for new 3DSSG version
-- Manual action guns RoF update - oleh5230
 - UDP9 RPM increase
 - Better static breathing animation speed for guns
 - Laser Settings Default config for all guns
-- Sawn offs in pistol slot but with higher dispersion
-- Global weapon sprint transition animation fix
+- Sawn-offs in pistol slot but with higher dispersion
+- Global weapon sprint transition animation fix - oleh5230
 - Buffed RAPTR across the board
-- mosin slight rebalance
-- reduced stakeout dispersion
-- Jam Probability differs between weapon depending on RPM - oleh5230
-- Glock 19 has 15 rounds now
-- svt as C type again
+- Mosin slight rebalance
+- Jam Probability differs between weapons - oleh5230
+- Glock 19 has 15 rounds magazine size now
+- SVT-40 added as C type rifle
 - Reduced MP412 hipfire recoil
 - MP5K rework (only FMJ rounds, kit at nato lv2)
-- CAR15 has 700 RPM
-- Rebalanced shotguns a bit (MP153, MP155, MP133, Remington)
+- CAR-15 RPM reduced to 700
+- Rebalanced shotguns a bit (MP153, MP155, MP133, Remington 870)
 
 ## Gameplay
 - Clear Sky and Duty are now enemies
-	- script to set clear sky living legend path to alt
 	- No more csky in Rostok
 	- Duty and Army now occupies zat_b5 smart (Ranger Station)
 	- Cheap Swamp guide routes to Yantar and Jupiter instead of Bar and Agroprom
 	- Marsh guide text edits
 	- Fixed Dolg <> Csky relations for actor and drx questline honcho pick
-	- Better introduction to main quest by Vorinin
+	- Better introduction to main quest by Voronin
 - Upgrades Overhaul:
 	- Upgrades kits needed overhaul based on armor, helmet and weapons repair type
 	- MP7, SVDS, SVD and Chim Hunter upgrade trees changed
@@ -157,12 +154,10 @@ As usual, many, many bugfixes were made, with important fixes to how artifact cr
 - SVD SVU Type D + faster RPM + a bit more common
 - SVD as tier 3 in stashes
 - Bit more rare SV98 because of the integrated scope
-- TOZ106 as Type A repair
-- more rare BRN
+- TOZ-106 as Type A repair
+- more rare BRN-180
 - Poltergeists as predatory_day + bigger squads + more common flame polter
-- wpn_rpk74_16_drum as D tier
-- MAC10 repair type as shotgun
-- Mac10 convert to 9x19 instead of .45
+- RPK-16 Drum LMG as D tier
 
 ## UI
 - Removed damage stats from gun display
@@ -179,7 +174,7 @@ As usual, many, many bugfixes were made, with important fixes to how artifact cr
 - Crafting artefact using low cond artefact fix
 - Artefacts on Belt cannot be used for crafting
 - Artefact melter does not use belt artefacts and the UI properly reset
-- Increased wood parts from items disassembly (easier hideout furniture crafting)  - oleh5230
+- Increased wood parts from items disassembly (easier hideout furniture crafting)
 
 ## Economy
 - Reduced prices of most gun upgrade kits
@@ -190,7 +185,7 @@ As usual, many, many bugfixes were made, with important fixes to how artifact cr
 - trading_computer added to several traders including mechanics, at var… 
 - 9mm silencer at WP traders
 - Increased price of T3 artefact recipe book (36k > 99k)
-- Increased cost and crafting cost of type D cleaning kit and repair ki… 
+- Increased cost and crafting cost of type D cleaning kit and repair kit
 - Increase exo and heavy repair kits costs and crafting costs
 - Removed AI packs from Ecolog traders
 - Bit less armors in stashes
@@ -198,7 +193,7 @@ As usual, many, many bugfixes were made, with important fixes to how artifact cr
 ## Progression
 - Randomized Agroprom Underground entrance - oleh5230
 - Starting Loadouts changes:
-	- MT255 for Duty, Bandit and Renegade, at 600, Stakeout for loner at 550  - oleh5230
+	- MT255 for Duty, Bandit and Renegade, at 600, Stakeout for loner at 550
 	- No glock hornet for freedom in starting loadout
 	- Rebalanced starting loadout armors
 	- Reworked all starting loadout pistols for each faction
@@ -221,19 +216,16 @@ As usual, many, many bugfixes were made, with important fixes to how artifact cr
 - Reduced green parts chance, reduced jam chance
 - More ammo for sale at north traders
 - Less random weapon parts degradation - oleh5230
-- Slower barrel degradation - oleh5230
 - Much less tanky ghost zombie from swamp quest
 - Goodwill decrease for opposite faction on task completion improved an… 
 - harsher goodwill penalties for freedom <> dolg tasks
 - Patches are worth a bit more money and can be sold for a higher price… 
-- KS23s as C tier - oleh5230
+- KS23s as C tier
 - Slightly easier expert tools in the north
 - drug kits spawn more in the south in yellow stashes, ammo kit a bit m… 
 
 ## Tutorials
 - Catspaw's Timed Tutorial Prompts added and configured for GAMMA Tutorials. The player will now be able to choose to check the bey pressing a keybind, or ignore them or dimiss them. 
-- Render Distance disclaimer update - oleh5230
-
 
 ## Performance
 - grok_gotta_go_fast script performance increase
@@ -243,26 +235,22 @@ As usual, many, many bugfixes were made, with important fixes to how artifact cr
 - Meat spoiling performance fix (once every 10s instead of every frame)
 - Optimised inventory management and items transfers
 
-
 ## Bugfix
 
-- 265- NPCs Die in Emissions for Real - TheMrDemonized Disabled, could … 
+- 265- NPCs Die in Emissions for Real - TheMrDemonized Disabled
 - Fix medics dropping trade inventories as loot - oleh5230
 - Fixed Sin increased AP res (10%)
 - Starting locations text fixes
 - Remove Nosorog despawn latency - oleh5230
-- arti_jamming:587 tentative crash fix - oleh5230
 - potential crash fix for Useful Idiots
 - smart_terrain.script:1491 crash fix
 - Fix for weapon section identification in grok_bo.script 
-- smart_terrain.script:1492 crash fix - oleh5230
 - fix Vinca overriding bandage effect
 - UI PDA Taskboard fixes (long tasks scroll + fixed overlapping text)
-- potential fix for bug with crafted artefacts not being at the right c… 
 - Fixed some north smart terrains spawns
 - Better seed system for loot stabilizer
 - prevent infinity time event loops
-- Replace negative complete_task_inc_goodwill with complete_task_dec_go…  - ProTriforcer
+- Replace negative complete_task_inc_goodwill with complete_task_dec_goodwill - ProTriforcer
 - Add complete_task_dec_goodwill to xr_effects.script - SaloEater
 - Fixed log spam error tasks_recover_item_on_corpse line 102 kill_if_on… 
 - Stop other tools working as basickit - FoxEternal
@@ -271,25 +259,21 @@ As usual, many, many bugfixes were made, with important fixes to how artifact cr
 - special character ' fix in certain st_quests_general.xml dialogues
 - tasks 123 124 125 russian translation
 - Disabled safe artifact melting since artefacts don't emit rads anymore
-- tasks 123 124 125 description in russian and english
-- Weapon trade blacklist update
 - Fixed rare crash when semenov dies during his task
 - fix for error smr_loot.script:345
-- arti_jamming:475 crash fix
-- Weapon Cover Tilt fix for activation after sprint and during sprint b… 
+- Weapon Cover Tilt fix for activation after sprint and during sprint
 - Removed smart reticle by default
 - pda.script line 524 crash fix
 - Afterglow crash fix disabled by default to avoid issues
 - fixed xr_meet.script(462) crash and disabled trading for all NPCs
-- aol_anim_transitions:145 crash fix - oleh5230
 - Better Artefacts Hunter Russian text by demyanich and english transla… 
 - dotmarks/dmarkmods/hf_add_primary_pickup = false to avoid pickup ani… 
 - Potential fix for pda.script:524 crash, likely from AlifePlus debug.
 - xr_danger potential crash fix & swedenvikings21
-- task_functor:391 crash fix - oleh5230
-- tasks_measure.se_target crash fix - oleh5230
-- surge_manager_ignore_npc crash fix - oleh5230
-- Crash fix - ui_inventory.script:2201: attempt to index field 'ico' (a… 
+- task_functor:391 tentative crash fix - oleh5230
+- tasks_measure.se_target tentative crash fix - oleh5230
+- get_jam_status tentative crash fix - oleh5230
+- ui_inventory:2201 crash fix
 
 _________________________
 
@@ -513,36 +497,36 @@ _________________________
 - Update dialogs_lostzone.script from UNISG Trader fix  @FoxEternal
 - Update tm_mlr.ltx from Anomaly, replace arti-box  @FoxEternal
 - Multiple toolkits in fetch tasks fix attempt
-- Gun unjam animation interruption fix @oleh5230
-- anim length hotfix @oleh5230
-- Unjam anim fix: speed modifiers support @oleh5230
-- Unjam anim fix: motion marks support @oleh5230
-- Unjam anim fix: cancel unjam if gun is holstered @oleh5230
-- RF packages permanent freezes fix @oleh5230
+- Gun unjam animation interruption fix - oleh5230
+- anim length hotfix - oleh5230
+- Unjam anim fix: speed modifiers support - oleh5230
+- Unjam anim fix: motion marks support - oleh5230
+- Unjam anim fix: cancel unjam if gun is holstered - oleh5230
+- RF packages permanent freezes fix - oleh5230
 - BAS Saiga Reanimation installation fix 
 - Once again hides the accept button for buggy tasks. @Serious
-- Dark Valley Bandit Base FPS optimisation as an optionnal addon (the boost isn't tremendous and the base becomes very dark) @oleh5230
+- Dark Valley Bandit Base FPS optimisation as an optionnal addon (the boost isn't tremendous and the base becomes very dark) - oleh5230
 - Fixes Black Market crash @Serious
 - Fixes Black Market exploit. @Serious
 - Fixes crash when trying to use mechanic vice while ZCP is turned off. @Serious
-- Fixed missing RPK-16 parts for DX9 @oleh5230
-- Saiga Reanimation sprint anim patch @oleh5230
-- Walther P99 sprint anim fix @oleh5230
+- Fixed missing RPK-16 parts for DX9 - oleh5230
+- Saiga Reanimation sprint anim patch - oleh5230
+- Walther P99 sprint anim fix - oleh5230
 - Better stats bar moved to disabled category
 - Thicc russian reticles disabled by default because of certain conflicts
 - Guns have their condition set properly to 83% when moved to player inventory
-- @oleh5230 fixed RPG NPCs prioritizing pistols
+- - oleh5230 fixed RPG NPCs prioritizing pistols
 - Fix for starting guns being damaged
-- @oleh5230 TCWP for DX9 free zoom fix
-- @oleh5230 Saiga-12 shell_bone fatal error fix
-- @oleh5230 X-16 companion NPC fatal error fix by Longreed
-- @oleh5230 OTs-4 knife stats fix
+- - oleh5230 TCWP for DX9 free zoom fix
+- - oleh5230 Saiga-12 shell_bone fatal error fix
+- - oleh5230 X-16 companion NPC fatal error fix by Longreed
+- - oleh5230 OTs-4 knife stats fix
 - Better Quickdraw spawn_antifreeze fix @Demonized
-- @oleh5230 Include addon items in trade presets
+- - oleh5230 Include addon items in trade presets
 - FDDAR Patches for DX9 and when not using Beef's NVGs
 - @lulnope fix disguise issue where NPCs aggro after losing disguise even if the… 
 - @MyNameIsAnon Spleen no longer asks for additional Expert Tools 
-- @oleh5230 Saiga-12 TPP position fix
+- - oleh5230 Saiga-12 TPP position fix
 - Better GAMMA Disabled and End of Modlist Separators
 - FDDAR No BNVG compatibility fix
 
