@@ -497,36 +497,36 @@ _________________________
 - Update dialogs_lostzone.script from UNISG Trader fix  @FoxEternal
 - Update tm_mlr.ltx from Anomaly, replace arti-box  @FoxEternal
 - Multiple toolkits in fetch tasks fix attempt
-- Gun unjam animation interruption fix - oleh5230
-- anim length hotfix - oleh5230
-- Unjam anim fix: speed modifiers support - oleh5230
-- Unjam anim fix: motion marks support - oleh5230
-- Unjam anim fix: cancel unjam if gun is holstered - oleh5230
-- RF packages permanent freezes fix - oleh5230
+- Gun unjam animation interruption fix @oleh5230
+- anim length hotfix @oleh5230
+- Unjam anim fix: speed modifiers support @oleh5230
+- Unjam anim fix: motion marks support @oleh5230
+- Unjam anim fix: cancel unjam if gun is holstered @oleh5230
+- RF packages permanent freezes fix @oleh5230
 - BAS Saiga Reanimation installation fix 
 - Once again hides the accept button for buggy tasks. @Serious
-- Dark Valley Bandit Base FPS optimisation as an optionnal addon (the boost isn't tremendous and the base becomes very dark) - oleh5230
+- Dark Valley Bandit Base FPS optimisation as an optionnal addon (the boost isn't tremendous and the base becomes very dark) @oleh5230
 - Fixes Black Market crash @Serious
 - Fixes Black Market exploit. @Serious
 - Fixes crash when trying to use mechanic vice while ZCP is turned off. @Serious
-- Fixed missing RPK-16 parts for DX9 - oleh5230
-- Saiga Reanimation sprint anim patch - oleh5230
-- Walther P99 sprint anim fix - oleh5230
+- Fixed missing RPK-16 parts for DX9 @oleh5230
+- Saiga Reanimation sprint anim patch @oleh5230
+- Walther P99 sprint anim fix @oleh5230
 - Better stats bar moved to disabled category
 - Thicc russian reticles disabled by default because of certain conflicts
 - Guns have their condition set properly to 83% when moved to player inventory
-- - oleh5230 fixed RPG NPCs prioritizing pistols
+- @oleh5230 fixed RPG NPCs prioritizing pistols
 - Fix for starting guns being damaged
-- - oleh5230 TCWP for DX9 free zoom fix
-- - oleh5230 Saiga-12 shell_bone fatal error fix
-- - oleh5230 X-16 companion NPC fatal error fix by Longreed
-- - oleh5230 OTs-4 knife stats fix
+- @oleh5230 TCWP for DX9 free zoom fix
+- @oleh5230 Saiga-12 shell_bone fatal error fix
+- @oleh5230 X-16 companion NPC fatal error fix by Longreed
+- @oleh5230 OTs-4 knife stats fix
 - Better Quickdraw spawn_antifreeze fix @Demonized
-- - oleh5230 Include addon items in trade presets
+- @oleh5230 Include addon items in trade presets
 - FDDAR Patches for DX9 and when not using Beef's NVGs
 - @lulnope fix disguise issue where NPCs aggro after losing disguise even if the… 
 - @MyNameIsAnon Spleen no longer asks for additional Expert Tools 
-- - oleh5230 Saiga-12 TPP position fix
+- @oleh5230 Saiga-12 TPP position fix
 - Better GAMMA Disabled and End of Modlist Separators
 - FDDAR No BNVG compatibility fix
 
