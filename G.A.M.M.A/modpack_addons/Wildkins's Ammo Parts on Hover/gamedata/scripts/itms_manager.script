@@ -33,6 +33,7 @@ ini_reward = ini_file("items\\settings\\item_rewards.ltx")
 ini_ammo = ini_file("items\\ammo\\ammo_vanilla.ltx")
 ini_ammo_bas = ini_file("items\\ammo\\ammo_bas.ltx")
 
+local level_object_by_id = level.object_by_id
 local n = 0
 local result,id,value = "","",""
 local string_find = string.find
@@ -714,7 +715,7 @@ function new_game_equippment()
 	local start_wpn_tbl = alife_storage_manager.get_state().start_wpn_ammo
 	if start_wpn_tbl then
 		for id, ammo_sec in pairs(start_wpn_tbl) do
-			local wpn = level.object_by_id(id)
+			local wpn = level_object_by_id(id)
 			if wpn then
 				local ammo_list = utils_item.get_ammo(wpn:section(), wpn:id())
 				local ammo_type
@@ -987,7 +988,7 @@ function relocate_item_to_actor(actor, npc, section, amount)
 		local id
 		if not is_empty(npc_inv) then
 			local id_pick = random_key_table(npc_inv)
-			local obj = id_pick and level.object_by_id(id_pick)
+			local obj = id_pick and level_object_by_id(id_pick)
 			if obj then
 				npc:transfer_item(obj, actor)
 				npc_inv[id_pick] = nil
@@ -1119,7 +1120,7 @@ function play_item_sound(item, vol)
 	end
 
 	local time_g = time_global()
-	if snd_obj and (time_g > time_snd_prev + 25) then
+	if snd_obj and (time_g > time_snd_prev + 75) then
 		snd_obj:play(db.actor,0,sound_object.s2d)
 		snd_obj.volume = vol or 1
 	end
@@ -1167,7 +1168,7 @@ end
 function ItemProcessor:update()
 	-- Process Condition
 	for id,con in pairs(self.Cond) do
-		local obj = level.object_by_id(id)
+		local obj = level_object_by_id(id)
 		if obj then
 			if self.Debug then
 				printf("* ItemProcessor | processing condition | id: %s - con: %s", id, con)
@@ -1196,7 +1197,7 @@ function ItemProcessor:update()
 	
 	-- Process Uses
 	for id,uses in pairs(self.Uses) do
-		local obj = level.object_by_id(id)
+		local obj = level_object_by_id(id)
 		if obj then
 			if self.Debug then
 				printf("* ItemProcessor | processing uses | id: %s - uses: %s", id, uses)
@@ -1224,7 +1225,7 @@ function ItemProcessor:update()
 	
 	-- Process Ammo
 	for id,ammo in pairs(self.Ammo) do
-		local obj = level.object_by_id(id)
+		local obj = level_object_by_id(id)
 		if obj then
 			if self.Debug then
 				printf("* ItemProcessor | processing ammo | id: %s - ammo: %s", id, ammo)
@@ -1427,7 +1428,7 @@ function ItemProcessor:Remove_Process(id, mark, str)
 		self.Remove[id] = nil
 		
 		if self.Debug then
-			local obj = level.object_by_id(id)
+			local obj = level_object_by_id(id)
 			local p = obj and obj:parent()
 			printf("%s ItemProcessor | %s: (%s) [%s] - owner: (%s) [%s]", mark, str, id, obj and obj:section(), p and p:id() or "-", p and p:section())
 		end

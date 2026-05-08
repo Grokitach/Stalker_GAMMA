@@ -1,0 +1,66 @@
+local frame_of_last_hit = 0
+local max_time_before_resetting = 5000
+local clicks_left = 0
+local delta_rads = 0
+local rads_last_frame = 0
+local rads = 0
+
+local valid_fields = {
+	["zone_field_radioactive"] = true,
+	["zone_field_radioactive_very_weak"] = true,
+	["zone_field_radioactive_weak"] = true,
+	["zone_field_radioactive_below_average"] = true,
+	["zone_field_radioactive_average"] = true,
+	["zone_field_radioactive_above_average"] = true,
+	["zone_field_radioactive_strong"] = true,
+	["zone_field_radioactive_lethal"] = true,
+	["zone_radioactive"] = true,
+	["zone_radioactive_very_weak"] = true,
+	["zone_radioactive_weak"] = true,
+	["zone_radioactive_below_average"] = true,
+	["zone_radioactive_average"] = true,
+	["zone_radioactive_above_average"] = true,
+	["zone_radioactive_strong"] = true,
+	["zone_radioactive_lethal"] = true
+}
+
+local function actor_in_field(s_hit)
+	local field = s_hit.draftsman
+	if valid_fields[field:section()] or load_var(db.actor,"grw_in_water") == true then
+		--printf("actor is in valid field or is standing in water")
+		
+		if game_difficulties.get_game_factor("notify_geiger") then
+			local obj_geiger = device_geiger and db.actor:object(device_geiger)
+			if not (obj_geiger and item_device.is_device_charged(db.actor:object(device_geiger))) then
+				--printf("geiger requirement is enabled but actor does not have functioning geiger")
+				return
+			end
+		end
+		
+		rads = math.floor(3869 * db.actor.radiation)
+		delta_rads = rads - rads_last_frame
+		clicks_left = delta_rads*5
+		rads_last_frame = rads
+		printf(time_global() - frame_of_last_hit)
+		frame_of_last_hit = time_global()
+	end
+end
+
+local function make_some_noise()
+	if (clicks_left > 0) then
+		printf("actor gaining rads, panicking...")
+		utils_obj.play_sound("detectors\\geiger_" .. math.random(8))
+		clicks_left = clicks_left - 1
+	end
+	
+	if (time_global() > (frame_of_last_hit+max_time_before_resetting)) then
+		rads_last_frame = math.floor(3869 * db.actor.radiation)
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_before_hit", actor_in_field)
+	RegisterScriptCallback("actor_on_update", make_some_noise)
+	
+	device_geiger = ini_file("items\\settings\\devices.ltx"):r_sec_ex("settings","geiger","detector_geiger")
+end

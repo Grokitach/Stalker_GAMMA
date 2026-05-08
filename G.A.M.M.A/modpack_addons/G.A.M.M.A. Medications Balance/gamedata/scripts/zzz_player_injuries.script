@@ -20,6 +20,7 @@ local effects_mult = 1 -- Divide this by maxhp and damagescale multipliers. Exam
 local prev_time = nil
 local head_tbl = {}
 local tinnitus_play = false
+local chance_damage_on_footstep = zzz_player_injuries_mcm.get_config("chance_damage_on_footstep")
 
 function save_state(m_data)
     m_data.head_tbl = head_tbl
@@ -41,6 +42,7 @@ function on_option_change()
 	if r(head_tbl.volume) ~= r(ui_options.get("sound/general/master_volume")) then
 		head_tbl.volume = (ui_options.get("sound/general/master_volume"))
 	end
+	chance_damage_on_footstep = zzz_player_injuries_mcm.get_config("chance_damage_on_footstep")
 end
 
 -- shameful steal from arti
@@ -681,8 +683,10 @@ function actor_on_hit_callback(bone_id)
     printf("! actor got hit in %s, id %s",text, bone_id)
 end
 
-local function recieved_damage(amount)
+function recieved_damage(amount, bone_id)
 	if grok_progressive_rad_damages.grok_rads == 1 then return end
+	
+	actor_on_hit_callback(bone_id)
 
 	local index=0
 	for k,v in pairs(health) do
@@ -1278,23 +1282,9 @@ local function actor_on_footstep(material,power,hud_view,flags)
 		hit_power = (l_leg_power + r_leg_power) / 2
 
 	--	printf("hit_power: " .. (hit_power))
-		local file
-		local sound_play = math.random(1,100)
-		if (hit_power > 0) and (state_cooldown < time_global()) and (sound_play <= 13) then
-			if zzz_player_injuries_mcm.get_config("new_voice_sounds") then
-				local helmet = (db.actor:item_in_slot(12) or db.actor:get_current_outfit())
-				if helmet then
-					muffle = ""
-				else
-					muffle = ""
-				end
-				file = "bhs\\" .. muffle .. "pain_" .. sound_play
-			else
-				file = "actor\\pain_" .. sound_play
-			end
-
-			file_to_say = sound_object( file )
-			file_to_say:play(db.actor,0,sound_object.s2d)
+		local chance_to_damage = math.random(1,100)
+		if (hit_power > 0) and (state_cooldown < time_global()) and (chance_to_damage <= chance_damage_on_footstep) then
+			play_actor_on_footstep_voice_over()
 
 			level.add_pp_effector("blur_bhs.ppe", math.random(655808, 655820), false)
 
@@ -1307,6 +1297,24 @@ local function actor_on_footstep(material,power,hud_view,flags)
 	end
 
 
+end
+
+function play_actor_on_footstep_voice_over()
+	local sound_play = math.random(1,13)
+	if not zzz_player_injuries_mcm.get_config("new_voice_sounds") then
+		file = "actor\\pain_" .. sound_play
+	else
+		local helmet = (db.actor:item_in_slot(12) or db.actor:get_current_outfit())
+		if helmet then
+			muffle = "m_"
+		else
+			muffle = ""
+		end
+		file =  "bhs\\" .. muffle .. "pain_" .. sound_play
+	end
+
+	file_to_say = sound_object( file )
+	file_to_say:play(db.actor,0,sound_object.s2d)
 end
 ------------------------------------------------------------------------------------------
 ------------------------------------------------------------------------------------------
@@ -1489,11 +1497,11 @@ function actor_on_update()
 	--actor_menu.set_msg("width:"..device().width.." height:"..device().height)
 		local newhealth=db.actor.health
 		local amount=myhealth-newhealth
-		if amount>0.0293 then
-			recieved_damage(amount)
-			--printf("! %s",amount
-			-- trace_this("Amount"..amount.."\n")
-		end
+--		if amount>0.0293 then
+--			recieved_damage(amount)
+--			--printf("! %s",amount
+--			-- trace_this("Amount"..amount.."\n")
+--		end
 
 		
 		myhealth=db.actor.health

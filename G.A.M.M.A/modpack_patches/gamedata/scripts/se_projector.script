@@ -1,0 +1,66 @@
+--[[
+Create a new section for projector object by adding class = _S_SEARCH:
+
+[projector_object]
+class = _S_SEARC
+--]]
+
+function _G.IsProjector(o,c)
+	if not (c) then
+		c = o and o:clsid()
+	end
+	return (c == clsid.projector) or (c == clsid.projector_s) or false
+end
+
+--[[----------------------------------------------------------------------------------------------------
+	db
+------------------------------------------------------------------------------------------------------]]
+db.se_projector = {}
+
+function add_se_projector(se)
+	db.se_projector[se.id] = se
+end
+
+function del_se_projector(se)
+	db.se_projector[se.id] = nil
+end
+
+--[[----------------------------------------------------------------------------------------------------
+	Class
+------------------------------------------------------------------------------------------------------]]
+class "se_projector" (cse_alife_object_projector)
+
+function se_projector:__init (section) super (section)
+end
+
+function se_projector:on_register()
+	cse_alife_object_projector.on_register(self)
+	add_se_projector(self)
+	SendScriptCallback("server_entity_on_register",self,"se_projector")
+end
+
+function se_projector:on_unregister()
+	SendScriptCallback("server_entity_on_unregister",self,"se_projector")
+	del_se_projector(self)
+	cse_alife_object_projector.on_unregister(self)
+end
+
+function se_projector:can_switch_offline()
+	return cse_alife_object_projector.can_switch_offline(self)
+end
+
+function se_projector:can_switch_online()
+	return cse_alife_object_projector.can_switch_online(self)
+end
+
+function se_projector:STATE_Write(packet)
+	cse_alife_object_projector.STATE_Write(self,packet)
+end
+
+function se_projector:STATE_Read(packet,size)
+	cse_alife_object_projector.STATE_Read(self,packet,size)
+end
+
+function se_projector:keep_saved_data_anyway()
+	return true
+end

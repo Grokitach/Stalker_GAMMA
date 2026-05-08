@@ -1,0 +1,277 @@
+local try = try or function(func, ...)
+	local status, error_or_result = pcall(func, ...)
+	if not status then
+		printf(error_or_result)
+		return false, status, error_or_result
+	else
+		return error_or_result, status
+	end
+end
+
+-- 3 Level cache: file, class, input
+max_inputs = 20
+inputs_cache = {}
+
+-- Table for escaping charactets
+escape_table = {
+	[" "] = "\\s",
+	[";"] = "\\#59",
+}
+
+function escape(str)
+	for k, v in pairs(escape_table) do
+		str = str:gsub(k, v)
+	end
+	return str
+end
+
+function unescape(str)
+	for k, v in pairs(escape_table) do
+		str = str:gsub(v, k)
+	end
+	return str
+end
+
+function clear_cache()
+	empty_table(inputs_cache)
+end
+
+function check_path(path)
+	if inputs_cache[path[1]] and inputs_cache[path[1]][path[2]] and inputs_cache[path[1]][path[2]][path[3]] then
+		return true
+	else
+		printf("no input path exists in %s\\%s\\%s", path[1], path[2], path[3])
+		return false
+	end
+end
+
+function add_input_table(path)
+	if not inputs_cache[path[1]] then inputs_cache[path[1]] = {} end
+	if not inputs_cache[path[1]][path[2]] then inputs_cache[path[1]][path[2]] = {} end
+	if not inputs_cache[path[1]][path[2]][path[3]] then 
+		inputs_cache[path[1]][path[2]][path[3]] = {
+			inputs = {},
+			current_input = 1
+		}
+	end
+end
+
+function load_cache()
+	local sec = utils_data.collect_section(axr_main.config.ini, "better_debug_inputs")
+	if sec then
+		for _, s in ipairs(sec) do
+			local path = str_explode(s, "\\")
+			add_input_table(path)
+
+			local inputs = utils_data.collect_section(axr_main.config.ini, s:lower(), true)
+			for i = 1, max_inputs do
+				if inputs["input" .. i] then
+					local s = unescape(inputs["input" .. i])
+					table.insert(inputs_cache[path[1]][path[2]][path[3]].inputs, s)
+				end
+			end
+		end
+	end
+
+	if is_not_empty(inputs_cache) then
+		for k, v in pairs(inputs_cache) do
+			for k1, v1 in pairs(v) do
+				for k2, v2 in pairs(v1) do
+					v2.current_input = #v2.inputs + 1
+				end
+			end
+		end
+	end
+end
+load_cache()
+
+function save_cache()
+	for k, v in pairs(inputs_cache) do
+		for k1, v1 in pairs(v) do
+			for k2, v2 in pairs(v1) do
+
+				local res = k .. "\\" .. k1 .. "\\" .. k2
+				for k3, _ in pairs(axr_main.config:collect_section(res:lower())) do
+					axr_main.config:remove_line(res:lower(), k3)
+				end
+
+				for i, v3 in ipairs(v2.inputs) do
+					local s = escape(v3)
+					axr_main.config:w_value("better_debug_inputs", res, true)
+				    axr_main.config:w_value(res:lower(), "input" .. i, s)
+				end
+			end
+		end
+	end
+	axr_main.config:save()
+end
+
+function check_if_input_exists(path, text)
+	if not check_path(path) then return end
+
+	local t = inputs_cache[path[1]][path[2]][path[3]].inputs
+	for i = #t, 1, -1 do
+		if text == t[i] then return i end
+	end
+end
+
+function add_input(path, text)
+	add_input_table(path)
+	if text and text ~= "" then
+		local inputs_table = inputs_cache[path[1]][path[2]][path[3]]
+		local inputs = inputs_table.inputs
+		if is_empty(inputs) then
+			printf("table is empty, inserting stuff at pos 1")
+			table.insert(inputs, text)
+		elseif text ~= inputs[#inputs] then
+			local pos = check_if_input_exists(path, text)
+			if pos then
+				printf("found input at pos %s", pos)
+				table.remove(inputs, pos)
+				table.insert(inputs, text)
+				inputs_table.current_input = pos
+			else
+				if #inputs == max_inputs then
+					printf("table is full, removing at pos 1")
+					table.remove(inputs, 1)
+				end
+				printf("inserting at pos %s", #inputs)
+				table.insert(inputs, text)
+				inputs_table.current_input = #inputs + 1
+			end
+		end
+	end
+
+	save_cache()
+end
+
+function get_current_input(path)
+	if not check_path(path) then
+		return
+	end
+
+	local inputs = inputs_cache[path[1]][path[2]][path[3]]
+	local pos = clamp(inputs.current_input, 1, #inputs.inputs)
+	local res = inputs.inputs[pos]
+	if res then
+		printf("input at pos %s, %s", pos, res)
+		return res, true
+	else
+		local t = inputs.inputs
+		inputs.current_input = #t
+		printf("failed to get input at pos %s, getting last %s", pos, #t)
+		return t[#t], false
+	end
+end
+
+function get_input_and_move(path, up)
+	if not check_path(path) then
+		return
+	end
+
+	local inputs = inputs_cache[path[1]][path[2]][path[3]]
+	local pos = clamp(up and inputs.current_input - 1 or inputs.current_input + 1, 1, #inputs.inputs)
+	inputs.current_input = pos
+
+	local input, res = get_current_input(path)
+	return input
+end
+
+function inject_cache(path, input_field, dik, keyboard_action)
+	if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+		if dik == DIK_keys.DIK_UP then
+			local input = get_input_and_move(path, true)
+			if input and input ~= "" then
+				input_field:SetText(input)
+			end
+		elseif dik == DIK_keys.DIK_DOWN then
+			local input = get_input_and_move(path, false)
+			if input and input ~= "" then
+				input_field:SetText(input)
+			end
+		end
+	end
+end
+
+do
+	local on_keyboard = ui_debug_launcher.UIDebug_Executer.OnKeyboard
+	ui_debug_launcher.UIDebug_Executer.OnKeyboard = function(self, dik, keyboard_action)
+		local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+		if (res == false) then
+			inject_cache({"ui_debug_launcher", "UIDebug_Executer", "dl2_input"}, self.dl2_input, dik, keyboard_action)
+			return on_keyboard(self, dik, keyboard_action)
+		end
+	end
+
+	local on_exec = ui_debug_launcher.UIDebug_Executer.OnExecute
+	ui_debug_launcher.UIDebug_Executer.OnExecute = function(self)
+		local res, status, error = try(function() on_exec(self) end)
+		if not status then
+			self:SetMsg(strformat("Fail to execute: %s", error))
+		else
+			add_input({"ui_debug_launcher", "UIDebug_Executer", "dl2_input"}, self.dl2_input:GetText())
+		end
+	end
+end
+
+do
+	local on_keyboard = ui_debug_launcher.UIDebug_ItemSpawn.OnKeyboard
+	ui_debug_launcher.UIDebug_ItemSpawn.OnKeyboard = function(self, dik, keyboard_action)
+		local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+		if (res == false) then
+			inject_cache({"ui_debug_launcher", "UIDebug_ItemSpawn", "d14_input"}, self.d14_input, dik, keyboard_action)
+			return on_keyboard(self, dik, keyboard_action)
+		end
+	end
+
+	local on_exec = ui_debug_launcher.UIDebug_ItemSpawn.OnButton_Name
+	ui_debug_launcher.UIDebug_ItemSpawn.OnButton_Name = function(self)
+		on_exec(self)
+		add_input({"ui_debug_launcher", "UIDebug_ItemSpawn", "d14_input"}, self.d14_input:GetText())
+	end
+	local OnList_Object = ui_debug_launcher.UIDebug_ItemSpawn.OnItemList
+	ui_debug_launcher.UIDebug_ItemSpawn.OnItemList = function(self)
+		OnList_Object(self)
+		local pick = self.list:GetSelectedItem()
+		if (not pick) then
+			return
+		end
+		add_input({"ui_debug_launcher", "UIDebug_ItemSpawn", "d14_input"}, pick.index)
+	end
+	local On_CC_Mouse1 = ui_debug_launcher.UIDebug_ItemSpawn.On_CC_Mouse1
+	ui_debug_launcher.UIDebug_ItemSpawn.On_CC_Mouse1 = function(self, cont, idx)
+		On_CC_Mouse1(self, cont, idx)
+		local ci = self.d2_CC.cell[idx]
+		if (not ci) then
+			return
+		end
+		
+		add_input({"ui_debug_launcher", "UIDebug_ItemSpawn", "d14_input"}, ci.section)
+	end
+end
+
+do
+	local on_keyboard = ui_debug_launcher.UIDebug_ObjSpawn.OnKeyboard
+	ui_debug_launcher.UIDebug_ObjSpawn.OnKeyboard = function(self, dik, keyboard_action)
+		local res = CUIScriptWnd.OnKeyboard(self,dik,keyboard_action)
+		if (res == false) then
+			inject_cache({"ui_debug_launcher", "UIDebug_ObjSpawn", "d13_input"}, self.d13_input, dik, keyboard_action)
+			return on_keyboard(self, dik, keyboard_action)
+		end
+	end
+
+	local on_exec = ui_debug_launcher.UIDebug_ObjSpawn.OnButton_Name
+	ui_debug_launcher.UIDebug_ObjSpawn.OnButton_Name = function(self)
+		on_exec(self)
+		add_input({"ui_debug_launcher", "UIDebug_ObjSpawn", "d13_input"}, self.d13_input:GetText())
+	end
+	local OnList_Object = ui_debug_launcher.UIDebug_ObjSpawn.OnList_Object
+	ui_debug_launcher.UIDebug_ObjSpawn.OnList_Object = function(self)
+		OnList_Object(self)
+		local pick = self.list:GetSelectedItem()
+		if (not pick) then
+			return
+		end
+		add_input({"ui_debug_launcher", "UIDebug_ObjSpawn", "d13_input"}, pick.sec)
+	end
+end

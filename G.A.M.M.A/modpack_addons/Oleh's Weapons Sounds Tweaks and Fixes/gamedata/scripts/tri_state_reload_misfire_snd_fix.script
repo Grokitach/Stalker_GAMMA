@@ -1,0 +1,36 @@
+-- removes redundant snd_open sound when unjamming tri_state_reload weapons
+-- oleh5230, 04.02.26
+
+isMisfireWeapon = function(wpn, wpn_id)
+    return false
+end
+-- ugly patch for WPO
+if arti_jamming then
+    if arti_jamming.get_jam_status then
+        isMisfireWeapon = function(wpn, wpn_id)
+            return wpn:cast_Weapon() and wpn:cast_Weapon():IsMisfire() or arti_jamming.get_jam_status(wpn_id)
+        end
+    elseif arti_jamming.get_jammed then
+        isMisfireWeapon = function(wpn, wpn_id)
+            return wpn:cast_Weapon() and wpn:cast_Weapon():IsMisfire() or arti_jamming.get_jammed(wpn_id)
+        end
+    end
+else
+    isMisfireWeapon = function(wpn, wpn_id)
+        return wpn:cast_Weapon() and wpn:cast_Weapon():IsMisfire()
+    end
+end
+
+function on_before_play_hud_sound(alias, parent, result)
+    if alias == "sndOpen" and parent and parent:id() == AC_ID then
+        local wpn = db.actor:active_item()
+        if not wpn or not isMisfireWeapon(wpn, wpn:id()) then return end
+
+        result.section = "base_sounds"
+        result.line = "snd_blank"
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("on_before_play_hud_sound", on_before_play_hud_sound)
+end

@@ -19,7 +19,7 @@ local string_gsub   = string.gsub
 local scopes_table = utils_data.collect_sections(ini_sys, {"addons_table"})
 
 local function transfer_item(id)
-	local item = level.object_by_id(id)
+	local item = get_object_by_id(id)
 	if not (item) then 
 		return false 
 	end 
@@ -203,7 +203,7 @@ function toggle_silencer()
 	
 	if sil_info and not db.actor:active_item() then
 		local success = false
-		local weapon = level.object_by_id(sil_info.id)
+		local weapon = get_object_by_id(sil_info.id)
 		if weapon and weapon:parent() and weapon:parent():id() == AC_ID then
 			local newSound
 			if sil_attach then -- if attach the silencer
@@ -320,7 +320,7 @@ function ammo_aggregation_full(npc_id)
 		npc_id = type(npc_id.id) == "function" and npc_id:id() or npc_id.id
 	end
 	
-	local npc = level.object_by_id(npc_id)
+	local npc = get_object_by_id(npc_id)
 	if not npc then
 		return true
 	end
@@ -343,6 +343,7 @@ function ammo_aggregation_full(npc_id)
 	-- Wait for objects to come online if any needed
 	CreateTimeEvent("ammo_aggregation_full_wait_for_gobj", npc_id, 0, function()
 		local ammoObjectsBySection = {}
+		local needsRestart = false
 		for i = #ammoObjectIds, 1, -1 do
 			local id = ammoObjectIds[i]
 
@@ -350,47 +351,50 @@ function ammo_aggregation_full(npc_id)
 			if not alife_object(id) then
 				table.remove(ammoObjectIds, i)
 			else
-
-				-- If object is not online - try next frame
-				local obj = level.object_by_id(id)
-				if not obj then return false end
-
-				-- Replace damaged ammo with old, and wait until its online
-				if _NO_DAMAGED_AMMO and string.find(obj:section(), "verybad") then
-					local new_section = string.gsub(obj:section(), "verybad", "bad")
-					if ini_sys:section_exist(new_section) then
-						alife_release(obj)
-						table.remove(ammoObjectIds, i)
-						local new_obj = alife_create_item(new_section, npc, {ammo = obj:ammo_get_count()})
-						if new_obj then
-							table.insert(ammoObjectIds, new_obj.id)
-							return false
+				local obj = get_object_by_id(id)
+				if not obj then
+					-- If object is not online - try next frame
+					needsRestart = true
+				else
+					-- Replace damaged ammo with old, and wait until its online
+					if _NO_DAMAGED_AMMO and string.find(obj:section(), "verybad") then
+						local new_section = string.gsub(obj:section(), "verybad", "bad")
+						if ini_sys:section_exist(new_section) then
+							alife_release(obj)
+							table.remove(ammoObjectIds, i)
+							local new_obj = alife_create_item(new_section, npc, {ammo = obj:ammo_get_count()})
+							if new_obj then
+								table.insert(ammoObjectIds, new_obj.id)
+								needsRestart = true
+							end
 						end
 					end
-				end
-				
-				-- Replace home-made buck ammo with regular type, and wait until its online
-				if (obj:section() == "ammo_12x70_buck_self") then
-					local new_section = "ammo_12x70_buck"
-					if ini_sys:section_exist(new_section) then
-						alife_release(obj)
-						table.remove(ammoObjectIds, i)
-						local new_obj = alife_create_item(new_section, npc, {ammo = obj:ammo_get_count()})
-						if new_obj then
-							table.insert(ammoObjectIds, new_obj.id)
-							return false
+					
+					-- Replace home-made buck ammo with regular type, and wait until its online
+					if obj:section() == "ammo_12x70_buck_self" then
+						local new_section = "ammo_12x70_buck"
+						if ini_sys:section_exist(new_section) then
+							alife_release(obj)
+							table.remove(ammoObjectIds, i)
+							local new_obj = alife_create_item(new_section, npc, {ammo = obj:ammo_get_count()})
+							if new_obj then
+								table.insert(ammoObjectIds, new_obj.id)
+								needsRestart = true
+							end
 						end
 					end
-				end
 
-				-- If object has less ammo count then possible, add it to process
-				if obj:ammo_get_count() < obj:ammo_box_size() then
-					local sec = obj:section()
-					ammoObjectsBySection[sec] = ammoObjectsBySection[sec] or {}
-					table.insert(ammoObjectsBySection[sec], obj)
-				end	
+					-- If object has less ammo count then possible, add it to process
+					if not needsRestart and obj:ammo_get_count() < obj:ammo_box_size() then
+						local sec = obj:section()
+						ammoObjectsBySection[sec] = ammoObjectsBySection[sec] or {}
+						table.insert(ammoObjectsBySection[sec], obj)
+					end	
+				end
 			end
 		end
+
+		if needsRestart then return false end
 
 		-- Process not full ammo boxes
 		for sec, objects in pairs(ammoObjectsBySection) do
@@ -444,7 +448,7 @@ function ammo_aggregation(obj, npc)
 		-- Ensure parent is still online
 		local parent_id = obj:parent():id()
 		CreateTimeEvent("ammo_aggregation_next_frame", ("%s_%s"):format(device():time_global(), parent_id), 0, function()
-			local parent = level.object_by_id(parent_id)
+			local parent = get_object_by_id(parent_id)
 			if parent then
 				-- printf_me("item_weapon.ammo_aggregation %s", parent:name())
 				ammo_aggregation_full(parent_id)
@@ -871,97 +875,130 @@ end
 -------------------------------
 -- OVERHEAT
 -------------------------------
-can_overheat = true
 
+-- Vanilla values, keep for compatibility but they are unused
+can_overheat = true
 local overheat_threshold = 100
 local time_quant
 local decrease_quant
-
 local max_overheat = 150
-
 local overheat = 0
 local smoke
 local last_wpn_id
 
-function update_overheat()
+local function stop_smoke(smoke, force)
+	if smoke then
+		if force then
+			smoke:stop()
+		elseif smoke:playing() then
+			smoke:stop_deffered()
+		end
+	end
+end
 
-	if overheat < overheat_threshold then
-		decrease_quant = 0.2
-	else
-		decrease_quant = 0.1
+-- demonized: per weapon overheat, Actual values there
+local weapons = {}
+function add_weapon(wpn)
+	if not weapons[wpn:id()] then
+		weapons[wpn:id()] = {
+			overheat_threshold = 100,
+			decrease_quant_overheat = 0.008,
+			decrease_quant_normal = 0.004,
+			increase_quant = 0.22,
+			max_overheat = 150,
+			ammo_count = wpn:cast_Weapon():GetAmmoElapsed(),
+			overheat = 0,
+			smoke = nil,
+		}
+	end
+end
+function remove_weapon_by_id(id)
+	if weapons[id] then
+		if weapons[id].smoke then
+			stop_smoke(weapons[id].smoke, true)
+		end
+		weapons[id] = nil
+	end
+end
+function is_valid_weapon(wpn)
+	local cobj = wpn and wpn:cast_Weapon()
+	return wpn and cobj and IsWeapon(wpn) and not IsMelee(wpn)
+end
+
+function update_overheat()
+	if not can_overheat then
+		return
+	end
+	
+	local wpn = db.actor:active_item()
+	if is_valid_weapon(wpn) then
+		add_weapon(wpn)
 	end
 
+	for k, v in pairs(weapons) do
+		local wpn = get_object_by_id(k)
+		local cobj = wpn and wpn:cast_Weapon()
+		if not (wpn and cobj) then
+			remove_weapon_by_id(k)
+		else				
+			local state = wpn:get_state()
+			local ammo_count = cobj:GetAmmoElapsed()
+			local fired = state == 5 and ammo_count < v.ammo_count
+			v.ammo_count = ammo_count
+			if fired then
+				local increase_quant = v.increase_quant * device().time_delta
+				v.overheat = math.min(v.overheat + increase_quant, v.max_overheat)
+			else
+				local decrease_quant = (v.overheat < v.overheat_threshold and v.decrease_quant_normal or v.decrease_quant_overheat) * device().time_delta
+				v.overheat = math.max(v.overheat - decrease_quant, 0)
+			end
 
-	local wpn = db.actor:active_item()
-	if not wpn then return end
-	if (string.match(tostring(wpn:section()),"knife") or string.match(tostring(wpn:section()),"axe")) then return end
-	
-	
-	if IsWeapon(wpn) then
-		-- reset overheat value on weapon change
-		if not (last_wpn_id) then
-			last_wpn_id = wpn:id()
-		end
+			local parent = wpn:parent()
+			local active = not parent
+			if not active then
+				local parent_active_item = IsStalker(parent) and parent:active_item()
+				if parent_active_item and parent_active_item:id() == k then
+					active = true
+				end
+			end
+			local hud_mode = parent and parent:id() == AC_ID
+			if active and v.overheat >= v.overheat_threshold then
+				-- play at bone position
+				v.smoke = v.smoke or particles_object("industrial_particles\\weapon_smoke")
+				local smoke = v.smoke
+				if not smoke:playing() then
+					smoke:play_at_pos(wpn:bone_position("wpn_body"))
+				end
 
-		if (last_wpn_id ~= wpn:id()) then
-			overheat = 0
-			last_wpn_id = wpn:id()
-		end
+				-- move to firepoint
+				local hud = SYS_GetParam(0, wpn:section(), "hud", wpn:section())
+				local sec = hud_mode and hud or wpn:section()
+				local fire_bone = SYS_GetParam(0, sec, "fire_bone", "wpn_body")
+				local offset = SYS_GetParam(0, sec, "fire_point", "0,0,0")
+				offset = utils_data.string_to_vector(offset)
 
-		if not (can_overheat) then
-			return
-		end
-
-		local rpm = ui_wpn_params.GetRPM(wpn:section())
-		
-		-- Grab packet data
-		local se_wpn = alife_object(wpn:id())
-		local data = utils_stpk.get_weapon_data(se_wpn)
-
-		if not data then return end
-		
-		--printf("RPM: "..rpm)
-		time_quant = rpm/100
-		
-		-- Check if weapon firing
-		if (data.weapon_state == 5) then
-
-			-- increase overheat quantity over time
-			overheat = overheat + time_quant <= max_overheat and overheat + time_quant or max_overheat
-
-		else
-			-- Stop playing particle if value less then threshold
-			if (overheat < overheat_threshold) then
-				if (smoke and smoke:playing()) then
-					smoke:stop()
+				-- get position of hud geometry
+				local pos = wpn:bone_position(fire_bone, hud_mode)
+				local mat = wpn:bone_transform(fire_bone, hud_mode)
+				mat:transform_tiny(pos, offset)
+				if hud_mode then
+					pos:hud_to_world()
+				end
+				smoke:move_to(pos, VEC_ZERO)
+			else
+				if v.smoke then
+					stop_smoke(v.smoke, false)
 				end
 			end
 		end
-		
-		--printf("-heat: "..overheat.."/"..overheat_threshold)
+	end
+end
 
-		-- if overheating greater then threshold
-		if (overheat >= overheat_threshold) then
-			-- create particle if not exist
-			if not (smoke) then
-				smoke = particles_object("industrial_particles\\weapon_smoke")
-			end
-
-			-- play at bone position
-			if not (smoke:playing()) then
-				smoke:play_at_pos( wpn:bone_position("wpn_body") )
-			end
-
-			-- move to firepoint
-			local hud = utils_data.read_from_ini(nil,wpn:section(),"hud","string",nil)
-			local fire_bone = utils_data.read_from_ini(nil,hud,"fire_bone","string",nil) or "wpn_body"
-			local offset = utils_data.read_from_ini(nil,hud,"fire_point","string",nil) or VEC_ZERO
-			offset = offset and utils_data.string_to_vector(offset)
-			smoke:move_to( wpn:bone_position(fire_bone), offset )
-		end
-
-		-- decrease quantity over time
-		overheat = overheat - decrease_quant >= 0 and overheat - decrease_quant or 0
+-- Can optionally enable for npcs as well, but looks not good, so not registered for now
+function npc_on_update(npc)
+	local wpn = npc:active_item()
+	if is_valid_weapon(wpn) then
+		add_weapon(wpn)
 	end
 end
 
@@ -1045,6 +1082,7 @@ function on_game_start()
 	RegisterScriptCallback("ActorMenu_on_item_drag_drop",on_item_drag_dropped)
 	RegisterScriptCallback("on_key_release",on_key_release)
 	RegisterScriptCallback("actor_on_update",actor_on_update)
+	-- RegisterScriptCallback("npc_on_update",npc_on_update)
 	RegisterScriptCallback("ActorMenu_on_item_after_move", move)
 	if (ini_sys:section_exist("addons_table")) then
 		--[[

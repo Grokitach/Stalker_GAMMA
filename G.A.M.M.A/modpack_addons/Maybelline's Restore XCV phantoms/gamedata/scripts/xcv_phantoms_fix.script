@@ -1,0 +1,30 @@
+local rnd = math.random
+xcv_phantoms.enable_psi_hit = false
+
+function xcv_phantoms.actor_on_update()
+	local tg = time_global()
+	if (xcv_phantoms.tmr and tg < xcv_phantoms.tmr) then return end
+	xcv_phantoms.tmr = tg + xcv_phantoms.phantom_frequency * 1000
+
+	-- chance to spawn phantoms
+	local psi_health = (1 - arszi_psy.get_ppe_intensity() * 50 * 2) * 100 --Grok changed ppe from 0.5 to 0.01
+	if rnd(0, xcv_phantoms.phantoms_appear_at) > psi_health  then
+		xcv_phantoms.spawn_xphantoms()
+	end
+
+	-- release offline squads
+	local function delay_offline_release()
+		for sq_id, _ in pairs(xcv_phantoms.spawned_phantoms) do
+			local sq = alife_object(sq_id)
+			if sq and not (sq.online) then
+				pr("! squad_id: [ %s ] is offline, release", sq_id)
+				alife_release_id(sq_id)
+				xcv_phantoms.spawned_phantoms[sq_id] = nil
+			end
+		end
+		return true
+	end
+	-- give it some time to appear if spawning xd
+	CreateTimeEvent("phantom_offline_release_ev", "phantom_offline_release_ac", 1, delay_offline_release)
+
+end

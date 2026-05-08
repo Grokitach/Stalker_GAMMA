@@ -181,6 +181,7 @@ function UIRepair:Reset(obj,section)
 	self.parts_match       = ini_sys:r_bool_ex(section,"repair_parts_match",false)
 	self.use_actor_effects = ini_sys:r_bool_ex(section,"repair_use_actor_effects",false)
 	self.con_val           = {}
+	self.ignored_item_id   = nil
 	
 	-- Elements
 	self.CC[2]:Reset()
@@ -221,11 +222,21 @@ end
 function UIRepair:InitInventory(n)
 	local inv = {}
 	local size_t = 0
+
+	local belt_ids = {}
+	db.actor:iterate_belt(function(owner, arty)
+		belt_ids[arty:id()] = true
+	end)
 	
 	-- Compatible weapons list to repair
 	if n == 1 then
+		self.CC[1]:Reinit(inv)
+		
 		db.actor:iterate_inventory( function(owner, obj)
-            artefact_to_repair = obj:section()
+			if self.ignored_item_id and self.ignored_item_id == obj:id() then return end
+			if belt_ids[obj:id()] then
+				return
+			end
 			local sec = obj:section()
 			local main_section = ini_sys:r_string_ex(sec,"repair_type") or sec
 			if (self.repair_only and self.repair_only[main_section]) then
@@ -242,18 +253,22 @@ function UIRepair:InitInventory(n)
 	-- Compatible part list to use
 	elseif n == 2 then
 		local obj_s = self.CC[1]:GetCell_Selected(true)
-		if (not obj_s) then
+		
+		if not obj_s then return end
+
+		if belt_ids[obj_s:id()] then
 			return
 		end
-		
+
 		local inf = {}
 		local ItemListSec_2 = {} -- to show only one copy of bonus items
 		db.actor:iterate_inventory( function(owner, obj)
+			if self.ignored_item_id and self.ignored_item_id == obj:id() then return end
 			local sec = obj:section()
 			obj_s_kind = SYS_GetParam(0, obj_s:section(), "kind")
 			obj_kind = SYS_GetParam(0, obj:section(), "kind")
 
-			if (obj_s:section() == obj:section() or obj_s_kind == "i_arty_junk" and obj_kind == "i_arty_junk") then
+			if (obj_s:section() == obj:section() or obj_s_kind == "i_arty_junk" and obj_kind == "i_arty_junk") and not belt_ids[obj:id()] then
 
 				if (obj_s:section() == obj:section()) then
 					strengthen = "strong"
@@ -418,9 +433,10 @@ function UIRepair:OnRepair()
 	if zz_item_artefact then
 		zz_item_artefact.cond_t[obj_1:id()] = self.con_val[4] / 100
 	end
- 	if obj_2 then
- 		utils_item.discharge(obj_2) -- Remove 1 use of the support item
- 	end
+	if obj_2 then
+		self.ignored_item_id = obj_2:id()
+		utils_item.discharge(obj_2) -- Remove 1 use of the support item
+	end
 	
 	-- Remove 1 use of the repair kit
 	if IsItem("multiuse",nil,self.obj) then
@@ -441,9 +457,23 @@ function UIRepair:OnRepair()
 	
 	-- Increase Statistic
 	game_statistics.increment_statistic("self_repairs")
-	
-	-- Hide dialog
-	GUI:Reset(tool_obj, tool_sec)
+
+	-- Elements
+	self.CC[1]:Reset()
+	self.CC[2]:Reset()
+	self.con_txt[1]:SetText("")
+	self.con_txt[2]:SetText("")
+	self.text_item[1]:SetText("")
+	self.text_item[2]:SetText("")
+	self.cell_item[1]:Reset()
+	self.cell_item[2]:Reset()
+	self.con_txt_base:SetText("")
+	self.con_txt_new:SetText("")
+	self.btn_repair:Enable(false)
+
+
+	-- Show damaged items
+	self:InitInventory(1)
 end
 
 function UIRepair:OnKeyboard(dik, keyboard_action)

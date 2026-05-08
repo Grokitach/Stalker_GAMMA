@@ -60,6 +60,10 @@
 
         poltergeist_spawn_corpse_on_death // Poltergeists spawn corpses on death
         g_firepos_zoom // Make firepos work while aiming
+
+        g_decouple_horz_recoil // calculate horz recoil independently of vert recoil
+        g_use_non_linear_inertia // enable non linear weapon inertia movement
+
     }
 
     lua extensions {
@@ -89,6 +93,22 @@
         string dik_to_keyname(number dik, boolean localize)
         int get_modded_exes_version() // Returns modded exes version in integer format
         table get_string_table() // Returns all translated strings in [string id] = string text format 
+        player_hud* get_player_hud()
+
+        // MT only
+        string active_tutorial_name()
+        class class_info(object) // Returns luabind class with information about object's class: name, methods, attributes
+        string r_file_as_string(string path)
+
+        -- color getters / setters
+        ClrGetA(number argb)
+        ClrGetR(number argb)
+        ClrGetG(number argb)
+        ClrGetB(number argb)
+        ClrSetA(number argb, number a)
+        ClrSetR(number argb, number r)
+        ClrSetG(number argb, number g)
+        ClrSetB(number argb, number b)
     }
 
     get_console() {
@@ -96,15 +116,20 @@
     }
 
     alife() {
+        number object_count()
         void iterate_objects(function(se_obj))
+        void force_update() -- forces an immediate alife scheduled update cycle
     }
 
     game {
         Fvector2 world2ui(Fvector pos, bool hud = false, bool allow_offscreen = false)
+        Fvector2 world2ui_with_depth(Fvector pos, bool hud = false, bool allow_offscreen = false)
         function ui2world(Fvector2 pos) -> Fvector result, u16 object_id
         function ui2world_offscreen(Fvector2 pos) -> Fvector result, u16 object_id
         change_game_news_show_time(CUIWindow* UIWindow, float show_time)
         update_pda_news_from_uiwindow(CUIWindow* UIWindow)
+
+        bool motion_exists(string model_path, string motion_name) -- Loads a HUD model temporarily and checks whether it contains a named cycle motion. Caller must ensure the file exists first — game crashes on a missing path.
     }
 
     ini_file() {
@@ -123,12 +148,18 @@
 
     // Player hud
     // get_player_hud():set_hands("actor_hud_cs_exo")
-    globals {
-        player_hud* get_player_hud()
-    }
-    player_hud {
+    get_player_hud() {
         void set_hands(string section)
         void reset_hands()
+    }
+
+    namespace ActorMenu {
+        CUIMessagesWindow get_messages_menu()
+    }
+
+    // MT only
+    class cse_alife_item_weapon {
+        function clone_upgrades(cse_alife_item_weapon*)
     }
 
     class CUIProgressBar {
@@ -139,6 +170,59 @@
     	void SetColorAnimation(string name, number flags, float delay)
 		void ResetColorAnimation()
 		void RemoveColorAnimation()
+    }
+
+    class CUIDialogWnd : CUIWindow {
+        void AllowWorkInPause(bool state)
+    }
+
+	 class CUIPdaWnd : CUIDialogWnd {
+        // Ncenka - allow to change PDA UI XML file
+		function SetPdaXml(string)
+		function GetPdaXml()
+    }
+
+    class CUIMessagesWindow : CUIWindow {
+        // no extra exports yet
+    }
+
+    class CUIMainIngameWnd : CUIWindow {
+        property m_QuickSlotText1
+        property m_QuickSlotText2
+        property m_QuickSlotText3
+        property m_QuickSlotText4
+
+        table GetQuickSlotIcons()
+    }
+
+    // MT only
+    class CMapManager {
+        void RemoveMapLocationByObjectID(u16 id)
+        void RemoveMapLocation(CMapLocation* ml)
+        void DisableAllPointers()
+    }
+    
+    // MT only
+    class CMapLocation {
+        bool HintEnabled()
+        string GetHint()
+        void SetHint(string hint)
+        bool PointerEnabled()
+        void EnablePointer()
+        void DisablePointer()
+        bool Collidable()
+        bool SpotEnabled()
+        void EnableSpot()
+        void DisableSpot()
+        string GetLevelName()
+        Fvector2 GetPosition()
+        u16 ObjectID()
+        Fvector3 GetLastPosition()
+    }
+
+    class render_device {
+        // Switch the pause, with sound emitters and without hint on screen
+        void pause_ex(bool state)
     }
 
     class particles_object {
@@ -152,9 +236,12 @@
         box,
     }
     debug_render {
-        DBG_ScriptObject* add_object(u16 id, DebugRenderType type)
-        void remove_object(u16 id)
-        DBG_ScriptObject* get_object(u16 id)
+        DBG_ScriptObject* add_object(u32 id, DebugRenderType type)
+        DBG_ScriptObject* add_object(LPCSTR id, DebugRenderType type)
+        void remove_object(u32 id)
+        void remove_object(LPCSTR id)
+        DBG_ScriptObject* get_object(u32 id)
+        DBG_ScriptObject* get_object(LPCSTR id)
         u32 get_flags()
         void set_flags(u32 flags)
         DBG_ScriptSphere* cast_dbg_sphere()
@@ -202,10 +289,22 @@
 		Device      = 2,
 		Actor       = 3,
 	}
-		
+
+    // Encodings used for dds formats, DX10/11 Compatible
+	enum DxEncoding {
+		eDXE_A8R8G8B8 = 0,
+		eDXE_DXT1 = 1,
+		eDXE_DXT5 = 2,
+		eDXE_BC7 = 3,
+		eDXE_undefined = 4,
+    }
     level {
         float get_music_volume()
         void set_music_volume(float)
+
+        float get_weather_weight()
+        void set_weather_weight(float)
+        void set_weather_smooth(string)
 
         // Camera, position is x,y,z vector, direction is head,pitch,roll vector in RADIANS
         void set_cam_custom_position_direction(Fvector position, Fvector direction, int smoothing, bool hudDraw, bool hudAffect)
@@ -225,6 +324,19 @@
         script_rq_result get_target_result(ETraceTarget)
         script_rq_result get_target_result()
 
+        table get_nearby_vertices(pos, radius) // can be used to collect nearby vertices. ([lvid] = true)
+        number vertex_link(lvid, index) // can be used to get the vertices that is connected to the current vertex.
+        table get_nearby_covers(pos, radius) // can be used to collect nearby vertices that are covers. ([lvid] = true)
+
+        // antglobes
+        Fvector get_sun_pos() // Get the sun's position in the sky
+        Fcolor get_sun_color() // Get the float represenation of the sun's color in rgb format
+        float get_sun_intensity() // Get the sun's brightness
+        bool is_sun_visible() // Check if the weather is clear
+
+        //Take Screenshot (written to textures folder), each 'dimensions' field must be to power of 2
+        void take_screenshot(LPCSTR path, Fvector2 dimensions, DxEncoding dx_encoding)
+
         void map_remove_all_object_spots(id)
 
         CUIStatic* map_get_object_spot_static(u16 id, LPCSTR spot_type)
@@ -234,6 +346,11 @@
             spot_type: string, icon ID from map_spots XML
             text: string, text when spot is hovered
         // }
+
+        // MT only
+        CMapManager* get_map_manager()
+        void patrol_path_add(string patrol_path, CPatrolPath* path)
+        void patrol_path_remove(string patrol_path)
 
         add_bullet(Fvector pos, Fvector dir, float speed, float power, float impulse, u16 sender, ALife::EHitType hit_type, float max_dist, LPCSTR ammo_sect, float air_resistance)
 
@@ -253,14 +370,13 @@
         //        air_resistance = 0.2,
         //    }
         //    level.add_bullet(t)
-    }
 
-    class CUIMessagesWindow : CUIWindow {
-        // no extra exports yet
-    }
-
-    namespace ActorMenu {
-        function get_messages_menu()
+         // Script Attachments
+        function add_attachment(string, string)
+        function get_attachment(string)
+        function remove_attachment(string)
+        function remove_attachment(script_attachment)
+        function iterate_attachments(function)
     }
 
     // obj:get_physics_shell()
@@ -366,6 +482,13 @@
     }
 
     class game_object {
+		// Class casting
+		function cast_Knife()
+        function get_projector()
+        function get_stmgun()
+        function cast_Missile()
+        function cast_Explosive()
+
         // General
         Fmatrix xform(bool bHud)
         Fbox bounding_box(bool bHud)
@@ -400,6 +523,7 @@
         function get_actor_person_looking_at()
         function get_actor_default_action_for_object()
 		function set_actor_box_y_offset(u32 box_num, float offset) --box_num:0 for stand, 1 for crouch, 2 for prone;
+
         // Stalker NPCs
         function get_enable_anomalies_pathfinding()
         function set_enable_anomalies_pathfinding(bool)
@@ -409,10 +533,17 @@
         function force_set_angle(Fvector angle, bool bActivate)
         function set_enable_movement_collision(bool)
         function character_dialogs()
+        function memory_remove_links(game_object)
+        function get_object_visible_distance(game_object)
+        function get_object_luminocity(game_object)
 
         // Artefact
         function get_artefact_additional_inventory_weight()
         function set_artefact_additional_inventory_weight(float)
+
+		// Devices
+		function set_device_enabled(bool)
+		function is_device_enabled()
 
         // Bones
         u16 get_bone_id(string)
@@ -502,6 +633,34 @@
         property m_additional_weight
     }
 
+    class CMissile : CGameObject {
+        enum EMissileStates
+            eThrowStart
+            eReady
+            eThrow
+            eThrowEnd
+
+        function GetMinForce()
+        function GetMaxForce()
+        function GetThrowForce()
+        function GetConstForce()
+        function IsConstPower()
+        function GetThrowPoint()
+        function GetThrowDir()
+    }
+
+    class CProjector : CGameObject {
+        enum projector_enum
+            eActive
+            eSwitch
+            eDesiredPos
+            eDesiredDir
+            eDesiredAng
+        
+        functiom Action(number id, number flags, string sec)
+        functiom SetParam(number id, Fvector val, string sec)
+    }
+
     class CWeapon : CGameObject {
         // Return RPM in actual RPM value like in configs
         function RealRPM()
@@ -545,7 +704,14 @@
         function Set_mStrapOffset(Fvector position, Fvector orientation)
         function Set_mFirePoint(Fvector position)
         function Set_mFirePoint2(Fvector position)
-        function Set_mShellPoint(Fvector position)        
+        function Set_mShellPoint(Fvector position)  
+
+        function Get_mOffset()
+        function Get_mStrapOffset()
+        function Get_strap_bone0()
+        function Get_strap_bone1()
+        function Get_strapped_mode()
+        function HandDependence()
 
         // Cam Recoil
         // Getters
@@ -597,6 +763,24 @@
         // Get and set the zoom_rotate_time (time in seconds to fully ADS) field for a given weapon
         function GetZoomRotateTime()
         function SetZoomRotateTime(float)
+
+		// Forcibly set the zoom type for the weapon
+		function ForceSetZoomType(float)
+    }
+
+    class CWeaponKnife : CWeapon {
+		function GetHit1Power()
+		function GetHit2Power()
+		function GetHit1PowerCritical()
+		function GetHit2PowerCritical()
+		function GetHit1Impulse()
+		function GetHit2Impulse()
+		function SetHit1Power(float power)
+		function SetHit2Power(float power)
+		function SetHit1PowerCritical(float power)
+		function SetHit2PowerCritical(float power)
+		function SetHit1Impulse(float impulse)
+		function SetHit2Impulse(float impulse)
     }
 	
     enum rq_target { (sum them up to target multiple types)
@@ -620,6 +804,7 @@
         function get_object() : game_object
         function get_distance() : float
         function get_element() : int (number of triangle)
+        function get_normal() : vector
     }
 
     class script_rq_result {
@@ -699,6 +884,7 @@
         -- Parent
         function set_parent(ScriptAttachment*);
         function set_parent(game_object*);
+        function set_parent_level();
         function get_parent();
 
         -- Child

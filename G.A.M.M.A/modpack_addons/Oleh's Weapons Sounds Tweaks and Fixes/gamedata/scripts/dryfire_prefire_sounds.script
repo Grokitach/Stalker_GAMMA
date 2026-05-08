@@ -9,6 +9,9 @@ To Do:
 - add arti_jamming.block_repeat check? (unlocalizing needed)
 ]]
 
+local volume = 1
+local volume_sil = 1
+
 local charged_guns = {}
 local prefire_flag
 function actor_on_weapon_before_fire(flags)
@@ -26,7 +29,7 @@ function actor_on_weapon_before_fire(flags)
         if  dryfire
         and (wpn:get_ammo_in_magazine() == 0 or isMisfireWeapon(wpn, wpn_id))
         and state == 0 and charged_guns[wpn_id] and zoom_type ~= 2 then
-            sound_to_play = sound_object(dryfire)
+            local sound_to_play = sound_object(dryfire)
             sound_to_play:play(db.actor, 0, sound_object.s2d)
             charged_guns[wpn_id] = false
         end
@@ -40,15 +43,17 @@ function actor_on_weapon_fired(obj, wpn)
     -- play extra sound on first shot in a burst
     if prefire_flag then
         local prefire
-        if wpn:weapon_is_silencer() then
+        local sil_flag = wpn:weapon_is_silencer()
+        if sil_flag then
             prefire = ini_sys:r_string_ex(wpn:section(),"snd_silncer_shot_first")
         else
             prefire = ini_sys:r_string_ex(wpn:section(),"snd_shoot_first")
         end
         if not prefire then return end
 
-        sound_to_play = sound_object(prefire)
-        sound_to_play:play_no_feedback(db.actor, sound_object.s2d, 0, vector(), 1.0, 1.0)
+        local sound_to_play = sound_object(prefire)
+        sound_to_play:play(db.actor, 0, sound_object.s2d)
+        sound_to_play.volume = sil_flag and volume_sil or volume
         prefire_flag = false
     end
 end
@@ -65,10 +70,23 @@ isMisfireWeapon = function(wpn, wpn_id)
     return false
 end
 
+function load_mcm_options()
+    if ui_mcm and oleh_sounds_mcm then
+        volume      = ui_mcm.get("oleh_sounds/weapons/volume_gunfire") or 1
+        volume_sil  = ui_mcm.get("oleh_sounds/weapons/volume_gunfire_sil") or 1
+    -- old MCM compatibility
+    elseif ui_mcm and grok_casings_sounds_mcm then
+        volume      = ui_mcm.get("grok_casings_sounds/volume_gunfire") or 1
+        volume_sil  = ui_mcm.get("grok_casings_sounds/volume_gunfire_sil") or 1
+    end
+end
+
 function on_game_start()
     RegisterScriptCallback("actor_on_weapon_before_fire", actor_on_weapon_before_fire)
     RegisterScriptCallback("actor_on_weapon_fired", actor_on_weapon_fired)
     RegisterScriptCallback("actor_on_hud_animation_play", actor_on_hud_animation_play)
+    RegisterScriptCallback("on_option_change", load_mcm_options)
+    load_mcm_options()
 
     -- ugly patch for WPO
     if arti_jamming then

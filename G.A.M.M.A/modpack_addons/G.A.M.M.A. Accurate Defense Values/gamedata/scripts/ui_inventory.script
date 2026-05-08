@@ -23,6 +23,7 @@ local is_shift_pressed = false
 
 local weight_unit = game.translate_string("st_kg")
 local snd_open         = sound_object([[interface\inv_open]])
+local snd_open_loot	   = sound_object([[interface\inv_open_loot]])
 local snd_close        = sound_object([[interface\inv_close]])
 local snd_item_to_slot = sound_object([[interface\inv_slot]])
 local snd_item_to_belt = sound_object([[interface\inv_belt]])
@@ -34,6 +35,13 @@ local snd_attach_addon = sound_object([[interface\inv_attach_addon]])
 local snd_detach_addon = sound_object([[interface\inv_detach_addon]])
 local snd_item_use     = sound_object([[interface\inv_none]])
 local snd_trade        = sound_object([[interface\inv_trade]])
+local snd_button	   = sound_object([[interface\inv_button]])
+
+local snd_addon = {
+	["snd_attach_scope"] 	= sound_object([[interface\inv_attach_scope]]),
+	["snd_attach_sil"]   	= sound_object([[interface\inv_attach_sil]]),
+	["snd_attach_gl"]  		= sound_object([[interface\inv_attach_gl]]),
+}
 
 local clr_weight = {
 	[1] = GetARGB(255,255,255,255),
@@ -237,7 +245,8 @@ function UIInventory:__init() super()
 		["power"]      = { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_power_restore_speed"))   },
 		["thirst"]		= { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_power_restore_speed"))   },
 		["sleep"]		= { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_power_restore_speed"))   },
-		["br_class"]	= { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_fire_wound_protection")) , hint= "ui_inv_br_protection"   },		
+		["br_class"]	= { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_fire_wound_protection")) , hint= "ui_inv_br_protection"   },	
+		["br_mitigation"]	= { min= 0 , max= (SYS_GetParam(2,"actor_condition","max_fire_wound_protection")) , hint= "ui_inv_br_protection"   },	
 	}
 	self.boost_id = {
 		[ BoosterID["HpRestore"] ]              = "health_restore",
@@ -1211,8 +1220,15 @@ function UIInventory:Action_UnEquip(obj, bag)
 	db.actor:move_to_ruck(obj)
 	
 	--self:UpdateInfo(true)
-	self:PlaySND(snd_item_to_ruck)
-	itms_manager.play_item_sound(obj)
+	--self:PlaySND(snd_item_to_ruck)
+	-- FDDAR patch
+	if (IsHeadgear(obj) and ui_mcm and ui_mcm.get("fddar/headgear_anm/enable"))
+	or (IsItem("backpack", nil, obj) and ui_mcm and ui_mcm.get("fddar/outfit_anm/enable_backpack_equip")) then
+		--printf("UIInventory:Action_Equip sound omitted")
+	else
+		itms_manager.play_item_sound(obj)
+	end
+
 	self:On_Item_Update()
 end
 
@@ -1256,7 +1272,13 @@ function UIInventory:Action_Equip(obj, bag)
 		end
 		
 		--self:PlaySND(snd_item_to_slot)
-		itms_manager.play_item_sound(obj)
+		-- FDDAR patch
+		if (IsHeadgear(obj) and ui_mcm and ui_mcm.get("fddar/headgear_anm/enable"))
+		or (IsItem("backpack", nil, obj) and ui_mcm and ui_mcm.get("fddar/outfit_anm/enable_backpack_equip")) then
+			--printf("UIInventory:Action_Equip sound omitted")
+		else
+			itms_manager.play_item_sound(obj)
+		end
 	end
 	
 	self:On_Item_Update()
@@ -1282,7 +1304,8 @@ function UIInventory:Action_Attach(obj, bag, temp, slot, wpn)
 	
 	utils_item.attach_addon(wpn, obj, typ, true)
 
-	self:PlaySND(snd_attach_addon)
+	if itms_manager.timeout_snd_on_take then itms_manager.timeout_snd_on_take(50) end
+	self:PlaySND(snd_addon["snd_attach_" .. typ])
 	self:On_Item_Update()
 end
 
@@ -1300,6 +1323,7 @@ function UIInventory:Action_Custom(obj, bag, temp, i)
 		end
 	end
 	
+	self:PlaySND(snd_button)
 	self:On_Item_Update()
 end
 
@@ -1309,7 +1333,8 @@ function UIInventory:Action_Detach_Silencer(obj, bag)
 	utils_item.detach_addon(obj, nil, "sil")
 	self:On_Item_Update()
 	
-	self:PlaySND(snd_detach_addon)
+	if itms_manager.timeout_snd_on_take then itms_manager.timeout_snd_on_take(50) end
+	self:PlaySND(snd_addon["snd_attach_sil"])
 end
 
 function UIInventory:Action_Detach_Scope(obj, bag)
@@ -1317,7 +1342,8 @@ function UIInventory:Action_Detach_Scope(obj, bag)
 
 	utils_item.detach_addon(obj, nil, "scope")
 	
-	self:PlaySND(snd_detach_addon)
+	if itms_manager.timeout_snd_on_take then itms_manager.timeout_snd_on_take(50) end
+	self:PlaySND(snd_addon["snd_attach_scope"])
 	self:On_Item_Update()
 end
 
@@ -1326,7 +1352,8 @@ function UIInventory:Action_Detach_GL(obj, bag)
 	
 	utils_item.detach_addon(obj, nil, "gl")
 
-	self:PlaySND(snd_detach_addon)
+	if itms_manager.timeout_snd_on_take then itms_manager.timeout_snd_on_take(50) end
+	self:PlaySND(snd_addon["snd_attach_gl"])
 	self:On_Item_Update()
 end
 
@@ -1912,12 +1939,13 @@ function UIInventory:UpdateStats()
 	self.stat["strike"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, math.ceil(strike_bonus * 100), perc))
 
 	s_hit.type = hit.fire_wound
-	local fire_wound_val, fire_wound_bonus,tmp1,tmp2,armor_br = get_protection(s_hit,s_hit.bone_id, 12)
+	local fire_wound_val, fire_wound_bonus,tmp1,tmp2,armor_br = get_protection(s_hit,s_hit.bone_id, 100)
+	local tmp1, tmp2,tmp3,tmp4,tmp5,tmp6,armor_premitigation = get_protection(s_hit,s_hit.bone_id, 0)
 	self.stat["fire_wound"].text:SetText(strformat("%s%s", math.ceil(fire_wound_val * 100), perc))
 	self.stat["fire_wound"].text_bonus:SetText(strformat("%s%s%s", bonus_symbol, math.ceil(fire_wound_bonus * 100), perc))
 	self.stat["fire_wound"].text_bonus2:SetText(strformat("%s%s%s", bonus_symbol, math.ceil(fire_wound_bonus * 100), perc))
 	self.stat["br_class"].text:SetText(strformat("%s", math.ceil(armor_br *100)))
-	
+	self.stat["br_mitigation"].text:SetText(strformat("<%s%s", math.ceil(armor_premitigation *100), perc))
 
 	local h_hit = hit()
 	h_hit.bone = "bip01_head"
@@ -1926,9 +1954,11 @@ function UIInventory:UpdateStats()
 	h_hit.draftsman = db.actor
 	h_hit.type = hit.fire_wound
 	h_hit.direction = VEC_Z
-	local fire_wound_helm,tmp1,tmp2,tmp3,tmp4,helm_br = get_protection(h_hit,19, 12)
+	local fire_wound_helm,tmp1,tmp2,tmp3,tmp4,helm_br = get_protection(h_hit,19, 100)
+	local tmp1, tmp2,tmp3,tmp4,tmp5,tmp6,helm_premitigation = get_protection(s_hit,19, 0)
 	self.stat["fire_wound"].text_bonus_regen:SetText(strformat("%s%s", fire_wound_helm * 100, perc))
 	self.stat["br_class"].text_bonus_regen:SetText(strformat("%s", helm_br * 100))
+	self.stat["br_mitigation"].text_bonus_regen:SetText(strformat("<%s%s", math.ceil(helm_premitigation *100), perc))
 
 	-- Satiety Bar
 	local satiety = actor:cast_Actor():conditions():GetSatiety()
@@ -2180,9 +2210,11 @@ function UIInventory:Picker_Toggle(bag, idx, update_mode, force_hide)
 				self:Print(nil, "Picker_Toggle(%s, %s) | dealing with picker -> continue", bag, idx)
 				return
 
-			elseif (cc.hold.ico:IsShown()) then
-				self:Print(nil, "Picker_Toggle(%s, %s) | was holding cell -> continue", bag, idx)
-				return
+			elseif type(cc.hold.ico) ~= "boolean" then
+				if (cc.hold.ico:IsShown()) then
+					self:Print(nil, "Picker_Toggle(%s, %s) | was holding cell -> continue", bag, idx)
+					return
+				end
 			else
 				self:Print(nil, "Picker_Toggle(%s, %s) | clicking outside picker area -> hide", bag, idx)
 				self:Picker_Update(true)
@@ -2336,7 +2368,11 @@ function UIInventory:IMode_Init()
 	self:UpdateInfo(true)
 	
 	-- Sound effect
-	self:PlaySND(snd_open)
+	if ui_mcm and ui_mcm.get("fddar/backpack/enable") then
+		--printf("FDDAR backpack enabled, omit ui_inventory sound effect")
+	else
+		self:PlaySND(snd_open)
+	end
 end
 
 function UIInventory:IMode_ResetInventories()
@@ -2391,7 +2427,7 @@ function UIInventory:LMode_Init(obj)
 	self:LMode_TransferInfo(obj)
 	
 	-- Sound effect
-	self:PlaySND(snd_open)
+	self:PlaySND(snd_open_loot)
 end
 
 function UIInventory:LMode_ResetInventories(reset_only)
@@ -2545,7 +2581,7 @@ function UIInventory:LMode_TakeAll()
 			end
 		end
 	end
-	
+
 	-- Update info
 	self.update_info = true
 end
@@ -2784,6 +2820,7 @@ function UIInventory:TMode_Sell()
 	npc:give_money(-tot_cost)
 
 	-- Sound effect
+	if itms_manager.timeout_snd_on_take then itms_manager.timeout_snd_on_take(50) end
 	self:PlaySND(snd_trade)
 	
 	-- Update UI
@@ -3288,7 +3325,7 @@ function UIInventory:actor_on_item_put_in_box(npc, obj)
 		
 		self:On_Item_Update()
 		
-		itms_manager.play_item_sound(obj, 0.75)
+		itms_manager.play_item_sound(obj)
 	end
 end
 
@@ -3310,8 +3347,8 @@ function UIInventory:npc_on_item_take(npc, obj)
 		end
 		
 		self:On_Item_Update()
-		
-		itms_manager.play_item_sound(obj, 0.75)
+
+		itms_manager.play_item_sound(obj)
 	end
 end
 
@@ -3999,7 +4036,11 @@ function UIInventory:Close()
 	self:Print(nil, "Close")
 	
 	-- Sound effect
-	self:PlaySND(snd_close)
+	if ui_mcm and ui_mcm.get("fddar/backpack/enable") then
+		--printf("FDDAR backpack enabled, omit ui_inventory sound effect")
+	else
+		self:PlaySND(snd_close)
+	end
 	
 	self:HideDialog()
 	self:Show(false)

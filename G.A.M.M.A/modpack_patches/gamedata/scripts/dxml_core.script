@@ -678,6 +678,33 @@ function xml_object(xml_file_name, xml_string, xml_table)
 		return self:insertFromXMLString(contents, where, pos, useRootNode)
 	end
 
+	-- Merge from XML string, doesn't do anything for now
+	t.mergeFromXMLString = function(self, xml_string)
+
+		-- Read the override file
+		local override_xml_obj = self:parseXMLString(xml_string)
+		
+		-- Get root elements from both files
+		local current_root = self:getRoot()
+		local override_root = override_xml_obj:getRoot()
+		
+		-- If override file has no kids, nothing to do
+		if not override_root.kids or #override_root.kids == 0 then
+			return
+		end
+		
+		return
+	end
+
+	t.mergeFromXMLFile = function(self, path)
+		local p = getFS():update_path('$game_config$', '') .. path
+		local f, status, code = io.open(p, "r")
+		assert(f, ("\n\nDXML ERROR: mergeFromXMLFile\nCan't read file by path %s %s"):format(p, status and status:gsub(p, "") or "nil"))
+		local contents = f:read('*all')
+		f:close()
+		return self:mergeFromXMLString(contents)
+	end
+
 	-- Get text inside of element
 	-- Returns text if element contains only #text node and prints errors otherwise
 	t.getText = function(self, el)

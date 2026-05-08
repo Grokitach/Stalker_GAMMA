@@ -1,0 +1,23 @@
+local function clearky_info_fix()
+	local actor = db.actor
+	if actor then
+		if character_community(actor) ~= "actor_csky" then return end
+        if actor:has_info("living_legend_st") and actor:has_info("lttz_ll_visit_agro_ug_task_done") and not actor:has_info("living_legend_alt") then
+            actor:disable_info_portion("living_legend_st")
+			actor:give_info_portion("living_legend_alt")
+			local tm = task_manager.get_task_manager()
+			local tsk = tm.task_info["lttz_ll_visit_barkeep"]
+			if tsk and tsk.status == "completed" then 
+				return 
+			else
+				tm:set_task_failed("lttz_ll_visit_barkeep")
+				tm:give_task("lttz_ll_visit_blackjack")
+			end
+        end
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_first_update",clearky_info_fix)
+end
+

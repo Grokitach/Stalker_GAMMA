@@ -32,17 +32,6 @@ function game_object_on_net_spawn(obj)
 end
 function game_object_on_net_destroy(obj)
 	gameobjects_registry[obj:id()] = nil
-
-	-- Fix dynamic_news_manager loot table
-	local instance = dynamic_news_manager and dynamic_news_manager.get_dynamic_news and dynamic_news_manager.get_dynamic_news()
-	if instance and instance.loot then
-		for i = #instance.loot, 1, -1 do
-			local item = instance.loot[i]
-			if type(item) == "userdata" and item:id() == obj:id() then
-				table.remove(instance.loot, i)
-			end
-		end
-	end
 end
 
 -- Game objects iterator
@@ -67,6 +56,28 @@ _G.game_objects_without_actor_iter = function()
 		return obj
 	end
 end
+
+-- Game objects binder callback.net_spawn_after
+-- Bind a function to run right after engine net_Spawn.
+--[[ Example:
+function CObjectBinder:net_spawn(se_abstract)
+	if not (object_binder.net_spawn(self,se_abstract)) then
+		return false
+	end
+	self.object:set_callback(callback.net_spawn_after,self.net_spawn_after,self)
+	return true
+end
+
+function CObjectBinder:net_destroy()
+	self.object:set_callback(callback.net_spawn_after,nil)
+	object_binder.net_destroy(self)
+end
+
+function CObjectBinder:net_spawn_after()
+	-- Run your codes here.
+	-- Resources created in engine net_Spawn are available for use.
+end
+--]]
 
 -- Pseudogiant callbacks
 AddScriptCallback("pseudogiant_on_start_stomp_animation")
@@ -105,6 +116,7 @@ AddScriptCallback("bullet_on_remove")
 -- target_id = game object id of entity the bullet hit (it will be 65535 if bullet hit the terrain or vanished)
 -- material = name of material that bullet hit
 -- life_time = time of bullet fly
+-- element - bone_id if the target hit is object, triangle number if its static geometry. -1 if nothing was hit
 
 -- Called when bullet is shot from the weapon
 _G.CBulletOnInit = function(bullet)
@@ -303,12 +315,18 @@ body_state = {
 	move.stand,
 }
 --]]
-local csbs_flags = {}
 AddScriptCallback("npc_on_combat_set_body_state")
 function _G.CAI_Stalker__CombatSetBodyState(npc,world_operator,body_state)
-	csbs_flags.body_state = body_state
+	local csbs_flags = {body_state = body_state}
 	SendScriptCallback("npc_on_combat_set_body_state",npc,world_operator,body_state,csbs_flags)
 	return csbs_flags.body_state
+end
+
+AddScriptCallback("npc_on_before_look_at_actor")
+_G.CNPCBeforeLookAtActor = function(npc, distance)
+	local flags = {ret_value = true}
+	SendScriptCallback("npc_on_before_look_at_actor", npc, distance)
+	return flags.ret_value
 end
 
 -- actor_on_task_callback
@@ -341,18 +359,26 @@ _G.CPickupModeUpdate_COD = function(obj)
 end
 
 --[[
-on_before_play_hud_sound callback, possibility to override sound with another one
-Callback returns a table which must contain "section" and "line" fields, which refer to section and line to load new sounds from
+on_before_play_hud_sound callback, possibility to override sound with another one, or changing the volume of existing sound or both
+Callback returns a table which must contain "section", "line" or "volume_mult" fields, which refer to section and line to load new sounds from, and the volume multiplier.
+Unforturnately, the engine have some limitation regarding its sound's volume, so it can't increase the volume too much.
 
 Arguments
 	Alias: internal sound type in the engine
 	Parent: Parent object of an object that initiated the sound (`actor` when shooting a weapon for example), might be nil
 
-Example
+Example:
 	if alias == "sndShot" and parent and parent:id() == AC_ID then
 		result.section = "wpn_l96a1_sounds"
 		result.line = "snd_shoot"
+		result.volume_mult = 0.75 -- Multiply the fire sound's volume by 0.75
 	end
+
+Or:
+	if alias == "sndShot" and parent and parent:id() == AC_ID then
+		result.volume_mult = 0.5 -- Multiply the fire sound's volume by 0.5
+	end
+	
 
 Possible aliases:
 	"catch_snd"
@@ -393,7 +419,6 @@ Possible aliases:
 	"sndShotActor"
 	"sndShotActorFirst"
 	"sndShotG"
-	"sndShotIndoor"
 	"sndShotMisfire"
 	"sndShotMisfireActor"
 	"sndShow"
@@ -402,7 +427,6 @@ Possible aliases:
 	"sndSilencerShot"
 	"sndSilencerShotActor"
 	"sndSilencerShotActorFirst"
-	"sndSilencerShotIndoor"
 	"sndSilencerShotMisfire"
 	"sndSilencerShotMisfireActor"
 	"sndSwitch"
@@ -417,12 +441,13 @@ AddScriptCallback("on_before_play_hud_sound")
 _G.COnBeforePlayHudSound = function(alias, parent)
 	local result = {
 		section = nil,
-		line = nil
+		line = nil,
+		volume_mult = nil
 	}
 
 	SendScriptCallback("on_before_play_hud_sound", alias, parent, result)
 
-	if result.section and result.line then
+	if (result.section and result.line) or result.volume_mult then
 		return result
 	end
 end
@@ -441,35 +466,19 @@ function on_imgui_render(name)
 	SendScriptCallback("imgui_on_render", name)
 end
 
--- Improve NPCs pathfinding by reducing actual anomaly damage radius
--- Works only when npc:get_enable_anomalies_pathfinding() == true or ai_die_in_anomalies cvar is 1
-function is_outside_damage_radius(zone, obj)
-	local se_zone = alife_object(zone:id())
-	if not se_zone then
-		return false
-	end
-
-	local data = utils_stpk.get_anom_zone_data(se_zone)
-	if not (data and data.shapes[1] and data.shapes[1].radius) then
-		return false
-	end
-
-	local radius = data.shapes[1].radius
-	local damage_radius = math.max(radius - 1.1, 1)
-	local damage_radius_sqr = damage_radius * damage_radius
-	local dist_sqr = zone:position():distance_to_sqr(obj:position())
-	local res = dist_sqr > damage_radius_sqr
-	return res
+--on GAME path build fail callback (can be used when npc tries to get to currently unavailable smart), 
+--can be used to intercept and redirect squad to available smart, also can suppress error message with flags.ret_value = false
+AddScriptCallback("npc_on_game_path_build_fail")
+_G.CAI_Stalker__PathBuildFailCallback = function(npc)
+	local flags = {ret_value = true}
+	SendScriptCallback("npc_on_game_path_build_fail",npc,flags)
+	return flags.ret_value
 end
 
-function anomaly_on_before_activate(zone, obj, flags)
-	if obj:id() ~= AC_ID 
-	and (IsStalker(obj) or IsMonster(obj))
-	and obj:alive()
-	and is_outside_damage_radius(zone, obj)
-	then
-		flags.ret_value = false
-	end
+-- HUD items state switch
+AddScriptCallback("actor_on_item_state_switch")
+_G.CHudItem__OnStateSwitch = function(obj, new_state, old_state)
+	SendScriptCallback("actor_on_item_state_switch", obj, new_state, old_state)
 end
 
 -- NLTP_ASHES: Trigger actor_on_item_put_in_box callback when moving item to stash from slot
@@ -480,44 +489,112 @@ function ActorMenu_on_item_after_move(npc_id, obj, mode, bag_from)
     end
 end
 
--- Prefetch HUD visual when moving item to slot
-function actor_item_to_slot_prefetch(item)
-	local hudSec = SYS_GetParam(0, item:section(), "hud")
-	if hudSec then
-		local visual = SYS_GetParam(0, hudSec, "item_visual")
-		if visual then
-			game.prefetch_model(visual)
-		end
-	end
+-- Generic server object on register
+AddScriptCallback("server_object_on_register")
+_G.CSE_ALifeDynamicObject_on_register = function(id)
+	SendScriptCallback("server_object_on_register", alife_object(id))
 end
 
--- Prefetch current items
-function actor_on_first_update_prefetch()
-	db.actor:iterate_inventory(function(npc, item)
-		local ui_texture = SYS_GetParam(0, item:section(), "icons_texture", "ui\\ui_icon_equipment")
-		game.prefetch_texture(ui_texture)
+-- Generic server object on unregister
+AddScriptCallback("server_object_on_unregister")
+_G.CSE_ALifeDynamicObject_on_unregister = function(id)
+	SendScriptCallback("server_object_on_unregister", alife_object(id))
+end
 
-		if item_backpack.is_in_slot(item) then
-			local hudSec = SYS_GetParam(0, item:section(), "hud")
-			if hudSec then
-				local visual = SYS_GetParam(0, hudSec, "item_visual")
-				if visual then
-					game.prefetch_model(visual)
-				end
-			end
-		end
-	end, db.actor)
+_G.server_objects_registry = {}
+function server_object_on_register(obj)
+	server_objects_registry[obj.id] = obj
+end
+function server_object_on_unregister(obj)
+	server_objects_registry[obj.id] = nil
+end
+
+-- If this is called, Lua called an exported LuaBind method that will result in engine getting a fatal error, leading to semibroken Lua state, ie. "Busy Hands" 
+AddScriptCallback("on_luabind_fatal_error")
+local LuaFatalErrorUIInstance = nil
+local on_luabind_fatal_error_triggered = false
+_G.COnLuaBindFatalError = function(offender)
+	-- Don't engage when actor is gone, it doesn't matter at this point
+	-- The engine would still log the error
+	if not db.actor then
+		return
+	end
+
+	if on_luabind_fatal_error_triggered then
+		return
+	end
+	on_luabind_fatal_error_triggered = true
+
+	SendScriptCallback("on_luabind_fatal_error", offender)
+	exec_console_cmd("save " .. (user_name() or "") .. " - tempsave")
+
+	LuaFatalErrorUIInstance = LuaFatalErrorUI(offender)
+	LuaFatalErrorUIInstance:Show()
+end
+
+class "LuaFatalErrorUI" (CUIScriptWnd)
+function LuaFatalErrorUI:__init(offender) super()
+	self:SetWndRect(Frect():set(0,0,1024,768))
+	self:SetAutoDelete(true)
+
+	self.message_box = CUIMessageBoxEx()
+	self.offender = offender:gsub("%d.*(%[Lua%] ).*[/\\]", "%1")
+	self:Register(self.message_box, "LuaFatalErrorUI_msg_box")
+
+	self:InitCallBacks()
+	self:InitControls()
+	self:AllowWorkInPause(true)
+	self:AllowMovement(true)
+	self:AllowCursor(true)
+
+	self.message_box:AllowWorkInPause(true)
+	self.message_box:AllowMovement(true)
+	self.message_box:AllowCursor(true)
+
+	device():pause(true)
+end
+
+function LuaFatalErrorUI:__finalize()
+end
+
+function LuaFatalErrorUI:InitCallBacks()
+	self:AddCallback("LuaFatalErrorUI_msg_box", ui_events.MESSAGE_BOX_COPY_CLICKED, self.OnMsgCopy, self)
+	self:AddCallback("LuaFatalErrorUI_msg_box", ui_events.MESSAGE_BOX_YES_CLICKED, self.OnMsgYes, self)
+	self:AddCallback("LuaFatalErrorUI_msg_box", ui_events.MESSAGE_BOX_NO_CLICKED, self.OnMsgNo, self)
+end
+
+function LuaFatalErrorUI:InitControls()
+	self.message_box:InitMessageBox("message_box_lua_fatal_error")
+
+	local msg_str = game.translate_string("st_lua_fatal_error")
+	msg_str = msg_str:gsub("(%[Lua%] ).*[/\\]", "%1")
+	local str = strformat(msg_str, self.offender)
+	self.message_box:SetText(str)
+end
+
+function LuaFatalErrorUI:Show()
+    self.message_box:ShowDialog(true)
+end
+
+function LuaFatalErrorUI:OnMsgCopy()
+	device():pause(false)
+	exec_console_cmd("disconnect")
+end
+
+function LuaFatalErrorUI:OnMsgYes()
+	device():pause(false)
+    exec_console_cmd("load " .. (user_name() or "") .. " - tempsave")
+end
+
+function LuaFatalErrorUI:OnMsgNo()
+	device():pause(false)
 end
 
 function on_game_start()
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
-
-	-- Prefetch callbacks. Disabled for now, conflict with SSS
-	-- RegisterScriptCallback("actor_item_to_slot", actor_item_to_slot_prefetch)
-	-- RegisterScriptCallback("actor_on_first_update", actor_on_first_update_prefetch)
-
 	RegisterScriptCallback("ActorMenu_on_item_after_move", ActorMenu_on_item_after_move)
-	RegisterScriptCallback("anomaly_on_before_activate", anomaly_on_before_activate)
 	RegisterScriptCallback("game_object_on_net_spawn", game_object_on_net_spawn)
 	RegisterScriptCallback("game_object_on_net_destroy", game_object_on_net_destroy)
+	RegisterScriptCallback("server_object_on_register", server_object_on_register)
+	RegisterScriptCallback("server_object_on_unregister", server_object_on_unregister)
 end

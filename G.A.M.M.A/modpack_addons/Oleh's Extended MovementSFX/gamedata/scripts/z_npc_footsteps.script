@@ -1,0 +1,214 @@
+xr_motivator.motivator_binder.net_spawn = function(self, se_abstract)
+	--utils_data.debug_write(strformat("\n----%s:net_spawn()---%s visual=%s",self.object:name(),self.object:character_name(),self.object:get_visual_name()),true)
+	if not object_binder.net_spawn(self, se_abstract) then
+		return false
+	end
+	
+	local se_obj = alife_object(self.object:id())
+	if not (se_obj) then 
+		return false 
+	end
+	
+	local npc = self.object
+
+	-- Enable if you need it, CoC doesn't have story for actor_visual and ini read from HDD not good
+	--[[
+	local visual = ini_sys:r_string_ex(npc:section(),"set_visual")
+	if (visual and visual ~= "") then
+		if visual == "actor_visual" then
+			npc:set_visual_name(db.actor:get_visual_name())
+		else
+			npc:set_visual_name(visual)
+		end
+	end
+	--]]	
+	
+	-- overrides
+	local m_data = alife_storage_manager.get_se_obj_state(se_obj)
+	if (m_data) then 
+		if (m_data.visual) then 
+			npc:set_visual_name(m_data.visual)
+		end  
+		if (m_data.icon_name) then 
+			npc:set_character_icon(m_data.icon_name)
+		end
+	end
+	local motivator_binder = xr_motivator.motivator_binder
+	npc:apply_loophole_direction_distance(1.0)
+	npc:set_callback(callback.use_object, motivator_binder.use_callback, self)
+	npc:set_callback(callback.on_item_take, self.on_item_take, self)
+	npc:set_callback(callback.on_item_drop, self.on_item_drop, self)
+	
+	db.add_obj(npc)
+	if not npc:alive() then
+		npc:death_sound_enabled(false)
+		--utils_data.debug_write(se_obj:name()..":net_spawn() Moving dead body...")
+		release_body_manager.get_release_body_manager():moving_dead_body(npc,true)
+		--utils_data.debug_write(se_obj:name()..":net_spawn() Moving dead body done")
+		
+		if not (self.loaded) then
+			local ini = npc:spawn_ini()
+			local filename = ini and ini:r_string_ex("logic","cfg")
+			ini = filename and ini_file(filename) or ini
+			if (ini) then
+				self:setup_known_info(npc,ini,ini:r_string_ex("logic","known_info"))
+			end
+		end
+		
+		-- fix for 'Invalid vertex for object'
+		if not (se_obj.m_level_vertex_id < 4294967295 and npc:accessible(se_obj.m_level_vertex_id)) then
+			printf("npc %s has invalid spawning vertex, correcting",se_obj:name())
+			local v_id = npc:accessible_nearest(level.vertex_position(se_obj.m_level_vertex_id), VEC_ZERO)
+			npc:set_npc_position(level.vertex_position(v_id))
+		end
+		
+		--xr_logic.initialize_obj(npc, self.st, self.loaded, db.actor, modules.stype_stalker)
+		return true
+	end
+	
+	npc:enable_vision(true)
+	
+	self.st.state_mgr = state_mgr.bind_manager(npc)
+	self.st.move_mgr = move_mgr.move_mgr(npc)
+	self.st.move_mgr:initialize()
+	
+	npc:set_patrol_extrapolate_callback(motivator_binder.extrapolate_callback, self)
+	npc:set_callback(callback.hit, motivator_binder.hit_callback, self)
+	npc:set_callback(callback.death, motivator_binder.death_callback, self)
+	npc:set_callback(callback.sound, motivator_binder.hear_callback, self)
+    npc:set_callback(callback.on_foot_step, npc_on_foot_step, self)
+	npc:set_callback(callback.take_item_from_box, self.take_item_from_box, self)
+		
+	db.add_enemy(npc)
+
+	local relation = db.goodwill.relations and db.goodwill.relations[npc:id()]
+	if (relation and db.actor) then
+		game_relations.set_npcs_relation(npc, db.actor, relation)
+	end
+
+	local sympathy = db.goodwill.sympathy and db.goodwill.sympathy[npc:id()]
+	if (sympathy) then
+		game_relations.set_npc_sympathy(npc, sympathy)
+	end
+
+	sound_theme.init_npc_sound(npc)
+
+	-- HACK! Not sure why this is needed now. If this isn't here then there will be
+	-- Cannot build GAME path! error
+	npc:set_dest_game_vertex_id(npc:game_vertex_id()) 
+	
+	xr_reach_task.add_reach_task_action(npc)
+	
+	if (se_load_var(se_obj.id,se_obj:name(),"companion")) then
+		axr_companions.setup_companion_logic(npc,self.st,self.loaded)
+	else
+		npc:disable_info_portion("npcx_is_companion")
+		npc:disable_info_portion("npcx_beh_cannot_dismiss")
+		smart_terrain.setup_gulag_and_logic_on_spawn(npc, self.st, se_obj, modules.stype_stalker, self.loaded)
+	end
+	
+	local id = se_obj.id
+	local force_set_position
+	
+	if (db.offline_objects[id] and db.offline_objects[id].level_vertex_id) then
+		force_set_position = level.vertex_position(db.offline_objects[id].level_vertex_id)
+		db.offline_objects[id].level_vertex_id = nil
+	elseif (db.spawned_vertex_by_id[id]) then
+		force_set_position = level.vertex_position(db.spawned_vertex_by_id[id])
+		db.spawned_vertex_by_id[id] = nil
+	end
+
+	if (force_set_position) then
+		npc:set_npc_position(force_set_position)
+	end
+
+	if character_community(npc) ~= "zombied" then
+		post_combat_idle.add_post_combat_idle(npc)
+	end
+
+	npc:group_throw_time_interval(2000)
+
+	-- start [Alundaio]
+	SendScriptCallback("npc_on_net_spawn",npc,se_obj)
+	-- End [Alundaio]
+
+	--utils_data.debug_write(se_obj:name()..":net_spawn() end")
+
+	return true
+end
+
+xr_motivator.motivator_binder.net_destroy = function(self)
+	--printf("%s:net_destroy()",self.object:name())
+	self.object:set_callback(callback.use_object,nil)
+	self.object:set_callback(callback.on_item_take,nil)
+	self.object:set_callback(callback.on_item_drop,nil)
+	self.object:set_patrol_extrapolate_callback(nil)
+	self.object:set_callback(callback.hit,nil)
+	self.object:set_callback(callback.death,nil)
+	self.object:set_callback(callback.sound,nil)
+	self.object:set_callback(callback.take_item_from_box,nil)
+    self.object:set_callback(callback.on_foot_step,nil)
+	-- start [Alundaio]
+	SendScriptCallback("npc_on_net_destroy",self.object)
+	-- end [Alundaio]
+	xr_combat_ignore.fighting_with_actor_npcs[self.object:id()] = nil
+
+	xr_sound.stop_sounds_by_id(self.object:id())
+	
+	if (self.object:is_talking()) then
+		db.actor:stop_talk()
+		self.object:stop_talk()
+	end
+
+	if (self.st) then
+		if (self.st.active_scheme) then
+			xr_logic.issue_event(self.object, self.st[self.st.active_scheme], "net_destroy", self.object)
+		end
+		if (self.st.reach_task) then
+			xr_logic.issue_event(self.object, self.st.reach_task, "net_destroy", self.object)
+		end
+		if (self.st.overrides and self.st.overrides.on_offline_condlist) then
+			xr_logic.pick_section_from_condlist(db.actor, self.object, self.st.overrides.on_offline_condlist)
+		end
+	end
+
+	if db.offline_objects[self.object:id()] then
+		db.offline_objects[self.object:id()].level_vertex_id = self.object:level_vertex_id()
+		db.offline_objects[self.object:id()].active_section = db.storage[self.object:id()].active_section
+	end
+
+	if (USE_MARSHAL) then
+		UnregisterScriptCallback("save_state",self)
+	end
+
+	db.del_obj(self.object)
+	db.delete_enemy(self.object)
+	
+	local m_data = alife_storage_manager.get_state()
+	if (m_data.game_object) then
+		m_data.game_object[self.object:id()] = nil
+	end
+	
+	trade_manager.on_npc_death(self.object)
+	
+	object_binder.net_destroy(self)
+end
+
+local sound_table = {}
+local visuals = {}
+local string_find = string.find
+
+function npc_on_foot_step(binder,obj,power,b_play,b_on_ground,b_hud_view)
+    local visual = obj:get_visual_name()
+    local outfit_tbl = death_manager.get_outfit_by_npc_visual(visual)
+    local outfit = outfit_tbl and outfit_tbl[1]
+    if not outfit then return end
+    local kind = string_find(outfit, "proto") and "light" or SYS_GetParam(0, outfit, "repair_type") == "outfit_exo" and "heavy" or nil
+	if not kind then return end
+    local id = obj:id()
+	if not sound_table[id] or visuals[id] ~= visual then
+		sound_table[id] = sound_object("npc-exo-servo\\".. kind .."_servo_exo_walk" .. math.random(2))
+		visuals[id] = visual
+	end
+	sound_table[id]:play_at_pos(obj, obj:position(), 0, sound_object.s3d)
+end
