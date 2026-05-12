@@ -1,0 +1,571 @@
+-- https://github.com/ubilabs/kd-tree-javascript
+-- k-d Tree Implementation for Lua for quick search in multidimensional tables
+-- k-d trees are a useful data structure for several applications, such as searches involving a multidimensional search key (e.g. range searches and nearest neighbor searches). k-d trees are a special case of binary space partitioning trees.
+-- Rewritten to pure Lua and adapted for usage in Anomaly by demonized
+
+local math_floor = math.floor
+local math_log = math.log
+local math_max = math.max
+local math_min = math.min
+
+local table_insert = table.insert
+local table_remove = table.remove
+local table_sort = table.sort
+
+local empty_table = empty_table
+
+local pairs = pairs
+
+local function table_slice(t, first, last)
+    local res = {}
+    for i = first or 1, last and last - 1 or #t do
+        res[#res + 1] = t[i]
+    end
+    return res
+end
+
+-- http://lua-users.org/wiki/BinaryInsert
+local function binary_insert(t, value, fcomp)
+    -- Initialise compare function
+    local fcomp = fcomp or function(a, b) return a < b end
+
+    -- print_table(value)
+
+    --  Initialise numbers
+    local iStart, iEnd, iMid, iState = 1, #t, 1, 0
+
+    if iEnd == 0 then
+        t[1] = value
+        -- printf("adding in beginning table empty")
+        return 1
+    end
+
+    if fcomp(value, t[1]) then
+        -- printf("adding in beginning %s of %s", 1, iEnd)
+        table_insert(t, 1, value)
+        return 1
+    end
+
+    if not fcomp(value, t[iEnd]) then
+        -- printf("adding in end %s of %s", iEnd + 1, iEnd)
+        local pos = iEnd + 1
+        t[pos] = value
+        return pos
+    end
+
+    -- Get insert position
+    while iStart <= iEnd do
+
+        -- calculate middle
+        iMid = math_floor((iStart + iEnd) / 2)
+
+        -- compare
+        if fcomp(value, t[iMid]) then
+            iEnd, iState = iMid - 1, 0
+        else
+            iStart, iState = iMid + 1, 1
+        end
+    end
+
+    local pos = iMid + iState
+    -- printf("adding in middle %s of %s", pos, iEnd)
+    table_insert(t, pos, value)
+    return pos
+end
+
+function Node(obj, dimension, parent)
+    local node = {}
+
+    node.obj = obj
+    node.left = nil
+    node.right = nil
+    node.parent = parent
+    node.dimension = dimension
+
+    return node
+end
+
+function kdTree(points, metric, dimensions)
+    local kd_tree = {}
+
+    kd_tree.points = points or {}
+    kd_tree.metric = metric
+    kd_tree.dimensions = dimensions
+
+    local function buildTree(new_points, depth, parent)
+        local dim = (depth % #dimensions) + 1
+        local median
+        local node
+
+        if not new_points then 
+            return
+        end
+
+        if #new_points == 0 then
+            -- printf("buildTree #new_points == 0")
+            return
+        end
+
+        if #new_points == 1 then
+            -- printf("buildTree #new_points == 1")
+            return Node(new_points[1], dim, parent)
+        end
+
+        table_sort(new_points, function(a, b)
+            return a[dimensions[dim]] < b[dimensions[dim]]
+        end)
+
+        median = math_floor(#new_points / 2) + 1
+        node = Node(new_points[median], dim, parent)
+        node.left = buildTree(table_slice(new_points, 1, median), depth + 1, node)
+        node.right = buildTree(table_slice(new_points, median + 1), depth + 1, node)
+
+        return node
+    end
+
+    kd_tree.root = buildTree(points, 0, nil)
+
+    kd_tree.insertAndRebuild = function(self, point)
+        self.points[#self.points + 1] = point
+        self.root = buildTree(self.points, 0, nil)
+        return self
+    end
+
+    kd_tree.insert = function(self, point)
+        local function innerSearch(node, parent)
+
+            if node == nil then
+                return parent
+            end
+
+            local dimension = self.dimensions[node.dimension]
+            if point[dimension] < node.obj[dimension] then
+                return innerSearch(node.left, node)
+            else
+                return innerSearch(node.right, node)
+            end
+        end
+
+        local insertPosition = innerSearch(self.root, nil)
+        local newNode
+        local dimension
+
+        if insertPosition == nil then
+            self.points[#self.points + 1] = point
+            self.root = buildTree(self.points, 0, nil)
+            return self
+        end
+
+        newNode = Node(point, (insertPosition.dimension + 1) % #self.dimensions, insertPosition)
+        dimension = self.dimensions[insertPosition.dimension]
+
+        if point[dimension] < insertPosition.obj[dimension] then
+            insertPosition.left = newNode
+        else
+            insertPosition.right = newNode
+        end
+
+        self.points[#self.points + 1] = point
+
+        return self
+    end
+
+    kd_tree.remove = function(self, point)
+        local node
+
+        local function nodeSearch(node)
+            if node == nil then
+                return
+            end
+
+            if node.obj == point then
+                return node
+            end
+
+            local dimension = self.dimensions[node.dimension]
+
+            if point[dimension] < node.obj[dimension] then
+                return nodeSearch(node.left)
+            else
+                return nodeSearch(node.right)
+            end
+        end
+
+        local function removeNode(node)
+            local nextNode
+            local nextObj
+            local pDimension
+
+            local function findMin(node, dim)
+                local dimension
+                local own
+                local left
+                local right
+                local min
+
+                if node == nil then
+                    return
+                end
+
+                dimension = self.dimensions[dim]
+
+                if node.dimension == dim then
+                    if node.left ~= nil then
+                        return findMin(node.left, dim)
+                    end
+                    return node
+                end
+
+                own = node.obj[dimension]
+                left = findMin(node.left, dim)
+                right = findMin(node.right, dim)
+                min = node
+
+                if left ~= nil and left.obj[dimension] < own then
+                    min = left
+                end
+
+                if right ~= nil and right.obj[dimension] < min.obj[dimension] then
+                    min = right
+                end
+
+                return min
+            end
+
+            if node.left == nil and node.right == nil then
+                if node.parent == nil then
+                    self.root = nil
+                    return
+                end
+
+                pDimension = self.dimensions[node.parent.dimension]
+
+                if node.obj[pDimension] < node.parent.obj[pDimension] then
+                    node.parent.left = nil
+                else
+                    node.parent.right = nil
+                end
+                return
+            end
+
+            -- If the right subtree is not empty, swap with the minimum element on the
+            -- node's dimension. If it is empty, we swap the left and right subtrees and
+            -- do the same.
+            if node.right ~= nil then
+                nextNode = findMin(node.right, node.dimension)
+                nextObj = nextNode.obj
+                removeNode(nextNode)
+                node.obj = nextObj
+            else 
+                nextNode = findMin(node.left, node.dimension)
+                nextObj = nextNode.obj
+                removeNode(nextNode)
+                node.right = node.left
+                node.left = nil
+                node.obj = nextObj
+            end
+        end
+
+        node = nodeSearch(self.root)
+
+        if node == nil then
+            return
+        end
+
+        removeNode(node)
+
+        return self
+    end
+
+    kd_tree.clearRoot = function(self)
+        empty_table(self.root)
+        return self
+    end
+
+    -- Update positions of objects
+    -- Points input must be same structure as existing in k-d Tree
+
+    kd_tree.updatePositions = function(self, points)
+        self.points = points
+        self:clearRoot()
+        self.root = buildTree(points, 0, nil)
+        return self
+    end
+
+    -- get all points sorted by nearest
+    kd_tree.nearestAll = function(self, point)
+        local point = {
+            x = point.x or point[1],
+            y = point.y or point[2],
+            z = point.z or point[3]
+        }
+
+        local function comp_function(a, b)
+            return a[2] < b[2]
+        end
+
+        local res = {}
+        for i = 1, #self.points do
+            local v = self.points[i]
+            res[i] = {
+                [1] = {
+                    x = v.x,
+                    y = v.y,
+                    z = v.z,
+                    data = v.data
+                },
+                [2] = math.huge
+            }
+            res[i][2] = self.metric(res[i][1], point)
+        end
+        table_sort(res, comp_function)
+        
+        return res
+    end
+
+    -- Query the nearest *count* neighbours to a point, with an optional
+    -- maximal search distance.
+    -- Result is an array with *count* elements.
+    -- Each element is an array with two components: the searched point and
+    -- the distance to it.
+
+    kd_tree.nearest = function(self, point, maxNodes, maxDistance)
+        local i
+        local result
+        local bestNodes
+
+        bestNodes = {}
+        local passedNodes = {}
+
+        local maxNodes = maxNodes or 1
+
+        local function comp_function(a, b) 
+            return a[2] < b[2]
+        end 
+
+        local function saveNode(node, distance)
+            binary_insert(bestNodes, {node, distance}, comp_function)
+            if #bestNodes > maxNodes then
+                table_remove(bestNodes)
+            end
+        end
+
+        local function nearestSearch(node)
+            if passedNodes[node] then return end
+
+            local bestChild
+            local dimension = self.dimensions[node.dimension]
+            local ownDistance = self.metric(point, node.obj)
+            local linearPoint = {}
+            local linearDistance
+            local otherChild
+            local i            
+
+            for i = 1, #self.dimensions do
+                linearPoint[self.dimensions[i]] = i == node.dimension and point[self.dimensions[i]] or node.obj[self.dimensions[i]]
+            end
+
+            linearDistance = self.metric(linearPoint, node.obj)
+
+            if node.right == nil and node.left == nil then
+                if #bestNodes < maxNodes or ownDistance < bestNodes[#bestNodes][2] then
+                    saveNode(node, ownDistance)
+                end
+                passedNodes[node] = true
+                return
+            end
+
+            if node.right == nil then
+                bestChild = node.left
+            elseif node.left == nil then
+                bestChild = node.right
+            else
+                bestChild = point[dimension] < node.obj[dimension] and node.left or node.right
+            end
+
+            nearestSearch(bestChild)
+
+            if #bestNodes < maxNodes or ownDistance < bestNodes[#bestNodes][2] then
+                saveNode(node, ownDistance)
+                passedNodes[node] = true
+            end
+
+            if #bestNodes < maxNodes or math.abs(linearDistance) < bestNodes[1][2] then
+                otherChild = bestChild == node.left and node.right or node.left
+                if (otherChild ~= nil) then
+                    nearestSearch(otherChild)
+                end
+            end
+        end
+
+        if maxDistance then
+            for i = 1, maxNodes do
+                bestNodes[i] = {nil, maxDistance}
+            end
+        end
+
+        if self.root then
+            nearestSearch(self.root)
+        end
+
+        result = {}
+        for i = 1, math_min(maxNodes, #bestNodes) do
+            if bestNodes[i][1] then
+                result[#result + 1] = {
+                    bestNodes[i][1].obj,
+                    bestNodes[i][2]
+                }
+            end
+        end
+
+        return result
+    end
+
+    -- Get an approximation of how unbalanced the tree is.
+    -- The higher this number, the worse query performance will be.
+    -- It indicates how many times worse it is than the optimal tree.
+    -- Minimum is 1. Unreliable for small trees.
+
+    kd_tree.balanceFactor = function(self)
+        local function height(node)
+            if node == nil then
+                return 0
+            end
+            return math_max(height(node.left), height(node.right)) + 1
+        end
+
+        local function count(node)
+            if node == nil then
+                return 0
+            end
+            return count(node.left) + count(node.right) + 1
+        end
+
+        return height(self.root) / (math_log(count(self.root)) / math_log(2))
+    end
+
+    return kd_tree
+end
+
+local function distance_to(a, b)
+    -- printf("distance_to fired")
+
+    local dist_x = a.x - b.x
+    local dist_y = a.y - b.y
+    local dist_z = a.z - b.z
+    
+    return dist_x * dist_x + dist_y * dist_y + dist_z * dist_z
+end
+
+-- Actual usage starts here
+--[[
+
+When you build position tree, you can find nearest objects in relation to other objects
+Example, find nearest position to actor:
+    local pos_tree = kd_tree.buildTreeObjectIds({45, 65, 23, 5353, 232})
+    print_table(pos_tree:nearest(db.actor:position()))
+
+will print position, distance and id of nearest object from given ids
+
+--]]
+
+-- Build k-d Tree by several inputs
+-- Input - Array of vectors (vector():set(x, y, z) or table with x, y, z keys or 1, 2, 3 keys)
+-- Data is an optional table where you can bind your data to your object, must have same amount of fields as vectors (#vectors == #data)
+function buildTreeVectors(vectors, data)
+    local v = {}
+    local data = data or {}
+    local vectors = vectors or {}
+    for k, t in pairs(vectors) do
+        table_insert(v, {
+            x = t.x or t[1],
+            y = t.y or t[2],
+            z = t.z or t[3],
+            data = data[k]
+        })
+    end
+    -- printf("vectors num %s", #v)
+    return kdTree(v, distance_to, {"x", "y", "z"})
+end
+
+-- Input - Array of game objects
+-- Vectors are binded to object ids automatically
+function buildTreeObjects(objects)
+    local vectors = {}
+    local data = {}
+    for k, v in pairs(objects) do
+        table_insert(vectors, v:position())
+        table_insert(data, v:id())
+    end
+    return buildTreeVectors(vectors, data)
+end
+
+-- Input - Array of server objects
+-- Vectors are binded to object ids automatically
+function buildTreeSeObjects(objects)
+    local vectors = {}
+    local data = {}
+    for k, v in pairs(objects) do
+        table_insert(vectors, v.position)
+        table_insert(data, v.id)
+    end
+    return buildTreeVectors(vectors, data)
+end
+
+-- Input - Array of game object ids
+-- Vectors are binded to object ids automatically
+function buildTreeObjectIds(ids)
+    local vectors = {}
+    local data = {}
+    local level_object_by_id = level.object_by_id
+    for k, v in pairs(ids) do
+        local obj = level_object_by_id(v)
+        if obj and obj ~= 0 and obj:id() ~= 0 then 
+            table_insert(vectors, obj:position())
+            table_insert(data, v)
+        end
+    end
+    return buildTreeVectors(vectors, data)
+end
+
+-- Input - Array of server object ids
+-- Vectors are binded to object ids automatically
+function buildTreeSeObjectIds(ids)
+    local vectors = {}
+    local data = {}
+    local sim = alife()
+    local sim_object = sim.object
+    for k, v in pairs(ids) do
+        local obj = sim_object(sim, v)
+        if obj and obj ~= 0 and obj.id ~= 0 then 
+            table_insert(vectors, obj.position)
+            table_insert(data, v)
+        end
+    end
+    return buildTreeVectors(vectors, data)
+end
+
+-- If you build a tree using functions above
+-- You can use this function to update positions and rebuild the tree 
+function updateObjPositions(kd_tree)
+    local points = kd_tree.points
+    local new_points = {}
+
+    local sim = alife()
+    local sim_object = sim.object
+    for i = 1, #points do
+        local obj = sim_object(sim, points[i].data)
+        if obj then
+            local pos = obj.position
+            table_insert(new_points, {
+                x = pos.x,
+                y = pos.y,
+                z = pos.z,
+                data = points[i].data
+            })
+        end
+    end
+
+    kd_tree:updatePositions(new_points)
+    return kd_tree
+end
