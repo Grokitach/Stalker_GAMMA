@@ -975,9 +975,11 @@ end
 
 function UIInventory:Cond_Childs(obj, bag)
 	obj = self:CheckItem(obj,"Cond_Childs")
-
-	local ci = self.CC[bag]:GetCell_ID(obj:id())
-	return ci.ID == obj:id() and ci:HasChild()
+	
+	if obj and bag then
+		local ci = self.CC[bag]:GetCell_ID(obj:id())
+		return ci.ID == obj:id() and ci:HasChild()
+	end
 end
 
 function UIInventory:Cond_Use(obj, bag)
@@ -2806,6 +2808,10 @@ function UIInventory:TMode_Sell()
 		self.message_box:ShowDialog(true)
 		return
 	end
+
+	-- Sound effect
+	if itms_manager.timeout_snd_on_take then itms_manager.timeout_snd_on_take(50) end
+	self:PlaySND(snd_trade)
 	
 	-- Transfer items
 	for id,idx in pairs(cc.indx_id) do
@@ -2818,10 +2824,6 @@ function UIInventory:TMode_Sell()
 	-- Transfer money
 	db.actor:give_money(tot_cost)
 	npc:give_money(-tot_cost)
-
-	-- Sound effect
-	if itms_manager.timeout_snd_on_take then itms_manager.timeout_snd_on_take(50) end
-	self:PlaySND(snd_trade)
 	
 	-- Update UI
 	self.update_info = true
