@@ -100,11 +100,22 @@ function get_wpn_params(weapon)
         wpn.frequency  = clamp(0.25 / wpn.aim_time, 0.8, 1.2)
         wpn.kind       = SYS_GetParam(0, sec, "kind") or "w_rifle"
         wpn.class      = wpn_kinds[wpn.kind] or wpn_kinds["w_rifle"]
+
         -- special case for magazine fed shotguns
-        if wpn.kind == "w_shotgun" and not SYS_GetParam(0, sec, "tri_state_reload") then wpn.class = wpn_kinds["w_rifle"] end
+        -- reads GAMMA casings sounds .ltx to check if weapon has delayed ejection (manual action)
+        if wpn.kind == "w_shotgun" and
+        not ini_cas:r_float_ex(sec, "eject_delay") and
+        SYS_GetParam(0, sec, "tri_state_reload", "off") ~= "on" and
+        SYS_GetParam(0, sec, "class", "WP_ASHTG") ~= "WP_BM16" then
+            wpn.class = wpn_kinds["w_rifle"]
+        end
+
         -- special case for self loading snipers
         -- reads GAMMA casings sounds .ltx to check if weapon has delayed ejection (manual action)
-        if wpn.kind == "w_sniper" and not ini_cas:r_float_ex(sec, "eject_delay") then wpn.class = wpn_kinds["w_rifle"] end
+        if wpn.kind == "w_sniper" and
+        not ini_cas:r_float_ex(sec, "eject_delay") then
+            wpn.class = wpn_kinds["w_rifle"]
+        end
         wpn.sclass = "sprint_" .. wpn.class
     end
 end

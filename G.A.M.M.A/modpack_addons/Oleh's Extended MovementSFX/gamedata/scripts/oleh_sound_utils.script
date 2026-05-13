@@ -19,8 +19,41 @@ function load_settings()
     freelook_toggle = get_console_cmd(1,"g_freelook_toggle") or false
 end
 
+local cached_outfit = {
+    id = nil,
+    class = "default",
+    weight = 10
+}
+function get_outfit_params()
+    local item = db.actor:item_in_slot(7)
+    if not item then return cached_outfit end
+
+    if item:id() ~= cached_outfit.id then
+        local section = item:section()
+        if not section then return end
+        local outfit = {}
+        outfit.weight = SYS_GetParam(2, section, "inv_weight", 10)
+        outfit.class = SYS_GetParam(0, section, "repair_type", "default")
+
+        if string.find(section, "proto") then
+            outfit.class = "outfit_exo_proto"
+        end
+
+        if string.find(section, "nosorog") then
+            outfit.class = "outfit_exo_nosorog"
+        end
+
+        outfit.id = item:id()
+        --printf("%s %s %s" , outfit.id, outfit.class, outfit.weight)
+        cached_outfit = outfit
+    end
+
+    return cached_outfit
+end
+
+-- legacy method
+local cached_outfit_id = nil
 local cached_outfit_class = "default"
-local cached_outfit_id
 function get_outfit_class()
     local outfit = db.actor:item_in_slot(7)
     if not outfit then return "default" end
