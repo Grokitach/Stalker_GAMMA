@@ -412,6 +412,9 @@ anomaly_radii = {
 updated_anomaly_levels = {}
 last_surge_time = 0
 
+local vanilla_anomaly_cache = {}
+local vanilla_cache_built = {}
+
 function init_anomaly_table_on_level(level_name)
 	local level_name = level_name or level.name()
 	if not updated_anomaly_levels[level_name] then updated_anomaly_levels[level_name] = {} end
@@ -881,7 +884,7 @@ function clean_dynamic_anomalies_global()
 						if IsAnomaly(_, se_obj:clsid()) then
 							printf("Deleting anomaly %s, %s globally, level %s", se_obj:section_name(), v1, k)
 							alife_record(se_obj ,false)
-							alife():release(se_obj, true)
+							sim:release(se_obj, true)
 						else
 							printf("Error, object is not an anomaly, %s, %s, on level %s", se_obj:section_name(), v1, k)
 						end
@@ -918,7 +921,7 @@ function clean_dynamic_anomalies_global()
 									local o = alife_object(anom_id)
 									if o then 
 										alife_record(o ,false)
-										alife():release(o, true)
+										sim:release(o, true)
 									end
 								else
 									printf("Error, can't remove old anomaly %s, level %s, in restriction", anom_id, k)
@@ -1100,7 +1103,7 @@ function drx_da_spawn_anomalies_on_level(level_name)
 	if is_not_empty(rad_fields) then
 		for i = 1, math.ceil(#rad_fields / 2) do
 			if is_empty(rad_fields) then break end
-			anomaly_list[#anomaly_list + 1] = table_remove(rad_fields, math.random(#rad_fields))
+			anomaly_list[#anomaly_list + 1] = table_remove(rad_fields, random(#rad_fields))
 		end
 	end
 
@@ -1725,8 +1728,9 @@ function register_anomalies_behaviour()
 
 	printf("anomalies behaviour, turning on behaviour for level %s", level_name)
 
+	local now = time_global()
 	for k, v in pairs(updated_anomaly_levels[level_name].anomalies_properties) do
-		v.update_time = time_global()
+		v.update_time = now
 	end
 
 	local get_object = level.object_by_id
@@ -1786,34 +1790,69 @@ common_sec = {
 }
 
 function build_anomalies_pos_tree()
-	local alife_release_id = alife_release_id
 	local gg = game_graph()
 	local gg_vertex = gg.vertex
 	local level_name = level.name()
-	local load_var = load_var
 	local pairs = pairs
-	local printf = printf
 	local sim = alife()
+	if not sim then return end
 	local sim_level_name = sim.level_name
 	local sim_object = sim.object
-	local sim_release = sim.release
-	local alife_record = alife_record
-	local strformat = strformat
-
-	local level_name = level.name()
 
 	local objects = {}
 	local obj_to_pos = {}
 	local sec_to_obj = {}
 
-	
+	local all_anomaly_ids = {}
 
-	for i = 1, 65534 do
-		local obj = get_anomaly_obj(i, level_name)
+	if updated_anomaly_levels[level_name] and updated_anomaly_levels[level_name].anomalies then
+		for _, id in pairs(updated_anomaly_levels[level_name].anomalies) do
+			if id and type(id) == "number" then
+				all_anomaly_ids[id] = true
+			end
+		end
+	end
+
+	if bind_anomaly_field and bind_anomaly_field.dyn_anomalies then
+		local ssfx_anomalies = bind_anomaly_field.dyn_anomalies[level_name]
+		if ssfx_anomalies then
+			for id, _ in pairs(ssfx_anomalies) do
+				if id and type(id) == "number" then
+					all_anomaly_ids[id] = true
+				end
+			end
+		end
+	end
+
+	if not vanilla_cache_built[level_name] then
+		vanilla_anomaly_cache[level_name] = {}
+		for i = 1, 65534 do
+			local se_obj = sim_object(sim, i)
+			if se_obj then
+				local cls = se_obj:clsid()
+				if IsAnomaly(_, cls) then
+					local obj_level = sim_level_name(sim, gg_vertex(gg, se_obj.m_game_vertex_id):level_id())
+					if obj_level == level_name and not all_anomaly_ids[i] then
+						vanilla_anomaly_cache[level_name][i] = true
+					end
+				end
+			end
+		end
+		vanilla_cache_built[level_name] = true
+	end
+
+	if vanilla_anomaly_cache[level_name] then
+		for id, _ in pairs(vanilla_anomaly_cache[level_name]) do
+			all_anomaly_ids[id] = true
+		end
+	end
+
+	for id, _ in pairs(all_anomaly_ids) do
+		local obj = get_anomaly_obj(id, level_name)
 		if obj then
 			table.insert(objects, obj)
-			obj_to_pos[i] = {
-				id = i,
+			obj_to_pos[id] = {
+				id = id,
 				section = obj:section_name(),
 				position = obj.position
 			}
@@ -1821,10 +1860,12 @@ function build_anomalies_pos_tree()
 			sec = common_sec[sec] or sec
 			if not sec_to_obj[sec] then sec_to_obj[sec] = {} end
 			table.insert(sec_to_obj[sec], {
-				id = i,
+				id = id,
 				section = obj:section_name(),
 				position = obj.position
 			})
+		elseif vanilla_anomaly_cache[level_name] then
+			vanilla_anomaly_cache[level_name][id] = nil
 		end
 	end
 
@@ -1978,12 +2019,13 @@ anomalies_near_actor_functions = {
 
 		if random() * 100 <= 0.5 then
 			anomaly.spawn_time = time_elapsed + spawn_cooldown
+			local actor_position = actor:position()
+			local actor_gvid = alife():actor().m_game_vertex_id
 			for i = 1, ceil(random() ^ 2 * spawn_max_amount) do
-				local actor_position = actor:position()
 				local spawn_position = vector():set(actor_position.x - random_float(5, 7), actor_position.y, actor_position.z - random_float(5, 7))
 				local spawn_section = spawn_table[random(#spawn_table)]
 
-				alife_create(spawn_section, spawn_position, level_vertex_id(spawn_position), alife():actor().m_game_vertex_id)
+				alife_create(spawn_section, spawn_position, level_vertex_id(spawn_position), actor_gvid)
 			end
 		end
 	end,
@@ -3407,7 +3449,7 @@ function force_clean_dynamic_anomalies_global()
 						if IsAnomaly(_, se_obj:clsid()) then
 							printf("Deleting anomaly %s, %s globally, level %s", se_obj:section_name(), v1, k)
 							alife_record(se_obj ,false)
-							alife():release(se_obj, true)
+							sim:release(se_obj, true)
 						else
 							printf("Error, object is not an anomaly, %s, %s, on level %s", se_obj:section_name(), v1, k)
 						end
@@ -3444,7 +3486,7 @@ function force_clean_dynamic_anomalies_global()
 									local o = alife_object(anom_id)
 									if o then 
 										alife_record(o ,false)
-										alife():release(o, true)
+										sim:release(o, true)
 									end
 								else
 									printf("Error, can't remove old anomaly %s, level %s, in restriction", anom_id, k)
