@@ -1,5 +1,6 @@
 -- Prepare ini files
 ini_manager = ini_manager or ini_file("items\\settings\\itms_manager.ltx")
+local pistol_extra_ammo = 1
 
 use_package_random = itms_manager.use_package_random
 function itms_manager.use_package_random(obj)
@@ -13,24 +14,28 @@ function itms_manager.use_package_random(obj)
 	if settings then
 		ts = str_explode(settings,",")
 	end
-	local min_items 	= tonumber(ts[1]) or 4
-	local max_items 	= tonumber(ts[2]) or 6
-	local chance		= tonumber(ts[3]) or 50
-	local type			= ts[4]
+	local min_items 		= tonumber(ts[1]) or 4
+	local max_items 		= tonumber(ts[2]) or 6
+	local chance			= tonumber(ts[3]) or 50
+	local type				= ts[4] or nil
+	local ammo_types		= ts[5] or 3
 	printf("[use_package_random] %s min: %s max: %s chance: %s type: %s", sec, min_items, max_items, chance, type)
 
 	local pick = {}
 	if type and type == "ammo" then
-		--[[ --select one ammo item
-		local ammo_type = t[math.random(#t)]
-		local ammo_amount = pistol_ammo[ammo_type] and max_items or min_items
-		for i=1,ammo_amount do
-			pick[#pick+1] = ammo_type
+		-- Select 3 ammo types (may be duplicates)
+		local selected_types = {}
+		for i = 1, ammo_types do
+			selected_types[i] = t[math.random(#t)]
 		end
-		]]
-		local ammo_amount = math.random(min_items,max_items) or min_items
-		for i=1,ammo_amount do
-			pick[#pick+1] = t[math.random(#t)]
+
+		for _, ammo_type in ipairs(selected_types) do
+			local min_amt = pistol_ammo[ammo_type] and min_items + pistol_extra_ammo or min_items
+			local max_amt = pistol_ammo[ammo_type] and max_items + pistol_extra_ammo or max_items
+			local ammo_amount = math.random(min_amt, max_amt)
+			for j = 1, ammo_amount do
+				pick[#pick + 1] = ammo_type
+			end
 		end
 	else
 		for i=1,#t do

@@ -1,5 +1,5 @@
 -- plays player footstep sounds - oleh5230, 17.08.25
--- Last edit: 09.10.25
+-- Last edit: 12.05.25
 
 local debug = false
 
@@ -87,14 +87,14 @@ end
 function actor_on_footstep(material, power, hud_view, flags)
     --flags.ret_value = false -- uncomment to disable engine footstep sounds
     if not step_enabled then return end
-    local outfit_class = oleh_sound_utils.get_outfit_class() or "default"
+    local outfit = oleh_sound_utils.get_outfit_params() or {id = nil, class = "default", weight = 10}
 
     local move_state, volume = "n_", 1
     move_state, volume = get_move_state()
     material = available_materials[material] or available_materials["default"]
 
     -- play cloth sounds
-    local cloth = extra_sounds[outfit_class][1]
+    local cloth = extra_sounds[outfit.class][1]
     if cloth then
         local sound = sound_object(cloth .. queues[cloth][count[cloth]])
         sound:play(db.actor, 0, sound_object.s2d)
@@ -110,9 +110,10 @@ function actor_on_footstep(material, power, hud_view, flags)
 
     -- play gear rattle sounds
     if gear_enabled then
-        local gear = extra_sounds[outfit_class][2]
+        local gear = extra_sounds[outfit.class][2]
+        -- volume based on carry weight, excluding outfit weight
         local weight = db.actor:get_total_weight()
-        local weight_volume = weight and clamp(weight/100, 0.25, 1) or 1
+        local weight_volume = weight and outfit.weight and clamp((weight - outfit.weight)/100, 0.25, 1) or 1
         if gear then
             local sound = sound_object(gear .. queues[gear][count[gear]])
             sound:play(db.actor, 0, sound_object.s2d)
@@ -128,8 +129,8 @@ function actor_on_footstep(material, power, hud_view, flags)
     end
 
     -- play exo servo sounds
-    if servo_enabled and exo_classes[outfit_class] then
-        local sound = sound_object("exo-gear-walk-jump-land\\servo_exo_walk_" .. exo_classes[outfit_class] .. (exo_count and 2 or 1))
+    if servo_enabled and exo_classes[outfit.class] then
+        local sound = sound_object("exo-gear-walk-jump-land\\servo_exo_walk_" .. exo_classes[outfit.class] .. (exo_count and 2 or 1))
         sound:play(db.actor, 0, sound_object.s2d)
         sound.volume = volume * servo_volume
         exo_count = not exo_count

@@ -1,0 +1,180 @@
+get_sort_kind = zzz_rax_sortingplus_mcm.get_sort_kind
+
+function sort_by_kind_factory(t)
+    -- grab references to zzz_rax_sortingplus_mcm variables in factory instead of
+    -- script scope in case they're reassigned at some point (reloading from MCM etc.)
+    local SORTFAVS = zzz_rax_sortingplus_mcm.SORTFAVS
+    local SORTJUNK = zzz_rax_sortingplus_mcm.SORTJUNK
+    local favorite_itms = zzz_rax_sortingplus_mcm.favorite_itms
+    local junk_itms = zzz_rax_sortingplus_mcm.junk_itms
+
+    --[[
+        Renamed import to be more descriptive.
+        Example values: {
+            favorites=0,
+            w_misc=1,
+            i_tool=5,
+            i_part=13,
+            na=38,
+            junk=100
+        }
+    ]] --
+    local kind_to_order = zzz_rax_sortingplus_mcm.item_order
+
+    -- cached sec => kind
+    local sec_to_kind = {}
+    -- cached sec => kind_to_order[get_sort_kind(sec)] sort order e.g.
+    -- {bolt=1, swiss_knife=5, prt_w_barrel_1=13}
+    local sec_to_kind_order = {}
+    -- cached width & height in grid e.g. {bolt=1, swiss_knife=1, prt_w_barrel_1=3}
+    local sec_to_width, sec_to_height = {}, {}
+
+    for k, _ in pairs(t) do
+        local obj = t[k]
+        local sec = t[k] ---@type string
+
+        if type(sec) ~= "string" then
+            sec = obj:section()
+        end
+
+        if not sec_to_width[sec] then
+            sec_to_width[sec] = SYS_GetParam(2, sec, "inv_grid_width", 0)
+        end
+        if not sec_to_height[sec] then
+            sec_to_height[sec] = SYS_GetParam(2, sec, "inv_grid_height", 0)
+        end
+
+        if not sec_to_kind_order[sec] then
+            --[[
+            kind can be e.g. given a sec: {
+                bolt="w_misc",
+                swiss_knife="i_tool",
+                prt_w_barrel_1="i_part"
+            }
+            ]] --
+            local kind = sec_to_kind[sec]
+            if not kind then
+                -- cache kind
+                kind = get_sort_kind(sec)
+                sec_to_kind[sec] = kind
+            end
+            sec_to_kind_order[sec] = kind_to_order[kind] or kind_to_order["na"]
+        end
+    end
+
+    local sort_by_kind_custom = function(_, a, b)
+        -- HOT LOOP
+        a = t[a]
+        b = t[b]
+        local a_sec = a
+        local b_sec = b
+
+        -- normalize both a_val and b_val to be strings
+        if type(a_sec) ~= "string" then
+            -- a_sec = sec_to_name[a]
+            a_sec = a:section()
+        end
+        if type(b_sec) ~= "string" then
+            -- b_sec = sec_to_name[b]
+            b_sec = b:section()
+        end
+
+        local a_kind_order = sec_to_kind_order[a_sec]
+        local b_kind_order = sec_to_kind_order[b_sec]
+        if (magazine_binder and type(a) ~= "string" and type(b) ~= "string") then
+            -- not hot path optimized
+            if magazine_binder.is_carried_mag(a:id()) then
+                a_kind_order = kind_to_order["loadout"]
+            end
+
+            if magazine_binder.is_carried_mag(b:id()) then
+                b_kind_order = kind_to_order["loadout"]
+            end
+        end
+
+        local a_override_kind_order = kind_to_order
+            [SORTFAVS and favorite_itms[a_sec] or SORTJUNK and junk_itms[a_sec]] or
+            false
+        local b_override_kind_order = kind_to_order
+            [SORTFAVS and favorite_itms[b_sec] or SORTJUNK and junk_itms[b_sec]] or
+            false
+
+        if a_override_kind_order ~= b_override_kind_order then
+            --if the overrides are equal sort by the actual kind
+            --otherwise sort by the overide if it exists or the orginal kind
+            a_kind_order = a_override_kind_order or a_kind_order
+            b_kind_order = b_override_kind_order or b_kind_order
+        end
+
+        if a_kind_order == b_kind_order then
+            -- sort_by_size
+            if (sec_to_width[a_sec] == sec_to_width[b_sec]) then
+                if (sec_to_height[a_sec] == sec_to_height[b_sec]) then
+                    if (a_sec == b_sec) then
+                        if (type(a) == "string") then return false end --true
+
+                        return a:id() > b:id()
+                    end
+                    -- alphaptic order
+
+                    return a_sec < b_sec
+                end
+
+                return sec_to_height[a_sec] > sec_to_height[b_sec]
+            end
+
+            return sec_to_width[a_sec] > sec_to_width[b_sec]
+        end
+
+        return a_kind_order and b_kind_order and a_kind_order < b_kind_order
+    end
+
+
+    -- SortingPlus zzz_rax_sortingplus_mcm overrides this UICellContainer.FindFreeCell
+    -- to use its own ab_k[] etc. variables which are produced during the sort's sort_info().
+    -- Patch it to use our own precalculated stuff instead (sec_to_width/height, kind_to_order)
+    local patched_custom_FindFreeCell = function(self, obj, sec)
+        if (not sec) then
+            if (not obj) then return false end
+            sec = obj and obj:section()
+        end
+
+        ----------------- seax patch begin
+        local w = sec_to_width[sec]
+        local h = sec_to_height[sec]
+        ----------------- seax patch end
+        -- Avoid icons that don't fit
+        if w > self.cols then return false end
+
+        -- Sorting by kind: when sorting a new kind, always start from last row taken by previous kind
+        if self.sort_method == "kind" then
+            local sort_kind = (magazine_binder and obj and magazine_binder.is_carried_mag(obj:id()) and "loadout")
+                or (SORTFAVS and favorite_itms[sec])
+                or (SORTJUNK and junk_itms[sec])
+                or sec_to_kind[sec]
+            self.rKind.current = kind_to_order[sort_kind]
+
+            if (self.rKind.last ~= self.rKind.current) then
+                self.rKind.last = self.rKind.current
+                self.rKind.row = self.row_end + 1
+            end
+        end
+
+        local row_s = self.rKind.row
+        local rows = #self.grid
+        local cols = self.cols + 1 - w
+        self:Print(nil, "FindFreeCell for [%s] (rows: %s, cols: %s, W: %s, H: %s)", sec, rows, cols, w, h)
+
+        for r = row_s, rows do
+            for c = 1, cols do
+                if self:IsFreeRoom(r, c, w, h) then return self:TakeRoom(r, c, w, h) end
+            end
+        end
+
+        self:Grow()
+
+        return self:FindFreeCell(obj, sec)
+    end
+
+    return sort_by_kind_custom, patched_custom_FindFreeCell
+end
