@@ -17,8 +17,38 @@ function set_weapon_condition(item)
 	end
 end
 
+local flag = false
+function ActorMenu_on_mode_changed(mode)
+	-- trade
+	if mode == 2 then
+		db.actor:iterate_inventory(blacklist_all_weapon_trade)
+	end
+end
+
+function GUI_on_hide()
+	if flag == true then
+		db.actor:iterate_inventory(set_all_weapon_condition)
+	end
+end
+
+function blacklist_all_weapon_trade(_, item)
+	if item and IsWeapon(item) and not IsMelee(item) then
+		item:set_condition(0.001)
+		flag = true
+	end
+end
+
+function set_all_weapon_condition(_, item)
+	if item and IsWeapon(item) and not IsMelee(item) then
+		item:set_condition(cond)
+		flag = false
+	end
+end
+
 function on_game_start()
 	RegisterScriptCallback("actor_on_weapon_fired", set_weapon_fire_condition)
 	RegisterScriptCallback("actor_on_item_take", set_weapon_condition)
 	RegisterScriptCallback("actor_item_to_ruck", set_weapon_condition)
+	RegisterScriptCallback("ActorMenu_on_mode_changed", ActorMenu_on_mode_changed)
+	RegisterScriptCallback("GUI_on_hide", GUI_on_hide)
 end
