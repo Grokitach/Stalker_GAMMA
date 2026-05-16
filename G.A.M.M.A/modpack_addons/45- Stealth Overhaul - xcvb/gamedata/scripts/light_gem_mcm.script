@@ -9,15 +9,28 @@ FLASHLIGHT_PENALTY = .3 --flat value to make the gem jump as a reminder that you
 
 GEM_ON = false
 
+local gem
+local last_update = 0
+local update_interval = 100
 
-function on_game_start()
-	RegisterScriptCallback("actor_on_update",light_gem)
+function actor_on_net_destroy()
+	local hud = get_hud()
+	if not hud then return end
+	local cs = hud:GetCustomStatic("mp_warm_up")
+	if cs then hud:RemoveCustomStatic("mp_warm_up") end
+	gem = nil
 end
 
-
-local gem
+function on_game_start()
+	RegisterScriptCallback("actor_on_update", light_gem)
+	RegisterScriptCallback("actor_on_net_destroy", actor_on_net_destroy)
+end
 
 function light_gem()
+	local now = time_global()
+	if now - last_update < update_interval then return end
+	last_update = now
+
 	local hud = get_hud()
 	local cs = hud:GetCustomStatic("mp_warm_up") 
 		if (cs == nil) then 
