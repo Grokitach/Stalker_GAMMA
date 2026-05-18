@@ -9,12 +9,12 @@ local math_random = math.random
 local math_huge   = math.huge
 local pairs       = pairs
 
-local factions_t = { 
-    ["stalker"]     = true, ["dolg"]        = true,
-    ["freedom"]     = true, ["csky"]        = true,
-    ["ecolog"]      = true, ["killer"]      = true,
-    ["army"]        = true, ["bandit"]      = true,
-    ["renegade"]    = true, ["monolith"]    = false,
+local factions_t = {
+    ["stalker"]     = true,  ["dolg"]       = true,
+    ["freedom"]     = true,  ["csky"]       = true,
+    ["ecolog"]      = true,  ["killer"]     = true,
+    ["army"]        = true,  ["bandit"]     = true,
+    ["renegade"]    = true,  ["monolith"]   = false,
     ["greh"]        = false, ["isg"]        = false,
 }
 
@@ -42,41 +42,82 @@ local prior_t = {
 }
 
 local squad_behaviour_keys = {
-    {"all",1},
-    {"base",1},
-    {"resource",2},
-    {"territory",1},
-    {"surge",3},
+    {"all",       1},
+    {"base",      1},
+    {"resource",  2},
+    {"territory", 1},
+    {"surge",     3},
 }
-local squad_behaviour_count = #squad_behaviour_keys -- FIXED: Defined the count for the loop
+local squad_behaviour_count = #squad_behaviour_keys
 
-local default_monster_behaviour = { 
-    ["actor"] = 0, ["base"] = 0, ["lair"] = 1, ["monster"] = 1, ["resource"] = 0, ["squad"] = 0, ["surge"] = 0, ["territory"] = 1
+local default_monster_behaviour = {
+    ["actor"] = 0, ["base"] = 0, ["lair"] = 1, ["monster"] = 1,
+    ["resource"] = 0, ["squad"] = 0, ["surge"] = 0, ["territory"] = 1,
 }
 
 local shared_rank = {
-    ["trainee"] = "novice", ["professional"] = "experienced", ["expert"] = "veteran", ["legend"] = "master",
+    ["trainee"] = "novice", ["professional"] = "experienced",
+    ["expert"]  = "veteran", ["legend"]      = "master",
 }
 
 function pr(...)
     if debugx then printf(...) end
 end
 
--- Transient cache defined outside, cleared per sweep
-local sweep_level_cache = {} 
+-- Precompute stable-for-session fields on simulation_objects.register.
+-- Smart-terrain gvid is fixed (xrServer_Objects_ALife.cpp:369,468 -- m_tGraphID
+-- only assigned in ctor and STATE_Read), so its level_id and game_point
+-- are pure functions of its identity. clsid never changes for a C++ class.
+local function precompute(se_obj)
+    if se_obj.clsid_cached ~= nil then return end
+    local cls = se_obj:clsid()
+    se_obj.clsid_cached = cls
+    if cls == clsid.smart_terrain then
+        local v = game_graph():vertex(se_obj.m_game_vertex_id)
+        se_obj.level_id_cached   = v:level_id()
+        se_obj.game_point_cached = v:game_point()
+    end
+end
+
+do
+    local original_register = simulation_objects.register
+    function simulation_objects.register(se_obj)
+        original_register(se_obj)
+        precompute(se_obj)
+    end
+end
+
+-- One-shot backfill: on save-game load, alife may restore entities and fire
+-- on_register before axr_main.on_game_start finishes auto-loading scripts,
+-- so the register hook misses early entries. First sweep catches them.
+local backfilled = false
+
+-- Per-sweep state set by get_squad_target, read by evaluate_prior.
+-- Lua is single-threaded; sweeps don't nest. State may be nil if our
+-- evaluate_prior is called from a foreign get_squad_target override --
+-- helpers below fall back to direct computation in that case.
+local sweep_squad_pt    = nil
+local sweep_squad_level = nil
+local sweep_token       = nil  -- identity table; no integer wrap
 
 local function get_level_id(se_obj)
-    local lvl = sweep_level_cache[se_obj.id]
-    if not lvl then
-        lvl = game_graph():vertex(se_obj.m_game_vertex_id):level_id()
-        sweep_level_cache[se_obj.id] = lvl
-    end
-    return lvl
+    return se_obj.level_id_cached
+        or game_graph():vertex(se_obj.m_game_vertex_id):level_id()
+end
+
+local function get_squad_pt(squad)
+    return sweep_squad_pt
+        or game_graph():vertex(squad.m_game_vertex_id):game_point()
+end
+
+local function get_squad_level(squad)
+    return sweep_squad_level or get_level_id(squad)
 end
 
 local function evaluate_prior_by_dist(target, squad)
-    -- Removed useless cache here, distance is only checked once per pair anyway
-    local dist = utils_obj.graph_distance(target.m_game_vertex_id, squad.m_game_vertex_id)
+    local target_pt = target.game_point_cached
+        or game_graph():vertex(target.m_game_vertex_id):game_point()
+    local dist = target_pt:distance_to(get_squad_pt(squad))
     if dist < 1 then dist = 1 end
     return 1 + 1 / dist
 end
@@ -86,46 +127,44 @@ function is_on_the_same_level(se_obj_1, se_obj_2)
     return get_level_id(se_obj_1) == get_level_id(se_obj_2)
 end
 
--- Used to safely memoize squad evaluations to exactly once per tick
-local current_eval_tick = 0 
-
 function simulation_objects.evaluate_prior(target, squad)
-    local sim = alife()
-    local prior = 5
-    
-    local t_clsid = target:clsid()
-    local p_id = squad.player_id
+    local sim     = alife()
+    local prior   = 5
+    local t_clsid = target.clsid_cached or target:clsid()
+    local p_id    = squad.player_id
 
-    if t_clsid == clsid.script_actor then
-        if not is_on_the_same_level(target, squad) then return 0 end
-        if not target:target_precondition(squad) then return 0 end
-
-    elseif t_clsid == clsid.online_offline_group_s then
-        if squad.id == target.id then return 0 end
-        if not is_on_the_same_level(sim:actor(), squad) then return 0 end
-        if xr_combat_ignore.safe_zone_npcs[squad.id] or xr_combat_ignore.safe_zone_npcs[target.id] then return 0 end
-        
-        -- Prevent cluster-fucks
-        local target_of_my_target = target.assigned_target_id and sim:object(target.assigned_target_id)
-        if target_of_my_target and target_of_my_target:clsid() == clsid.online_offline_group_s then return 0 end
-        if not target:target_precondition(squad) then return 0 end
-
-    elseif t_clsid == clsid.smart_terrain then
+    -- Smart-terrain is the common case (N-1 of N+1 iterations).
+    if t_clsid == clsid.smart_terrain then
         if target.disabled then return 0 end
-        
+
         local target_smart = SIMBOARD.smarts[target.id]
         if target_smart and target_smart.population >= target.max_population then return 0 end
         if not target_smart or not target_smart.squads then return 0 end
-        
-        -- Level travel
-        if not is_on_the_same_level(target, squad) then
+
+        -- Level travel: cached level_id avoids bridge; falls back if hook missed.
+        if get_level_id(target) ~= get_squad_level(squad) then
             if is_squad_monster[p_id] then return 0 end
             if not ALLOW_NPC_LEVEL_TRANSITION then return 0 end
         end
+
+    elseif t_clsid == clsid.script_actor then
+        if get_level_id(target) ~= get_squad_level(squad) then return 0 end
+        if not target:target_precondition(squad) then return 0 end
+
+    elseif t_clsid == clsid.online_offline_group_s then
+        -- Vanilla doesn't register squads as targets (sim_squad_scripted.script:1011
+        -- keeps simulation_objects.register commented), so this branch is dead in
+        -- stock Anomaly/GAMMA. Kept as a defensive 0-return for forks that do
+        -- register squads -- otherwise the props loop below would crash on
+        -- nil target.props (simulation_objects.get_props:119-121 skips squads).
+        return 0
     end
 
-    -- Priorize target based on target props
+    -- Priorize target based on target props. Guard nil for any registered
+    -- object class that get_props skipped.
     local target_props = target.props
+    if not target_props then return 0 end
+
     local target_koeff = target_props[p_id]
     if target_koeff then
         prior = prior + target_koeff
@@ -146,116 +185,105 @@ function simulation_objects.evaluate_prior(target, squad)
         end
     end
 
-    -- Calculate base mult once 
     local base_prior = prior * evaluate_prior_by_dist(target, squad)
 
-    -- Rank multiplier only applies to smart terrains
+    -- Rank multiplier only applies to smart terrains.
     if t_clsid ~= clsid.smart_terrain then
         return base_prior
     end
 
-    local target_level_id = get_level_id(target) -- FIXED: use our safe level cache
-    local target_level_name = sim:level_name(target_level_id)
+    -- Early exit: no prior_t entry means rank work would default to 100% (no-op).
+    local target_level_name = sim:level_name(get_level_id(target))
+    local level_priors = prior_t[target_level_name]
+    if not level_priors then return base_prior end
 
+    -- squad.player_id is identity-mapped to community for all factions_t entries
+    -- (_g.script:2354-2378 squad_community_by_behaviour), so skip the wrapper call.
+    if not factions_t[p_id] then return base_prior end
+
+    -- Squad rank fetch, memoized per sweep via identity token. Only cache
+    -- when sweep_token is set (i.e. our get_squad_target is the caller);
+    -- foreign callers always re-fetch but stay correct.
     local squad_rank
-    local squad_comm = squad:get_squad_community()
-    local squad_viable = squad_comm and factions_t[squad_comm]
-
-    if squad_viable then
-        -- Utilize memoization to avoid looping alife() lookup hundreds of times per update
-        if squad._eval_tick == current_eval_tick then
-            squad_rank = squad._eval_rank
-        else
-            -- FIXED: Avoided external script call and member loop. Direct native query.
-            local cmdr_id = squad:commander_id()
-            if cmdr_id then
-                local se_member = sim:object(cmdr_id)
-                if se_member and IsStalker(nil, se_member:clsid()) and se_member:alive() then
-                    squad_rank = ranks.get_se_obj_rank_name(se_member)
-                end
+    if sweep_token ~= nil and squad._tp_eval_token == sweep_token then
+        squad_rank = squad._tp_eval_rank
+    else
+        local cmdr_id = squad:commander_id()
+        if cmdr_id and cmdr_id ~= 65535 then
+            local se_member = sim:object(cmdr_id)
+            if se_member and IsStalker(nil, se_member:clsid()) and se_member:alive() then
+                squad_rank = ranks.get_se_obj_rank_name(se_member)
             end
-            
-            -- Cache for the duration of this specific get_squad_target sweep
-            squad._eval_rank = squad_rank
-            squad._eval_tick = current_eval_tick
+        end
+        if sweep_token ~= nil then
+            squad._tp_eval_rank  = squad_rank
+            squad._tp_eval_token = sweep_token
         end
     end
 
-    -- No rank found; fall back to unmodified priority
-    if not squad_rank then
-        return base_prior
-    end
+    if not squad_rank then return base_prior end
 
     if shared_rank[squad_rank] then
         squad_rank = shared_rank[squad_rank]
     end
 
-    local rank_prior = 100
-    local level_priors = prior_t[target_level_name]
-    if level_priors and level_priors[squad_rank] then
-        rank_prior = level_priors[squad_rank]
-    end
-
+    local rank_prior = level_priors[squad_rank] or 100
     if rank_prior < minimum_chance then rank_prior = minimum_chance end
-    rank_prior = rank_prior / 100
 
---    if debugx then
---        local squad_name = squad:name() or squad:section_name() or "<empty>"
---        local squad_level_name = sim:level_name(gg:vertex(squad.m_game_vertex_id):level_id())
---        local target_name = target:name() or target:section_name() or "<empty>"
---        local new_tot = base_prior * rank_prior
---        pr("------------------- target_prior -------------------")
---        pr("squad: [ %s ] || rank: [ %s ] || cur_level: [ %s ]", squad_name, tostring(squad_rank), squad_level_name)
---        pr("target: [ %s ] || target_level: [ %s ]", target_name, target_level_name)
---        pr("$ rank prior mult: [ %s ] || old_tot: [ %s ] || NEW_TOT: [ %s ]", round_idp(rank_prior, 3), round_idp(base_prior, 3), round_idp(new_tot, 3))
---        pr("---------------------------------------------------")
---    end
-
-    return base_prior * rank_prior
+    return base_prior * (rank_prior / 100)
 end
 
--- Flat arrays prevent GC thrashing in high iteration loop
+-- Flat parallel arrays avoid per-entry {target, prior} allocations.
 local priority_targets = {}
 local priority_priors  = {}
 
 function sim_board.simulation_board:get_squad_target(squad)
-    -- Tick cache rotation to invalidate stored squad ranks for a new sweep
-    current_eval_tick = current_eval_tick + 1
-    if current_eval_tick > 1000000 then current_eval_tick = 1 end
-    
-    -- Clear transient safe-cache for level IDs at the start of sweep
-    for k in pairs(sweep_level_cache) do
-        sweep_level_cache[k] = nil
+    -- One-shot backfill: catch any entries the register hook missed on save load.
+    if not backfilled then
+        local reg = simulation_objects.object_registry
+        for i = 1, simulation_objects.object_registry_size do
+            precompute(reg[i])
+        end
+        backfilled = true
     end
 
-    local size_t = 0
+    -- Per-sweep setup. squad_pt and squad_level are constant across the loop;
+    -- compute once, read everywhere. Identity token invalidates stale
+    -- squad._tp_eval_rank entries from prior sweeps.
+    sweep_token = {}
+    local gg = game_graph()
+    sweep_squad_pt    = gg:vertex(squad.m_game_vertex_id):game_point()
+    sweep_squad_level = get_level_id(squad)
+
+    local size_t    = 0
     local min_prior = math_huge
-    local min_idx = 1
+    local min_idx   = 1
 
     local object_registry = simulation_objects.object_registry
-    local is_available = simulation_objects.available_by_id
+    local is_available    = simulation_objects.available_by_id
+    local eval_prior      = simulation_objects.evaluate_prior
 
     for index = 1, simulation_objects.object_registry_size do
         local se_target = object_registry[index]
         if not se_target.locked and se_target.id ~= squad.id and is_available[se_target.id] then
-            local curr_prior = se_target:evaluate_prior(squad)
+            local curr_prior = eval_prior(se_target, squad)
             if curr_prior > 0 and se_target:target_precondition(squad) then
                 if size_t < 5 then
                     size_t = size_t + 1
                     priority_targets[size_t] = se_target
-                    priority_priors[size_t] = curr_prior
+                    priority_priors[size_t]  = curr_prior
                     if curr_prior < min_prior then
                         min_prior = curr_prior
-                        min_idx = size_t
+                        min_idx   = size_t
                     end
                 elseif curr_prior > min_prior then
                     priority_targets[min_idx] = se_target
-                    priority_priors[min_idx] = curr_prior
+                    priority_priors[min_idx]  = curr_prior
                     min_prior = math_huge
                     for i = 1, 5 do
                         if priority_priors[i] < min_prior then
                             min_prior = priority_priors[i]
-                            min_idx = i
+                            min_idx   = i
                         end
                     end
                 end
@@ -263,54 +291,30 @@ function sim_board.simulation_board:get_squad_target(squad)
         end
     end
 
---    if debugx then
---        local squad_name = squad:name() or squad:section_name() or "<empty>"
---        pr("----------------------------------")
---        for i = 1, size_t do
---            pr("squad_name: [ %s ] || simboard_t_target: [ %s ] || simboard_t_prior: [ %s ]",
---                squad_name, priority_targets[i]:name() or priority_targets[i]:section_name() or "<empty>", round_idp(priority_priors[i], 3))
---        end
---    end
-
     local highest_prior = 0
     local best_target
     for i = 1, size_t do
         if highest_prior < priority_priors[i] then
             highest_prior = priority_priors[i]
-            best_target = priority_targets[i]
+            best_target   = priority_targets[i]
         end
     end
-
---    if debugx and best_target then
---        local sim = alife()
---        local squad_name = squad:name() or squad:section_name() or "<empty>"
---        local best_name = best_target:name() or best_target:section_name() or "<empty>"
---        local best_level = sim:level_name(game_graph():vertex(best_target.m_game_vertex_id):level_id())
---        pr("squad_name: [ %s ] || highest prior: [ %s ] || best_target: [ %s ] || best_target_level: [ %s ]",
---            squad_name, round_idp(highest_prior, 3), best_name, best_level)
---        pr("----------------------------------")
---    end
 
     local final_target = nil
     if size_t > 0 then
         final_target = (math_random(1, 100) < ignore_best_target_chance)
             and priority_targets[math_random(1, size_t)]
             or best_target
-
---        if debugx then
---            local sim = alife()
---            local squad_name = squad:name() or squad:section_name() or "<empty>"
---            pr("squad_name: [ %s ] || picked target: [ %s ] || picked_target_level: [ %s ]",
---                squad_name, final_target:name(), sim:level_name(game_graph():vertex(final_target.m_game_vertex_id):level_id()))
---            pr("----------------------------------")
---        end
     end
 
-    -- Clear arrays unconditionally and avoid reallocations
     for i = 1, size_t do
         priority_targets[i] = nil
         priority_priors[i]  = nil
     end
+
+    -- Release Fvector userdata; sweep_token stays so memoized squad ranks
+    -- read from a prior sweep miss on the identity check.
+    sweep_squad_pt = nil
 
     return final_target
 end
