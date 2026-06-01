@@ -1,0 +1,299 @@
+--_size from item_cooking file, local var there by default
+-- if that changes then it needs to be changed here also
+local _size = item_cooking._size or 2 -- number of Ingredients (not counting fuel)
+
+local IsItem = IsItem
+
+local InitControlsSuper = item_cooking.UICook.InitControls
+item_cooking.UICook.InitControls = function(self)
+	InitControlsSuper(self)
+	self.hasCraftedItem = false
+	self.last_cont = nil
+	self.last_idx = nil
+	self.multiUseItemsObj = {}
+	self.multiUseItemsUses = 0
+	self.fuelCount = 0
+	-- printf("calling override InitControls")
+end
+
+item_cooking.UICook.CollectValidItems = function(self, obj, section)
+	-- Collect valid items
+	empty_table(self.multiUseItemsObj)
+	local parts_id = {}
+	local is_multiuse = IsItem("multiuse", section, nil)
+	local function search(temp, item)
+		if (item:section() == section) and (not parts_id[item:id()]) then
+			local cnt = is_multiuse and item:get_remaining_uses() or 1
+			local id = item:id()
+			parts_id[id] = cnt
+			self.multiUseItemsObj[#self.multiUseItemsObj + 1] = {
+				[id]=cnt
+			}
+		end
+	end
+	db.actor:iterate_inventory(search,nil)
+	-- print_r(self.multiUseItemsObj)
+
+	-- Collect Uses
+	self.multiUseItemsUses = 0
+	for _,cnt in pairs(parts_id) do
+		self.multiUseItemsUses = self.multiUseItemsUses + cnt
+	end
+
+	-- Write amount of uses near cooking item name
+	local str = ui_item.get_sec_name(section)
+	if (self.cooking_limited) then
+		local color = ""
+		if self.multiUseItemsUses > 3 then
+			color = utils_xml.get_color("d_green")
+		elseif self.multiUseItemsUses > 2 then
+			color = utils_xml.get_color("pda_yellow")
+		elseif self.multiUseItemsUses > 1 then
+			color = utils_xml.get_color("d_orange")
+		else
+			color = utils_xml.get_color("d_red")
+		end
+		str = color .. str .. " (" .. self.multiUseItemsUses .. ")"
+	end
+	self.cap_menu:SetText(str)
+
+	return true
+end
+
+
+local ResetSuper = item_cooking.UICook.Reset
+item_cooking.UICook.Reset = function(self, obj, section)
+	ResetSuper(self, obj, section)
+	-- Set cooking kit name, uses and icon, store uses
+	-- Delay because of alife shenanigans when using multiuse items with
+	-- heavy scripting like this
+	CreateTimeEvent("totally_not_random_event" .. random_number(1, 1000000), "update_ui_delay" .. random_number(1, 1000000), 0.1, self.CollectValidItems, self, obj, section)
+	--self:CollectValidItems(obj, section)
+	-- printf("Calling override Reset")
+	return true
+end
+
+local On_CC_Mouse1Super = item_cooking.UICook.On_CC_Mouse1
+item_cooking.UICook.On_CC_Mouse1 = function(self, cont, idx)
+	On_CC_Mouse1Super(self, cont, idx)
+
+	-- printf("calling override On_CC_Mouse1")
+	local ci = self.CC.cell[idx]
+	if (not ci) then
+		return
+	end
+	
+	-- Get meal props
+	local sec = ci.section
+	local meal = self:GetSelectedMeal()
+	if (not meal) then
+		return
+	end
+
+	-- Add amount of fuel available in window near fuel title
+	local fuel_tier = meal.fuel_tier
+	local fuel_type = self:GetAvailFuel(fuel_tier)
+	local ingre_clr = self:CheckAvailFuel(fuel_tier) and self.clr["g"] or self.clr["r"]
+
+	self.fuelCount = 0
+
+	for sec,_ in pairs(self.cooking_fuel) do
+		if self.fuel[sec] and (fuel_tier <= self.fuel[sec]) and self:CheckAvail(sec, 1) then
+			self.fuelCount = self.fuelCount + self:GetAvail(sec)
+		end
+	end
+
+	local color = ""
+	if not self.is_campfire then
+		if self.fuelCount > 3 then
+			color = utils_xml.get_color("d_green")
+		elseif self.fuelCount > 2 then
+			color = utils_xml.get_color("pda_yellow")
+		elseif self.fuelCount > 1 then
+			color = utils_xml.get_color("d_orange")
+		else
+			color = utils_xml.get_color("d_red")
+		end
+	end
+	
+	-- if at campfire then *, otherwise show fuel count
+	self.ingre_name[1]:SetText(color .. ui_item.get_sec_name(fuel_type) .. " (" .. (self.is_campfire and "*" or self.fuelCount) .. ")")
+	utils_xml.set_icon(fuel_type, ingre_clr == self.clr["r"], self.ingre_ico_temp[1], self.ingre_ico[1])
+
+	self.last_cont = cont
+	self.last_idx = idx
+	return true
+end
+
+item_cooking.UICook.CheckHasCookingIngredients = function(self) 
+	local meal = self:GetSelectedMeal()
+
+	if (self.multiUseItemsUses == 0) then
+		return false
+	end
+
+	if (not self:CheckAvailFuel(meal.fuel_tier)) then
+		return false
+	end
+
+	local meal_items = {}
+	local inventory = {}
+	for i, item in ipairs(meal) do
+		meal_items[item["sec"]] = item["amt"]
+		inventory[item["sec"]] = 0
+	end
+
+	-- print_r(self.objs)
+	-- printf("...")
+	-- print_r(meal_items)
+
+	for meal_ingredient, meal_ingredient_amt in pairs(meal_items) do
+		if (self.objs[meal_ingredient]) then
+			for id, amount in pairs(self.objs[meal_ingredient]) do
+				inventory[meal_ingredient] = inventory[meal_ingredient] + amount
+			end
+			if (inventory[meal_ingredient] < meal_items[meal_ingredient]) then
+				return false
+			end
+		else
+			return false
+		end
+	end
+	return true
+end
+
+item_cooking.UICook.UpdateUi = function(self)
+	-- printf("UpdateUI triggered")
+
+	--close on last use otherwise script bork the game
+	if (self.cooking_limited and self.multiUseItemsUses == 1) then
+		self:Close()
+		return true
+	end
+
+	empty_table(self.objs)
+	self:Load_ActorItems()
+	self:CollectValidItems(self.obj, self.section)
+	-- printf(self.multiUseItemsUses)
+	
+	self:On_CC_Mouse1(self.last_cont, self.last_idx)
+	if (self:CheckHasCookingIngredients()) then
+		-- printf("has Ingredients updating")	
+	else
+		-- printf("hasn't Ingredients reseting")
+		empty_table(self.meals)
+		self:Load_MealRecipes()
+		self:Load_MealList()
+		self.btn_cook:Enable(false)
+		self:Update()
+		
+		--self:Reset(self.obj, self.section)
+	end
+	return true
+end
+
+item_cooking.UICook.OnCook = function(self)
+	-- printf("Calling override OnCook")
+	local meal = self:GetSelectedMeal()
+	if (not meal) then
+		return
+	end
+
+	self:CollectValidItems(self.obj, self.section)
+
+	-- Discharge cooking fuel if its not a campfire
+	if (not self.is_campfire) then
+		local sec_fuel = self:GetAvailFuel(meal.fuel_tier, true)
+		local id_fuel = sec_fuel and random_key_table(self.objs[sec_fuel])
+		if id_fuel then
+			local obj_fuel = get_object_by_id(id_fuel)
+			if obj_fuel then
+				utils_item.discharge(obj_fuel)
+			end
+		end
+	end
+	
+	-- Discharge Ingredients
+	for i=1,_size do
+		if meal[i] then
+			local sec = meal[i].sec
+			local amt = meal[i].amt
+			local stop
+			for id,uses in pairs(self.objs[sec]) do
+				if stop then
+					break
+				end
+				
+				if ((amt - uses) >= 0) then
+					local se_obj = alife_object(id)
+					if se_obj then
+						if ((amt - uses) == 0) then
+							stop = true
+						end
+						amt = amt - uses
+						alife_release(se_obj)
+					end
+				else
+					stop = true
+					local obj = get_object_by_id(id)
+					if obj then
+						obj:set_remaining_uses(uses - amt)
+					end
+				end
+			end
+		end
+	end
+	
+	-- Give cooked meal
+	alife_create_item(meal.sec, db.actor)
+	
+	-- Discharge multiuse cooking tools
+	if self.cooking_limited then
+		local item = nil
+		if self.multiUseItemsObj and self.multiUseItemsObj[1] then
+			for id, amount in pairs(self.multiUseItemsObj[1]) do
+				item = get_object_by_id(id)
+				-- attempt to fix spontaneous crashes
+				if amount == 1 and self.multiUseItemsObj[2] then
+					--printf("last amount, selecting next obj id")
+					for id2, amount2 in pairs(self.multiUseItemsObj[2]) do
+						self.obj = get_object_by_id(id2)
+					end
+				end
+			end
+		end
+		if (item) then
+			utils_item.discharge(item)
+		end
+	end
+
+	self.hasCraftedItem = true
+	if (self.last_cont and self.last_idx) then
+		--Dirty hack to update ui after alife item removal
+		--Disable cook button and enable again later in UI update
+		--to prevent item abusing and game borking
+		-- printf("Creating UpdateUI event")
+		self.btn_cook:Enable(false)
+		CreateTimeEvent("totally_not_random_event" .. random_number(1, 1000000), "update_ui_delay" .. random_number(1, 1000000), 0.1, self.UpdateUi, self)
+	end
+end
+
+item_cooking.UICook.Close = function(self)
+	-- Effect
+	if (self.hasCraftedItem and self.cooking_use_actor_effects and actor_effects) then
+		actor_effects.play_item_fx(self.section.."_dummy")
+	end
+
+	utils_obj.play_sound("interface\\inv_close")
+
+	self.hasCraftedItem = false
+	self.last_cont = nil
+	self.last_idx = nil
+	self.multiUseItemsObj = {}
+	self.multiUseItemsUses = 0
+	self.fuelCount = 0
+	
+	self:HideDialog()
+	
+	Unregister_UI("UICook")
+end
