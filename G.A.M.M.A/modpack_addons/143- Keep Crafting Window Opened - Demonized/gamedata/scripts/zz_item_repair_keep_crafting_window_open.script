@@ -1,0 +1,279 @@
+-- degrade_factor from item_repair file, local var there by default
+-- if that changes then it needs to be changed here also
+local degrade_factor = item_repair.degrade_factor or 0.2
+
+local IsItem = IsItem
+
+local InitControlsSuper = item_repair.UIRepair.InitControls
+item_repair.UIRepair.InitControls = function(self)
+	InitControlsSuper(self)
+	self.hasCraftedItem = false
+	self.last_cont = nil
+	self.last_idx = nil
+	self.cont_1_last_idx = 0
+	self.cont_2_last_idx = nil
+	self.isMultiUse = false
+	self.kitCondition = 1
+	self.multiUseItemsObj = {}
+	self.multiUseItemsUses = 0
+	self.partSection = nil
+	-- printf("calling override item_repair.InitControls")
+end
+
+item_repair.UIRepair.CollectValidItems = function(self, obj, section)
+	-- Collect valid items
+	empty_table(self.multiUseItemsObj)
+	local parts_id = {}
+	local is_multiuse = IsItem("multiuse", section, nil)
+	local function search(temp, item)
+		if (item:section() == section) and (not parts_id[item:id()]) then
+			local cnt = is_multiuse and item:get_remaining_uses() or 1
+			local id = item:id()
+			parts_id[id] = cnt
+			self.multiUseItemsObj[#self.multiUseItemsObj + 1] = {
+				[id]=cnt
+			}
+		end
+	end
+	db.actor:iterate_inventory(search,nil)
+	-- print_r(self.multiUseItemsObj)
+
+	-- Collect Uses
+	self.multiUseItemsUses = 0
+	for _,cnt in pairs(parts_id) do
+		self.multiUseItemsUses = self.multiUseItemsUses + cnt
+	end
+
+	-- check if item is multiuse and write either uses or condition
+	local uses
+	local color = ""
+	if (is_multiuse) then
+		self.condition = 1
+		self.isMultiUse = true
+		if self.multiUseItemsUses > 3 then
+			color = utils_xml.get_color("d_green")
+		elseif self.multiUseItemsUses > 2 then
+			color = utils_xml.get_color("pda_yellow")
+		elseif self.multiUseItemsUses > 1 then
+			color = utils_xml.get_color("d_orange")
+		else
+			color = utils_xml.get_color("d_red")
+		end
+		uses = self.multiUseItemsUses
+		-- printf("item %s is multiuse", section)
+	else
+		self.isMultiUse = false
+		self.condition = obj:condition()
+		if self.condition > degrade_factor * 2 then
+			color = utils_xml.get_color("d_green")
+		elseif self.condition > degrade_factor then
+			color = utils_xml.get_color("pda_yellow")
+		else
+			color = utils_xml.get_color("d_red")
+		end
+		uses = string.format("%s%%", math.ceil(self.condition * 100))
+		-- printf("item %s is not multiuse", section)
+	end
+
+	-- Write amount of uses near repair kit name
+	local str = color .. ui_item.get_sec_name(section) .. " (" .. uses .. ")"
+
+	self.cap_menu:SetText(str)
+
+	-- printf("Collecting Done")
+
+	return true
+end
+
+local ResetSuper = item_repair.UIRepair.Reset
+item_repair.UIRepair.Reset = function(self, obj, section)
+	ResetSuper(self, obj, section)
+	-- Set repair kit name, uses and icon, store uses
+	-- Delay because of alife shenanigans when using multiuse items with
+	-- heavy scripting like this
+	CreateTimeEvent("totally_not_random_event" .. random_number(1, 1000000), "update_ui_delay" .. random_number(1, 1000000), 0.1, self.CollectValidItems, self, obj, section)
+	--self:CollectValidItems(obj, section)
+	-- printf("Calling override Reset")
+	return true
+end
+
+local On_CC_Mouse1Super = item_repair.UIRepair.On_CC_Mouse1
+item_repair.UIRepair.On_CC_Mouse1 = function(self, cont, idx, keep_selection)
+	On_CC_Mouse1Super(self, cont, idx)
+
+	-- printf("calling override On_CC_Mouse1")
+
+	self.last_cont = cont
+	self.last_idx = idx
+	if (cont == 1) then
+		self.cont_1_last_idx = idx
+		self.cont_2_last_idx = nil
+		self.partSection = nil
+	elseif (cont == 2) then
+		-- disable selection on click on same part 
+		if (idx == self.cont_2_last_idx and not keep_selection) then
+			self:On_CC_Mouse1(1, self.cont_1_last_idx)
+			return true
+		end
+		-- store last bonus part selection and write its amount near the title
+		self.cont_2_last_idx = idx
+		local part_obj = self.CC[2]:GetObj(idx)
+		local part_sec = part_obj:section()
+		self.partSection = part_sec
+		local parts_id = {}
+		local part_count = 0
+		local is_part_multiuse = IsItem("multiuse", part_sec, nil)
+		local function search(temp, item)
+			if (item:section() == part_sec) and (not parts_id[item:id()]) then
+				local cnt = is_part_multiuse and item:get_remaining_uses() or 1
+				local id = item:id()
+				parts_id[id] = cnt
+				part_count = part_count + cnt
+			end
+		end
+		db.actor:iterate_inventory(search,nil)
+		if (part_sec == self.section) then
+			part_count = part_count - 1
+		end 
+		local color = ""
+		if part_count > 3 then
+			color = utils_xml.get_color("d_green")
+		elseif part_count > 2 then
+			color = utils_xml.get_color("pda_yellow")
+		elseif part_count > 1 then
+			color = utils_xml.get_color("d_orange")
+		else
+			color = utils_xml.get_color("d_red")
+		end
+		local name = ui_item.get_sec_name(part_sec)
+		self.text_item[2]:SetText(color .. name .. " (" .. part_count .. ")")
+	end
+
+	-- printf("last cont %s, last idx %s", self.last_cont, self.last_idx)
+	return true
+end
+
+item_repair.UIRepair.UpdateUi = function(self)
+	--printf("UpdateUI triggered")
+
+	-- close on last use or if condition is less than degrade_factor
+	-- otherwise script bork the game
+	-- considering repair kits than can use same section as a bonus part
+	-- printf("multiUseItemsUses: %s", self.multiUseItemsUses)
+	if ((self.isMultiUse and (self.multiUseItemsUses == 1 or (self.multiUseItemsUses == 2 and self.section == self.partSection))) or (not self.isMultiUse and self.condition <= degrade_factor)) then
+		self:OnCancel()
+		return true
+	end
+
+	self:InitInventory(1)
+	self:CollectValidItems(self.obj, self.section)
+	
+	-- if part was last in list and fully repaired, select previous one
+	-- otherwise select next one 
+	if (not self.CC[1]:GetObj(self.cont_1_last_idx)) then
+		self.cont_1_last_idx = self.cont_1_last_idx - 1
+	end
+	-- if last index is 0, so no part, close window
+	if (self.cont_1_last_idx <= 0) then
+		self:OnCancel()
+		return true
+	end
+	self.CC[1]:On_Select(self.cont_1_last_idx)
+
+	-- save bonus part selection if any
+	local cont_2_last_idx = nil
+	if (self.cont_2_last_idx) then
+		cont_2_last_idx = self.cont_2_last_idx
+	end
+
+	-- Update bonus part list
+	self:On_CC_Mouse1(1, self.cont_1_last_idx)
+
+	-- restore bonus part selection
+	self.cont_2_last_idx = cont_2_last_idx
+	if (self.cont_2_last_idx) then
+		if (not self.CC[2]:GetObj(self.cont_2_last_idx)) then
+			self.cont_2_last_idx = self.cont_2_last_idx - 1
+		end
+		if (self.cont_2_last_idx > 0 and self.CC[2]:GetObj(self.cont_2_last_idx)) then
+			self.CC[2]:On_Select(self.cont_2_last_idx)
+			self:On_CC_Mouse1(2, self.cont_2_last_idx, true)
+		end
+	end
+	return true
+end
+
+item_repair.UIRepair.OnRepair = function(self)
+	local obj_1 = self.CC[1]:GetCell_Selected(true)
+	local obj_2 = self.CC[2]:GetCell_Selected(true)
+	
+	if not (obj_1 and self.con_val[4]) then return end
+
+	obj_1:set_condition(self.con_val[4] / 100) -- Repair main item
+	if obj_2 then
+		utils_item.discharge(obj_2) -- Remove 1 use of the support item
+	end
+
+	self:CollectValidItems(self.obj, self.section)
+	
+	-- Remove 1 use of the combined repair kits
+	if self.isMultiUse then
+		local item = nil
+		if self.multiUseItemsObj and self.multiUseItemsObj[1] then
+			for id, amount in pairs(self.multiUseItemsObj[1]) do
+				item = get_object_by_id(id)
+				-- attempt to fix spontaneous crashes
+				if amount == 1 and self.multiUseItemsObj[2] then
+					--printf("last amount, selecting next obj id")
+					for id2, amount2 in pairs(self.multiUseItemsObj[2]) do
+						self.obj = get_object_by_id(id2)
+					end
+				end
+			end
+		end
+		if (item) then
+			utils_item.discharge(item)
+		end
+	else
+		utils_item.degrade(self.obj, degrade_factor)
+	end
+	
+	self.hasCraftedItem = true
+	
+	-- Increase Statistic
+	game_statistics.increment_statistic("self_repairs")
+
+	utils_obj.play_sound("interface\\inv_properties_2")
+
+	if (self.last_cont and self.last_idx) then
+		--Dirty hack to update ui after alife item removal
+		--Disable repair button and enable again later in UI update
+		--to prevent item abusing and game borking
+		--printf("Creating UpdateUI event")
+		self.btn_repair:Enable(false)
+		CreateTimeEvent("totally_not_random_event" .. random_number(1, 1000000), "update_ui_delay" .. random_number(1, 1000000), 0.1, self.UpdateUi, self)
+	end
+	
+end
+
+item_repair.UIRepair.OnCancel = function(self)
+	-- Effect
+	if (self.hasCraftedItem and self.use_actor_effects and actor_effects) then
+		actor_effects.play_item_fx(self.section.."_dummy")
+	end
+
+	utils_obj.play_sound("interface\\inv_close")
+
+	self.hasCraftedItem = false
+	self.last_cont = nil
+	self.last_idx = nil
+	self.cont_1_last_idx = 0
+	self.cont_2_last_idx = nil
+	self.multiUseItemsObj = {}
+	self.multiUseItemsUses = 0
+	self.partSection = nil
+	
+	self:HideDialog()
+	
+	Unregister_UI("UIRepair")
+end

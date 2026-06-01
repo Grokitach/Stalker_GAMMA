@@ -1,0 +1,356 @@
+-- Lower Weapon Sprint Optimized
+-- By Spaicrab - Edited By Coverdrave
+-- Original Addon By Skieppy
+
+-- Current version
+VERSION = 1.3
+
+
+-- Variables
+
+local sprinting = false
+local manually_lowered = false
+local can_fire = true
+
+
+-- Beginning of Coverdrave's edit to enable blacklisting weapons
+local get_config = lower_weapon_sprint_mcm.get_config
+
+local mcm_keybinds = ui_mcm and ui_mcm.key_hold
+local keybind = get_config("keybind")
+local apply_for_all_wpn_variations = get_config("apply_for_all_wpn_variations")
+local modifier = get_config("modifier")
+local mode = get_config("mode")
+local reverse_blacklist = get_config("reverse_blacklist")
+
+local function give_news(message)
+    if db.actor then
+        db.actor:give_game_news("Lower Weapon Sprint", message, "ui_inGame2_D_Ohotnik_na_mutantov", 0, 5000, 0)
+    end
+end
+
+local function build_blacklist_table()
+	local tbl = {}
+	local stored_blacklist = axr_main.config:r_value("lower_weapon_sprint", "blacklist", 3) or ""
+	
+	for str in string.gmatch(stored_blacklist, '[^,%s]+') do
+		if not tbl[str] then
+			tbl[str] = true
+		end
+	end
+	
+	return tbl
+end
+
+local blacklist_table = build_blacklist_table()
+
+local function save_blacklist(blacklist_tbl)
+	local blacklist_to_save = ""
+	
+	for k,v in pairs(blacklist_tbl) do
+		blacklist_to_save = blacklist_to_save..k..","
+	end
+	
+	axr_main.config:w_value("lower_weapon_sprint", "blacklist", blacklist_to_save)
+	axr_main.config:save()
+end
+
+local function clear_blacklist()
+	blacklist_table = {}
+	axr_main.config:w_value("lower_weapon_sprint", "blacklist", "")
+	axr_main.config:save()
+	
+	give_news(game.translate_string("ui_lower_weapon_sprint_blacklist_cleared"))
+end
+
+local function add_to_blacklist(sec)
+	blacklist_table[sec] = true
+	give_news(game.translate_string("ui_lower_weapon_sprint_blacklist_add"))
+	save_blacklist(blacklist_table)
+end
+
+local function remove_from_blacklist(sec)
+	blacklist_table[sec] = nil
+	give_news(game.translate_string("ui_lower_weapon_sprint_blacklist_remove"))
+	save_blacklist(blacklist_table)
+end
+
+local function is_current_wpn_in_blacklist()
+	local wpn = db.actor:active_item()
+	if not (wpn and IsWeapon(wpn)) then return false end
+	
+	local sec = wpn:section()
+	sec = (apply_for_all_wpn_variations and ini_sys:r_string_ex(sec,"parent_section")) or sec
+	
+	if blacklist_table[sec] then return true, sec end
+	return false, sec
+end
+
+local function process_blacklist()
+	local is_wpn_in_blacklist, sec = is_current_wpn_in_blacklist()
+	
+	if not is_wpn_in_blacklist then
+		add_to_blacklist(sec)
+	else
+		remove_from_blacklist(sec)
+	end
+end
+
+local function on_key_press_blacklist(key)
+	if key ~= keybind then return end
+	
+	local wpn = db.actor:active_item()
+	if not (wpn and IsWeapon(wpn)) then return end
+	
+    if not mcm_keybinds then
+        process_blacklist()
+        return
+    end
+	
+	if mode == 0 and ui_mcm.get_mod_key(modifier) then
+		ui_mcm.simple_press("lower_weapon_sprint", key, process_blacklist)
+	end
+	
+	if (mode == 1) and ui_mcm.get_mod_key(modifier) and ui_mcm.double_tap("lower_weapon_sprint",key) then 
+		process_blacklist()
+		return
+	end
+end
+
+function on_key_hold(key)
+	if mcm_keybinds and (key == keybind) and (mode == 2) and ui_mcm.get_mod_key(modifier) and ui_mcm.key_hold("lower_weapon_sprint", key, 5) then
+		process_blacklist()
+	end	
+end
+
+function on_option_change()
+	if ui_mcm and get_config("clear_blacklist") then
+		clear_blacklist()
+		ui_mcm.set("lower_weapon_sprint/clear_blacklist", false)
+	end
+	
+	keybind = get_config("keybind")
+	apply_for_all_wpn_variations = get_config("apply_for_all_wpn_variations")
+	modifier = get_config("modifier")
+	mode = get_config("mode")
+	reverse_blacklist = get_config("reverse_blacklist")
+end
+-- End of Coverdrave's edit
+
+
+-- TimeEvents
+
+function delay_lower_weapon()
+	game.actor_lower_weapon(true)
+	return true
+end
+
+function delay_fire()
+	level.press_action(bind_to_dik(key_bindings.kWPN_FIRE))
+	return true
+end
+
+-- Failsafe
+function delay_reset_can_fire()
+	can_fire = true
+	return true
+end
+
+-- The delay before checking is needed because can_fire needs to be updated
+-- If the player can shoot and is sprinting, fire
+function delay_check_if_can_fire(wpn)
+	if can_fire and wpn:get_ammo_in_magazine() ~= 0 then
+		local weaponState = wpn:get_state()
+		if sprinting and (weaponState == 0 or weaponState == 3) then
+			game.actor_lower_weapon(false)
+			wpn:switch_state(0)
+			CreateTimeEvent("delay_fire", 0, 0, delay_fire)
+		end
+	else
+		can_fire = true
+		if sprinting then
+			game.actor_lower_weapon(true)
+		end
+	end
+	return true
+end
+
+-- When pressing reload, the weapon's state only changes after some time (if actually needing to reload)
+-- Lowers the weapon when R is pressed with a full magazine, the actual reload animation is handled by actor_on_hud_animation_end()
+function delay_check_if_reloading(wpn)
+	local weaponState = wpn:get_state()
+	if sprinting and (weaponState == 0 or weaponState == 3) then
+		CreateTimeEvent("delay_lower_weapon", 0, 0, delay_lower_weapon)
+	end
+	return true
+end
+
+-- Loop every 50ms until animation ends, then lower weapon
+-- Needed for animations not included in actor_on_hud_animation_end (such as firing a weapon)
+function wait_for_animation_end(wpn)
+	if not sprinting then
+		return true
+	end
+	if wpn then
+		local weaponState = wpn:get_state()
+		if weaponState then
+			if weaponState == 0 or weaponState == 3 then
+				CreateTimeEvent("delay_lower_weapon", 0, 0, delay_lower_weapon)
+				return true
+			else
+				ResetTimeEvent("wait_for_animation_end", wpn:id(), 0.05)
+				return false
+			end
+		end
+	end
+end
+
+-- Loop every 50ms until a weapon is equipped or player stops sprinting
+-- Needed in case a player with no weapon equips one in the middle of sprinting
+function wait_for_weapon_equip()
+	if not sprinting then
+		return true
+	end
+	local wpn = db.actor:active_item()
+	if IsWeapon(wpn) then
+		CreateTimeEvent("delay_lower_weapon", 0, 0.01, delay_lower_weapon)
+		return true
+	else
+		ResetTimeEvent("wait_for_weapon_equip", 0, 0.05)
+		return false
+	end
+end
+
+-- When an animation ends, the weapon's state only seems to change after a delay
+function delay_actor_on_hud_animation_end()
+	if not sprinting then
+		return true
+	end
+	local wpn = db.actor:active_item()
+	if not IsWeapon(wpn) then
+		CreateTimeEvent("wait_for_weapon_equip", 0, 0, wait_for_weapon_equip)
+	else
+		CreateTimeEvent("delay_lower_weapon", 0, 0.01, delay_lower_weapon)
+	end
+	return true
+end
+
+
+-- Callbacks
+
+-- Main Function
+function actor_on_movement_changed(movementState)
+	if (is_current_wpn_in_blacklist() ~= reverse_blacklist) then return end
+	
+	local wpn = db.actor:active_item()
+
+	-- The actor_move_states table is in line 1380 of _g.script, but I never use that table in this script.
+	-- I would use "if movementState == 4096 then" here, but it doesn't seem to work.
+	if IsMoveState("mcSprint")  then
+		
+		if sprinting then
+			return
+		end
+		sprinting = true
+		if IsWeapon(wpn) then
+			CreateTimeEvent("wait_for_animation_end", wpn:id(), 0, wait_for_animation_end, wpn)
+		else
+			CreateTimeEvent("wait_for_weapon_equip", 0, 0, wait_for_weapon_equip)
+		end
+
+	else
+
+		if not sprinting then
+			return
+		end
+		sprinting = false
+		if not IsWeapon(wpn) then
+			return
+		end
+		if game.actor_weapon_lowered() and not manually_lowered then
+			game.actor_lower_weapon(false)
+			wpn:switch_state(0)
+		end
+
+	end
+
+end
+
+-- On Weapon Animation End (mainly needed for reloading or switching weapons)
+function actor_on_hud_animation_end(wpn)
+	if (is_current_wpn_in_blacklist() ~= reverse_blacklist) then return end
+	
+	manually_lowered = false
+	CreateTimeEvent("delay_actor_on_hud_animation_end", 0, 0.05, delay_actor_on_hud_animation_end)
+
+end
+
+-- Key Press
+function on_key_press(key)
+	if (is_current_wpn_in_blacklist() ~= reverse_blacklist) then return end
+	
+	-- Player must not be in any menu
+	if db.actor:has_info("ui_pda") or not main_hud_shown() then
+        return
+    end
+
+	local wpn = db.actor:active_item()
+	if not IsWeapon(wpn) then
+		return
+	end
+	local weaponState = wpn:get_state()
+
+
+	if key == bind_to_dik(key_bindings.kSAFEMODE) then
+		
+		if weaponState == 0 or weaponState == 3 then
+			if (not game.actor_weapon_lowered()) and (not sprinting) then
+				manually_lowered = true
+			else
+				manually_lowered = not manually_lowered
+				if sprinting then
+					CreateTimeEvent("delay_lower_weapon", 0, 0, delay_lower_weapon)
+				end
+			end
+		end
+
+	elseif key == bind_to_dik(key_bindings.kWPN_FIRE) then
+
+		manually_lowered = false
+		CreateTimeEvent("delay_check_if_can_fire", 0, 0, delay_check_if_can_fire, wpn)
+
+	elseif key == bind_to_dik(key_bindings.kWPN_RELOAD) then
+		
+		manually_lowered = false
+		CreateTimeEvent("delay_check_if_reloading", 0, 0, delay_check_if_reloading, wpn)
+	
+	elseif key == bind_to_dik(key_bindings.kWPN_ZOOM) then
+
+		manually_lowered = false
+
+	end
+
+end
+ 
+-- Jammed Weapons Should Act The Same Way As Empty Weapons
+function actor_on_weapon_jammed()
+	if (is_current_wpn_in_blacklist() ~= reverse_blacklist) then return end
+	
+	if sprinting then
+		can_fire = false
+		CreateTimeEvent("delay_reset_can_fire", 0, 0.1, delay_reset_can_fire)
+	end
+end
+
+-- Register All Callbacks
+function on_game_start()
+	RegisterScriptCallback("on_key_press",on_key_press_blacklist)
+	RegisterScriptCallback("on_key_hold",on_key_hold)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	on_option_change()
+	
+	RegisterScriptCallback( "actor_on_movement_changed", actor_on_movement_changed )
+	RegisterScriptCallback( "actor_on_hud_animation_end", actor_on_hud_animation_end )
+	RegisterScriptCallback( "on_key_press", on_key_press )
+	RegisterScriptCallback( "actor_on_weapon_jammed", actor_on_weapon_jammed )
+end

@@ -513,10 +513,15 @@ end
 AddScriptCallback("on_luabind_fatal_error")
 local LuaFatalErrorUIInstance = nil
 local on_luabind_fatal_error_triggered = false
+local in_main_menu = false
 _G.COnLuaBindFatalError = function(offender)
 	-- Don't engage when actor is gone, it doesn't matter at this point
 	-- The engine would still log the error
 	if not db.actor then
+		return
+	end
+
+	if in_main_menu then
 		return
 	end
 
@@ -590,11 +595,59 @@ function LuaFatalErrorUI:OnMsgNo()
 	device():pause(false)
 end
 
+function main_menu_on_init()
+	in_main_menu = true
+end
+
+function main_menu_on_quit()
+	in_main_menu = false
+end
+
+-- Orleon
+AddScriptCallback("actor_on_item_sell")
+AddScriptCallback("actor_on_item_buy")
+
 function on_game_start()
+	RegisterScriptCallback("main_menu_on_init", main_menu_on_init)
+	RegisterScriptCallback("main_menu_on_quit", main_menu_on_quit)
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
 	RegisterScriptCallback("ActorMenu_on_item_after_move", ActorMenu_on_item_after_move)
 	RegisterScriptCallback("game_object_on_net_spawn", game_object_on_net_spawn)
 	RegisterScriptCallback("game_object_on_net_destroy", game_object_on_net_destroy)
 	RegisterScriptCallback("server_object_on_register", server_object_on_register)
 	RegisterScriptCallback("server_object_on_unregister", server_object_on_unregister)
+
+	-- Orleon, patch later for compatibility
+	ui_inventory_UIInventory_TMode_Sell = ui_inventory.UIInventory.TMode_Sell
+	ui_inventory.UIInventory.TMode_Sell = function(self)
+	    self.on_sell_callback_flag = true
+	    ui_inventory_UIInventory_TMode_Sell(self)
+	    self.on_sell_callback_flag = false
+	end
+
+	ui_inventory_UIInventory_TMode_Buy = ui_inventory.UIInventory.TMode_Buy
+	ui_inventory.UIInventory.TMode_Buy = function(self)
+	    self.on_buy_callback_flag = true
+	    ui_inventory_UIInventory_TMode_Buy(self)
+	    self.on_buy_callback_flag = false
+	end
+
+	ui_inventory_UIInventory_On_Item_Exchange = ui_inventory.UIInventory.On_Item_Exchange
+	ui_inventory.UIInventory.On_Item_Exchange = function(self, npc_from, npc_to, obj)
+	    if self.on_sell_callback_flag then
+	        local cc = self.CC["actor_trade"]
+	        if cc then
+	            local sell_cost = utils_item.get_item_cost(obj, cc.trade_profile)
+	            SendScriptCallback("actor_on_item_sell", obj, sell_cost, npc_to)
+	        end
+	    end
+	    if self.on_buy_callback_flag then
+	        local cc = self.CC["npc_trade"]
+	        if cc then
+	            local buy_cost = utils_item.get_item_cost(obj, cc.trade_profile)
+	            SendScriptCallback("actor_on_item_buy", obj, buy_cost, npc_from)
+	        end
+	    end
+	    ui_inventory_UIInventory_On_Item_Exchange(self, npc_from, npc_to, obj)
+	end
 end
