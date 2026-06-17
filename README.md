@@ -6,7 +6,7 @@
 
 ## Description
 
-G.A.M.M.A. stands for Grok's Automated Modular Modpack for Anomaly. This modpack for the 100% free and standalone STALKER Anomaly changes *every* aspect of the game, from the entire economy to the minute detail statistic of every gun and artefact.
+G.A.M.M.A. stands for Grok's Automated Modular Modpack for Anomaly. This modpack for the 100% free and standalone STALKER Anomaly changes *every* aspect of the game, from the entire economy to the minute detail statistics of every gun and artefact.
 
 From a technical point of view, the main motivation behind this project is to provide an easy to install, automatically updated and modular modding platform for Stalker Anomaly. From a gameplay point of view, the default parameters and mods activated with G.A.M.M.A. aim at providing a balanced survival, scavenging, cooking, crafting and repairing focused experience with a streamlined gameplay. GAMMA aims at creating a meaningful and enjoyable sense of progression in the sandbox Chernobyl Exclusion Zone of STALKER Anomaly.
 
@@ -44,7 +44,7 @@ Steam: https://store.steampowered.com/franchise/stalker
 GOG: https://www.gog.com/en/game/stalker_shadow_of_chernobyl | https://www.gog.com/en/game/stalker_clear_sky | https://www.gog.com/en/game/stalker_call_of_pripyat
 
 
-GAMMA is a large project using the work of many talented modders, and each and everyone one of them are contributing to making Stalker Anomaly a better experience. You can check the entire modlist, modder names and mod pages link used by GAMMA here:
+GAMMA is a large project using the work of many talented modders, and each and every one of them are contributing to making Stalker Anomaly a better experience. You can check the entire modlist, modder names and mod pages link used by GAMMA here:
 https://stalker-gamma.com/api/list
 
 I would like to thank all the modders involved in this project by making all the GAMMA addons free to use, edit and repost with modifications as long as the source is indicated (original addon author, from Stalker GAMMA). For numbered addons (105-), original authors must be contacted before repost and modifications. Repost of unmodified individual parts of this project are not recommended and may harm the community in the long run because updates happen quite often in this repository and it is thus better to directly post links to the relevant files stored here.
@@ -52,4 +52,4 @@ I would like to thank all the modders involved in this project by making all the
 
 ## Other Projects
 
-A similar logic was applied to a modpack built for Dragon's Dogma 2 called "Dragon's Dogamma", for whic the entire gear looting system as been remade to put more emphasis on exploration and boss hunting instead of buying gear from shops: https://github.com/Grokitach/Dragons-Dogamma
+A similar logic was applied to a modpack built for Dragon's Dogma 2 called "Dragon's Dogamma", for which the entire gear looting system has been remade to put more emphasis on exploration and boss hunting instead of buying gear from shops: https://github.com/Grokitach/Dragons-Dogamma
