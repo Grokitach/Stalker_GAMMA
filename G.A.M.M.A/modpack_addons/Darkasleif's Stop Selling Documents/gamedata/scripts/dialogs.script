@@ -1361,7 +1361,14 @@ function relocate_money(victim, num, type)
 			if victim == nil then
 				printf("Couldn't relocate money to NULL")
 			end
-			db.actor:transfer_money(num, victim)
+
+      -- guard against double transferring money if victim is actor
+      -- this should be fixed in-engine at CScriptGameObject::TransferMoney(int money, CScriptGameObject* pForWho) but i'm too lazy to do a PR there
+      if victim == db.actor then
+        db.actor:give_money(-num)
+      else
+        db.actor:transfer_money(num, victim)
+      end
 			-- game_stats.money_quest_update(-num)
 		end
 		news_manager.relocate_money(db.actor, type, num)
