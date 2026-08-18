@@ -1209,6 +1209,75 @@ function luagc_cleanup()
 	printf("~[luagc_cleanup] collectgarbage after=%sKb",collectgarbage("count")*1024)
 end
 
+-- Fix: stop treasure_manager putting loot and a map spot on an object that is
+-- not a stash.
+--
+-- treasure_manager.caches is the stash pool, keyed by server object id, and
+-- those ids get recycled. xrServer::entity_Destroy frees the id back to the
+-- generator and it is handed out again later, so a pool entry for a box that
+-- has been released ends up on whatever object took the id over.
+-- set_random_stash then writes contents and a map spot onto that object, and
+-- the spot is stuck there: try_spawn_treasure only runs from
+-- physic_object_on_use_callback, which is gated on IsInvbox.
+--
+-- The entries come from release_stash_by_id. It tests `if id and caches[id]`,
+-- but an available box is stored as false, so the test fails and the entry
+-- stays. Its one caller is game_setup, which releases [remove_objects] from
+-- new_game_setup.ltx on actor_on_first_update and prunes the boxes among them.
+-- Three of them are boxes, so every new campaign starts with three pool entries
+-- on freed ids.
+--
+-- Wrapped from on_game_start, not file scope, so this sits on top of any
+-- file-scope patches to treasure_manager.
+local function fix_stale_stash_ids()
+	local tm = treasure_manager
+	if not (tm and tm.caches and type(tm.release_stash_by_id) == "function"
+	        and type(tm.set_random_stash) == "function") then
+		printf("![fix_stale_stash_ids] treasure_manager missing or changed shape, fix not installed")
+		return
+	end
+
+	-- caches[id] is false for an available box, so the base guard skips it. Set
+	-- it true and the original will delete the key and decrement caches_count,
+	-- which is file-local and cannot be reached from here.
+	local base_release_stash_by_id = tm.release_stash_by_id
+	tm.release_stash_by_id = function(id)
+		-- Only promote a key that is already there, or this enrols a stash
+		-- instead of removing one.
+		if tm.caches[id] == false then
+			tm.caches[id] = true
+		end
+		return base_release_stash_by_id(id)
+	end
+
+	-- Nothing downstream of the pool checks class, and some callers hold an id
+	-- for a long time before using it (PDA contact stashes, task stashes), so
+	-- check again at the point of use. A mod that releases a box without
+	-- pruning lands here too. set_random_stash already returns nil when it
+	-- assigns nothing, so callers that test the result handle the refusal.
+	local base_set_random_stash = tm.set_random_stash
+	tm.set_random_stash = function(no_spot, hint, bonus_items, id, dbg)
+		-- simulate_stash_creation passes counters, not real ids.
+		if not dbg then
+			-- alife_object callstacks on a nil or out-of-range id, so screen it
+			-- first. IsInvbox is what on_game_load builds the pool with.
+			local usable = (type(id) == "number") and (id >= 0) and (id < 65535)
+			local se_obj = usable and alife_object(id) or nil
+			if not (se_obj and IsInvbox(nil, se_obj:clsid())) then
+				printf("![treasure_manager] refused to place a stash on a non-box: id %s", id)
+				if usable and (tm.caches[id] ~= nil) then
+					if type(tm.caches[id]) == "string" then
+						printf("![treasure_manager] dropped entry had contents: %s", tm.caches[id])
+					end
+					tm.release_stash_by_id(id)
+				end
+				return
+			end
+		end
+		return base_set_random_stash(no_spot, hint, bonus_items, id, dbg)
+	end
+end
+
 function on_game_start()
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update_calculate_rankings)
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update_register_callbacks)
@@ -1224,4 +1293,5 @@ function on_game_start()
 	RegisterScriptCallback("on_loading_screen_key_prompt", luagc_cleanup)
 
 	fix_squad_offline_teleport()
+	fix_stale_stash_ids()
 end
