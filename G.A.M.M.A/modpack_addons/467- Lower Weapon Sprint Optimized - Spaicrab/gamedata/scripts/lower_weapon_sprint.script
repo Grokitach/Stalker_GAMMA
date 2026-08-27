@@ -1,5 +1,5 @@
 -- Lower Weapon Sprint Optimized
--- By Spaicrab - Edited By Coverdrave
+-- By Spaicrab - Edited By Coverdrave and Skieppy
 -- Original Addon By Skieppy
 
 -- Current version
@@ -141,6 +141,8 @@ end
 -- TimeEvents
 
 function delay_lower_weapon()
+	if (is_current_wpn_in_blacklist() ~= reverse_blacklist) then return end
+
 	game.actor_lower_weapon(true)
 	return true
 end
@@ -240,13 +242,11 @@ end
 
 -- Main Function
 function actor_on_movement_changed(movementState)
-	if (is_current_wpn_in_blacklist() ~= reverse_blacklist) then return end
-	
 	local wpn = db.actor:active_item()
 
 	-- The actor_move_states table is in line 1380 of _g.script, but I never use that table in this script.
 	-- I would use "if movementState == 4096 then" here, but it doesn't seem to work.
-	if IsMoveState("mcSprint")  then
+	if IsMoveState("mcSprint") and not (IsMoveState("mcFall") or IsMoveState("mcJump"))  then
 		
 		if sprinting then
 			return
@@ -268,6 +268,8 @@ function actor_on_movement_changed(movementState)
 			return
 		end
 		if game.actor_weapon_lowered() and not manually_lowered then
+			if (is_current_wpn_in_blacklist() ~= reverse_blacklist) then return end
+
 			game.actor_lower_weapon(false)
 			wpn:switch_state(0)
 		end
