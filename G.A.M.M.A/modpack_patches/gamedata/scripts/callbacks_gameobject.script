@@ -265,11 +265,45 @@ map_table contains:
 
 --]]
 
+-- Replace base pda.property_box_clicked so the clicked item's u32 TAG is forwarded
+-- as a trailing prop_id arg, letting menus carry duplicate labels.
+function pda.property_box_clicked(property_ui)
+	local list_item = property_ui:GetSelectedItem()
+	if not (list_item) then
+		return
+	end
+	local prop = list_item:GetTextItem():GetText()
+	SendScriptCallback("map_spot_menu_property_clicked", property_ui,
+		pda.map_spot_property.id, pda.map_spot_property.level_name, prop, list_item:GetTAG())
+end
+
 AddScriptCallback("on_map_right_click")
 _G.COnRightClickMap = function(property_ui, map_table)
 	pda.map_spot_property.id = map_table.object_id
 	pda.map_spot_property.level_name = map_table.level_name
 	SendScriptCallback("on_map_right_click", property_ui, map_table)
+end
+
+-- Engine sets the clicked menu item's owning spot before pda.property_box_clicked,
+-- so a merged multi-object context menu dispatches the correct object id per item.
+function pda.set_map_spot_context(id, level_name)
+	pda.map_spot_property.id = id
+	pda.map_spot_property.level_name = level_name
+end
+
+--[[
+
+On left click on PDA map spot callback
+Params are id, level_name, spot_type
+	id - alife object id of the spot, 65535 if none
+	level_name - name of the level the spot belongs to
+	spot_type - icon id from map_spots XML
+
+--]]
+
+AddScriptCallback("on_map_spot_selected")
+function pda.map_spot_selected(id, level_name, spot_type)
+	SendScriptCallback("on_map_spot_selected", id, level_name, spot_type)
 end
 
 -- On receive game news callback
@@ -329,6 +363,157 @@ _G.CNPCBeforeLookAtActor = function(npc, distance)
 	return flags.ret_value
 end
 
+-- NPC critically wounded callback, fires once on first critical wound transition
+AddScriptCallback("npc_on_critically_wounded")
+_G.CAI_Stalker__OnCriticallyWounded = function(npc, hit, bone_id)
+	SendScriptCallback("npc_on_critically_wounded", npc, hit, bone_id)
+end
+
+-- NPC danger location added callback. Fires when any danger (bullets, grenade, death, sound)
+-- is registered near the NPC. in_open=true when NPC has no cover point selected.
+-- cover_threatened=true when the danger overlaps the NPC's current cover position.
+-- Use npc:best_cover_invalidate() to force cover re-evaluation.
+-- Use npc:rank_name() to scale reaction threshold by rank.
+AddScriptCallback("npc_on_danger_location_add")
+_G.CAI_Stalker__OnDangerLocationAdd = function(npc, pos, radius, in_open, cover_threatened)
+	SendScriptCallback("npc_on_danger_location_add", npc, pos, radius, in_open, cover_threatened)
+end
+
+-- NPC weapon shot start callback. weapon is the weapon being fired
+AddScriptCallback("npc_on_weapon_shot_start")
+_G.CAI_Stalker__OnWeaponShotStart = function(npc, weapon)
+	SendScriptCallback("npc_on_weapon_shot_start", npc, weapon)
+end
+
+-- NPC weapon shot stop callback. Fires when the NPC stops firing
+AddScriptCallback("npc_on_weapon_shot_stop")
+_G.CAI_Stalker__OnWeaponShotStop = function(npc)
+	SendScriptCallback("npc_on_weapon_shot_stop", npc)
+end
+
+-- NPC weapon reload start callback. Fires when a stalker's weapon enters the reload state, on every
+-- reload path (planner reload, scripted state, tri-state shotgun shell loading, misfire clear).
+-- The actor is excluded: actor reloads already fire actor_on_weapon_reload.
+AddScriptCallback("npc_on_weapon_reload_start")
+_G.CAI_Stalker__OnWeaponReloadStart = function(npc, weapon)
+	SendScriptCallback("npc_on_weapon_reload_start", npc, weapon)
+end
+
+-- NPC weapon reload stop callback. Fires when the weapon leaves the reload state for any reason
+-- (finished, interrupted by a weapon or state switch). Best-effort: a weapon detached mid-reload
+-- (owner died, weapon dropped) has no stalker parent and fires nothing - where the truth matters,
+-- poll wpn:get_state() == 7 (CWeapon::eReload; eFire=5, eFire2=6, eReload=7 from eLastBaseState=4).
+AddScriptCallback("npc_on_weapon_reload_stop")
+_G.CAI_Stalker__OnWeaponReloadStop = function(npc, weapon)
+	SendScriptCallback("npc_on_weapon_reload_stop", npc, weapon)
+end
+
+-- NPC grenade throw gate. Return false to prevent the throw. Use npc:rank_name() to scale by rank
+-- Note: only fires when throw trajectory is clear, after engine validity checks pass
+AddScriptCallback("npc_on_should_throw")
+_G.CAI_Stalker__ShouldThrow = function(npc)
+	local flags = { ret_value = true }
+	SendScriptCallback("npc_on_should_throw", npc, flags)
+	return flags.ret_value
+end
+
+-- NPC grenade throw force override. Return a float to override throw force.
+-- Lower values = shorter throw range. Use npc:rank_name() to scale by rank
+_G.CAI_Stalker__GetMissileThrowForce = function(npc, base_force)
+	local flags = { ret_value = base_force }
+	SendScriptCallback("npc_on_missile_throw_force", npc, base_force, flags)
+	return flags.ret_value
+end
+AddScriptCallback("npc_on_missile_throw_force")
+
+-- NPC wounded/killed an enemy callback. victim is the enemy that was wounded or killed
+AddScriptCallback("npc_on_enemy_wounded_or_killed")
+_G.CAI_Stalker__OnEnemyWoundedOrKilled = function(npc, victim)
+	SendScriptCallback("npc_on_enemy_wounded_or_killed", npc, victim)
+end
+
+-- NPC squad member death reaction callback. member is the affected member, is_alive=true if wounded (not dead)
+AddScriptCallback("npc_on_member_death_reaction")
+_G.CAI_Stalker__OnMemberDeathReaction = function(npc, member, is_alive)
+	SendScriptCallback("npc_on_member_death_reaction", npc, member, is_alive)
+end
+
+-- NPC enemy selected/lost callback. new_enemy is nil on target loss
+AddScriptCallback("npc_on_enemy_selected")
+_G.CAI_Stalker__OnEnemySelected = function(npc, new_enemy)
+	SendScriptCallback("npc_on_enemy_selected", npc, new_enemy)
+end
+
+-- NPC combat GOAP action transition callback. old_op and new_op match stalker_ids.action_* values
+AddScriptCallback("npc_on_combat_action_changed")
+_G.CAI_Stalker__OnCombatActionChanged = function(npc, old_op, new_op)
+	SendScriptCallback("npc_on_combat_action_changed", npc, old_op, new_op)
+end
+
+-- NPC combat GOAP action switch veto. Fires BEFORE the combat planner swaps actions
+-- (npc_on_combat_action_changed fires after an allowed swap). from_op and to_op match
+-- stalker_ids.action_* values. Set flags.allow = false to keep the current action
+-- (e.g. suppress the take_cover <-> look_out oscillation); real switches (grenade,
+-- hit, target dead) should be left through. Re-fires each AI update while the
+-- proposed switch stays denied, so keep subscribers cheap.
+AddScriptCallback("npc_on_combat_action_switch")
+_G.CAI_Stalker__AllowCombatActionSwitch = function(npc, from_op, to_op)
+	local flags = { allow = true }
+	SendScriptCallback("npc_on_combat_action_switch", npc, from_op, to_op, flags)
+	return flags.allow ~= false
+end
+
+-- NPC best-cover re-pick veto. Fires BEFORE the NPC replaces its current best cover
+-- (on_best_cover_changed, which clears InCover/LookedOut/PositionHolded, runs after an
+-- allowed change). Set flags.allow = false to keep the current cover. Only fires when a
+-- cover is already held; a change to a different point and losing the cover entirely both count.
+-- Re-asked on the next invalidation while denied; two invalidators are standing state (enemy
+-- within 3m of the held cover, smart cover without a loophole) and re-ask every combat action
+-- update, so keep subscribers cheap and cap a continuous denial.
+AddScriptCallback("npc_on_best_cover_repick")
+_G.CAI_Stalker__AllowCoverRepick = function(npc)
+	local flags = { allow = true }
+	SendScriptCallback("npc_on_best_cover_repick", npc, flags)
+	return flags.allow ~= false
+end
+
+-- NPC TakeCover destination callback. Only fires when a real cover point is found, not on fallback paths
+AddScriptCallback("npc_on_take_cover_destination")
+_G.CAI_Stalker__OnTakeCoverDestination = function(npc, cover_pos, enemy)
+	SendScriptCallback("npc_on_take_cover_destination", npc, cover_pos, enemy)
+end
+
+-- NPC cover point changed callback.
+-- cover_pos is nil when NPC loses its cover point entirely.
+-- is_smart_cover=true when the new cover is a smart cover position.
+-- smart_cover_name is the level object name of the smart cover (empty string if not a smart cover).
+-- Use npc:get_current_smart_cover_name() and npc:get_current_loophole_id() for coordination.
+AddScriptCallback("npc_on_best_cover_changed")
+_G.CAI_Stalker__OnBestCoverChanged = function(npc, cover_pos, is_smart_cover, smart_cover_name)
+	SendScriptCallback("npc_on_best_cover_changed", npc, cover_pos, is_smart_cover, smart_cover_name)
+end
+
+-- NPC minimum combat engagement distance override
+-- Returns the minimum distance from enemy at which this NPC will accept a cover point.
+-- Snipers use a high min (they need distance to fire effectively).
+-- Default is computed from ef_weapon_type and ai_cover_sniper_min_dist / MIN_SUITABLE_ENEMY_DISTANCE.
+_G.CAI_Stalker__GetMinCombatDist = function(npc, base_min)
+	local flags = { ret_value = base_min }
+	SendScriptCallback("npc_on_get_min_combat_dist", npc, base_min, flags)
+	return flags.ret_value
+end
+AddScriptCallback("npc_on_get_min_combat_dist")
+
+-- NPC maximum combat engagement distance override
+-- Returns the maximum distance from enemy at which this NPC will accept a cover point.
+-- Shotgunners use a low max (close cover only). Default computed from ef_weapon_type.
+_G.CAI_Stalker__GetMaxCombatDist = function(npc, base_max)
+	local flags = { ret_value = base_max }
+	SendScriptCallback("npc_on_get_max_combat_dist", npc, base_max, flags)
+	return flags.ret_value
+end
+AddScriptCallback("npc_on_get_max_combat_dist")
+
 -- actor_on_task_callback
 AddScriptCallback("actor_on_task_callback")
 task_callback = task_manager.task_callback
@@ -349,6 +534,20 @@ end
 AddScriptCallback("explosive_item_on_explode")
 _G.CExplosiveItem__OnExplode = function(obj)
 	SendScriptCallback("explosive_item_on_explode", obj)
+end
+
+-- car hit callback
+-- car - the car that was hit, who - initiator (may be nil), shit - CScriptHit, boneId - hit bone
+AddScriptCallback("car_on_hit")
+_G.CCar__OnHit = function(car, who, shit, boneId)
+	SendScriptCallback("car_on_hit", car, who, shit, boneId)
+end
+
+-- car weapon fired callback
+-- car - the car whose mounted weapon fired a shot
+AddScriptCallback("car_on_weapon_fired")
+_G.CCar__OnWeaponFired = function(car)
+	SendScriptCallback("car_on_weapon_fired", car)
 end
 
 -- nearest item to pickup callback

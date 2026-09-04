@@ -1,0 +1,58 @@
+-- Make NPC/character portraits respect their aspect ratio (cover) instead of
+-- stretching to fill the slot.
+
+local targets = {
+	[ [[ui\ui_hud.xml]] ]                         = { "companion_list > slot > icon" },
+	[ [[ui\pda_npc_16.xml]] ]                     = { "contact > icon" },
+	[ [[ui\ui_inventory.xml]] ]                   = { "player > icon", "npc > icon", "upgrade > icon" },
+	[ [[ui\ui_inventory_16.xml]] ]                = { "player > icon", "npc > icon", "upgrade > icon" },
+	[ [[ui\ui_companion_inv.xml]] ]               = { "ch_info > icon" },
+	[ [[ui\ui_companion_inv_16.xml]] ]            = { "ch_info > icon" },
+	[ [[ui\ui_wheel_companion.xml]] ]             = { "info > icon" },
+	[ [[ui\ui_wheel_companion_16.xml]] ]          = { "info > icon" },
+}
+
+function on_xml_read()
+	RegisterScriptCallback("on_xml_read", function(xml_file_name, xml_obj)
+		local tags = targets[xml_file_name]
+		if not tags then return end
+
+		for _, tag in ipairs(tags) do
+			local res = xml_obj:query(tag)
+			if is_not_empty(res) then
+				for _, el in ipairs(res) do
+					xml_obj:setElementAttr(el, { cover = 1 })
+				end
+			end
+		end
+	end)
+end
+
+local function apply_cover(info_table, icon_key)
+	if not info_table then return end
+	for _, info in pairs(info_table) do
+		local icon = info and info[icon_key]
+		if icon and icon.SetCoverTexture then
+			icon:SetCoverTexture(true)
+		end
+	end
+end
+
+local function patch_tab(mod, class_name, info_field, icon_key)
+	local cls = (type(mod) == "table" and mod[class_name]) or _G[class_name]
+	if not cls or cls.__portrait_cover then return end
+	cls.__portrait_cover = true
+
+	local original_reset = cls.Reset
+	if not original_reset then return end
+
+	cls.Reset = function(self, ...)
+		original_reset(self, ...)
+		apply_cover(self[info_field], icon_key)
+	end
+end
+
+function on_game_start()
+	patch_tab(ui_pda_contacts_tab, "pda_contacts_tab", "contact_info", "icon_field")
+	patch_tab(ui_pda_relations_tab, "pda_relations_tab", "companion_info", "icon_wnd")
+end

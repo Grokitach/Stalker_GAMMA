@@ -1,0 +1,74 @@
+--[[
+	Made by tdef
+	Last Edit: 2019/7/15
+	NPC weapon jam
+--]]
+
+local enable_debug = false
+
+local GUN_TRACKING = {}
+local SETTINGS
+
+function print_dbg(frmt, ...)
+	if enable_debug then
+		printf(strformat(frmt, ...))
+	end
+end
+
+AddScriptCallback("npc_get_misfire_probability")
+function GetConditionMisfireProbability(weapon, npc, base_value)
+	if not SETTINGS.enabled then
+		return base_value
+	end
+
+	local t = {
+		ret_value = base_value
+	}
+	SendScriptCallback("npc_get_misfire_probability", weapon, npc, base_value, t)
+	return t.ret_value or 0
+end
+
+-- Vanilla misfire code
+function npc_misfire(weapon, npc, base_value, t)
+	local itm = weapon	
+	local gun_id = itm:id()
+	if (not GUN_TRACKING[gun_id]) then
+		GUN_TRACKING[gun_id] = {}
+	end
+	
+	local ammo_now = itm:get_ammo_in_magazine()
+	local ammo_then = GUN_TRACKING[gun_id].ammo_last_update or ammo_now
+	local ammo_spent = ammo_then - ammo_now 
+	GUN_TRACKING[gun_id].ammo_last_update = ammo_now
+	
+	print_dbg('ammo difference: %s - %s = %s', ammo_spent, ammo_now, ammo_spent)
+	
+	-- Calculate and apply jam
+	local new_ammo
+	if ammo_spent > 0 then
+		local npc_id = npc:id()
+		local npc_rank = ranks.get_obj_rank_name(npc)
+		local chance = clamp(SETTINGS['base_ch_'..npc_rank] * ammo_spent, 0, SETTINGS['max_ch_'..npc_rank])
+		
+		if chance > 0 then 
+			print_dbg('npc %s (%s) chance to jam is %s', npc_id, npc_rank, chance)
+		end
+		
+		if math.random(0, 100) <= chance then 
+			t.ret_value = 1
+			print_dbg('jamming gun %s (%s) on npc %s (%s)', gun_id, itm:section(), npc_id, npc_rank)
+		end
+	end
+end
+
+function on_game_start()
+	local ini = ini_file("ai_tweaks\\xr_weapon_jam.ltx")
+	SETTINGS = utils_data.parse_ini_section_to_array(ini, "settings")
+	for k,v in pairs(SETTINGS) do
+		if string.find(k,'_ch_') then
+			SETTINGS[k] = tonumber(v)
+		end
+	end
+		
+	RegisterScriptCallback('npc_get_misfire_probability', npc_misfire)
+end

@@ -1,0 +1,99 @@
+-- Dynamic PDA tab registry.
+--
+-- Lets mods add PDA tabs without overriding single-owner pda_16.xml (engine support:
+-- CUITabControl::AddTab + scrolling, CUIPdaWnd RebuildTabs). register/unregister may be called at
+-- ANY time -- before the game UI exists or mid-session (the live strip is rebuilt immediately).
+--
+-- Usage:
+--
+--     local my_tab = pda_dynamic_tabs.register("st_wrfr_pda_tab", function()
+--         return ui_pda_warfare_tab.get_ui()
+--     end)
+--     -- optionally place it after a specific tab instead of at the end:
+--     -- pda_dynamic_tabs.register("st_wrfr_pda_tab", getter, "eptTasks")
+--     -- and later, if needed:
+--     -- pda_dynamic_tabs.unregister(my_tab)
+--
+-- Arguments:
+--   caption_key string-table id for the tab label (translated at build time).
+--   ui_getter   function returning the tab's content window (a CUIScriptWnd), called when the
+--               tab is selected. Same contract as pda.set_active_subdialog returns.
+--   after       optional tab id to insert after (an engine tab like "eptTasks", or another
+--               registered tab's id). Omitted/unknown -> appended. Tabs sharing an anchor come
+--               out in reverse registration order.
+--
+-- Returns the tab's registry-assigned section id ("ept_dynamic_<n>"), needed for unregister.
+--
+-- The tab's look is not configurable: it inherits the strip's own art, font and size. Its width is
+-- fixed to the strip's tab width, so a long caption may clip.
+--
+-- Icons: if the UI declares a texture named after the caption id ("st_wrfr_pda_tab_e" and optional
+-- _d/_h/_t, or a single "st_wrfr_pda_tab"), the tab gets it. No art under that name means no icon,
+-- which is not an error. The caption id is used because it is chosen by the registering mod and
+-- stable, unlike the tab id -- so a PDA reskin can supply icons for tabs it does not know about,
+-- and a mod can ship a default for its own, without either side coordinating.
+--
+-- To detect engine support: CUITabControl.AddTab ~= nil.
+
+local registry = {}        -- ordered list of { id, caption, ui, after }
+local by_id = {}           -- id -> entry, for set_active_subdialog routing
+local seq = 0              -- monotonic id source (never reused, even after unregister)
+
+local function apply()
+    if not level.present() then
+        return
+    end
+    local pm = ActorMenu.get_pda_menu()
+    if pm then
+        pm:RebuildTabs()
+    end
+end
+
+function register(caption_key, ui_getter, after)
+    seq = seq + 1
+    local id = "ept_dynamic_" .. seq
+    local entry = { id = id, caption = caption_key or id, ui = ui_getter, after = after }
+    registry[#registry + 1] = entry
+    by_id[id] = entry
+    apply()
+    return id
+end
+
+function unregister(id)
+    local entry = by_id[id]
+    if not entry then
+        return false
+    end
+    by_id[id] = nil
+    for i = 1, #registry do
+        if registry[i] == entry then
+            table.remove(registry, i)
+            break
+        end
+    end
+    apply()
+    return true
+end
+
+-- Called by the engine (CUIPdaWnd::Init / RebuildExtraTabs) with the live CUITabControl.
+function build_extra_tabs(tab_control)
+    if not tab_control then
+        return
+    end
+    for i = 1, #registry do
+        local t = registry[i]
+        tab_control:AddTab(t.id, game.translate_string(t.caption), t.after or "")
+        if CUITabControl.SetTabIcon then
+            tab_control:SetTabIcon(t.id, t.caption)
+        end
+    end
+end
+
+local base_set_active_subdialog = pda.set_active_subdialog
+function pda.set_active_subdialog(section)
+    local entry = by_id[section]
+    if entry then
+        return entry.ui()
+    end
+    return base_set_active_subdialog(section)
+end

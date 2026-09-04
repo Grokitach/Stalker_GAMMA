@@ -1,0 +1,26 @@
+-- Stock map_spots_16.xml (widescreen variant) defines circle_army_spot and
+-- circle_ecolog_spot at width/height 28, while every other faction spot is 24.
+-- On widescreen this makes the army and ecolog map icons render oversized vs the rest
+-- Normalise them to 24 to match every other faction.
+
+
+local targets = {
+	[ [[ui\map_spots.xml]] ]    = { "circle_army_spot", "circle_ecolog_spot" },
+	[ [[ui\map_spots_16.xml]] ] = { "circle_army_spot", "circle_ecolog_spot" },
+}
+
+function on_xml_read()
+	RegisterScriptCallback("on_xml_read", function(xml_file_name, xml_obj)
+		local tags = targets[xml_file_name]
+		if not tags then return end
+
+		for _, tag in ipairs(tags) do
+			local res = xml_obj:query(tag)
+			if is_not_empty(res) then
+				for _, el in ipairs(res) do
+					xml_obj:setElementAttr(el, { width = 24, height = 24 })
+				end
+			end
+		end
+	end)
+end

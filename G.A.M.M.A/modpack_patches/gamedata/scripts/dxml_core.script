@@ -241,6 +241,15 @@ function xml_object(xml_file_name, xml_string, xml_table)
 		xml_table = xml_table,
 	}
 
+	local function setParent(node, parent)
+		node.parent = parent
+		if node.kids then
+			for _, child in ipairs(node.kids) do
+				setParent(child, node)
+			end
+		end
+	end
+
 	-- Check if node is Processing Instruction
 	t.isPi = function(self, el)
 		return el.el:sub(1, 1) == "?"
@@ -589,6 +598,7 @@ function xml_object(xml_file_name, xml_string, xml_table)
 			args = self:convertElement(args)
 		end
 		pos = pos and clamp(pos, 1, #where.kids + 1) or #where.kids + 1
+		setParent(args, where)
 		table_insert(where.kids, pos, args)
 		return where.kids[pos], pos
 	end
@@ -606,18 +616,14 @@ function xml_object(xml_file_name, xml_string, xml_table)
 			return
 		end
 
-		if args.name then
-			args = self:convertElement(args)
+		local parent = el and el.parent
+		if not parent or not parent.kids then
+			print_parser_error(xml_file_name, "target element has no parent")
+			print_r_xml(el)
+			return
 		end
 
-		local pos
-		self:iterateChildren(el.parent, function(v, i)
-			if v == el then
-				pos = after and i + 1 or i
-				table_insert(el.parent, pos, args)
-				return true
-			end
-		end)
+		local pos = self:getElementPosition(el)
 		if not pos then
 			print_parser_error(xml_file_name, "failed to insert element " .. (after and "after" or "before") .. "specified element")
 			print_parser_error(xml_file_name, "input element")
@@ -626,7 +632,14 @@ function xml_object(xml_file_name, xml_string, xml_table)
 			print_r_xml(el)
 			return
 		end
-		return el[pos], pos
+
+		if args.name then
+			args = self:convertElement(args)
+		end
+		pos = after and pos + 1 or pos
+		setParent(args, parent)
+		table_insert(parent.kids, pos, args)
+		return parent.kids[pos], pos
 	end
 
 	-- Insert new element after element into xml table
@@ -652,18 +665,21 @@ function xml_object(xml_file_name, xml_string, xml_table)
 		end
 
 		where = where or self:getRoot()
+		if not where.kids then
+			where.kids = {}
+		end
 		local xml_obj = self:parseXMLString(xml_string)
 		local xml_obj_root = useRootNode and xml_obj:getRoot() or xml_obj.xml_table
-		local n_pos
-		for i, v in ipairs(xml_obj_root.kids) do
-			v.parent = where
-			local ins = pos and clamp(pos, 1, #where.kids + 1) or #where.kids + 1
-			local p = table_insert(where.kids, ins, v)
-			if not n_pos then
-				n_pos = p
-			end
+		if not xml_obj_root.kids or #xml_obj_root.kids == 0 then
+			return
 		end
-		return where.kids[n_pos], n_pos
+
+		local first_pos = pos and clamp(pos, 1, #where.kids + 1) or #where.kids + 1
+		for i, v in ipairs(xml_obj_root.kids) do
+			setParent(v, where)
+			table_insert(where.kids, first_pos + i - 1, v)
+		end
+		return first_pos
 	end
 
 	-- Insert from XML file
@@ -742,10 +758,12 @@ function xml_object(xml_file_name, xml_string, xml_table)
 		end
 		if is_empty(el.kids) then
 			el.kids[1] = {
-				el = "#"
+				el = "#",
+				parent = el,
 			}
 		end
 		if self:getText(el) then
+			el.kids[1].parent = el
 			el.kids[1].el = "#" .. text
 		end
 	end
@@ -754,10 +772,17 @@ function xml_object(xml_file_name, xml_string, xml_table)
 	-- the el argument is a sub-table from xml_table which is received by findElement function
 	-- in other words, the pointers should be same, otherwise it wont do anything
 	t.removeElement = function(self, el)
+		if not el or not el.parent or not el.parent.kids then
+			print_parser_error(xml_file_name, "target element has no parent")
+			print_r_xml(el)
+			return
+		end
+
 		local res, pos
 		self:iterateChildren(el.parent, function(v, i)
 			if v == el then
 				res = table_remove(el.parent.kids, i)
+				res.parent = nil
 				pos = i
 				return true
 			end
@@ -874,8 +899,8 @@ function xml_object(xml_file_name, xml_string, xml_table)
 		["+"] = function(xml_obj, args, where)
 			local res = {}
 			local r = xml_obj:findFirstSibling(where, args)
-			if r then
-				res[1] = r
+			if r and r[1] then
+				res[1] = r[1]
 			end
 			return res
 		end,

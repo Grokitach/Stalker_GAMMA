@@ -551,6 +551,18 @@ do
 	end
 end
 
+-- Don't update member-less squads pending release: avoids sim:object(commander_id()==0xffff) spam
+do
+	local sq = sim_squad_scripted.sim_squad_scripted
+	local orig_generic_update = sq.generic_update
+	function sq.generic_update(self, ...)
+		if self:npc_count() == 0 then
+			return
+		end
+		return orig_generic_update(self, ...)
+	end
+end
+
 -- Fix for returning wrong scope section on detaching
 function item_weapon.detach_scope(weapon)
 	-- Return if the weapon is not valid.
@@ -596,7 +608,94 @@ function item_weapon.detach_scope(weapon)
 	end
 end
 
+-- Allow adding "scopes" field via upgrades
+local item_weapon_attach_scope_weapon
+local item_weapon_attach_scope_item
+item_weapon_attach_scope = item_weapon.attach_scope
+item_weapon.attach_scope = function(item, weapon, ...)
+	item_weapon_attach_scope_item = item
+	item_weapon_attach_scope_weapon = weapon
+	item_weapon_attach_scope(item, weapon, ...)
+	item_weapon_attach_scope_item = nil
+	item_weapon_attach_scope_weapon = nil
+end
+item_weapon_on_item_drag_dropped = item_weapon.on_item_drag_dropped
+item_weapon.on_item_drag_dropped = function(obj_1, obj_2, ...)
+	item_weapon_attach_scope_item = obj_1
+	item_weapon_attach_scope_weapon = obj_2
+	item_weapon_on_item_drag_dropped(obj_1, obj_2, ...)
+	item_weapon_attach_scope_item = nil
+	item_weapon_attach_scope_weapon = nil
+end
+
+function get_scopes_from_upgrade(upgr_sec, weapon)
+	local sec = SYS_GetParam(0, upgr_sec, "section")
+	if not sec then return {} end
+
+	local scopes = SYS_GetParam(0, sec, "scopes")
+	if not scopes then return {} end
+
+	return str_explode(scopes, ",")
+end 
+
+item_weapon_check_scope = item_weapon.check_scope
+item_weapon.check_scope = function(addon_sect, weapon_sect, ...)
+	if item_weapon_check_scope(addon_sect, weapon_sect, ...) then
+		return true
+	end
+
+	local item = item_weapon_attach_scope_item
+	local weapon = item_weapon_attach_scope_weapon
+
+	if not (item and weapon) then
+		return false
+	end
+
+	local found = false
+	weapon:iterate_installed_upgrades(function(upgr_sec)
+		for i, v in ipairs(get_scopes_from_upgrade(upgr_sec, weapon)) do
+			if v == addon_sect then
+				found = true
+				return true
+			end
+		end
+	end)
+
+	return found
+end
+
+-- Highlighting for scopes that were added
+function ActorMenu_on_item_focus_receive(obj)
+	local sec_focus = obj:section()
+	local focus_tbl = {}
+
+	-- For weapons
+	if IsWeapon(obj) then
+		
+		-- Scopes
+		obj:iterate_installed_upgrades(function(upgr_sec)
+			for i, v in ipairs(get_scopes_from_upgrade(upgr_sec, obj)) do
+				focus_tbl[#focus_tbl + 1] = v
+			end
+		end)
+	end
+	local inventory = GetActorMenu()
+	if not ((#focus_tbl > 0) or (inventory and inventory:IsShown())) then
+		return
+	end
+	
+	for i=1,#focus_tbl do 
+		inventory:highlight_section_in_slot(focus_tbl[i],EDDListType.iActorBag)
+		inventory:highlight_section_in_slot(focus_tbl[i],EDDListType.iPartnerTradeBag)
+		inventory:highlight_section_in_slot(focus_tbl[i],EDDListType.iDeadBodyBag)
+		inventory:highlight_section_in_slot(focus_tbl[i],EDDListType.iActorTrade)
+		inventory:highlight_section_in_slot(focus_tbl[i],EDDListType.iPartnerTrade)
+	end
+end
+
 -- Fixed 65534 loop in this
+-- Make npcs not blind when they got hit
+local transparent_gg_ignore_id = {}
 function trans_outfit.transparent_gg()
 	if not trans_outfit.ReadOutfitBlindnessKoeff then return end
 
@@ -609,20 +708,31 @@ function trans_outfit.transparent_gg()
 		range1 = trans_outfit.ReadOutfitBlindnessKoeff(outfit_in_slot:section())
 	else 
 		range1 = 80 
-	end  
+	end
+
+	local is_blind = range1 < 80
 
 	for i = 1, #db.OnlineStalkers do
 		local id = db.OnlineStalkers[i]
 		local obj_around = gameobjects_registry[id]
 		if obj_around and IsStalker(obj_around) and id ~= AC_ID then
 			local dist_act_npc = db.actor:position():distance_to_sqr(obj_around:position())
-			if dist_act_npc <= 120^2 then  
+			local is_ignore = not is_blind and transparent_gg_ignore_id[id] and transparent_gg_ignore_id[id].stop_ignore_time > time_global()
+			if is_ignore then
+				obj_around:set_range(math.max(200, range1))
+			elseif dist_act_npc <= math.max(range1^2, is_blind and 120^2 or 100^2) then  
 				obj_around:set_range(range1)
 			else 
 				obj_around:set_range(80) 
 			end 
 		end 
 	end
+end
+
+function transparent_gg_add_to_ignore_ids(npc, amount, local_direction, who, bone_index)
+	transparent_gg_ignore_id[npc:id()] = {
+		stop_ignore_time = time_global() + 120 * 1000
+	}
 end
 
 -- Lander:
@@ -796,6 +906,251 @@ function anomaly_on_before_activate_pathfinding(zone, obj, flags)
 	end
 end
 
+-- Pathfinding to evade anomalies by dynamically registering anomalies' SR
+-- Enabled only for monsters, might be stuttery
+local anomaly_restrictor_db = {}
+local anomaly_restrictor_db_k
+local anomaly_restrictor_db_v
+local anomaly_restrictor_db_by_gvid = {}
+function anomaly_add_to_db(obj)
+	local anomaly_classes = {
+		[clsid.zone_rusty_hair]		= true,
+		[clsid.zone_bfuzz]			= true,
+		[clsid.zone_bfuzz_s]		= true,
+		[clsid.zone_mosquito_bald]	= true,
+		[clsid.zone_mbald_s]		= true,
+		[clsid.zone_galantine]		= true,
+		[clsid.zone_galant_s]		= true,
+		[clsid.zone_mincer]			= true,
+		[clsid.zone_mincer_s]		= true,
+	}
+	if not anomaly_classes[obj:clsid()] then
+		return
+	end
+
+	local se_zone = alife_object(obj:id())
+	if not se_zone then
+		return
+	end
+
+	local data = utils_stpk.get_anom_zone_data(se_zone)
+	if not (data and data.shapes[1] and data.shapes[1].radius) then
+		return
+	end
+
+	local radius = data.shapes[1].radius
+	anomaly_restrictor_db[obj:id()] = {
+		radius = radius + 20,
+		entities = {},
+		last_pos = VEC_ZERO
+	}
+	anomaly_restrictor_db_by_gvid[obj:game_vertex_id()] = anomaly_restrictor_db_by_gvid[obj:game_vertex_id()] or {}
+	anomaly_restrictor_db_by_gvid[obj:game_vertex_id()][obj:id()] = {
+		entities = {}
+	}
+end
+
+-- Active online monsters registry to bypass expensive engine spatial queries
+local db_online_monsters = {}
+
+function track_monsters_on_spawn(obj)
+	if IsMonster(obj) then
+		db_online_monsters[obj:id()] = obj
+	end
+end
+
+function track_monsters_on_destroy(obj)
+	db_online_monsters[obj:id()] = nil
+end
+
+local function concat_by_func(t, f, sep)
+	local s = ""
+	sep = sep or ", "
+	for k, v in pairs(t) do
+		s = s .. f(k, v) .. sep
+	end
+	return s
+end
+
+local function concat_by_name(k, v)
+	local obj = level.object_by_id(k)
+	if obj then
+		return obj:name()
+	end
+	return [["destroyed"]]
+end
+
+local anomaly_amount_per_update = 2
+local anomaly_cycle_start_time
+local anomaly_restrictor_db_count = 0
+function anomaly_restrictor_update()
+	local need_invalidate = {}
+
+	if not anomaly_cycle_start_time then
+		anomaly_cycle_start_time = time_global()
+	end
+
+	-- Couple of anomalies per update, goal is to pass all anomalies in 1 second independent of frame time
+	for i = 1, anomaly_amount_per_update do
+		anomaly_restrictor_db_k, anomaly_restrictor_db_v = next(anomaly_restrictor_db, anomaly_restrictor_db_k)
+		if anomaly_restrictor_db_k and anomaly_restrictor_db_v then
+			anomaly_restrictor_db_count = anomaly_restrictor_db_count + 1
+
+			local obj = level.object_by_id(anomaly_restrictor_db_k)
+			if obj then
+				local prev_entities = dup_table(anomaly_restrictor_db_v.entities)
+				empty_table(anomaly_restrictor_db_v.entities)
+
+				local last_pos = anomaly_restrictor_db_v.last_pos
+				local new_pos = obj:position()
+				local pos_dist_invalidate = last_pos:distance_to_sqr(new_pos) > 16
+				if pos_dist_invalidate then
+					anomaly_restrictor_db_v.last_pos = new_pos
+				end
+				
+
+				-- Pure-Lua distance check bypass and optimized monster search loop over db_online_monsters.
+				-- Bypasses level.iterate_nearest to avoid Luabind interop and C++ sorting overhead.
+				local radius = anomaly_restrictor_db_v.radius
+				local cache_cam_pos = device().cam_pos
+				local max_dist_limit = 150 + (radius * 2)
+				local dist_to_cam_sqr = new_pos:distance_to_sqr(cache_cam_pos)
+
+				if dist_to_cam_sqr < (max_dist_limit * max_dist_limit) then
+					local cache_cam_limit_sqr = (150 + radius) * (150 + radius)
+					local radius_sqr = radius * radius
+
+					for id, entity in pairs(db_online_monsters) do
+						if entity:alive() then
+							local pos = entity:position()
+							if pos:distance_to_sqr(new_pos) < radius_sqr then
+								if pos:distance_to_sqr(cache_cam_pos) < cache_cam_limit_sqr then
+									anomaly_restrictor_db_v.entities[id] = true
+								end
+							end
+						end
+					end
+				end
+
+				local new_entities = anomaly_restrictor_db_v.entities
+
+				if is_empty(new_entities) then
+					if is_not_empty(prev_entities) then
+						-- print_tip("force_set_restrictor_type(3), obj %s, exited %s", obj:name(), concat_by_func(prev_entities, concat_by_name))
+						obj:force_set_restrictor_type(3)
+					end
+				else
+					if is_empty(prev_entities) then
+						-- print_tip("force_set_restrictor_type(2), obj %s, entered %s", obj:name(), concat_by_func(new_entities, concat_by_name))
+						obj:force_set_restrictor_type(2)
+					end
+					for k, v in pairs(new_entities) do
+						if not prev_entities[k] or pos_dist_invalidate then
+							need_invalidate[k] = true
+						end
+					end
+				end
+			else
+				anomaly_restrictor_db[anomaly_restrictor_db_k] = nil
+			end
+		else
+			-- Recalculate anomaly_amount_per_update to desired goal
+			local anomaly_cycle_end_time = time_global()
+			local elapsed_ms = anomaly_cycle_end_time - anomaly_cycle_start_time
+
+			if anomaly_restrictor_db_count > 0 and elapsed_ms > 0 then
+				if elapsed_ms > 1000 then
+					anomaly_amount_per_update = anomaly_amount_per_update + 1
+				else
+					anomaly_amount_per_update = anomaly_amount_per_update - 1
+				end
+				anomaly_amount_per_update = clamp(anomaly_amount_per_update, 2, 10)
+				-- printf("elapsed_ms %s, count %s, new anomaly_amount_per_update %s", elapsed_ms, anomaly_restrictor_db_count, anomaly_amount_per_update)
+			else
+				anomaly_amount_per_update = 2
+			end
+
+			anomaly_restrictor_db_count = 0
+			anomaly_cycle_start_time = nil
+			break
+		end
+	end
+
+	for k, v in pairs(need_invalidate) do
+		get_object_by_id(k):invalidate_restrictions()
+	end
+end
+
+local anomaly_processor_queue = {}
+local entity_anomaly_last_gvid = {}
+function anomaly_entity_restrictor_update(entity)
+	local id = entity:id()
+	local gvid = entity:alive() and entity:id() ~= AC_ID and entity:game_vertex_id() or -1
+	entity_anomaly_last_gvid[id] = entity_anomaly_last_gvid[id] or -1
+	local last_gvid = entity_anomaly_last_gvid[id]
+	if gvid == last_gvid then
+		return
+	end
+
+	if anomaly_restrictor_db_by_gvid[last_gvid] then
+		for k, v in pairs(anomaly_restrictor_db_by_gvid[last_gvid]) do
+			local obj = level.object_by_id(k)
+			if obj then
+				local was_not_empty = is_not_empty(v.entities)
+				v.entities[id] = nil
+				if was_not_empty and is_empty(v.entities) then
+					local id = obj:id()
+					table.insert(anomaly_processor_queue, function()
+						local obj = level.object_by_id(id)
+						if obj then
+							print_tip("force_set_restrictor_type(3), obj %s", obj:name())
+							obj:force_set_restrictor_type(3)
+						end
+					end)
+				end
+			else
+				anomaly_restrictor_db_by_gvid[last_gvid][k] = nil
+			end
+		end
+	end
+
+	if anomaly_restrictor_db_by_gvid[gvid] then
+		for k, v in pairs(anomaly_restrictor_db_by_gvid[gvid]) do
+			local obj = level.object_by_id(k)
+			if obj then
+				table.insert(anomaly_processor_queue, function()
+					local entity = level.object_by_id(id)
+					if entity then
+						entity:invalidate_restrictions()
+					end
+				end)
+				if is_empty(v.entities) then
+					local oid = obj:id()
+					table.insert(anomaly_processor_queue, function()
+						local obj = level.object_by_id(oid)
+						if obj then
+							print_tip("force_set_restrictor_type(2), obj %s", obj:name())
+							obj:force_set_restrictor_type(2)
+						end
+					end)
+				end
+				v.entities[id] = true
+			else
+				anomaly_restrictor_db_by_gvid[gvid][k] = nil
+			end
+		end
+	end
+
+	entity_anomaly_last_gvid[id] = gvid
+end
+
+function anomaly_processor_process()
+	if #anomaly_processor_queue > 0 then
+		local f = table.remove(anomaly_processor_queue)
+		f()
+	end
+end
+
 -- When object is added to alife after game load, remove stale data from tables
 function server_object_on_register_remove_stale_data(se_obj)
 	local id = se_obj.id
@@ -953,6 +1308,25 @@ end
 -- Disable caching in utils_item, with extra setters exported it will have wrong data
 utils_item.check_cache = function(...)
 	return false
+end
+
+-- Disable sim when in Warfare
+local old_axr_generate_available_tasks = axr_task_manager.generate_available_tasks
+function axr_task_manager.generate_available_tasks(npc, is_sim)
+	if is_sim and _G.WARFARE and warfare.is_warfare_trader(npc) then
+		is_sim = false
+	end
+	return old_axr_generate_available_tasks(npc, is_sim)
+end
+
+-- Fix possible busy hands due to storing objects in ui_debug_launcher
+function game_object_on_net_destroy_ui_debug_launcher(obj)
+	if ui_debug_launcher.o1 and obj:id() == ui_debug_launcher.o1:id() then
+		ui_debug_launcher.o1 = nil
+	end
+	if ui_debug_launcher.o2 and obj:id() == ui_debug_launcher.o2:id() then
+		ui_debug_launcher.o2 = nil
+	end
 end
 
 -- Actually persistent weather
@@ -1209,89 +1583,67 @@ function luagc_cleanup()
 	printf("~[luagc_cleanup] collectgarbage after=%sKb",collectgarbage("count")*1024)
 end
 
--- Fix: stop treasure_manager putting loot and a map spot on an object that is
--- not a stash.
---
--- treasure_manager.caches is the stash pool, keyed by server object id, and
--- those ids get recycled. xrServer::entity_Destroy frees the id back to the
--- generator and it is handed out again later, so a pool entry for a box that
--- has been released ends up on whatever object took the id over.
--- set_random_stash then writes contents and a map spot onto that object, and
--- the spot is stuck there: try_spawn_treasure only runs from
--- physic_object_on_use_callback, which is gated on IsInvbox.
---
--- The entries come from release_stash_by_id. It tests `if id and caches[id]`,
--- but an available box is stored as false, so the test fails and the entry
--- stays. Its one caller is game_setup, which releases [remove_objects] from
--- new_game_setup.ltx on actor_on_first_update and prunes the boxes among them.
--- Three of them are boxes, so every new campaign starts with three pool entries
--- on freed ids.
---
--- Wrapped from on_game_start, not file scope, so this sits on top of any
--- file-scope patches to treasure_manager.
-local function fix_stale_stash_ids()
-	local tm = treasure_manager
-	if not (tm and tm.caches and type(tm.release_stash_by_id) == "function"
-	        and type(tm.set_random_stash) == "function") then
-		printf("![fix_stale_stash_ids] treasure_manager missing or changed shape, fix not installed")
+-- Bump scheduler batch size on first update for flushing, then reduce it after some time
+function actor_on_first_update_scheduler_flush()
+	if not level.scheduler_flush then
 		return
 	end
 
-	-- caches[id] is false for an available box, so the base guard skips it. Set
-	-- it true and the original will delete the key and decrement caches_count,
-	-- which is file-local and cannot be reached from here.
-	local base_release_stash_by_id = tm.release_stash_by_id
-	tm.release_stash_by_id = function(id)
-		-- Only promote a key that is already there, or this enrols a stash
-		-- instead of removing one.
-		if tm.caches[id] == false then
-			tm.caches[id] = true
-		end
-		return base_release_stash_by_id(id)
+	level.scheduler_flush(true)
+end
+
+function on_loading_screen_dismissed_scheduler_flush_stop()
+	if not level.scheduler_flush then
+		return
 	end
 
-	-- Nothing downstream of the pool checks class, and some callers hold an id
-	-- for a long time before using it (PDA contact stashes, task stashes), so
-	-- check again at the point of use. A mod that releases a box without
-	-- pruning lands here too. set_random_stash already returns nil when it
-	-- assigns nothing, so callers that test the result handle the refusal.
-	local base_set_random_stash = tm.set_random_stash
-	tm.set_random_stash = function(no_spot, hint, bonus_items, id, dbg)
-		-- simulate_stash_creation passes counters, not real ids.
-		if not dbg then
-			-- alife_object callstacks on a nil or out-of-range id, so screen it
-			-- first. IsInvbox is what on_game_load builds the pool with.
-			local usable = (type(id) == "number") and (id >= 0) and (id < 65535)
-			local se_obj = usable and alife_object(id) or nil
-			if not (se_obj and IsInvbox(nil, se_obj:clsid())) then
-				printf("![treasure_manager] refused to place a stash on a non-box: id %s", id)
-				if usable and (tm.caches[id] ~= nil) then
-					if type(tm.caches[id]) == "string" then
-						printf("![treasure_manager] dropped entry had contents: %s", tm.caches[id])
-					end
-					tm.release_stash_by_id(id)
-				end
-				return
-			end
-		end
-		return base_set_random_stash(no_spot, hint, bonus_items, id, dbg)
-	end
+	CreateTimeEvent("reset_scheduler_batch_size", 0, 8, function()
+		level.scheduler_flush(false)
+		return true
+	end)
 end
 
 function on_game_start()
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update_calculate_rankings)
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update_register_callbacks)
 
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update_scheduler_flush)
+	RegisterScriptCallback("on_loading_screen_dismissed", on_loading_screen_dismissed_scheduler_flush_stop)
+
 	-- Prefetch callbacks. Disabled for now, conflict with SSS
 	-- RegisterScriptCallback("actor_item_to_slot", actor_item_to_slot_prefetch)
 	-- RegisterScriptCallback("actor_on_first_update", actor_on_first_update_prefetch)
 
 	RegisterScriptCallback("npc_on_update", npc_on_update_force_trader_update)
+	RegisterScriptCallback("npc_on_hit_callback", transparent_gg_add_to_ignore_ids)
+
+	RegisterScriptCallback("game_object_on_net_destroy", game_object_on_net_destroy_ui_debug_launcher)
+
+	RegisterScriptCallback("ActorMenu_on_item_focus_receive", ActorMenu_on_item_focus_receive)
+
+	-- Reduce anomaly radius for entities, doesn't change pathfinding
 	RegisterScriptCallback("anomaly_on_before_activate", anomaly_on_before_activate_pathfinding)
+	
+	-- Toggle anomaly evading for entities, postpone to loading screen dismissed to ignore initial alife switch 
+	do
+		RegisterScriptCallback("game_object_on_net_spawn", anomaly_add_to_db)
+
+		RegisterScriptCallback("game_object_on_net_spawn", track_monsters_on_spawn)
+		RegisterScriptCallback("game_object_on_net_destroy", track_monsters_on_destroy)
+
+		RegisterScriptCallback("on_loading_screen_dismissed", function()
+			-- Per anomaly update via level.iterate_nearest, less stuttery, less reliable which is alright, we don't want perfect evasion
+			RegisterScriptCallback("actor_on_update", anomaly_restrictor_update)
+
+			-- Per entity update via gvid change, a lot more stuttery
+			-- RegisterScriptCallback("npc_on_update", anomaly_entity_restrictor_update)
+			-- RegisterScriptCallback("monster_on_update", anomaly_entity_restrictor_update)
+			-- RegisterScriptCallback("actor_on_update", anomaly_processor_process)
+		end)		
+	end
 
 	-- Force Lua GC and flush LuaJIT trace cache after "first update" calls which will be never executed again
 	RegisterScriptCallback("on_loading_screen_key_prompt", luagc_cleanup)
 
 	fix_squad_offline_teleport()
-	fix_stale_stash_ids()
 end

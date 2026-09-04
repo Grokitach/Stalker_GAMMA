@@ -10,6 +10,12 @@
 
         pseudogiant_can_damage_objects_on_stomp [0; 1] // Enable the ability for pseudogiants to damage objects on stomp
 
+        pseudogiant_dodge_stomp_while_falling [0; 1] // Prevent pseudogiants stomp attack from damaging actor if they are falling
+
+        allow_accel_during_lookout [0; 1] // flag to allow 'running' speed during left or right lookouts
+
+        scale_hud_motion_marks_by_speed [1; 0] // flag to scale motion marks by speed, default is on
+
         telekinetic_objects_include_corpses [0; 1] // Enable the ability for poltergeists and burers to throw corpses
         
         sds_enable [0; 1] // Enable shader based scopes
@@ -34,6 +40,7 @@
 
         pda_map_zoom_in_to_mouse // Enable map zoom in relative to cursor
         pda_map_zoom_out_to_mouse // Enable map zoom out relative to cursor
+        pda_show_map_labels // Show level name labels on the global PDA map if configured in game_maps_single.ltx
 
         mouse_wheel_change_weapon // Enable changing weapons with mouse wheel
         mouse_wheel_invert_zoom // Invert mouse wheel
@@ -63,6 +70,43 @@
 
         g_decouple_horz_recoil // calculate horz recoil independently of vert recoil
         g_use_non_linear_inertia // enable non linear weapon inertia movement
+
+        // Combat AI - fire/suppression logic
+        ai_fire_make_sense_interval [0; 20000] // How long (ms) NPCs fire at last known position after losing sight. 0 = fire only while visible. Default 10000
+        ai_fire_range_extension [0; 10] // Extra metres past pick_distance where suppression fire still makes sense. Default 2.5
+        ai_fire_max_height_diff [0; 8] // Max vertical gap (m) between NPC and enemy for fire to make sense. Default 2.0
+        ai_fire_min_dist [0; 20] // Minimum pick_distance (m) required for fire to make sense. Default 2.5
+
+        // Combat AI - cover danger zones
+        ai_cover_danger_radius [0; 15] // Danger zone radius (m) when NPC is shot while in cover. Default 3.0
+        ai_cover_danger_time [0; 300000] // Duration (ms) of that danger flag. Default 120000
+        ai_cover_detour_radius [0; 15] // Danger zone radius (m) when NPC flanks. Default 5.0
+        ai_cover_detour_time [0; 300000] // Duration (ms) of that danger flag. Default 120000
+        ai_cover_unknown_radius [0; 15] // Danger zone radius (m) on unknown threats. Default 5.0
+        ai_cover_unknown_time [0; 300000] // Duration (ms) of that danger flag. Default 120000
+
+        // Combat AI - cover selection distances
+        ai_cover_search_near_radius [1; 30] // First-pass cover search radius (m). Default 10.0
+        ai_cover_search_far_radius [1; 80] // Fallback cover search radius (m). Default 30.0
+        ai_cover_pistol_max_dist [3; 50] // Max cover distance (m) for pistol wielders. Default 10.0
+        ai_cover_shotgun_max_dist [3; 20] // Max cover distance (m) for shotgun wielders. Default 5.0
+        ai_cover_sniper_min_dist [0; 80] // Min cover distance (m) for sniper wielders. 0 = no minimum. Default 20.0
+        ai_cover_default_max_dist [3; 50] // Max cover distance (m) for all other weapons. Default 20.0
+
+        // Combat AI - timing and movement
+        ai_close_move_distance [0; 6] // Distance (m) at which TakeCover switches from running to in-place movement. Default 1.5
+        ai_crouch_look_out_delta [0; 12000] // LookOut crouch/stand randomization interval (ms). Default 5000
+        ai_wait_in_smart_cover_time [0; 120000] // How long (ms) NPC waits at smart cover before giving up. Default 30000
+
+        // Combat AI - danger perception multipliers (1.0 = original, 0.0 = disabled, 5.0 = 5x urgency)
+        ai_danger_ricochet_mult [0.0; 5.0] // Bullet ricochet danger urgency multiplier. Default 1.0 (base score 3000)
+        ai_danger_attack_sound_mult [0.0; 5.0] // Gunshot sound danger urgency multiplier. Default 1.0 (base score 2500)
+        ai_danger_entity_attacked_mult [0.0; 5.0] // Ally hit danger urgency multiplier. Default 1.0 (base score 2000)
+        ai_danger_entity_death_mult [0.0; 5.0] // Entity death danger urgency multiplier. Default 1.0 (base score 3000)
+        ai_danger_corpse_mult [0.0; 5.0] // Fresh corpse danger urgency multiplier. Default 1.0 (base score 2250)
+        ai_danger_attacked_mult [0.0; 5.0] // Being attacked danger urgency multiplier. Default 1.0 (base score 2000)
+        ai_danger_grenade_mult [0.0; 5.0] // Grenade danger urgency multiplier. Default 1.0 (base score 1000)
+        ai_danger_enemy_sound_mult [0.0; 5.0] // Enemy sound danger urgency multiplier. Default 1.0 (base score 1000)
 
     }
 
@@ -118,6 +162,7 @@
     alife() {
         number object_count()
         void iterate_objects(function(se_obj))
+        void iterate_level_objects_of_clsid(number script_clsid, function(se_obj)) -- walks actor's current-level CSE registry filtered by m_script_clsid; functor returns true to stop early; must not release the currently iterated entity
         void force_update() -- forces an immediate alife scheduled update cycle
     }
 
@@ -162,6 +207,12 @@
         function clone_upgrades(cse_alife_item_weapon*)
     }
 
+    class cse_alife_level_changer : cse_alife_space_restrictor {
+        property dest_game_vertex_id    // u16
+        property dest_level_vertex_id   // u32
+        property dest_position          // Fvector
+    }
+
     class CUIProgressBar {
         CUIStatic GetProgressStatic()
 		bool GetSnapNoDelay() Get the status of "SnapNoDelay"
@@ -183,10 +234,41 @@
         // Ncenka - allow to change PDA UI XML file
 		function SetPdaXml(string)
 		function GetPdaXml()
+
+        // Sync the PDA tab strip with the pda_dynamic_tabs.script registry. Not for mod code:
+        // register/unregister call it themselves.
+        void RebuildTabs()
+    }
+
+    // Dynamic tabs + tab-strip overflow scrolling. For internal use only, use the pda_dynamic_tabs.script registry
+    // to manage dynamic tabs
+    class CUITabControl : CUIWindow {
+        // Insert a tab after the tab `after_id` ("" or unknown = append); size/art/font copy the
+        // strip's own tabs. Tab width is fixed, so a too-long caption may clip. False on a control
+        // with no tabs. Call RecalcScroll after.
+        bool AddTab(string id, string caption, string after_id)
+        // Give a tab an icon drawn over its background art, fitted into the slot the strip's XML
+        // declares (<icon_layout> on the <tab> node). `art` is a base name: art_e/_d/_h/_t are used
+        // when present, a missing state falls back to _e, and a bare `art` alone is tinted with the
+        // caption colour instead. False if the tab or the art is unknown. Must be re-applied after
+        // AddTab, which builds the tab fresh.
+        bool SetTabIcon(string id, string art)
+        void RecalcScroll() // recompute strip geometry; scrolling engages only on overflow
     }
 
     class CUIMessagesWindow : CUIWindow {
         // no extra exports yet
+    }
+
+    class CUIPropertiesBox : CUIFrameWindow {
+        void AddHeader(string str) // Adds a non-selectable, colored title row (used to group items in a merged context menu)
+        CUIPropertiesBox AddSubmenu(string label) // Adds a "label >" row whose submenu expands on hover; returns the child box to populate (AddItem/AddHeader/nested AddSubmenu)
+        bool AddItem(string str, u32 id) // Adds a selectable item row carrying a u32 id (read back via GetSelectedItem():GetTAG() / map_spot_menu_property_clicked prop_id); lets a menu carry duplicate labels
+    }
+
+    class CUIListBoxItem : CUIFrameLineWnd {
+        u32 GetTAG() // Per-item u32 id set via CUIPropertiesBox:AddItem(str, id)
+        void SetTAG(u32 value)
     }
 
     class CUIMainIngameWnd : CUIWindow {
@@ -315,7 +397,11 @@
         void set_cam_custom_position_direction(Fvector position, Fvector direction, int smoothing)
         void set_cam_custom_position_direction(Fvector position, Fvector direction)
         void remove_cam_custom_position_direction()
-		
+
+        // Removes all engine-spawned per-animation HUD camera effectors
+        // Scripted effectors added via add_cam_effector are not touched.
+        void remove_hud_motion_cam_effectors()
+
         game_object get_target_obj(ETraceTarget)
         game_object get_target_obj()
         number get_target_dist(ETraceTarget)
@@ -350,6 +436,9 @@
             text: string, text when spot is hovered
         // }
 
+        void map_pan_to(LPCSTR level_name, float x, float z, bool zoom_in)
+        void map_pan_to_level(LPCSTR level_name, bool zoom_in)
+
         // MT only
         CMapManager* get_map_manager()
         void patrol_path_add(string patrol_path, CPatrolPath* path)
@@ -380,6 +469,9 @@
         function remove_attachment(string)
         function remove_attachment(script_attachment)
         function iterate_attachments(function)
+
+        // MT only
+        function scheduler_flush(bool)
     }
 
     // obj:get_physics_shell()
@@ -387,6 +479,54 @@
         void apply_torque(float roll, float yaw, float pitch)
 		void set_linear_vel(vector)
 		void set_angular_vel(vector)
+        void set_force_exact_integration() // step this object's physics island with the exact solver
+                                           // (dWorldStep) bypassing the 30-joint budget that gates the
+                                           // vehicles' default preference (capped at 96 island joints).
+                                           // Needed by >4-wheel vehicles: wheel+contact joints exceed
+                                           // 30, silently demoting them to quickstep, which cannot
+                                           // transmit wheel motor torque into a heavy hull.
+    }
+
+    // obj:get_car()
+    class CCar {
+        function GetSpeed() -> float // signed forward m/s, negative = reversing
+        function SetTargetSpeed(float mps) // speed governor, negative = reverse
+        function ClearTargetSpeed()
+        function SetThrottle(float k) // 0..1 drive torque scale
+        function SetSteer(float k) // -1..1, + = right
+        function GetWheelFriction() -> float // wheel-ground friction multiplier (mu_factor)
+        function SetWheelFriction(float k)
+        function Transmission(number gear) // 0 = reverse, 1..N = forward gears
+        function TransmissionUp()
+        function TransmissionDown()
+        function CurrentTransmission() -> number
+        function RefWheelMaxSpeed() -> float
+        function EnginePower() -> float
+        function EngineCurTorque() -> float
+        function DoorOpen(number bone_id) / DoorClose / DoorUse / DoorSwitch
+        function IsDoor(number bone_id) -> bool
+		
+		function SetUseAction(string)
+		function GetZoomFactor() -> float
+		function GetViewportNear() float
+		function SetViewportNear(float)
+		
+		/* Camera scope with different zooming levels. */
+		function IsScopeEnable() -> bool
+		function GetScopeSize() number
+		function GetScopeActive() number
+		function SetScopeActive(number)
+		
+		/* Drone subclass */
+		function CCarDrone_GetPowerEfficiency() -> float
+		function CCarDrone_SetPowerEfficiency(float)
+		
+		/* Visual 3D camera on model */
+		function VisualCamera_GetDesireAngle() -> float
+		function VisualCamera_GetRotXCur() -> float
+		function VisualCamera_GetRotYCur() -> float
+		
+        callbacks (see callbacks_gameobject.script): car_on_hit, car_on_weapon_fired
     }
 
     class Fvector {
@@ -523,17 +663,29 @@
         function get_talking_npc()
         function set_actor_position(vector pos, bool bskip_collision_correct, bool bkeep_speed)
         function set_movement_speed(vector)
-        function get_actor_ui_luminocity()
+        function get_actor_ui_luminosity() // Deprecated : Prefer using get_actor_visibility, which better describes what the value represents
+        function get_actor_visibility()
         function get_actor_object_looking_at()
         function get_actor_person_looking_at()
         function get_actor_default_action_for_object()
-		function set_actor_box_y_offset(u32 box_num, float offset) --box_num:0 for stand, 1 for crouch, 2 for prone;
+		function set_actor_box_y_offset(u32 box_num, float offset) -- box_num: 0 for stand, 1 for crouch, 2 for prone;
+        function g_fireParams()
+        function move_to_slot(game_object* pItem, number slot_id, bool doNotActivate)
+
+        // Stalker and Monster
+        function invalidate_restrictions()
+        void set_vision_speed(float factor) // Per-object vision-speed factor multiplied into get_visible_value on top of the ai_vision_speed_boost cvar. 1.0 = vanilla, higher spots faster, negative clamps to 0. Persists while online; re-set on spawn (memory manager is rebuilt when the NPC comes back online).
+        void set_visible_enemy_bias(float actor_bias, float npc_bias) // Per-object override of the enemy-selection bias toward whoever can see the NPC. actor_bias replaces the default 900 subtracted when the actor sees this NPC. npc_bias replaces the default 300 for another NPC that sees it. Each arg is independent, a negative one keeps that side vanilla (900 / 300). 0 removes the pull. Not serialized, re-set on spawn.
+        void set_hit_redirect(float max, float falloff) // Per-object bonus toward the last attacker in enemy selection, replacing the flat CQB step. max < 0 keeps vanilla. max >= 0 subtracts max*(1 - d2/falloff^2) from the attacker cost within falloff metres, so a close attacker is prioritised and a distant one fades to 0. The victim turns toward the shooter without a forced sighting. Not serialized, re-set on spawn.
+        void set_view_distance_factor(float factor) // Per-object view-DISTANCE factor, the range sibling of set_vision_speed: multiplies object_visible_distance's return, composing with the per-state max_view_distance LTX multiplier. 1.0 = vanilla, higher sees farther, negative clamps to 0. Persists while online; re-set on spawn.
+        void set_health_restore_boost(float value) // Per-object additive passive health-restore boost: adds value to the condition's m_fV_HealthRestore velocity applied every UpdateHealth while alive (base ~0.00003/s for stalkers), so the entity regenerates HP over time with no item. 0 = vanilla, higher = faster idle regen, negative clamps to 0. Stalkers and monsters (any CEntityAlive). Persists while online; re-set on spawn (condition rebuilt on re-online).
 
         // Stalker NPCs
         function get_enable_anomalies_pathfinding()
         function set_enable_anomalies_pathfinding(bool)
         function get_enable_anomalies_damage()
         function set_enable_anomalies_damage(bool)
+        function inside_anomaly()
         function angle()
         function force_set_angle(Fvector angle, bool bActivate)
         function set_enable_movement_collision(bool)
@@ -541,6 +693,24 @@
         function memory_remove_links(game_object)
         function get_object_visible_distance(game_object)
         function get_object_luminocity(game_object)
+        void set_aim_params(float max_angle, float min_angle, float min_speed, float predict_time) // Per-NPC sight-manager aim params (swing speed, firing cone, target lead). Unset or negative components follow the live ai_aim_max_angle / ai_aim_min_angle / ai_aim_min_speed / ai_aim_predict_time cvars, so pass negatives to revert to vanilla. Set once per NPC (e.g. on spawn by rank); read per frame in C++, no per-frame Lua.
+        void set_fire_queue_scale(float size_k, float interval_k) // Per-NPC scale on the combat planner's burst roll (select_queue_params): burst size and inter-burst interval multiply after the weapon-type x distance band is picked, so [fire_queue_params] retunes stay respected. Scaled size clamps to >= 1. Negative = unset (vanilla queues). Touches planner fire only - script set_item queues and the death mag dump are not scaled. Not serialized; re-set on spawn.
+        bool can_kill_enemy() // Engine posture-aware shot clearance: fire-point ray (with safety-angle probes) reaches the NPC's current selected enemy. False when no weapon is out. At most one recompute per frame (shared cache with the engine friendly-fire gate).
+        bool can_kill_member() // As can_kill_enemy but true when the ray would hit a squad member (friendly fire). False when no weapon is out.
+        bool fire_make_sense() // Engine fire-discipline gate for the current selected enemy: occlusion before target (pick_distance + ai_fire_range_extension), floor gap (ai_fire_max_height_diff), point-blank (ai_fire_min_dist), unseen enemy only within ai_fire_make_sense_interval and with an automatic weapon.
+        bool is_hit_anim_playing() // True while the engine's additive hit flinch (PlayHitMotion) is still blending on this entity - one clock compare against the end time stamped when the flinch played, no blend walk. Any alive entity with character physics support (stalkers, monsters); false otherwise.
+        bool affect_cover() // Returns true when the NPC considers itself in a tactically covered position (physically arrived at cover). Set by combat actions, reset on action transition. Use in BeforeHitCallback to detect hits in the open.
+        void best_cover_invalidate() // Forces the NPC to re-evaluate its best cover point on the next tick. Call after affect_cover() returns false on a hit to make the NPC seek new cover.
+        void make_enemy_visible(game_object enemy) // Force-plant enemy as a VISIBLE-memory object on this stalker (CMemoryManager::make_object_visible_somewhen - the engine's own squad wounded-target distribution call). Enemy selection scores "currently seen" far above hit/sound memory, so a shooter injected only via hit memory never wins selection; this puts him in the seen class where the engine's nearest-seen logic takes over. Visibility then decays through normal memory rules. Stalker receiver, alive-entity argument, no-op with an error log otherwise.
+        string rank_name() // Returns rank id string from CharacterInfo: "novice", "experienced", "veteran", "master", "expert". More reliable than rank() since raw integer thresholds vary per modpack.
+        string get_current_smart_cover_name() // Returns cName() of the smart cover the NPC is currently occupying, or "" if none.
+        string get_current_loophole_id() // Returns the loophole id within the current smart cover, or "" if none.
+
+        // Space Restrictors
+        function force_set_restrictor_type(number)
+
+        // Anomalies
+        function is_enabled_anomaly()
 
         // Artefact
         function get_artefact_additional_inventory_weight()
@@ -589,6 +759,33 @@
         function set_bone_visible(string bone_name, bool bVisibility, bool bRecursive, bool bHud)
 
         function list_bones(bool bHud = false)
+		
+		bool GetBulletCheckVisual()
+		void SetBulletCheckVisual(bool)
+
+        // HUD item fire points/bones
+        Fvector hud_fire_point()
+        Fvector hud_fire_point2()
+        Fvector hud_fire_point_silencer()
+        void set_hud_fire_point(Fvector value)
+        void set_hud_fire_point2(Fvector value)
+        void set_hud_fire_point_silencer(Fvector value)
+
+        u16 hud_fire_bone_id()
+        u16 hud_fire_bone2_id()
+        u16 hud_fire_bone_silencer_id()
+        string hud_fire_bone_name()
+        string hud_fire_bone2_name()
+        string hud_fire_bone_silencer_name()
+        void set_hud_fire_bone(u16 id)
+        void set_hud_fire_bone(string bone_name)
+        void set_hud_fire_bone2(u16 id)
+        void set_hud_fire_bone2(string bone_name)
+        void set_hud_fire_bone_silencer(u16 id)
+        void set_hud_fire_bone_silencer(string bone_name)
+        // HUD item inertia
+        bool set_hud_inertion_enabled()
+        void hud_inertion_enabled(bool value)
 
         // Torch
         function update_torch()
@@ -736,6 +933,9 @@
         function GetZoomCamMaxAngleVert()
         function GetZoomCamMaxAngleHorz()
         function GetZoomCamStepAngleHorz()
+        function get_CurrentFirePoint()
+        function get_CurrentFirePoint2()
+        function get_CurrentFirePointSilencer()
 
         // Setters
         function SetCamRelaxSpeed(float)
@@ -754,6 +954,8 @@
         function SetZoomCamMaxAngleVert(float)
         function SetZoomCamMaxAngleHorz(float)
         function SetZoomCamStepAngleHorz(float)
+		
+		
 
         //Scope UI
         //Returns table containing this data
@@ -771,6 +973,8 @@
 
 		// Forcibly set the zoom type for the weapon
 		function ForceSetZoomType(float)
+
+        callbacks (see callbacks_gameobject.script): npc_on_weapon_reload_start, npc_on_weapon_reload_stop -- (npc, wpn), fired on a stalker's weapon entering/leaving the reload state; actor reloads fire actor_on_weapon_reload instead
     }
 
     class CWeaponKnife : CWeapon {
