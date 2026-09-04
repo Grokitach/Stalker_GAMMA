@@ -6,13 +6,14 @@ if not looted then
 	looted = {}
 end
 
+local last_loot_press_time = 0
+
 function npc_on_death_callback(victim, killer)
 	local v_id = victim and victim:id()
 	local k_id = killer and killer:id()
 	local k_faction = killer and character_community(killer)
 
 	if k_id == db.actor:id() then
-		--printf("body can be looted")
 		if IsMonster(victim) then
 			if (get_story_object("yan_ecolog_semenov")) then
 				local need = load_var(db.actor,"yan_ecolog_semenov_task_1_tissue_need") or 0
@@ -31,13 +32,14 @@ function npc_on_death_callback(victim, killer)
 	elseif character_community(killer) == "zombied" then
 		printf("body can be looted")
 	else
-		claimed[v_id] = k_id
-		--printf("claimed body")
+		if killer and IsStalker(killer) then
+			claimed[v_id] = k_id
+		end
 	end
 end
 
 function on_before_key_press(key, bind, dis, flags)
-    if bind ~= key_bindings.kUSE then return end
+	if bind ~= key_bindings.kUSE then return end
 
 	local max_dist = 10
 	local ray = ray_pick()
@@ -54,19 +56,27 @@ function on_before_key_press(key, bind, dis, flags)
 		if (obj and IsStalker(obj)) or (obj and IsMonster(obj)) then
 			if obj:alive() then return end
 			id = obj:id()
-			
+
 			if looted[id] then
 				actor_menu.set_msg(1, game.translate_string("st_npc_loot_claim_far"), 5)
 				flags.ret_value = false
+				return
 			end
-			
+
 			if claimed[id] then
-				sender = level.object_by_id(claimed[obj:id()])
-				if sender then
-					if sender:alive() and IsStalker(sender) then
+				local se_killer = alife_object(claimed[id])
+				if se_killer and (IsStalker(se_killer) or IsMonster(se_killer)) and se_killer:alive() then
+					local sender = level.object_by_id(claimed[id])
+					if sender then
 						flags.ret_value = false
-						
-						dist = 	sender:position():distance_to(db.actor:position())
+
+						local current_time = time_global()
+						if (current_time - last_loot_press_time < 2000) then 
+							return 
+						end
+						last_loot_press_time = current_time
+
+						dist = sender:position():distance_to(db.actor:position())
 						if dist > 25 then
 							actor_menu.set_msg(1, game.translate_string("st_npc_loot_claim_far"), 5)
 							looted[id] = true
@@ -77,7 +87,11 @@ function on_before_key_press(key, bind, dis, flags)
 							local msg = game.translate_string("st_npc_loot_claim_last_"..rnd_last)
 							dynamic_news_helper.send_tip( msg, sender_header, 0, 10, sender:character_icon(), "danger", "npc" )
 						end
+					else
+						flags.ret_value = true
 					end
+				else
+					claimed[id] = nil
 				end
 			end
 		end
@@ -88,37 +102,38 @@ local function save_state(m_data)
 	if claimed then
 		m_data.claimed = claimed
 	end
-	
+
 	if looted then
 		m_data.looted = looted
 	end
+
+	local count_claimed = 0
+	for k, v in pairs(claimed or {}) do
+		count_claimed = count_claimed + 1
+	end
+
+	local count_looted = 0
+	for k, v in pairs(looted or {}) do
+		count_looted = count_looted + 1
+	end
+
+	--local debug_text = "Loot Claim Debug: Saved " .. tostring(count_claimed) .. " claimed bodies and " .. tostring(count_looted) .. " looted IDs."
+	--actor_menu.set_msg(1, debug_text, 5)
 end
 
 local function load_state(m_data)
-	claimed = m_data.claimed
-	if not claimed then
-		claimed = {}
+	if m_data.claimed then
+		claimed = m_data.claimed
 	end
-	nrows = 0
-	for k,v in pairs(claimed) do
-		nrows = nrows + 1
+
+	if m_data.looted then
+		looted = m_data.looted
 	end
-	if nrows > 30 then
-		claimed = {}
-	end
-	
-	
-	looted = m_data.looted
-	if not looted then
-		looted = {}
-	end
-	nrows = 0
-	for k,v in pairs(looted) do
-		nrows = nrows + 1
-	end
-	if nrows > 30 then
-		looted = {}
-	end
+end
+
+function on_level_changing()
+	claimed = {}
+	looted = {}
 end
 
 function on_game_start()
@@ -127,4 +142,5 @@ function on_game_start()
 	RegisterScriptCallback("on_before_key_press",on_before_key_press)
 	RegisterScriptCallback("save_state",save_state)
 	RegisterScriptCallback("load_state",load_state)
+	RegisterScriptCallback("on_level_changing",on_level_changing)
 end
