@@ -1,0 +1,30 @@
+-- Script by Siba Inu Maska
+
+local orig_On_Scroll = nil
+
+local function clean_scroll_patch()
+	if not (utils_ui and utils_ui.UICellContainer) then return end
+	orig_On_Scroll = utils_ui.UICellContainer.On_Scroll
+	utils_ui.UICellContainer.On_Scroll = function(self, ...)
+		if self.scroll then
+			local current_engine_pos = self.scroll:GetCurrentScrollPos() or 0
+			if not self.scroll_pos then
+				self.scroll_pos = current_engine_pos
+			end
+			local saved_tracking_pos = self.scroll_pos or 0
+			local max_pos = self.scroll:GetMaxScrollPos() or 0
+			local step = (self.grid_size + self.grid_line) * self.scolling_power
+
+			if step and step > 0 and math.abs(current_engine_pos - saved_tracking_pos) > step then
+				local target = math.min(saved_tracking_pos, max_pos)
+				self:Scroll_SetPos(target, true)
+				return
+			end
+		end
+		return orig_On_Scroll(self, ...)
+	end
+end
+
+function on_game_start()
+	clean_scroll_patch()
+end

@@ -1,0 +1,235 @@
+-- Original script from Night Mutants by xcvb
+-- Improved and optimized logic by Jack Harris
+
+local spawn_time_interval = 30
+local safe_radius = 50
+local night_start = 20
+local night_end = 5
+local squads_to_spawn = {
+	"night_bloodsucker",
+	"night_burer",
+	"night_cat",
+	"night_chimera",
+	"night_controller",
+	"night_dog",
+	"night_fracture",
+	"night_karlik",
+	"night_lurker",
+	"night_psy_dog",
+	"night_psysucker",
+	"night_snork",
+	"night_zombie"
+}
+
+local spawned_mutants = {}
+local available_smart_terrains = {}
+local mutant_squad_registry = {}
+local ctime_to_t = utils_data.CTime_to_table
+local t_to_ctime = utils_data.CTime_from_table
+local xspawn_time
+local whitelisted_maps = {
+	["k00_marsh"] = 0, ["l01_escape"] = 0, ["l05_bar"] = 1, ["l02_garbage"] = 0,
+	["k01_darkscape"] = 0, ["l04_darkvalley"] = 0, ["k02_trucks_cemetery"] = 0,
+	["l09_deadcity"] = 0, ["l03_agroprom"] = 0, ["l06_rostok"] = 0, ["l07_military"] = 0,
+	["l08_yantar"] = 0, ["jupiter"] = 0, ["l03u_agr_underground"] = 0, ["l10_limansk"] = 0,
+	["l08u_brainlab"] = 0, ["l10_red_forest"] = 0, ["labx8"] = 0, ["l12_stancia"] = 0,
+	["zaton"] = 0, ["l12_stancia_2"] = 0, ["l11_hospital"] = 0, ["jupiter_underground"] = 0,
+	["l10u_bunker"] = 0, ["l10_radar"] = 0, ["l04u_labx18"] = 0, ["l11_pripyat"] = 0,
+	["l12u_sarcofag"] = 0, ["l12u_control_monolith"] = 0, ["l13_generators"] = 0,
+	["l13u_warlab"] = 0, ["pripyat"] = 0, ["y04_pole"] = 0,
+}
+
+function se_obj_outside_spawn_radius(se_obj)
+	if not (se_obj and db.actor) then return false end
+	if not simulation_objects.is_on_the_same_level(alife():actor(), se_obj) then return true end
+	local pos_actor = db.actor:position()
+	local pos_target = se_obj.position
+	local dist = pos_actor:distance_to_xz(pos_target)
+	if dist < 45 then return false end
+	if dist > safe_radius then return true end
+	local dir_to_target = vec_sub(pos_target, pos_actor):normalize()
+	local cam_dir = device().cam_dir
+	local dot_product = dir_to_target.x * cam_dir.x + dir_to_target.y * cam_dir.y + dir_to_target.z * cam_dir.z
+	return dot_product <= 0.766
+end
+
+function try_to_spawn()
+	local sim = alife()
+	if not (sim and sim:actor()) then return false end
+	local gg = game_graph()
+	local actor_level = sim:level_name(gg:vertex(sim:actor().m_game_vertex_id):level_id())
+	local whitelist = whitelisted_maps[actor_level]
+	if whitelist == 1 or is_night() == false then
+		if is_not_empty(spawned_mutants) then
+			delete_mutants()
+			xspawn_time = nil
+		end
+		return false
+	end
+
+	local cur_time = game.get_game_time()
+	if not xspawn_time then xspawn_time = ctime_to_t(cur_time) end
+	if cur_time:diffSec(t_to_ctime(xspawn_time)) > (spawn_time_interval * 60) then
+		xspawn_time = ctime_to_t(cur_time)
+		spawn_mutants()
+	end
+	return false
+end
+
+function night_mutants_timer()
+	try_to_spawn()
+	CreateTimeEvent("night_mutants_queue", "process_spawns", 30, night_mutants_timer)
+	return true
+end
+
+function is_squad_nocturnal(squad_id)
+	local sq = alife_object(squad_id)
+	if not sq then return false end
+	return sq.player_id == "monster_predatory_night" or sq.player_id == "monster_zombied_night"
+end
+
+function has_night_squad(squads)
+	for squad_id, _ in pairs(squads) do
+		if is_squad_nocturnal(squad_id) then return true end
+	end
+	return false
+end
+
+function process_single_smart(level_name, smart_id)
+	local simboard_t = SIMBOARD.smarts[smart_id]
+	local smart = simboard_t and simboard_t.smrt
+	if not smart then return end
+	if simboard_t.population >= smart.max_population then return end
+	if has_night_squad(simboard_t.squads) then return end
+	if se_obj_outside_spawn_radius(smart) == false then return end
+	local squad_sec = is_not_empty(squads_to_spawn) and squads_to_spawn[math.random(1, #squads_to_spawn)]
+	local squad = squad_sec and SIMBOARD:create_squad(smart, squad_sec)
+	if not squad then return end
+	spawned_mutants[level_name] = spawned_mutants[level_name] or {}
+	table.insert(spawned_mutants[level_name], squad.id)
+	mutant_squad_registry[squad.id] = level_name
+end
+
+function spawn_mutants()
+	for level_name, t in pairs(available_smart_terrains) do
+		if #t > 0 then
+			local random_smart_id = t[math.random(1, #t)]
+			process_single_smart(level_name, random_smart_id)
+		end
+	end
+end
+
+function clear_valid_mutant(t, idx, squad)
+	local smart = squad.smart_id and alife_object(squad.smart_id)
+	if smart and se_obj_outside_spawn_radius(smart) == false then
+		return false
+	end
+
+	local squad_id = squad.id
+	alife_release(squad)
+
+	if t[idx] and t[idx] == squad_id then
+		table.remove(t, idx)
+	end
+	mutant_squad_registry[squad_id] = nil
+	return true
+end
+
+function delete_mutants()
+	for level_name, t in pairs(spawned_mutants) do
+		for idx = #t, 1, -1 do
+			local squad_id = t[idx]
+			local squad = squad_id and alife_object(squad_id)
+
+			if squad then
+				if squad.get_script_target then
+					clear_valid_mutant(t, idx, squad)
+				else
+					alife_release(squad)
+				end
+			elseif squad_id then
+				table.remove(t, idx)
+				mutant_squad_registry[squad_id] = nil
+			end
+		end
+	end
+end
+
+
+function server_entity_on_unregister(obj)
+	if not mutant_squad_registry[obj.id] then return end
+	local level_name = mutant_squad_registry[obj.id]
+	if not (level_name and spawned_mutants[level_name]) then return end
+	local t = spawned_mutants[level_name]
+	for idx = #t, 1, -1 do
+		if t[idx] and obj.id == t[idx] then
+			table.remove(t, idx)
+			break
+		end
+	end
+	mutant_squad_registry[obj.id] = nil
+end
+
+function squad_on_npc_death(squad, se_obj, killer)
+	if not mutant_squad_registry[squad.id] then return end
+	local level_name = mutant_squad_registry[squad.id]
+	if not (level_name and spawned_mutants[level_name]) then return end
+	local t = spawned_mutants[level_name]
+	for idx = #t, 1, -1 do
+		local mutant_squad = t[idx] and alife_object(t[idx])
+		if mutant_squad and mutant_squad.id == squad.id and squad:npc_count() <= 1 then
+			table.remove(t, idx)
+			mutant_squad_registry[squad.id] = nil
+			break
+		end
+	end
+end
+
+function catalog_single_smart(sim, gg, smart_id, board_data)
+	local smart = board_data and board_data.smrt
+	if not smart then return end
+	if simulation_objects.available_by_id[smart_id] ~= true then return end
+	if not (smart.props["monster"] and smart.props["monster"] > 0) then return end
+	local target_level_id = gg:vertex(smart.m_game_vertex_id):level_id()
+	local smart_level_name = sim:level_name(target_level_id)
+	available_smart_terrains[smart_level_name] = available_smart_terrains[smart_level_name] or {}
+	table.insert(available_smart_terrains[smart_level_name], smart_id)
+end
+
+function save_mutant_smarts()
+	local sim = alife()
+	local gg = game_graph()
+	for id, board_data in pairs(SIMBOARD.smarts) do
+		catalog_single_smart(sim, gg, id, board_data)
+	end
+	CreateTimeEvent("night_mutants_queue", "process_spawns", 5, night_mutants_timer)
+end
+
+function is_night()
+	local cur_hour = level.get_time_hours() + level.get_time_minutes() / 60
+	return (cur_hour > night_start) or (cur_hour < night_end)
+end
+
+function save_state(m_data)
+	m_data.spawned_mutants = spawned_mutants
+	m_data.xspawn_time = xspawn_time
+end
+
+function load_state(m_data)
+	xspawn_time = m_data.xspawn_time or nil
+	spawned_mutants = m_data.spawned_mutants or {}
+	empty_table(mutant_squad_registry)
+	for level_name, t in pairs(spawned_mutants) do
+		for _, squad_id in ipairs(t) do
+			mutant_squad_registry[squad_id] = level_name
+		end
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("server_entity_on_unregister", server_entity_on_unregister)
+	RegisterScriptCallback("squad_on_npc_death", squad_on_npc_death)
+	RegisterScriptCallback("actor_on_first_update", save_mutant_smarts)
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
+end

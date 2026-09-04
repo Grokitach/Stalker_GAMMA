@@ -1,0 +1,222 @@
+-- Improved version of GAMMA Fix: Cordon Transitions by Jack Harris that works on every map instead of just Cordon
+
+local transition_registry = {
+	["l01_escape"] = {
+		"esc_space_restrictor_to_darkscape_1",
+		"esc_space_restrictor_to_garbage_1",
+		"esc_space_restrictor_to_garbage_2",
+		"esc_space_restrictor_to_marsh_1",
+		"esc_space_restrictor_to_marsh_2",
+		"esc_space_restrictor_to_pole_1",
+	},
+	["l02_garbage"] = {
+		"gar_space_restrictor_to_agroprom_1",
+		"gar_space_restrictor_to_agroprom_2",
+		"gar_space_restrictor_to_bar_1",
+		"gar_space_restrictor_to_darkvalley_1",
+		"gar_space_restrictor_to_darkvalley_2",
+		"gar_space_restrictor_to_escape_1",
+		"gar_space_restrictor_to_escape_2",
+		"gar_space_restrictor_to_rostok_1",
+	},
+	["l03_agroprom"] = {
+		"agr_space_restrictor_to_agr_ug_1",
+		"agr_space_restrictor_to_agr_ug_2",
+		"agr_space_restrictor_to_agr_ug_3",
+		"agr_space_restrictor_to_agr_ug_4",
+		"agr_space_restrictor_to_agr_ug_5",
+		"agr_space_restrictor_to_agr_ug_6",
+		"agr_space_restrictor_to_garbage_1",
+		"agr_space_restrictor_to_garbage_2",
+		"agr_space_restrictor_to_marsh_1",
+		"agr_space_restrictor_to_yantar_1",
+	},
+	["l04_darkvalley"] = {
+		"val_space_restrictor_to_darkscape",
+		"val_space_restrictor_to_garbage_1",
+		"val_space_restrictor_to_garbage_2",
+		"val_space_restrictor_to_labx18",
+		"val_space_restrictor_to_pole_1",
+		"val_space_restrictor_to_tc",
+	},
+	["k00_marsh"] = {
+		"mar_space_restrictor_to_agroprom_1",
+		"mar_space_restrictor_to_escape_1",
+		"mar_space_restrictor_to_escape_2",
+	},
+	["l05_bar"] = {
+		"bar_space_restrictor_to_garbage_01",
+		"bar_space_restrictor_to_military_01",
+		"bar_space_restrictor_to_rostok_01",
+		"bar_space_restrictor_to_tc",
+	},
+	["l06_rostok"] = {
+		"ros_space_restrictor_to_bar_1",
+		"ros_space_restrictor_to_garbage_1",
+		"ros_space_restrictor_to_yantar_1",
+	},
+	["l07_military"] = {
+		"mil_space_restrictor_to_bar_1",
+		"mil_space_restrictor_to_dead_city_1",
+		"mil_space_restrictor_to_radar_1",
+		"mil_space_restrictor_to_red_1",
+		"mil_space_restrictor_to_tc",
+	},
+	["l08_yantar"] = {
+		"yan_space_restrictor_to_agroprom_1",
+		"yan_space_restrictor_to_dead_city_1",
+		"yan_space_restrictor_to_rostok_1",
+		"yan_space_restrictor_to_x16",
+	},
+	["l09_deadcity"] = {
+		"cit_space_restrictor_to_limansk",
+		"cit_space_restrictor_to_military",
+		"cit_space_restrictor_to_yantar",
+	},
+	["l10_radar"] = {
+		"rad_space_restrictor_to_bunker",
+		"rad_space_restrictor_to_military_01",
+		"rad_space_restrictor_to_pripyat_01",
+		"rad_space_restrictor_to_red_forest",
+	},
+	["l10_red_forest"] = {
+		"red_space_restrictor_to_limansk",
+		"red_space_restrictor_to_military_1",
+		"red_space_restrictor_to_radar_1",
+	},
+	["l11_pripyat"] = {
+		"pri_space_restrictor_to_cop_pripyat",
+		"pri_space_restrictor_to_jupiter",
+		"pri_space_restrictor_to_radar",
+		"pri_space_restrictor_to_stancia",
+	},
+	["l12_stancia_2"] = {
+		"aes2_space_restrictor_to_aes1",
+		"aes2_space_restrictor_to_gen",
+		"aes2_space_restrictor_to_hospital",
+		"aes2_space_restrictor_to_secret_lab",
+	},
+	["l12_stancia"] = {
+		"aes_space_restrictor_to_aes2",
+		"aes_space_restrictor_to_pripyat",
+		"aes_space_restrictor_to_sarcofag",
+		"aes_space_restrictor_to_zaton",
+	},
+	["k01_darkscape"] = {
+		"ds_space_restrictor_to_darkvalley",
+		"ds_space_restrictor_to_escape",
+	},
+	["k02_truck_cemetery"] = {
+		"tc_space_restrictor_to_bar",
+		"tc_space_restrictor_to_darkvalley",
+		"tc_space_restrictor_to_military_1",
+		"tc_space_restrictor_to_military_2",
+		"tc_space_restrictor_to_military_3",
+	},
+	["zaton"] = {
+		"zaton_space_restrictor_to_jupiter",
+		"zaton_space_restrictor_to_stancia_1",
+	},
+	["jupiter"] = {
+		"jup_space_restrictor_to_zaton",
+		"jupiter_space_restrictor_to_jupiter_ug",
+		"jupiter_space_restrictor_to_red_forest",
+		"jupiter_space_restrictor_to_soc_pripyat",
+	},
+	["pripyat"] = {
+		"cop_pripyat_space_restrictor_to_soc_pripyat",
+	},
+	["limansk"] = {
+		"lim_space_restrictor_to_dead_city",
+		"lim_space_restrictor_to_hospital",
+		"lim_space_restrictor_to_red_forest",
+	},
+	["jupiter_underground"] = {
+		"jupiter_ug_space_restrictor_to_jupiter",
+	},
+	["generators"] = {
+		"gen_space_restrictor_to_aes2",
+		"gen_space_restrictor_to_warlab",
+	},
+}
+
+local function restore_map_activators()
+	local current_level = level.name()
+	local target_names = transition_registry[current_level]
+	if not target_names then
+		return
+	end
+
+	local alife_mgr = alife()
+	if not alife_mgr then 
+		return 
+	end
+
+	for _, name in ipairs(target_names) do
+		local story_id = get_story_object_id(name)
+		if story_id then
+			local se_obj = alife_mgr:object(story_id)
+			if se_obj then
+				alife_mgr:set_switch_offline(se_obj.id, false)
+				alife_mgr:set_switch_online(se_obj.id, true)
+				
+				local client_obj = level.object_by_id(se_obj.id)
+				if client_obj then
+					xr_logic.initialize_obj(client_obj, db.storage[se_obj.id], false, db.actor, modules.stype_restrictor)
+					--printf("---  Reparsed online restrictor: %s", name)
+				else
+					CreateTimeEvent(0, "delay_activator_init_" .. se_obj.id, 1, function()
+						local delayed_client = level.object_by_id(se_obj.id)
+						if delayed_client then
+							xr_logic.initialize_obj(delayed_client, db.storage[se_obj.id], false, db.actor, modules.stype_restrictor)
+						end
+						return true
+					end)
+				end
+			end
+		end
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_game_load", function()
+		CreateTimeEvent(0, "run_automated_restoration_delayed", 5, function()
+			restore_map_activators()
+			return true
+		end)
+	end)
+	--[[
+	RegisterScriptCallback("on_key_press", on_key_press)
+	]]
+end
+
+--[[
+local function on_key_press(key)
+    if key == DIK_keys.DIK_T then
+        print_all_map_restrictors()
+    end
+end
+
+function print_all_map_restrictors()
+    local current_level = level.name()
+    local alife_mgr = alife()
+    if not alife_mgr then 
+        printf("~ [DUMP] Error: No A-Life")
+        return 
+    end
+
+    printf("~ [DUMP] Scanning level: %s", current_level)
+
+    for id = 1, 65534 do
+        local se_obj = alife_mgr:object(id)
+        if se_obj then
+            local name = se_obj:name()
+            if string.find(name, "space_restrictor") then
+                local story_id = se_obj.story_id or "NO_STORY_ID"
+                printf("~ [DUMP] Found Restrictor: Name -> '%s' | StoryID -> %s | ID -> %d", name, tostring(story_id), id)
+            end
+        end
+    end
+    printf("~ [RESTR_DUMP] Scan done: %s", current_level)
+end
+]]
