@@ -36,6 +36,8 @@ local _current_states = {
 local _draw_part
 local pos_by_id = {}
 
+npc_max_weight = 30
+
 ------------------------------------------
 -- Localized Functions
 ------------------------------------------
@@ -1333,6 +1335,23 @@ function get_inventory_table(npc, npc_id, mode)
 	return t
 end
 
+function get_npc_personnal_weight(npc)
+	local npc_id = npc:id()
+	local npc_personnal_weight = 0
+	local function iterate(owner,item)
+		local item_id = item:id()
+		local item_weight = item:weight()
+		if is_assigned_item(npc_id,item_id) then
+			item_weight = 0
+		end
+		npc_personnal_weight = npc_personnal_weight + item_weight
+	end
+
+	npc:iterate_inventory(iterate,npc)
+
+	return npc_personnal_weight
+end
+
 function transfer_item(item_id, npc_from, npc_to, no_snd)
 	local item = level.object_by_id(item_id)
 	if not (item and npc_from and npc_to) then
@@ -1416,7 +1435,6 @@ function is_overweight(npc, npc_id, comp_weight)
 	end
 	npc_id = npc_id or npc:id()
 	
-	local max_weight = 30
 	local curr_weight = 0
 	if assigned_items[npc_id] then
 		for id,_ in pairs(assigned_items[npc_id]) do
@@ -1427,10 +1445,13 @@ function is_overweight(npc, npc_id, comp_weight)
 		end
 	end
 
+	printf(curr_weight)
+
 	if comp_weight then
-		return (comp_weight > (max_weight - curr_weight))
+		printf(comp_weight)
+		return (comp_weight > (npc_max_weight - curr_weight))
 	end
-	return curr_weight > max_weight, curr_weight, max_weight
+	return curr_weight > npc_max_weight, curr_weight, npc_max_weight
 end
 
 function get_inventory_weight(tbl_inv)
@@ -1454,6 +1475,22 @@ function OnItemBeforeMove(flags, npc_id, obj, mode, bag_from)
 	local overweight, a, b = is_overweight(nil, npc_id) --utils_item.is_overweight(nil, npc_id)
 	if overweight then
 		flags.ret_value = false
+	end
+
+	if obj then
+		local curr_weight = 0
+		if assigned_items[npc_id] then
+			for id,_ in pairs(assigned_items[npc_id]) do
+				local npc_obj = level.object_by_id(id)
+				if npc_obj then
+					curr_weight = curr_weight + npc_obj:weight()
+				end
+			end
+		end
+
+		if curr_weight + obj:weight() > npc_max_weight then
+			flags.ret_value = false
+		end
 	end
 end
 
