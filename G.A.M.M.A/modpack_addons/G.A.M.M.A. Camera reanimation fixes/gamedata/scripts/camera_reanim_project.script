@@ -1,3 +1,8 @@
+-- edited by oleh5230, 08.09.26
+-- weapon anims are applied to hud instead of camera
+-- footstep anims are played for sprint only + removed anm id overlap
+-- some jump/land tweaks 
+
 local zoom_flag = true
 local jump_flag = true
 local lean_flag = true
@@ -112,19 +117,23 @@ function has_multiple_fire_modes(sec)
     return false
 end
 
-tg_anim1 = 0
-tg_anim1_delay = 1000
+local tg_anim1 = 0
+local tg_anim1_delay = 250
 local function actor_on_land(fall_speed)
-	if jump_flag and (fall_speed > 5) and time_global() > tg_anim1 then
-		local rand = math.random(1,2)
-		level.add_cam_effector("camera_effects\\landing_crp" .. rand .. ".anm", 1905, false, "", 0, false)
+    -- hack for speed set to 0 by fake geometry
+    if fall_speed == 0 then fall_speed = 6.66 end
+	if jump_flag and (fall_speed > 2) and time_global() > tg_anim1 then
+		level.add_cam_effector("camera_effects\\landing_crp2.anm", 1905, false, "", 0, false, clamp(fall_speed / 5, 1, 5))
 		tg_anim1 = time_global() + tg_anim1_delay
 	end
 end
 
+local tg_anim2 = 0
+local tg_anim2_delay = 250
 local function actor_on_jump()
-	if jump_flag then
-		level.add_cam_effector("camera_effects\\jump_crp.anm", 1906, false, "", 0, false)
+	if jump_flag and time_global() > tg_anim2 then
+		level.add_cam_effector("camera_effects\\jump_crp.anm", 1906, false, "", 0, false, 1.5)
+		tg_anim2 = time_global() + tg_anim2_delay
 	end
 end
 
@@ -140,32 +149,57 @@ local function actor_on_weapon_zoom_out()
 	end
 end
 
+local count = 1910
 function actor_on_footstep()
-	if move_flag then
+	if move_flag and (IsMoveState("mcSprint") or IsMoveState("mcClimb")) then
 	
-		local crouch = IsMoveState("mcCrouch")
-		local slow = IsMoveState("mcAccel")
-		local sprint = IsMoveState("mcSprint")
+		local power = axr_main.weapon_is_zoomed and 0 or 2
+		level.add_cam_effector("camera_effects\\sprint_crp.anm", count, false, "", 0, false, power)
+
+		count = count + 1
+		if count > 1915 then count = 1910 end
 	
-		local power = axr_main.weapon_is_zoomed and 0.35 or crouch and slow and 0.35 or crouch and 0.4 or slow and 0.65 or sprint and 1.25 or 0.75
-	
-		if sprint then
-			level.add_cam_effector("camera_effects\\sprint_crp.anm", 1909, false, "", 0, false, power)
-		elseif (db.actor.power < 0.25) then
-			level.add_cam_effector("camera_effects\\tired_crp.anm", 1910, false, "", 0, false, power)
-		else
-			level.add_cam_effector("camera_effects\\move_crp.anm", 1904, false, "", 0, false, power)
-		end
+		-- if sprint then
+		-- 	level.add_cam_effector("camera_effects\\sprint_crp.anm", 1909, false, "", 0, false, power)
+		-- elseif (db.actor.power < 0.25) then
+		-- 	level.add_cam_effector("camera_effects\\tired_crp.anm", 1910, false, "", 0, false, power)
+		-- else
+		-- 	level.add_cam_effector("camera_effects\\move_crp.anm", 1904, false, "", 0, false, power)
+		-- end
 	end
 end
 
+-- oleh5230
+-- unused, handled by reload_hint.script
 local function actor_on_weapon_jammed()
 	if weapon_jammed then
-		-- oleh5230
-		-- controlled by reload_hint.script
-		-- game.play_hud_anm("camera_effects\\fmode_crp.anm", 2, 2, 1, false, false)
-		-- level.add_cam_effector("camera_effects\\jammed_crp.anm", 1913, false, "", 0, false)
+		game.play_hud_anm("camera_effects\\fmode_crp.anm", 2, 2, 1, false, false)
+		level.add_cam_effector("camera_effects\\jammed_crp.anm", 1913, false, "", 0, false)
 	end
+end
+
+function get_move_state_power()
+    local state_bit = level.actor_moving_state()
+    local power = 0.8
+
+    if bit_and(state_bit, 4096) ~= 0 then
+        power = 2.4
+
+    elseif bit_and(state_bit, 16) ~= 0 then
+        power = 0.4
+        if bit_and(state_bit, 32) ~= 0 then
+            power = 0
+        end
+
+    elseif bit_and(state_bit, 32) ~= 0 then
+        power = 0.2
+    end
+
+    if bit_and(state_bit, 2048) ~= 0 then
+        power = 1
+    end
+
+    return power
 end
 
 function on_game_start()
@@ -176,7 +210,7 @@ function on_game_start()
 	RegisterScriptCallback("actor_on_land",actor_on_land)
 	RegisterScriptCallback("on_key_press",on_key_press)
 	RegisterScriptCallback("actor_on_update",actor_on_update)
-	RegisterScriptCallback("actor_on_weapon_jammed",actor_on_weapon_jammed)
+	--RegisterScriptCallback("actor_on_weapon_jammed",actor_on_weapon_jammed)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	on_option_change()
 end
