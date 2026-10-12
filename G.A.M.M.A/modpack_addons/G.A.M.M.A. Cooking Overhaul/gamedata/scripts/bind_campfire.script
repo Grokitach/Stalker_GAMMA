@@ -1,4 +1,3 @@
-
 --[[
 
 	Modified by Tronex
@@ -7,18 +6,109 @@
 	������ ������� ������
 	--------------------------------------------
 	name your campfires in SDK <smart_name>_campfire_<number> if you want them to be lit by NPCs
-	
+
 --]]
 
 local k_rain = 0
 local dist_cf = 2 --[meters] distance to interact with campfire
 campfires_all = {}
 
+local campfire_whitelist = {
+	["main_base_ds_killers_campfire_1"] = true, --Dead City main base campfire
+	["mar_smart_terrain_base_campfire_1"] = true, --Csky base
+	["esc_smart_terrain_2_12_campfire_1"] = true, --Rookie Village
+	["esc_smart_terrain_2_12_campfire_3"] = true,
+	["esc_smart_terrain_5_7_campfire_2"] = true, --Farmstead Loner base
+	["gar_smart_terrain_3_5_campfire_1"] = true,
+	["gar_smart_terrain_6_3_campfire_1"] = true,
+	["val_smart_terrain_7_3_campfire_1"] = true,
+	["agr_smart_terrain_1_6_campfire_1"] = true,
+	["agr_smart_terrain_1_6_campfire_2"] = true,
+	["agr_smart_terrain_1_6_campfire_3"] = true,
+	["agr_smart_terrain_1_6_near_1_campfire_1"] = true,
+	["agr_smart_terrain_4_4_campfire_1"] = true,
+	["agr_smart_terrain_4_4_near_1_campfire_1"] = true,
+	["agr_smart_terrain_4_4_near_2_campfire_1"] = true,
+	---------------------------------------------------------
+	["mil_smart_terrain_2_2_campfire_3"] = true, --Merc planks
+	["mil_smart_terrain_2_4_campfire_2"] = true, --Chernov
+	["mil_smart_terrain_4_7_campfire_3"] = true,
+	["mil_smart_terrain_4_8_campfire_1"] = true, --Gatekeeper
+	["mil_smart_terrain_7_7_campfire_2"] = true,
+	["mil_smart_terrain_7_12_campfire_1"] = true,
+	---------------------------------------------------------
+	["yan_smart_terrain_4_2_campfire_1"] = true, --Fire anomaly field
+	["yan_smart_terrain_5_5_campfire_2"] = true, --Yantar WT transition
+	["yan_smart_terrain_6_4_campfire_1"] = true, --Yantar Ecolog base
+	["ds2_domik_st_campfire_1"] = true, --DS Loner base
+	["trc_sim_20_campfire_1"] = true, --TC Bandit base
+	---------------------------------------------------------
+	["bar_dolg_general_campfire_1"] = true,
+	["bar_dolg_general_campfire_2"] = true,
+	["bar_visitors_campfire_1"] = true,
+	["bar_visitors_campfire_2"] = true,
+	["bar_visitors_campfire_3"] = true,
+	["bar_visitors_campfire_4"] = true,
+	---------------------------------------------------------
+	["rad_antenna_monolith_campfire_1"] = true, --All three in front of BS
+	["rad_antenna_monolith_campfire_2"] = true,
+	["rad_antenna_patrol_campfire_1"] = true,
+	---------------------------------------------------------
+	["red_smart_terrain_3_2_campfire_1"] = true, --Sin cave base
+	["red_smart_terrain_3_2_campfire_2"] = true,
+	---------------------------------------------------------
+	["jup_a12_campfire_1"] = true, --Bandit base in Jupiter
+	["jup_a12_campfire_2"] = true,
+	---------------------------------------------------------
+	["pri_monolith_campfire_1"] = true, --Monolith Pripyat base
+	["pri_monolith_campfire_2"] = true,
+	["pri_monolith_campfire_3"] = true,
+	["pri_monolith_campfire_4"] = true,
+	["pri_monolith_campfire_5"] = true,
+	["pri_monolith_campfire_6"] = true,
+	["pri_monolith_campfire_7"] = true,
+	["pri_monolith_campfire_8"] = true,
+	["pri_monolith_campfire_9"] = true,
+	["pri_monolith_campfire_10"] = true,
+	["pri_monolith_campfire_11"] = true,
+	["pri_monolith_campfire_12"] = true,
+	["pri_monolith_campfire_13"] = true,
+	["campfire_dinamic_0041_noaimap"] = true,
+	---------------------------------------------------------
+	["aes_smart_terrain_monolit_blockpost4_campfire_1"] = true, --Entrance to CNPP
+	---------------------------------------------------------
+	["campfire_dinamic_0000"] = true, --Wishgranter room + MM Escape tunnel
+	["campfire_dinamic_0001"] = true,
+	["campfire_dinamic_0002"] = true,
+	["campfire_dinamic_0003"] = true,
+	["campfire_dinamic_0005"] = true,
+	---------------------------------------------------------
+	["campfire_dinamic_0006"] = true, --MM Escape tunnel only
+	["campfire_dinamic_0007"] = true,
+	["campfire_dinamic_0012"] = true,
+	["campfire_dinamic_0014"] = true,
+	-- ["campfire_dinamic_0008"] = true, --Don't, this is the campfire in front of Pseudogiant and green puddle of goo, it will spam borked SFX
+	---------------------------------------------------------
+	["aes2_monolith_camp1_campfire_1"] = true, --Scattered campfires below cranes in NorthCNPP
+	["aes2_monolith_camp1_campfire_2"] = true,
+	["aes2_monolith_camp1_campfire_3"] = true,
+	["aes2_monolith_camp1_campfire_4"] = true,
+	["aes2_monolith_camp1_campfire_5"] = true,
+	["aes2_monolith_camp1_campfire_6"] = true,
+
+	["aes2_monolith_camp3_campfire_1"] = true, --Circle of campfires in NorthCNPP
+	["aes2_monolith_camp3_campfire_3"] = true,
+	["aes2_monolith_camp3_campfire_4"] = true,
+	["aes2_monolith_camp3_campfire_5"] = true,
+	["aes2_monolith_camp3_campfire_6"] = true,
+	["aes2_monolith_camp3_campfire_7"] = true,
+	["aes2_monolith_camp3_campfire_8"] = true,
+}
 
 function get_nearby_campfire (dist, result)
 	dist = dist + 4
 	local pos = db.actor:position()
-	for id,binder in pairs(campfires_all) do 
+	for id,binder in pairs(campfires_all) do
 		if (binder and binder.campfire) then
 			if (pos:distance_to_sqr(binder.object:position()) <= dist) then
 				--printf("TRX found campfires = " .. binder.object:id())
@@ -30,8 +120,8 @@ function get_nearby_campfire (dist, result)
 					return true
 				end
 			end
-		end 
-	end 
+		end
+	end
 	return false
 end
 
@@ -47,7 +137,7 @@ function turn_off_campfires_by_smart_name(smart_name,use_rand)
 			if (math.random(100) < 20) then
 				-- shouldn't be needed with Open Xray because of DX11 lighting fix
 				--if (v.object) then
-				--	if (render_get_dx_level() == 655361) then 
+				--	if (render_get_dx_level() == 655361) then
 				--		v.object:disable_anomaly()
 				--	end
 				--end
@@ -72,10 +162,10 @@ end
 
 function use_campfire(actor,zone,p) -- called from game_tutorials.xml
 	local pos = db.actor:position()
-	for id,binder in pairs(campfires_all) do 
+	for id,binder in pairs(campfires_all) do
 		if (binder and binder.campfire) then
 			if (pos:distance_to_sqr(binder.object:position()) <= 2) then
-				if (binder.campfire:is_on()) then 
+				if (binder.campfire:is_on()) then
 					campfire_go_off(binder.campfire)
 					--binder.campfire:turn_off()
 				else
@@ -87,22 +177,22 @@ function use_campfire(actor,zone,p) -- called from game_tutorials.xml
 					end
 				end
 			end
-		end 
-	end 
+		end
+	end
 end
-	
+
 function campfire_go_on(obj, cf)
 	local cf = cf or get_nearby_campfire(dist_cf,true)
 	if (not cf) then
 		return
 	end
-	
+
 	if (cf:is_on()) then
 		return
 	end
-	
+
 	if rain_pass() then
-		if (k_rain < 1)then
+		if (k_rain < 1) then
 			k_rain = k_rain + 1
 			actor_menu.set_msg(1, game.translate_string("st_camp_help"),3)
 		end
@@ -115,7 +205,7 @@ function campfire_go_on(obj, cf)
 		actor_effects.play_item_fx("matches_script")
 		actor_menu.set_msg(1, game.translate_string("st_fail"),3)
 	end
-	
+
 	utils_item.discharge(obj)
 end
 
@@ -143,19 +233,25 @@ end
 local function save_state(m_data)
 	--utils_data.debug_write("bind_campfire:save_state")
 	empty_table(m_data.campfire_states)
-	for smart,t in pairs(db.campfire_table_by_smart_names) do 
-		for id,binder in pairs(t) do 
+	if not m_data.extinguished_campfires then m_data.extinguished_campfires = {} end
+	for smart,t in pairs(db.campfire_table_by_smart_names) do
+		for id,binder in pairs(t) do
 			if (binder and binder.campfire) then
-				if (binder.campfire:is_on()) then 
-					if not (m_data.campfire_states) then 
+				if (binder.campfire:is_on()) then
+					if not m_data.campfire_states then
 						m_data.campfire_states = {}
 					end
 					m_data.campfire_states[id] = true
+					m_data.extinguished_campfires[id] = nil
+				else
+					if campfire_whitelist[string.gsub(binder.object:name(), "_%d*$", "")] or campfire_whitelist[binder.object:name()] then
+						m_data.extinguished_campfires[id] = true
+					end
 				end
 			end
 		end
 	end
-end 
+end
 
 local function on_before_save_input(flags, typ, text)
 	if (alife_storage_manager.get_state().enable_campfire_mode)
@@ -174,14 +270,14 @@ trigger = 0
 delay = 225
 
 local function actor_on_update()
-	if not (db.actor) then 
+	if not db.actor then
 		return
 	end
 
 	tg = time_global()
-	
+
 	if trigger == 0 then
-       	grok_delay = tg + delay
+		grok_delay = tg + delay
 		trigger = 1
 	end
 
@@ -190,7 +286,7 @@ local function actor_on_update()
 
 		-- Don't show tutorial when actor weapon is active
 		--if (db.actor:active_item()) then
-		
+
 		-- Don't show tutorial when actor is looking at an object
 		local pos = db.actor:position()
 		local obj = level.get_target_obj()
@@ -201,9 +297,9 @@ local function actor_on_update()
 					game.stop_tutorial()
 				end
 			end
-			return 
+			return
 		end
-		
+
 		for id,binder in pairs(campfires_all) do
 			if (binder and binder.campfire) then
 				if (pos:distance_to_sqr(binder.object:position()) <= dist_cf) then
@@ -212,7 +308,7 @@ local function actor_on_update()
 						if (binder.campfire:is_on()) then
 							--printf("tutorial_campfire_extinguish")
 							game.start_tutorial("tutorial_campfire_extinguish")
-						else 
+						else
 							--printf("tutorial_campfire_ignite")
 							game.start_tutorial("tutorial_campfire_ignite")
 						end
@@ -223,7 +319,7 @@ local function actor_on_update()
 						game.stop_tutorial()
 					end
 				end
-			end 
+			end
 		end
 	else return end
 end
@@ -234,11 +330,19 @@ function on_game_start()
 			RegisterScriptCallback("on_before_save_input",on_before_save_input)
 		end
 	end
+
+	local function on_level_changing()
+		local m_data = alife_storage_manager.get_state()
+		if m_data and m_data.extinguished_campfires then
+			m_data.extinguished_campfires = nil
+		end
+	end
+
 	RegisterScriptCallback("on_game_load",on_game_load)
 	RegisterScriptCallback("actor_on_item_use",actor_on_item_use)
 	RegisterScriptCallback("actor_on_update",actor_on_update)
+	RegisterScriptCallback("on_level_changing", on_level_changing)
 end
-
 
 --------------------------------------------------------------------------------
 -- Class "campfire_binder"
@@ -251,7 +355,7 @@ class "campfire_binder" (object_binder)
 
 function campfire_binder:__init(obj) super(obj)
 	self.campfire = obj:get_campfire()
-	if (USE_MARSHAL) then 
+	if (USE_MARSHAL) then
 		RegisterScriptCallback("save_state",save_state)
 	end
 end
@@ -268,23 +372,30 @@ function campfire_binder:net_spawn(se_abstract)
 	if not object_binder.net_spawn(self, se_abstract) then
 		return false
 	end
-    campfires_all[self.object:id()] = self
+	campfires_all[self.object:id()] = self
 
 	local id = self.object:id()
 	local m_data = alife_storage_manager.get_state()
-	if (m_data and m_data.campfire_states and m_data.campfire_states[id]) then 
+	if (m_data and m_data.campfire_states and m_data.campfire_states[id]) then
 		-- do not turn off campfire on game load
 		m_data.campfire_states[id] = nil
 	else
-		if (self.campfire and self.campfire:is_on()) then
+		-- Whitelist injection for campfires to be automatically turned on
+		if campfire_whitelist[string.gsub(self.object:name(), "_%d*$", "")] or campfire_whitelist[self.object:name()] then
+			if m_data and m_data.extinguished_campfires and m_data.extinguished_campfires[id] then
+				if self.campfire then self.campfire:turn_off() end
+			else
+				if self.campfire then self.campfire:turn_on() end
+			end
+		elseif (self.campfire and self.campfire:is_on()) then
 			self.campfire:turn_off()
 		end
-		
-		--if (render_get_dx_level() == 655361) then 
+
+		--if (render_get_dx_level() == 655361) then
 		--	self.object:disable_anomaly()
 		--end
 	end
-	
+
 	local smart_name = string.gsub(self.object:name(), "_campfire_%d*", "")
 	if SIMBOARD.smarts_by_names[smart_name] then
 		if db.campfire_table_by_smart_names[smart_name] == nil then
@@ -292,19 +403,19 @@ function campfire_binder:net_spawn(se_abstract)
 		end
 		db.campfire_table_by_smart_names[smart_name][id] = self
 	end
-	
+
 	--[[
 	self.object:set_callback(callback.use_object, self.use_campfire, self)
-	
+
 	if (self.campfire) then
 		if (self.campfire:is_on()) then
 			self.object:set_tip_text("st_ignite_fire")
-		else 
+		else
 			self.object:set_tip_text("st_extinguish_fire")
 		end
 	end
 	--]]
-	
+
 	return true
 end
 
@@ -312,18 +423,18 @@ function campfire_binder:net_destroy(se_abstract)
 
 	local smart_name = string.gsub(self.object:name(), "_campfire_%d*", "")
 	if SIMBOARD.smarts_by_names[smart_name] then
-		if (db.campfire_table_by_smart_names[smart_name]) then 
+		if (db.campfire_table_by_smart_names[smart_name]) then
 			db.campfire_table_by_smart_names[smart_name][self.object:id()] = nil
 		end
 	end
-	
+
 	--[[
 	self.object:set_callback(callback.use_object, nil)
 	self.object:set_tip_text("")
 	--]]
-	
+
 	object_binder.net_destroy(self)
-end 
+end
 
 function campfire_binder:update(delta)
 	object_binder.update(self, delta)
@@ -331,14 +442,14 @@ end
 
 --[[
 function campfire_binder:use_campfire()
-	if not (self.campfire) then 
-		return 
-	end 
-	
+	if not (self.campfire) then
+		return
+	end
+
 	if (self.campfire:is_on()) then
 		self.campfire:turn_off()
 		self.object:set_tip_text("st_ignite_fire")
-	else 
+	else
 		self.campfire:turn_on()
 		self.object:set_tip_text("st_extinguish_fire")
 	end
@@ -351,7 +462,7 @@ function turn_on_campfires_by_smart_name(smart_name,use_rand)
 	if smart_campfires ~= nil and not is_empty(smart_campfires) then
 		for k,v in pairs (smart_campfires) do
 			if (v.object) then
-				if (render_get_dx_level() == 655361) then 
+				if (render_get_dx_level() == 655361) then
 					v.object:enable_anomaly()
 				end
 			end
@@ -362,4 +473,3 @@ function turn_on_campfires_by_smart_name(smart_name,use_rand)
 	end
 end
 --]]
-
