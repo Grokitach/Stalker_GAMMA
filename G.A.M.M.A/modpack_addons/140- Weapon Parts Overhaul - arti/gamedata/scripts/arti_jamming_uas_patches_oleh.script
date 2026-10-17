@@ -1,0 +1,56 @@
+-- patches for older WPO version GAMMA uses
+-- plus monkeypatch fixes for outdated Aoldri Universal Scripts that are somehow still distributed
+-- oleh5230, 09.09.26
+
+-- remove jam inspect
+jam_animations.RegisterScriptCallback = function(name,func_or_userdata)
+	if name == "actor_on_weapon_before_fire" then
+	else
+		RegisterScriptCallback(name,func_or_userdata)
+	end
+end
+
+-- get_jam_status placeholder
+function arti_jamming.get_jam_status(id)
+	return arti_jamming.jammed_guns[id] == 3 and JamType.DoubleFeed or arti_jamming.jammed_guns[id] == 2 and arti_jamming.JamType.FailureToEject or nil
+end
+
+arti_jamming.JamType = {}
+arti_jamming.JamType.OK = {
+	anim = check_anim,
+	no_anim = check_simple
+}
+arti_jamming.JamType.Misfire = {
+	anim = unjam_anim,
+	no_anim = unjam_simple
+}
+arti_jamming.JamType.FailureToEject = {
+	anim = unjam_anim,
+	no_anim = unjam_simple
+}
+arti_jamming.JamType.DoubleFeed = {
+	anim = unjam_super_anim,
+	no_anim = unjam_super_simple
+}
+arti_jamming.JamType.Classic = {
+	anim = unjam_replace_anim,
+	no_anim = unjam_replace_simple
+}
+
+-- Clear jam mid animation with motion marks
+---@param state number
+---@param mark string
+---@param hud_item game_object
+---@param owner game_object
+function unjam_motion_mark.actor_on_hud_animation_mark(state, mark, hud_item, owner)
+	if mark == "clear_jam" then
+		if not hud_item or not owner then return end
+
+		local wpn = hud_item:cast_Weapon()
+		if not wpn then return end
+
+		if owner:id() ~= AC_ID then return end
+
+		wpn:SetMisfire(false)
+	end
+end
