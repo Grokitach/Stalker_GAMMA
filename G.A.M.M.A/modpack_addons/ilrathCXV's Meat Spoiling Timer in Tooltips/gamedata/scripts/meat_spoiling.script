@@ -10,6 +10,7 @@
         - Refrigiration
         - MCM configuration
 ]]
+-- Jack (09/08/2026): Rewritten the logic to only use 1 timer for each Stack of meat instead of meat being calculated individually.
 
 local mcm_id = "meat_spoiling"
 
@@ -30,99 +31,225 @@ local function c2t(ct)
 	if not ct then return nil end
 	local Y, M, D, h, m, s, ms = 0, 0, 0, 0, 0, 0, 0
 	Y, M, D, h, m, s, ms = ct:get(Y, M, D, h, m, s, ms)
-	return { Y=Y, M=M, D=D, h=h, m=m, s=s, ms=ms }
+	return { Y = Y, M = M, D = D, h = h, m = m, s = s, ms = ms }
 end
 
-local previous_time = nil
-
-local delay = 10000
-local trigger = 0
+local delay = 60000
+local grok_delay = 0
 function actor_on_update()
-    tg = time_global()
-    
-	if trigger == 0 then
-        grok_delay = tg + delay
-        trigger = 1
-    end
+	local tg = time_global()
 
-	if (trigger == 1 and tg > grok_delay) then
-        trigger = 0
-		printf("reducing meat time")
-		tick_expiration()
+	if tg < grok_delay then
+		return
 	end
+
+	grok_delay = tg + delay
+	tick_expiration()
+end
+
+local function process_container_averaging(container_items, is_frozen_container)
+	for sec, item_list in pairs(container_items) do
+		if #item_list > 1 then
+			local total_duration = 0
+			local count = 0
+			local has_diverged_timers = false
+			local first_item = item_list
+			local first_duration = first_item and first_item.duration or 0
+			local max_divergence_found = first_duration
+
+			for _, item in ipairs(item_list) do
+				total_duration = total_duration + item.duration
+				count = count + 1
+
+				local variance = math.abs(item.duration - first_duration)
+				if variance > 5 then
+					has_diverged_timers = true
+					if math.abs(item.duration - first_duration) > math.abs(max_divergence_found - first_duration) then
+						max_divergence_found = item.duration
+					end
+				end
+			end
+
+			if has_diverged_timers and count > 1 then
+				local averaged_duration = total_duration / count
+				local current_game_time = c2t(game.get_game_time())
+
+				for _, item in ipairs(item_list) do
+					if not expiration_table[item.id] then
+						expiration_table[item.id] = {}
+					end
+					expiration_table[item.id].duration = averaged_duration
+					expiration_table[item.id].last_update = current_game_time
+					expiration_table[item.id].is_frozen = is_frozen_container
+				end
+			else
+				for _, item in ipairs(item_list) do
+					if expiration_table[item.id] then
+						expiration_table[item.id].is_frozen = is_frozen_container
+					end
+				end
+			end
+		else
+			local item = item_list
+			if item and expiration_table[item.id] then
+				expiration_table[item.id].is_frozen = is_frozen_container
+			end
+		end
+	end
+end
+local next_allowed_scan_time = 0
+
+local function scan_and_average_container_stacks()
+	local tg = time_global()
+	if tg < next_allowed_scan_time then
+		return
+	end
+	next_allowed_scan_time = tg + 100
+
+	local actor_items = {}
+	local partner_items = {}
+	local partner_is_fridge = false
+
+	local function gather_actor_meat(npc_or_box, obj)
+		if not obj then return end
+		local sec = obj:section()
+		if meats[sec] then
+			if not actor_items[sec] then actor_items[sec] = {} end
+			local id = obj:id()
+			local duration = expiration_table[id] and expiration_table[id].duration or (string.match(sec, "meat_") and expiration_time.cooked or expiration_time.raw)
+			table.insert(actor_items[sec], { id = id, duration = duration })
+		end
+	end
+
+	local function gather_partner_meat(npc_or_box, obj)
+		if not obj then return end
+		local sec = obj:section()
+		if meats[sec] then
+			if not partner_items[sec] then partner_items[sec] = {} end
+			local id = obj:id()
+			local duration = expiration_table[id] and expiration_table[id].duration or (string.match(sec, "meat_") and expiration_time.cooked or expiration_time.raw)
+			table.insert(partner_items[sec], { id = id, duration = duration })
+		end
+	end
+
+	if db.actor then
+		db.actor:iterate_inventory(gather_actor_meat, db.actor)
+	end
+
+	if ui_inventory.GUI and ui_inventory.GUI:IsShown() then
+		local partner = ui_inventory.GUI:GetPartner()
+		if partner then
+			if IsInvbox(partner) then
+				partner_is_fridge = (partner:section() == "placeable_fridge")
+				partner:iterate_inventory_box(gather_partner_meat, partner)
+			elseif IsStalker(partner) then
+				partner_is_fridge = (partner:section() == "placeable_fridge")
+				partner:iterate_inventory(gather_partner_meat, partner)
+			end
+		end
+	end
+
+	process_container_averaging(actor_items, false)
+	process_container_averaging(partner_items, partner_is_fridge)
+end
+
+function on_inventory_update()
+	scan_and_average_container_stacks()
 end
 
 function actor_on_item_take(item)
-    local id = item:id()
-    local sec = item:section()
+	local id = item:id()
+	local sec = item:section()
 
-    if not (meats[sec] and (not expiration_table[id])) then
-        return
-    end
+	if not (meats[sec] and (not expiration_table[id])) then
+		return
+	end
 
-    expiration_table[id] = {
-        duration = string.match(sec, "meat_") and expiration_time.cooked or expiration_time.raw,
-        last_update = c2t(game.get_game_time())
-    }
+	expiration_table[id] = {
+		duration = string.match(sec, "meat_") and expiration_time.cooked or expiration_time.raw,
+		last_update = c2t(game.get_game_time()),
+		is_frozen = false
+	}
+	scan_and_average_container_stacks()
 end
 
 function actor_on_item_use(obj)
-    if (obj and expiration_table[obj:id()]) then
-        expiration_table[obj:id()] = nil
-    end
+	if (obj and expiration_table[obj:id()]) then
+		expiration_table[obj:id()] = nil
+	end
 end
 
 function get_meat_is_frozen(se_obj)
-    if (not se_obj) then return false end
+	if (not se_obj) then return false end
 
-    local se_parent = se_obj.parent_id and se_obj.parent_id < 65535 and alife_object(se_obj.parent_id)
-    
-    if (not se_parent) or (se_parent:section_name() ~= "placeable_fridge") then
-        return false
-    end
+	local se_parent = se_obj.parent_id and se_obj.parent_id < 65535 and alife_object(se_obj.parent_id)
 
-    return true
+	if (not se_parent) or (se_parent:section_name() ~= "placeable_fridge") then
+		return false
+	end
+
+	return true
 end
 
 function tick_expiration()
-    local curr_time = game.get_game_time()
+	local curr_time = game.get_game_time()
 
-    for id, data in pairs(expiration_table) do
-        repeat
-            local se_obj = alife_object(id)
-            
-            if (not se_obj) or (not meats[se_obj:section_name()]) then
-                expiration_table[id] = nil
-                do break end
-            end
+	for id, data in pairs(expiration_table) do
+		repeat
+			if data.is_frozen then
+				do break end
+			end
 
-            if (not get_meat_is_frozen(se_obj)) then
-                data.duration = data.duration - curr_time:diffSec(t2c(data.last_update))
-            end
+			local se_obj = alife_object(id)
 
-            data.last_update = c2t(curr_time)
+			if (not se_obj) or (not meats[se_obj:section_name()]) then
+				expiration_table[id] = nil
+				do break end
+			end
 
-            if (data.duration <= 0) then
-                expire_food(se_obj)
-                expiration_table[id] = nil
-            end
-        until true
-    end
+			if se_obj.parent_id and se_obj.parent_id == AC_ID then
+				data.duration = data.duration - curr_time:diffSec(t2c(data.last_update))
+				data.last_update = c2t(curr_time)
+				do break end
+			end
+
+			if se_obj.parent_id and se_obj.parent_id < 65535 then
+				local parent_obj = alife_object(se_obj.parent_id)
+				if not parent_obj then
+					expiration_table[id] = nil
+					do break end
+				end
+			end
+
+			if (not get_meat_is_frozen(se_obj)) then
+				data.duration = data.duration - curr_time:diffSec(t2c(data.last_update))
+			else
+				data.is_frozen = true
+			end
+
+			data.last_update = c2t(curr_time)
+
+			if (data.duration <= 0) then
+				expire_food(se_obj)
+				expiration_table[id] = nil
+			end
+		until true
+	end
 end
 
 function expire_food(se_obj)
-    if (not se_obj.parent_id) or se_obj.parent_id >= 65535 then
-        alife_release(se_obj)
-        return
-    end
+	if (not se_obj.parent_id) or se_obj.parent_id >= 65535 then
+		alife_release(se_obj)
+		return
+	end
 
-    local se_parent = alife_object(se_obj.parent_id)
-    
-    alife_release(se_obj)
+	local se_parent = alife_object(se_obj.parent_id)
 
-    if se_parent and (IsInvbox(se_parent) or se_parent.id == AC_ID) then
-        alife_create_item("rotten_meat", se_parent)
-    end
+	alife_release(se_obj)
+
+	if se_parent and (IsInvbox(se_parent) or se_parent.id == AC_ID) then
+		alife_create_item("rotten_meat", se_parent)
+	end
 end
 
 -- show spoiling timer in hours
@@ -131,23 +258,23 @@ build_footer_base = ui_item.build_desc_footer
 function ui_item.build_desc_footer(obj, sec, str)
 	str = str or gt(ini_sys:r_string_ex(sec, "description"))
 	if (not str) then return "" end
-	
+
 	local id = obj and obj:id()
-	
+
 	if id and expiration_table[id] and expiration_table[id].duration then
-		
+
 		local expiration_hours =  round_idp(expiration_table[id].duration / 3600, 1)
-		
+
 		local p_clr = utils_xml.get_color("d_purple")
 		local timer_clr = ((expiration_hours < 8) and utils_xml.get_color("d_red")) or ((expiration_hours < 12) and utils_xml.get_color("d_orange")) or ((expiration_hours < 24) and utils_xml.get_color("yellow")) or utils_xml.get_color("pda_white")
 		local def_clr = utils_xml.get_color("ui_gray_1")
-		
+
 		local sec_str = "\\n " .. p_clr .. gt("cxv_tooltip_dot") .. " " .. def_clr .. gt("cxv_rotting_timer_title") .. " " .. timer_clr .. expiration_hours .. " " .. gt("cxv_rotting_hrs") .. "\\n \\n" .. def_clr
-		
+
 		if sec_str then
 			return build_footer_base(obj, sec, str) .. sec_str
 		end
-		
+
 	end
 
 	return build_footer_base(obj, sec, str)
@@ -162,60 +289,64 @@ function load_state(m_data)
 end
 
 function on_option_change()
-    expiration_time = {
-        raw = ui_mcm and ui_mcm.get(mcm_id .. "/expiration_hours_raw") * 60 * 60 or 48 * 60 * 60,
-        cooked = ui_mcm and ui_mcm.get(mcm_id .. "/expiration_hours_cooked")  * 60 * 60 or 120 * 60 * 60
-    }
+	expiration_time = {
+		raw = ui_mcm and ui_mcm.get(mcm_id .. "/expiration_hours_raw") * 60 * 60 or 48 * 60 * 60,
+		cooked = ui_mcm and ui_mcm.get(mcm_id .. "/expiration_hours_cooked")  * 60 * 60 or 120 * 60 * 60
+	}
 end
 
 local clr_frozen = GetARGB(40,0,197,255)
 
 function get_meat_is_frozen_cell(cell)
-    local se_obj = cell.ID and expiration_table[cell.ID] and alife_object(cell.ID)
+	local se_obj = cell.ID and expiration_table[cell.ID] and alife_object(cell.ID)
 
-    if get_meat_is_frozen(se_obj) then
-        return true
-    end
+	if get_meat_is_frozen(se_obj) then
+		return true
+	end
 end
 
 function on_game_start()
-    RegisterScriptCallback("actor_on_item_use", actor_on_item_use)
-    RegisterScriptCallback("save_state",save_state)
+	RegisterScriptCallback("actor_on_item_use", actor_on_item_use)
+	RegisterScriptCallback("save_state",save_state)
 	RegisterScriptCallback("load_state",load_state)
-    RegisterScriptCallback("actor_on_item_take",actor_on_item_take)
---    RegisterScriptCallback("actor_on_update", actor_on_update)
-	RegisterScriptCallback("actor_on_first_update", tick_expiration)
-    RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_item_take",actor_on_item_take)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("on_option_change", on_option_change)
 
-    rax_persistent_highlight.register("frozen_meat", function(cell)
-        return get_meat_is_frozen_cell(cell) and clr_frozen or false
-    end)
-    
-    local anchor_x = function(axis, margin, w)
-        return (axis.w - w) - margin
-    end
+	rax_persistent_highlight.register("frozen_meat", function(cell)
+		return get_meat_is_frozen_cell(cell) and clr_frozen or false
+	end)
 
-    local anchor_y = function(axis, margin, h)
-        return margin
-    end
+	local anchor_x = function(axis, margin, w)
+		return (axis.w - w) - margin
+	end
 
-    rax_icon_layers.register("frozen_meat", function(cell, obj, sec)
-        if get_meat_is_frozen_cell(cell) then
-            local axis = utils_xml.get_item_axis(sec)
+	local anchor_y = function(axis, margin, h)
+		return margin
+	end
 
-            return {
-                texture = "ui_icon_freeze", 
-                x = anchor_x(axis, 2, 13), 
-                y = anchor_y(axis, 2, 13), 
-                w = 13, 
-                h = 13
-            }
-        end
-    end)
-    
-    on_option_change()
-	
-	-- Credit to Utjan's "Tagged Patches" mod for allowing to see multiple items in a stack for items that don't usually allow it
+	rax_icon_layers.register("frozen_meat", function(cell, obj, sec)
+		if get_meat_is_frozen_cell(cell) then
+			local axis = utils_xml.get_item_axis(sec)
+
+			return {
+				texture = "ui_icon_freeze",
+				x = anchor_x(axis, 2, 13),
+				y = anchor_y(axis, 2, 13),
+				w = 13,
+				h = 13
+			}
+		end
+	end)
+
+	RegisterScriptCallback("actor_on_item_take_from_box", on_inventory_update)
+	RegisterScriptCallback("actor_on_item_put_in_box", on_inventory_update)
+	RegisterScriptCallback("GUI_on_show", function(name)
+		if name == "UIInventory" then on_inventory_update() end
+	end)
+
+	on_option_change()
+
 	_inv_SYS_GetParam = ui_inventory.SYS_GetParam
 	_Picker_Toggle = ui_inventory.UIInventory.Picker_Toggle
 	function ui_inventory.UIInventory:Picker_Toggle(bag, idx, update_mode, force_hide)
@@ -227,13 +358,13 @@ end
 
 _inv_SYS_GetParam = nil
 function new_get_param(typ, sec, param, def)
-    if param == "use_condition" and (meats[sec] or (tagged_patches and tagged_patches.is_patch(nil, sec))) then
-        return true
-    else
+	if param == "use_condition" and (meats[sec] or (tagged_patches and tagged_patches.is_patch(nil, sec))) then
+		return true
+	else
 		if _inv_SYS_GetParam then
-        	return _inv_SYS_GetParam(typ, sec, param, def)
+			return _inv_SYS_GetParam(typ, sec, param, def)
 		else
-			return SYS_GetParam(typ, sec, param, def)
+			return SYS_Param(typ, sec, param, def)
 		end
-    end
+	end
 end
