@@ -1,0 +1,146 @@
+-- Original script by Zatura
+-- Improved logic and optimization by Jack Harris
+
+local DEBUG_MODE = false
+local inv_changed = true
+local math_min = math.min
+
+local function debug_msg(str)
+	if DEBUG_MODE and news_manager and db.actor then
+		news_manager.send_tip(db.actor, str, nil, nil, 5000)
+	end
+end
+
+local function process_item_pairs(item_table, k, v, use_iterator)
+	if not v or not item_table[k] then return end
+
+	for k1, v1 in spairs(item_table, use_iterator) do
+		if v.uses == v.max_uses then break end
+
+		if k ~= k1 and item_table[k] and item_table[k1] and v1 then
+			local new_uses = math_min(v.max_uses, v.uses + v1.uses)
+			local added_uses = new_uses - v.uses
+			v.uses = new_uses
+			v1.uses = v1.uses - added_uses
+			v.item:set_remaining_uses(v.uses)
+
+			if v1.uses <= 0 then
+				alife_release(v1.item)
+				item_table[k1] = nil
+			else
+				v1.item:set_remaining_uses(v1.uses)
+			end
+		end
+	end
+end
+
+function autostack_playerinv()
+	local all_items = {}
+	local sections_needing_stack = {}
+
+	debug_msg("Starting autostack checking loop...")
+
+	local function gather_inventory_data(npc_or_actor, obj)
+		if not obj then return end
+		local sec = obj:section()
+		if not sec then return end
+
+		if IsItem("multiuse", sec) then
+			local max_uses = obj:get_max_uses()
+
+			if max_uses and max_uses > 1 then
+				local uses = obj:get_remaining_uses()
+
+				if uses and uses > 0 and uses < max_uses then
+					if not all_items[sec] then
+						all_items[sec] = {}
+					end
+
+					sections_needing_stack[sec] = true
+					table.insert(all_items[sec], {
+						item = obj,
+						sec = sec,
+						id = obj:id(),
+						uses = uses,
+						max_uses = max_uses
+					})
+				end
+			end
+		end
+	end
+
+	db.actor:iterate_inventory(gather_inventory_data, db.actor)
+
+	local partner = ui_inventory.GUI and ui_inventory.GUI:GetPartner()
+	if partner then
+		if IsInvbox(partner) then
+			partner:iterate_inventory_box(gather_inventory_data, partner)
+		elseif IsStalker(partner) then
+			partner:iterate_inventory(gather_inventory_data, partner)
+		end
+	end
+
+	inv_changed = false
+
+	local function use_iterator(t, a1, a2)
+		return t[a1].uses < t[a2].uses
+	end
+
+	local function use_iterator_reverse(t, a1, a2)
+		return t[a1].uses > t[a2].uses
+	end
+
+	local stacked_any = false
+	for sec, _ in pairs(sections_needing_stack) do
+		local item_table = all_items[sec]
+
+		if item_table and #item_table > 1 then
+			debug_msg("Combining item section: " .. sec .. " | Count: " .. tostring(#item_table))
+			stacked_any = true
+
+			for k, v in spairs(item_table, use_iterator_reverse) do
+				process_item_pairs(item_table, k, v, use_iterator)
+			end
+		end
+	end
+
+	if not stacked_any then
+		debug_msg("Check complete: No stackable items detected.")
+	end
+
+	CreateTimeEvent("zatura_ui_refresh_defer", "ui_refresh", 0.1, function()
+		if ui_inventory.GUI and ui_inventory.GUI:IsShown() then
+			ui_inventory.GUI:UpdateInfo(true)
+		end
+		return true
+	end)
+end
+
+local function GUI_on_show(name)
+	if name ~= "UIInventory" then return end
+	if inv_changed then
+		autostack_playerinv()
+	end
+end
+
+local function GUI_on_hide(name)
+	if name == "UIInventory" then
+		inv_changed = true
+	end
+end
+
+function actor_on_item_take(itm) inv_changed = true end
+function actor_on_item_take_from_box(box, itm) inv_changed = true end
+function actor_on_item_put_in_box(box, itm) inv_changed = true end
+function actor_on_item_use(itm) inv_changed = true end
+function actor_on_item_drop(itm) inv_changed = true end
+
+function on_game_start()
+	RegisterScriptCallback("GUI_on_show", GUI_on_show)
+	RegisterScriptCallback("GUI_on_hide", GUI_on_hide)
+	RegisterScriptCallback("actor_on_item_take", actor_on_item_take)
+	RegisterScriptCallback("actor_on_item_take_from_box", actor_on_item_take_from_box)
+	RegisterScriptCallback("actor_on_item_put_in_box", actor_on_item_put_in_box)
+	RegisterScriptCallback("actor_on_item_use", actor_on_item_use)
+	RegisterScriptCallback("actor_on_item_drop", actor_on_item_drop)
+end

@@ -1,0 +1,226 @@
+-- Original script from Night Mutants by xcvb
+-- Improved and optimized logic by Jack Harris
+-- Improved dynamic squad lookups by ilrathCXV
+local spawn_time_interval = 30
+local safe_radius = 75
+local night_start = 20
+local night_end = 5
+
+squads_to_spawn = {}
+
+local spawned_mutants = {}
+local available_smart_terrains = {}
+local ctime_to_t = utils_data.CTime_to_table
+local t_to_ctime = utils_data.CTime_from_table
+local xspawn_time
+local debugx = false
+
+local whitelisted_maps = {
+	["k00_marsh"] = 0, ["l01_escape"] = 0, ["l05_bar"] = 1, ["l02_garbage"] = 0,
+	["k01_darkscape"] = 0, ["l04_darkvalley"] = 0, ["k02_trucks_cemetery"] = 0,
+	["l09_deadcity"] = 0, ["l03_agroprom"] = 0, ["l06_rostok"] = 0, ["l07_military"] = 0,
+	["l08_yantar"] = 0, ["jupiter"] = 0, ["l03u_agr_underground"] = 0, ["l10_limansk"] = 0,
+	["l08u_brainlab"] = 0, ["l10_red_forest"] = 0, ["labx8"] = 0, ["l12_stancia"] = 0,
+	["zaton"] = 0, ["l12_stancia_2"] = 0, ["l11_hospital"] = 0, ["jupiter_underground"] = 0,
+	["l10u_bunker"] = 0, ["l10_radar"] = 0, ["l04u_labx18"] = 0, ["l11_pripyat"] = 0,
+	["l12u_sarcofag"] = 0, ["l12u_control_monolith"] = 0, ["l13_generators"] = 0,
+	["l13u_warlab"] = 0, ["pripyat"] = 0, ["y04_pole"] = 0,
+}
+
+local tmr
+function try_to_spawn()
+	local tg = time_global()
+	if (tmr and tg < tmr) then return end
+	tmr = tg + 30000
+
+	if not squads_to_spawn or #squads_to_spawn == 0 then
+		catalog_squads_to_spawn()
+	end
+
+	local sim = alife()
+	local gg = game_graph()
+	local actor_level = sim:level_name(gg:vertex(sim:actor().m_game_vertex_id):level_id())
+	local whitelist = whitelisted_maps[actor_level]
+
+	if whitelist == 1 or not is_night() then
+		if is_not_empty(spawned_mutants) then
+			delete_mutants()
+			empty_table(spawned_mutants)
+			xspawn_time = nil
+		end
+		return
+	end
+
+	local cur_time = game.get_game_time()
+	if not xspawn_time then
+		xspawn_time = ctime_to_t(cur_time)
+	end
+
+	if cur_time:diffSec(t_to_ctime(xspawn_time)) > (spawn_time_interval * 60) then
+		xspawn_time = ctime_to_t(cur_time)
+		spawn_mutants()
+	end
+end
+
+function has_night_squad_active(smart_squads)
+	for squad_id, _ in pairs(smart_squads) do
+		local sq = alife_object(squad_id)
+		if sq and (sq.player_id == "monster_predatory_night" or sq.player_id == "monster_zombied_night") then
+			pr("squad_id is NIGHT squad: %s", squad_id)
+			return true
+		end
+	end
+	return false
+end
+
+function process_single_smart(level_name, random_smart_id)
+	local simboard_t = SIMBOARD.smarts[random_smart_id]
+	local smart = simboard_t and simboard_t.smrt
+	if not smart then return end
+
+	local smart_squads = simboard_t.squads
+	local smart_cur_pop = simboard_t.population
+	local smart_max_pop = smart.max_population
+
+	if smart_cur_pop >= smart_max_pop then return end
+	if has_night_squad_active(smart_squads) then return end
+	if not se_obj_outside_spawn_radius(smart) then return end
+
+	local squad_sec = is_not_empty(squads_to_spawn) and squads_to_spawn[math.random(1, #squads_to_spawn)]
+	local squad = squad_sec and SIMBOARD:create_squad(smart, squad_sec)
+	if not squad then return end
+
+	spawned_mutants[level_name] = spawned_mutants[level_name] or {}
+	table.insert(spawned_mutants[level_name], squad.id)
+end
+
+function spawn_mutants()
+	for level_name, t in pairs(available_smart_terrains) do
+		if #t > 0 then
+			local random_smart_id = t[math.random(1, #t)]
+			process_single_smart(level_name, random_smart_id)
+		end
+	end
+end
+
+function clear_single_mutant_squad(level_name, t, idx, squad_id)
+	local squad = alife_object(squad_id)
+	if not squad then return end
+
+	if squad.get_script_target then
+		alife_release(squad)
+		if t[idx] == squad_id then
+			table.remove(spawned_mutants[level_name], idx)
+		end
+	else
+		table.remove(spawned_mutants[level_name], idx)
+	end
+end
+function delete_mutants()
+	for level_name, t in pairs(spawned_mutants) do
+		for idx = #t, 1, -1 do
+			if t[idx] then
+				clear_single_mutant_squad(level_name, t, idx, t[idx])
+			end
+		end
+	end
+end
+
+function server_entity_on_unregister(obj)
+	for level_name, t in pairs(spawned_mutants) do
+		for idx = #t, 1, -1 do
+			if t[idx] and obj.id == t[idx] then
+				table.remove(spawned_mutants[level_name], idx)
+			end
+		end
+	end
+end
+
+function squad_on_npc_death(squad, se_obj, killer)
+	for level_name, t in pairs(spawned_mutants) do
+		for idx = #t, 1, -1 do
+			if t[idx] then
+				local mutant_squad = alife_object(t[idx])
+				if mutant_squad and mutant_squad.id == squad.id and squad:npc_count() <= 1 then
+					table.remove(spawned_mutants[level_name], idx)
+				end
+			end
+		end
+	end
+end
+
+function catalog_squads_to_spawn()
+	squads_to_spawn = {}
+
+	ini_sys:section_for_each(function(sec)
+		if (string.sub(sec, 1, 12) == "night_mutant" or string.find(sec, "night")) and ini_sys:line_exist(sec, "night_mutant") and ini_sys:r_bool_ex(sec, "night_mutant") then
+			table.insert(squads_to_spawn, sec)
+		end
+	end)
+end
+
+function save_mutant_smarts()
+	available_smart_terrains = {}
+
+	for id, board_data in pairs(SIMBOARD.smarts) do
+		local smart = board_data.smrt
+		if smart and (simulation_objects.available_by_id[id] == true) and (smart.props["monster"] and smart.props["monster"] > 0) then
+			local smart_level_name = get_se_obj_level_name(smart)
+			available_smart_terrains[smart_level_name] = available_smart_terrains[smart_level_name] or {}
+			table.insert(available_smart_terrains[smart_level_name], id)
+		end
+	end
+
+	if not squads_to_spawn or #squads_to_spawn == 0 then
+		catalog_squads_to_spawn()
+	end
+
+	for i = 1, #squads_to_spawn do
+		pr("[%s] = %s", i, squads_to_spawn[i])
+	end
+end
+
+function se_obj_outside_spawn_radius(se_obj)
+	if not se_obj then return false end
+
+	local on_same_level = simulation_objects.is_on_the_same_level(alife():actor(), se_obj)
+	if not on_same_level then return true end
+
+	local ac_pos = db.actor:position()
+	local se_obj_pos = se_obj.position
+	return ac_pos:distance_to_xz(se_obj_pos) > safe_radius
+end
+
+function is_night()
+	local cur_hour = level.get_time_hours() + level.get_time_minutes() / 60
+	return (cur_hour > night_start) or (cur_hour < night_end)
+end
+
+function get_se_obj_level_name(se_obj)
+	local target_level_id = game_graph():vertex(se_obj.m_game_vertex_id):level_id()
+	return alife():level_name(target_level_id)
+end
+
+function pr(...)
+	if not debugx then return end
+	printf(...)
+end
+
+function save_state(m_data)
+	m_data.spawned_mutants = spawned_mutants
+	m_data.xspawn_time = xspawn_time
+end
+
+function load_state(m_data)
+	xspawn_time = xspawn_time or nil
+	spawned_mutants = m_data.spawned_mutants or {}
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_update", try_to_spawn)
+	RegisterScriptCallback("server_entity_on_unregister", server_entity_on_unregister)
+	RegisterScriptCallback("squad_on_npc_death", squad_on_npc_death)
+	RegisterScriptCallback("actor_on_first_update", save_mutant_smarts)
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
+end
