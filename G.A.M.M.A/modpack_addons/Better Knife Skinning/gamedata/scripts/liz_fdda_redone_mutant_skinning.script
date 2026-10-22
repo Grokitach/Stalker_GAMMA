@@ -174,7 +174,16 @@ function get_knife_object()
     db.actor:iterate_inventory(function(owner, inv_obj)
         if inv_obj:clsid() == clsid.wpn_knife_s then
             local sec = inv_obj:section()
-            local tier = ini_sys:line_exist(sec, "tier") and ini_sys:r_u32(sec, "tier") or 1
+            
+            local tier = 1
+            if ini_sys:line_exist(sec, "tier") then
+                tier = ini_sys:r_u32(sec, "tier")
+            elseif sec == "wpn_knife4" or sec == "wpn_knife5" then
+                tier = 2
+            elseif sec == "wpn_knife6" or sec == "wpn_knife7" or sec == "wpn_knife8" then
+                tier = 3
+            end
+
             if inv_obj:condition() >= 0.15 then
                 if tier > highest_tier then
                     highest_tier = tier
@@ -194,19 +203,27 @@ function get_knife_object()
     end
 
     --check weapon slots
+    for _, slot_idx in ipairs({11, 12, 0}) do
+        local slot_item = db.actor:item_in_slot(slot_idx)
+        if slot_item and slot_item:clsid() == clsid.wpn_knife_s and slot_item:condition() >= 0.15 then
+            obj = slot_item
+            break
+        end
+    end
+    if obj and obj:clsid() == clsid.wpn_knife_s then
+        return obj
+    end
+    --check inventory
     if chosen_knife then
         obj = chosen_knife
     end
     if obj and obj:clsid() == clsid.wpn_knife_s then
         return obj
     end
-    --check inventory
-    if obj and obj:clsid() == clsid.wpn_knife_s then
-        return obj
-    end
     --found nothing, use default
     return nil
 end
+
 
 --- ---------------------------------------
 --- action templates
