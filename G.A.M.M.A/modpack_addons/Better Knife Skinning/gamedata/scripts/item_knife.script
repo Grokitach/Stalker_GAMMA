@@ -4,13 +4,18 @@
 	Revision by Jack_Harris to modernize, optimize and remove hardcoded tables for improved modularity (21/10/2026)
 ]]--
 
+--// If adding new custom knife, define Tier manually in .ltx as, for example "Tier = 3"
+
+--// Tier Durability & Degradation 
+--// Tier 1 (0.04) -> Basic knives
+--// Tier 2 (0.03) -> Hunting knives
+--// Tier 3 (0.02) -> Good quality knives
+
 local strong_monsters = { ["chimera"] = true, ["gigant"] = true, ["giant"] = true }
 local sys_ini_file = ini_file("system.ltx")
 
-local cached_knife = nil
-local last_scan_time = 0
-local scan_cooldown = 200 --// 0.2 seconds in milliseconds
-local is_processing = false
+local active_knife = nil -- We need this to correctly assign degradation if we have multiple knives
+local active_variable = nil -- We need this to correctly assign Pelt Quality if we have multiple knives
 
 --// compat table to prevent crashes from other mods reading the script
 knifes = setmetatable({}, {
@@ -28,37 +33,25 @@ knifes = setmetatable({}, {
 function get_best_hunting_tool()
 	if not db.actor then return nil end
 
-	--// lock the queue to prevent UI skinning loop redraw
-	if is_processing then
-		return cached_knife
-	end
-
-	local current_time = time_global()
-	local sim = alife()
-
-	if cached_knife and (current_time - last_scan_time < scan_cooldown) then
-		if sim and sim:object(cached_knife:id()) then
-			return cached_knife
-		else
-			cached_knife = nil
-		end
-	end
-
-	is_processing = true
-	last_scan_time = current_time
-
-	-- prioritize active item currently held in hands
 	local active_item = db.actor:active_item()
 	if active_item and active_item:clsid() == clsid.wpn_knife_s then
 		local sec = active_item:section()
-		if not string.find(sec, "animation_hit") and sim and sim:object(active_item:id()) then
-			cached_knife = active_item
-			is_processing = false
+		if not string.find(sec, "animation_hit") then
+			active_knife = active_item
+			active_variable = sec
 			return active_item
 		end
 	end
 
-	-- fallback: scan inventory with class tracking to pull the highest quality knife
+	if active_knife then
+		if db.actor:object(active_knife:section()) and active_knife:condition() > 0.01 then
+			return active_knife
+		else
+			active_knife = nil
+			active_variable = nil
+		end
+	end
+
 	local chosen_knife = nil
 	local highest_tier = -1
 	local fallback_knife = nil
@@ -69,9 +62,8 @@ function get_best_hunting_tool()
 
 		local sec = obj:section()
 		if string.find(sec, "animation_hit") then return end
-		if not (sim and sim:object(obj:id())) then return end
 
-		local tier = sys_ini_file:line_exist(sec, "tier") and sys_ini_file:r_u32(sec, "tier") or 1
+		local tier = get_knife_tier_value(sec)
 
 		if obj:condition() >= 0.15 then
 			if tier > highest_tier then
@@ -90,19 +82,32 @@ function get_best_hunting_tool()
 		chosen_knife = fallback_knife
 	end
 
-	cached_knife = chosen_knife
-	is_processing = false
 	return chosen_knife
+end
+
+function get_knife_tier_value(section)
+	local target_sec = active_variable or section
+	if sys_ini_file:line_exist(target_sec, "tier") then
+		return sys_ini_file:r_u32(target_sec, "tier")
+	end
+
+	if target_sec == "wpn_knife4" or target_sec == "wpn_knife5" then
+		return 2
+	elseif target_sec == "wpn_knife6" or target_sec == "wpn_knife7" or target_sec == "wpn_knife8" then
+		return 3
+	end
+
+	return 1
 end
 
 function get_degrade_value(section)
 	if not section then return 0.04 end
-	local tier = sys_ini_file:line_exist(section, "tier") and sys_ini_file:r_u32(section, "tier") or 1
+	local tier = get_knife_tier_value(section)
 
 	if tier == 1 then return 0.04
 	elseif tier == 2 then return 0.03
 	elseif tier == 3 then return 0.02
-	else return 0.015
+	else return 0.02
 	end
 end
 
@@ -115,10 +120,7 @@ end
 function get_condition()
 	local obj = get_best_hunting_tool()
 	if obj ~= nil then
-		local sim = alife()
-		if sim and sim:object(obj:id()) then
-			return obj:condition()
-		end
+		return obj:condition()
 	end
 	return 0
 end
@@ -143,7 +145,7 @@ function can_loot(monster_section)
 	end
 
 	if is_strong then
-		local tier = sys_ini_file:line_exist(wpn_section, "tier") and sys_ini_file:r_u32(wpn_section, "tier") or 1
+		local tier = get_knife_tier_value(wpn_section)
 		if tier <= 2 then
 			return false
 		end
@@ -152,26 +154,16 @@ function can_loot(monster_section)
 	return true
 end
 
---// Function to degrade knife condition
+--// function to degrade knife condition
 function degradate()
 	local obj = get_best_hunting_tool()
 	if obj ~= nil then
-		local sim = alife()
-		if not (sim and sim:object(obj:id())) then
-			cached_knife = nil
-			last_scan_time = 0
-			is_processing = false
-			return
-		end
-
 		local cond = obj:condition()
 		local num = get_degrade_value(obj:section())
 
-		--// Safety exit gate if the knife is already completely broken
 		if cond <= 0.01 then
-			cached_knife = nil
-			last_scan_time = 0
-			is_processing = false
+			active_knife = nil
+			active_variable = nil
 			return
 		end
 
@@ -181,13 +173,11 @@ function degradate()
 			obj:set_condition(0.01)
 		end
 	end
-	--// Clear queue lock on weapon degradation
-	cached_knife = nil
-	last_scan_time = 0
-	is_processing = false
+	active_knife = nil
+	active_variable = nil
 end
 
---// Weapon in hand is an axe?
+--// weapon in hand is an axe?
 function is_axe()
 	local obj = get_best_hunting_tool()
 	if obj ~= nil then
