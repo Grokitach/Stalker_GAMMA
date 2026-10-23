@@ -1,0 +1,188 @@
+--[[
+	Modified by Faustle (2018)
+    Modified by xCoiotex --// function degradate() (21/07/2025)
+	Revision by Jack_Harris to modernize, optimize and remove hardcoded tables for improved modularity (21/10/2026)
+]]--
+
+--// If adding new custom knife, define Tier manually in .ltx as, for example "Tier = 3"
+
+--// Tier Durability & Degradation 
+--// Tier 1 (0.04) -> Basic knives
+--// Tier 2 (0.03) -> Hunting knives
+--// Tier 3 (0.02) -> Good quality knives
+
+local strong_monsters = { ["chimera"] = true, ["gigant"] = true, ["giant"] = true }
+local sys_ini_file = ini_file("system.ltx")
+
+local active_knife = nil -- We need this to correctly assign degradation if we have multiple knives
+local active_variable = nil -- We need this to correctly assign Pelt Quality if we have multiple knives
+
+--// compat table to prevent crashes from other mods reading the script
+knifes = setmetatable({}, {
+	__index = function(t, section)
+		if not section then return nil end
+		if sys_ini_file:line_exist(section, "kind") and sys_ini_file:r_string(section, "kind") == "w_knife" then
+			return get_degrade_value(section)
+		elseif sys_ini_file:line_exist(section, "slot") and sys_ini_file:r_u32(section, "slot") == 11 then
+			return get_degrade_value(section)
+		end
+		return nil
+	end
+})
+
+function get_best_hunting_tool()
+	if not db.actor then return nil end
+
+	local active_item = db.actor:active_item()
+	if active_item and active_item:clsid() == clsid.wpn_knife_s then
+		local sec = active_item:section()
+		if not string.find(sec, "animation_hit") then
+			active_knife = active_item
+			active_variable = sec
+			return active_item
+		end
+	end
+
+	if active_knife then
+		if db.actor:object(active_knife:section()) and active_knife:condition() > 0.01 then
+			return active_knife
+		else
+			active_knife = nil
+			active_variable = nil
+		end
+	end
+
+	local chosen_knife = nil
+	local highest_tier = -1
+	local fallback_knife = nil
+	local fallback_highest_tier = -1
+
+	db.actor:iterate_inventory(function(owner, obj)
+		if obj:clsid() ~= clsid.wpn_knife_s then return end
+
+		local sec = obj:section()
+		if string.find(sec, "animation_hit") then return end
+
+		local tier = get_knife_tier_value(sec)
+
+		if obj:condition() >= 0.15 then
+			if tier > highest_tier then
+				highest_tier = tier
+				chosen_knife = obj
+			end
+		else
+			if tier > fallback_highest_tier then
+				fallback_highest_tier = tier
+				fallback_knife = obj
+			end
+		end
+	end, db.actor)
+
+	if not chosen_knife then
+		chosen_knife = fallback_knife
+	end
+
+	return chosen_knife
+end
+
+function get_knife_tier_value(section)
+	local target_sec = active_variable or section
+	if sys_ini_file:line_exist(target_sec, "tier") then
+		return sys_ini_file:r_u32(target_sec, "tier")
+	end
+
+	if target_sec == "wpn_knife4" or target_sec == "wpn_knife5" then
+		return 2
+	elseif target_sec == "wpn_knife6" or target_sec == "wpn_knife7" or target_sec == "wpn_knife8" then
+		return 3
+	end
+
+	return 1
+end
+
+function get_degrade_value(section)
+	if not section then return 0.04 end
+	local tier = get_knife_tier_value(section)
+
+	if tier == 1 then return 0.04
+	elseif tier == 2 then return 0.03
+	elseif tier == 3 then return 0.02
+	else return 0.02
+	end
+end
+
+--// function to check if a knife or axe is equipped
+function is_equipped()
+	return get_best_hunting_tool() ~= nil
+end
+
+--// function to get the condition of the current weapon
+function get_condition()
+	local obj = get_best_hunting_tool()
+	if obj ~= nil then
+		return obj:condition()
+	end
+	return 0
+end
+
+--// function to check if the monster can be looted
+function can_loot(monster_section)
+	if not monster_section then
+		return false
+	end
+
+	local obj = get_best_hunting_tool()
+	if not obj then return false end
+
+	local wpn_section = obj:section()
+	local is_strong = false
+
+	for name, _ in pairs(strong_monsters) do
+		if string.find(monster_section, name) then
+			is_strong = true
+			break
+		end
+	end
+
+	if is_strong and wpn_section ~= "wpn_knife3" then
+		local tier = get_knife_tier_value(wpn_section)
+		if tier < 2 then
+			return false
+		end
+	end
+
+	return true
+end
+
+--// function to degrade knife condition
+function degradate()
+	local obj = get_best_hunting_tool()
+	if obj ~= nil then
+		local cond = obj:condition()
+		local num = get_degrade_value(obj:section())
+
+		if cond <= 0.01 then
+			active_knife = nil
+			active_variable = nil
+			return
+		end
+
+		if (cond > num) then
+			obj:set_condition(cond - num / 4)
+		else
+			obj:set_condition(0.01)
+		end
+	end
+	active_knife = nil
+	active_variable = nil
+end
+
+--// weapon in hand is an axe?
+function is_axe()
+	local obj = get_best_hunting_tool()
+	if obj ~= nil then
+		local sec = obj:section()
+		return string.find(sec, "axe") or string.find(sec, "cleaver") or false
+	end
+	return false
+end
