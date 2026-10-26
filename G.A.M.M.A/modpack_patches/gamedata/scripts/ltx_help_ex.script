@@ -8,6 +8,14 @@
     Outfits, Actor
         legs_visual - Model for first person body legs
         legs_fwd_offset - Forward position offset
+
+    Outfits and helmets
+        fire_wound_param_1, fire_wound_param_2 - Optional float coefficients for the alternative bullet/armor damage formula. Both must be present to enable it; otherwise the normal formula is used.
+        hit_fraction_actor - Damage fraction used by bone armor. Helmet upgrade effect sections now also accept an additive change to this value.
+        control_inertion_factor - Outfit mouse-inertia factor; applied when allow_outfit_control_inertion_factor is enabled.
+
+    Character physics (actor/NPC/monster section)
+        ph_collision_damage_factor - Collision damage multiplier, default 1.0. Must not exceed 1.0; use 0 to disable collision damage through character movement physics.
     
     Weapons
         zoom_step_count - option for weapons to customize steps range for dynamic scopes. Default fallback to original 3
@@ -38,6 +46,40 @@
         attach_mount_hud_offset_pos - scope mount offset (modular_attachments)
         attach_mount_hud_offset_rot - scope mount rotation (modular_attachments)
         attach_scale - scale modifier for all attachments (modular_attachments)
+        gl_zoom_factor - Underbarrel grenade launcher aiming zoom factor, default 0.
+        hud_fov_aim_factor - Multiplier for the hud_fov_aim_factor console setting while aiming, default 1.0; applied when the console setting is greater than zero.
+        cycle_down - Use burst timing at the start of automatic fire, then switch to normal rpm. The initial burst length is derived from fire_modes
+
+    HUD items (the weapon/device section, not its referenced HUD section)
+        hud_fov_addition_modifier - Added to the base HUD FOV, default 0.
+        nearwall_dist_min, nearwall_dist_max - Near-wall adjustment distances, defaults 0.2 and 1.0.
+        nearwall_target_hud_fov - Target HUD FOV near a wall, default 0.27.
+        nearwall_speed_mod - Near-wall FOV transition speed, default 10.0.
+
+    Weapon HUD sections (the section referenced by hud)
+        shell_particles - Override the weapon's shell particle effect in first person. Omit to inherit the weapon effect; an explicitly empty value disables HUD shell particles.
+        fire_bone_silencer - Silenced muzzle bone; falls back to fire_bone, then wpn_body.
+        fire_point_silencer - Silenced muzzle offset (x,y,z); falls back to fire_point.
+
+    Inventory item upgrades (weapons, outfits, helmets, backpacks)
+        Put these in the upgrade effect section referenced by the upgrade's "section" field:
+        inv_grid_x, inv_grid_y - inventory icon position, in grid cells
+        inv_grid_width, inv_grid_height - inventory icon size and occupied space, in grid cells
+        upgr_icon_x, upgr_icon_y - upgrade picture position, in pixels
+        upgr_icon_width, upgr_icon_height - upgrade picture size, in pixels
+        inv_name, inv_name_short, description - translated string IDs for this item
+        These replace values rather than adding to them. Omitted or empty fields keep their previous values.
+        Coordinates must be nonnegative integers; dimensions must be positive integers.
+        Only the upgraded item changes. Saved upgrades reapply these values on load.
+        If several installed upgrades set the same field, the last applied value wins.
+        Existing ui_item text callbacks can override the displayed name and description.
+        The icon textures and attachment/layer offsets still come from the base item config.
+
+        fire_point, fire_point2, fire_point_silencer - Replace world-model muzzle offsets. Each requires exactly three comma-separated numbers.
+        hud_fire_point, hud_fire_point2, hud_fire_point_silencer - Replace HUD muzzle offsets, also three numbers. These require the item's HUD data to exist when the upgrade is applied.
+        rpm_mode_2, cycle_down - Replace burst rate and cycle-down behavior.
+        scope_texture, scope_texture_alt - Replace primary/alternative scope UI textures.
+        scopes - Additional attachable scope sections, comma-separated. This extension is provided by the bundled aaaa_script_fixes_mp.script patches to item_weapon.
 
     Grenades
         frags_ap - AP power for shrapnel
@@ -46,6 +88,7 @@
         frags_4to1_tracer - 4 to 1 tracer flag for shrapnel
         frags_magnetic_beam_shot - Magnetic beam flag for shrapnel
         frags_tracer_color_ID - Tracer color ID for shrapnel
+        frags_allow_ricochet - Allow shrapnel ricochets, default true. Also applies to other CExplosive objects.
         ammo_grenade_vel - Specify velocity of underbarrel grenade launcher ammo
         explode_effector_sect_name - customizable explode_effector per grenade section
         explode_on_contact - explode on contact
@@ -78,6 +121,41 @@
     Particles (.pe files)
         update_step - particle update delta in milliseconds
 
+    Hanging lamps and signal lights (object section)
+        shadow - Override the main light's shadow flag; omitted uses the spawned lamp's flag.
+        volumetric - Override the main light's volumetric flag; omitted uses the spawned lamp's flag.
+        ambient_shadow, ambient_volumetric - Shadow/volumetric flags for an existing ambient light, both default false.
+
+    Camera sections
+        lim_deg - Interpret lim_yaw and lim_pitch limits in degrees instead of radians, default false.
+
+    PDA level-map sections (game.ltx)
+        label - Translated string ID for a label centered on this level's global-map rectangle.
+        label_scale_max - When positive, hide the label at or above this global-map zoom and honor pda_show_map_labels. Default 0 leaves this visibility check inactive.
+        label_color - R,G,B,A integers from 0 to 255; default 230,220,200,180. If supplied without alpha, alpha is 255.
+        label_offset_x, label_offset_y - Offset in global_rect units, both default 0. Positive Y moves the label upward; offsets scale with map zoom.
+
+    Game font sections
+        texture2160 - Legacy high-resolution atlas entry, selected from a screen height of 1440 upward when available.
+        texture_h<height> - Atlas authored for an explicit screen height, e.g. texture_h1440 or texture_h2160.
+        The engine chooses the closest proportional height among explicit entries and the applicable legacy entry (texture800/texture/texture1600/texture2160).
+        The matching atlas .ini must exist under textures; unavailable candidates are skipped. Existing string_table/font_prefix suffix rules also apply.
+
+    ImGui font configuration (textures/fonts/<font-name>.ltx beside its .ttf/.otf, section [font])
+        sizepixels - Font size in pixels; defaults to the engine's ImGui font size.
+        oversampleh, oversamplev - Horizontal/vertical rasterization oversampling, defaults 2 and 1.
+        pixelsnaph - Snap horizontal glyph positions to pixels, default false.
+        glyphextraspacing - Extra glyph spacing (x,y), default 0,0.
+        glyphoffset - Glyph drawing offset (x,y), default 0,0.
+        ellipsischar - Ellipsis character code, default 0.
+        glyphminadvancex, glyphmaxadvancex - Minimum/maximum horizontal glyph advance, defaults 0 and FLT_MAX.
+        rasterizermultiply - Rasterizer brightness multiplier, default 1.0.
+        rasterizerdensity - Rasterization density, default 1.0.
+
+    Material overrides (gamedata/materials)
+        materials.ltx and material_pairs.ltx contain the complete field reference and examples for adding/overriding gamemtl.xr materials.
+        Material-pair sections use material1@material2; breaking_sounds, step_sounds, collide_sounds, collide_particles and collide_marks accept comma-separated resource lists.
+
 	WeaponStatMgun
 		snd_shoot: (string) Firing sound.
 		snd_empty: (string) Firing sound when out of ammo.
@@ -109,6 +187,11 @@
 		
 		
 		userdata of the weapon visual model:
+			[animation_weapon]
+			anm_idle, anm_shot, anm_reload0, anm_reload1, anm_chamber: (comma-separated animation names) Weapon-model animation variants.
+			magazine_hide_bid: (bone) Optional magazine bone to hide during specified animations.
+			magazine_hide_anm: (comma-separated animation names) Animations in which that magazine bone is hidden.
+
 			[mounted_weapon_definition]
 			rotate_x_bone: (bone) Bone for vertical rotation.
 			rotate_y_bone: (bone) Bone for horizontal rotation.
@@ -173,6 +256,20 @@
 			rotate_y_speed: (float) Horizontal rotation speed. degree/s.
 	
 	Car
+		on_before_hit: (<script>.<function>(obj,hit,bone_id)) Return false to cancel a hit after the engine applies immunity and bone scaling.
+		on_before_use: (<script>.<function>(obj,cam_pos,cam_dir,foot_pos)) Return false to reject using the vehicle.
+		use_action_hint: (string) Custom interaction hint.
+
+		userdata [car_definition]:
+			remote_control: (bool) Allow use without attaching the owner's position to the vehicle, default false.
+			camera_bone_def, camera_bone_aim: (bone) Optional idle/aim camera bones.
+			zoom_factor_def, zoom_factor_aim: (float) Idle/aim zoom factors, both default 1.0.
+			viewport_near: (float) Camera near clipping distance; default -1 uses the normal engine value.
+			driving_wheels, steering_wheels, breaking_wheels, exhausts, doors: (bone lists) May be omitted for vehicles without those components. The spelling breaking_wheels is intentional.
+
+		userdata [camera]:
+			cam_first, cam_chase, cam_free: (camera section names) Optional overrides for first-person, chase and free cameras.
+
 		/* Drone subclass*/
 		control_ele_force: (float) Force to move up/down.
 		control_pit_force: (float) Force to move forward/backward.

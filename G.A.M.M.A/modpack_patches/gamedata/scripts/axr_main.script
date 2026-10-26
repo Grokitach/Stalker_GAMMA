@@ -233,37 +233,347 @@ local intercepts = {
 }
 
 -- Kutez: Callback Priority System (https://github.com/themrdemonized/xray-monolith/pull/339)
+--
+-- before_funcs / after_funcs are stored as persistent ordering constraints.
+-- This makes callback ordering independent of script registration order:
+--   callback_set(name, A, { B }, {}) => A runs before B
+--   callback_set(name, A, {}, { B }) => A runs after B
+-- Function constraints may reference callbacks which have not been registered yet;
+-- they become active automatically when those functions are later registered.
+-- References to userdata are scrubbed when that userdata is unregistered.
 local next_index = {}
+local callback_order = {}
+local callback_constraints = {}
+
 for name,v in pairs(intercepts) do
 	next_index[name] = 1
+	callback_order[name] = {}
+	callback_constraints[name] = {}
+end
+
+local function callback_priority_name(priority)
+	if priority == CALLBACKS_PRE then
+		return "PRE"
+	elseif priority == CALLBACKS_NORMAL then
+		return "NORMAL"
+	elseif priority == CALLBACKS_POST then
+		return "POST"
+	end
+	return tostring(priority)
+end
+
+local function callback_valid_priority(priority)
+	return priority == CALLBACKS_PRE
+		or priority == CALLBACKS_NORMAL
+		or priority == CALLBACKS_POST
+end
+
+-- Normalize a single callback or a callback array into a private table.
+-- Keeping a private copy prevents callers from mutating constraints after registration.
+local function callback_normalize_constraint_list(targets, argument_name)
+	if not targets then
+		return {}
+	end
+
+	local target_type = type(targets)
+	if target_type == "function" or target_type == "userdata" then
+		return {targets}
+	end
+
+	if target_type ~= "table" then
+		return nil, string.format("%s must be a function, userdata, table, or nil", argument_name)
+	end
+
+	local result = {}
+	for k, target in pairs(targets) do
+		local value_type = type(target)
+		if value_type ~= "function" and value_type ~= "userdata" then
+			return nil, string.format("%s contains unsupported value of type %s", argument_name, value_type)
+		end
+		result[k] = target
+	end
+	return result
+end
+
+-- Remove references to a callback identity from a constraint list.
+local function callback_remove_constraint_target(targets, target)
+	local remove_keys = {}
+	for k, value in pairs(targets) do
+		if value == target then
+			remove_keys[#remove_keys + 1] = k
+		end
+	end
+	for i = 1, #remove_keys do
+		targets[remove_keys[i]] = nil
+	end
+end
+
+-- Recompute numeric priorities used by make_callback().
+-- PRE, NORMAL and POST are hard tiers. Explicit before/after constraints can
+-- order callbacks inside a tier, while compatible cross-tier constraints are
+-- already implied by the tier order. Contradictory cross-tier constraints and
+-- dependency cycles are rejected instead of being silently broken.
+--
+-- This function is transactional: callback priorities are only written after
+-- the complete proposed ordering has been validated successfully.
+local function callback_reorder(name)
+	local callbacks = intercepts[name]
+	if not callbacks then
+		return true
+	end
+
+	local order = callback_order[name]
+	local constraints = callback_constraints[name]
+	local edges = {}
+	local indegree = {}
+	local tier_members = {
+		[CALLBACKS_PRE] = {},
+		[CALLBACKS_NORMAL] = {},
+		[CALLBACKS_POST] = {}
+	}
+
+	for func_or_userdata in pairs(callbacks) do
+		local rule = constraints[func_or_userdata]
+		if not rule then
+		    rule = {
+		        priority = CALLBACKS_NORMAL,
+		        before = {},
+		        after = {}
+		    }
+		    constraints[func_or_userdata] = rule
+		else
+		    if not rule.priority then
+		        rule.priority = CALLBACKS_NORMAL
+		    end
+
+		    if not rule.before then
+		        rule.before = {}
+		    end
+
+		    if not rule.after then
+		        rule.after = {}
+		    end
+		end
+		if not callback_valid_priority(rule.priority) then
+			return false, string.format("callback has invalid tier %s", tostring(rule.priority))
+		end
+
+		if not order[func_or_userdata] then
+			order[func_or_userdata] = next_index[name]
+			next_index[name] = next_index[name] + 1
+		end
+
+		edges[func_or_userdata] = {}
+		indegree[func_or_userdata] = 0
+		tier_members[rule.priority][func_or_userdata] = true
+	end
+
+	local function add_same_tier_edge(from_func, to_func)
+		if from_func == to_func then
+			return false, string.format("callback depends on itself")
+		end
+		if not edges[from_func][to_func] then
+			edges[from_func][to_func] = true
+			indegree[to_func] = indegree[to_func] + 1
+		end
+		return true
+	end
+
+	-- Validate every active constraint and build edges only for callbacks in the
+	-- same tier. Missing targets remain valid forward references and become active
+	-- automatically if that exact function is registered later. References to
+	-- unregistered userdata are removed by callback_unset().
+	for func_or_userdata, rule in pairs(constraints) do
+		if callbacks[func_or_userdata] ~= nil then
+			for k, target in pairs(rule.before) do
+				if callbacks[target] ~= nil then
+					local target_rule = constraints[target]
+					if not target_rule then
+						return false, string.format("target callback has no constraint metadata")
+					end
+
+					if rule.priority > target_rule.priority then
+						return false, string.format(
+							"%s callback cannot run before %s callback",
+							callback_priority_name(rule.priority),
+							callback_priority_name(target_rule.priority)
+						)
+					elseif rule.priority == target_rule.priority then
+						local ok, err = add_same_tier_edge(func_or_userdata, target)
+						if not ok then
+							return false, err
+						end
+					end
+				end
+			end
+
+			for k, target in pairs(rule.after) do
+				if callbacks[target] ~= nil then
+					local target_rule = constraints[target]
+					if not target_rule then
+						return false, string.format("target callback has no constraint metadata")
+					end
+
+					if rule.priority < target_rule.priority then
+						return false, string.format(
+							"%s callback cannot run after %s callback",
+							callback_priority_name(rule.priority),
+							callback_priority_name(target_rule.priority)
+						)
+					elseif rule.priority == target_rule.priority then
+						local ok, err = add_same_tier_edge(target, func_or_userdata)
+						if not ok then
+							return false, err
+						end
+					end
+				end
+			end
+		end
+	end
+
+	local proposed_order = {}
+	local tiers = {CALLBACKS_PRE, CALLBACKS_NORMAL, CALLBACKS_POST}
+
+	-- Stable topological sort each hard tier independently. When several callbacks
+	-- are available, preserve their original registration order.
+	for i = 1, #tiers do
+		local tier = tiers[i]
+		local remaining = {}
+		local remaining_count = 0
+
+		for func_or_userdata in pairs(tier_members[tier]) do
+			remaining[func_or_userdata] = true
+			remaining_count = remaining_count + 1
+		end
+
+		while remaining_count > 0 do
+			local selected = nil
+			local selected_order = nil
+
+			for func_or_userdata, exists in pairs(remaining) do
+				if exists and indegree[func_or_userdata] == 0 then
+					local registration_order = order[func_or_userdata] or 0
+					if not selected or registration_order < selected_order then
+						selected = func_or_userdata
+						selected_order = registration_order
+					end
+				end
+			end
+
+			if not selected then
+				return false, string.format(
+					"dependency cycle detected in callback %s (%s tier)",
+					name, callback_priority_name(tier)
+				)
+			end
+
+			proposed_order[#proposed_order + 1] = selected
+			remaining[selected] = nil
+			remaining_count = remaining_count - 1
+
+			for target in pairs(edges[selected]) do
+				if remaining[target] then
+					indegree[target] = indegree[target] - 1
+				end
+			end
+		end
+	end
+
+	-- Commit only after the entire graph has been proven valid.
+	for priority = 1, #proposed_order do
+		callbacks[proposed_order[priority]] = priority
+	end
+	return true
 end
 
 -----------------------------------------------------------
 -- Global Callback Register
 -- param 1 - name as type<string> (ie. intercepts[name])
 -- param 2 - function to execute as type<function> or userdata with name as function
+-- param 3 - optional callback/array this callback must run before
+-- param 4 - optional callback/array this callback must run after
+-- param 5 - optional tier: CALLBACKS_PRE / CALLBACKS_NORMAL / CALLBACKS_POST
 -----------------------------------------------------------
 function callback_add(name)
 	if (not intercepts[name]) then
 		intercepts[name] = {}
 		next_index[name] = 1
+		callback_order[name] = {}
+		callback_constraints[name] = {}
 	else
 		printf("![axr_main callback_add] callback %s already exists!",name)
 		callstack()
 	end
 end
 
-function callback_set(name,func_or_userdata)
-	if (func_or_userdata == nil) then 
+function callback_set(name, func_or_userdata, before_funcs, after_funcs, priority)
+	if not func_or_userdata then 
 		printf("![axr_main callback_set] trying to set callback %s to nil function!",name)
 		callstack()
 		return
 	end
-	if (intercepts[name]) then
-		intercepts[name][func_or_userdata] = next_index[name]
-		next_index[name] = next_index[name] + 1
-	else
+
+	if not intercepts[name] then
 		printf("![axr_main callback_set] callback %s doesn't exist!",name)
+		callstack()
+		return
+	end
+
+	local normalized_before, before_error = callback_normalize_constraint_list(before_funcs, "before_funcs")
+	if not normalized_before then
+		assert(false, string.format("![axr_main callback_set] rejected callback dependency for %s: %s", name, before_error))
+		callstack()
+	end
+
+	local normalized_after, after_error = callback_normalize_constraint_list(after_funcs, "after_funcs")
+	if not normalized_after then
+		assert(false, string.format("![axr_main callback_set] rejected callback dependency for %s: %s", name, after_error))
+		callstack()
+	end
+
+	if not priority then
+		priority = CALLBACKS_NORMAL
+	end
+	if not callback_valid_priority(priority) then
+		assert(false, string.format("![axr_main callback_set] rejected callback dependency for %s: invalid callback tier %s", name, tostring(priority)))
+		callstack()
+	end
+
+	-- Registration order is stable: re-registering the same function/userdata
+	-- replaces its constraints/tier without moving its fallback position.
+	local old_next_index = next_index[name]
+	local old_order = callback_order[name][func_or_userdata]
+	local old_constraint = callback_constraints[name][func_or_userdata]
+	local old_priority = intercepts[name][func_or_userdata]
+	local was_registered = old_priority ~= nil
+
+	if not old_order then
+		callback_order[name][func_or_userdata] = next_index[name]
+		next_index[name] = next_index[name] + 1
+	end
+
+	callback_constraints[name][func_or_userdata] = {
+		priority = priority,
+		before = normalized_before,
+		after = normalized_after
+	}
+
+	-- New callbacks need to be visible to callback_reorder(). Existing callbacks
+	-- keep their old numeric priority until the proposed graph is validated.
+	if not was_registered then
+		intercepts[name][func_or_userdata] = callback_order[name][func_or_userdata]
+	end
+
+	local ok, reorder_error = callback_reorder(name)
+	if not ok then
+		-- Roll back the attempted registration completely. callback_reorder() does
+		-- not commit partial priorities, so the previous valid order is preserved.
+		next_index[name] = old_next_index
+		callback_order[name][func_or_userdata] = old_order
+		callback_constraints[name][func_or_userdata] = old_constraint
+		intercepts[name][func_or_userdata] = old_priority
+
+		printf("![axr_main callback_set] rejected callback for %s: %s", tostring(func_or_userdata), name, reorder_error)
 		callstack()
 	end
 end
@@ -271,6 +581,25 @@ end
 function callback_unset(name,func_or_userdata)
 	if (intercepts[name]) then
 		intercepts[name][func_or_userdata] = nil
+		callback_order[name][func_or_userdata] = nil
+		callback_constraints[name][func_or_userdata] = nil
+
+		-- Functions may be intentionally referenced while unregistered so they can
+		-- be registered again later and reactivate forward constraints. LuaBind
+		-- userdata is different: remove references to it so stale binder instances
+		-- are not kept alive solely by another callback's constraint table.
+		if type(func_or_userdata) == "userdata" then
+			for other_callback, rule in pairs(callback_constraints[name]) do
+				callback_remove_constraint_target(rule.before, func_or_userdata)
+				callback_remove_constraint_target(rule.after, func_or_userdata)
+			end
+		end
+
+		local ok, reorder_error = callback_reorder(name)
+		if not ok then
+			printf("![axr_main callback_unset] failed to reorder callback %s after unregistering %s: %s", name, tostring(func_or_userdata), reorder_error)
+			callstack()
+		end
 	else
 		printf("![axr_main callback_unset] callback %s doesn't exist!",name)
 		callstack()

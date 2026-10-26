@@ -1,0 +1,1274 @@
+-- Shader bus monitor in the ImGui debug menu
+-- Debug > Shader bus opens a lane panel and a HUD table drawn over the game
+
+local tonumber, type, pcall, next, pairs = tonumber, type, pcall, next, pairs
+local math_floor, math_ceil, math_huge, math_max, math_min = math.floor, math.ceil, math.huge, math.max, math.min
+local string_format, string_find, string_lower, string_match = string.format, string.find, string.lower, string.match
+local string_gsub, string_sub, string_byte, string_rep = string.gsub, string.sub, string.byte, string.rep
+local table_concat, table_sort = table.concat, table.sort
+local bit_bor = bit.bor
+
+local SECTION     = "imgui_shader_bus"
+local RELIST_MS   = 2000
+local TEXT_MS     = 100
+local HOT_MS      = 500
+local FADE_STEPS  = 5
+local HUD_ROWS    = 40
+local SAMPLE_LANES = 64
+local DETAIL_ROWS = 8
+local ID_CHARS    = 24
+local OWNER_CHARS = 16
+local TEX_CHARS   = 40
+local INPUT_CAP   = 16
+local LEGACY      = "engine legacy"
+local NAN         = 0 / 0
+
+local HEAD  = { "pin", "lane", "owner", "kind", "x", "y", "z", "w", "age", "chg", "wr", "bnd" }
+local CHARS = { 2, ID_CHARS, OWNER_CHARS, 10, 11, 11, 11, 11, 6, 6, 6, 6 }
+local COLS  = #HEAD
+local width = {}
+
+local SORTS      = { "id", "owner", "last change", "changes" }
+local OWNER_HEAD = { "all", "orphan", "legacy" }
+local READ_HEAD  = { "read", "unread" }
+
+local bus = { ok = false, ver = 0, declared = false, stats = false, pending = false,
+	uint = false, row = false, texture = false, objects = false, target = false, writers = false, warned = false }
+
+local lanes, index, owners = {}, {}, {}
+local hud_rows, panel_rows = {}, {}
+local detail, detail_n = {}, 0
+-- the selected lane's rows, read at 10 Hz for the range the rows list drew last
+local row_txt, row_n, row_from, row_to, rows_h = {}, 0, 0, DETAIL_ROWS - 1, 0
+local declared_n, live_n = 0, 0
+local next_list, next_text, last_tick = 0, 0, -1
+local text_now, slice = 0, 0
+local panel_from, panel_to, row_h = 1, 0, 0
+local by_id, by_owner, by_change, unchanged = {}, {}, {}, {}
+local order_dirty, change_sort, next_sort = true, nil, 0
+local snap_frame = 0
+
+local open = { panel = false, hud = false }
+local view = { owner = "all", sort = "id", filter = "", live_only = false, layout = "table",
+	frozen = false, diff = false, diff_at = 0, matrix = false, pins = {} }
+
+local sel
+local force_vec = vector4():set(0, 0, 0, 0)
+local force_txt = { "0", "0", "0", "0" }
+
+local ZERO       = vector2():set(0, 0)
+local CORNER     = vector2():set(1, 0)
+local HUD_POS    = vector2():set(15, 15)
+local PANEL_SIZE = vector2():set(900, 560)
+local TABLE_SIZE = vector2():set(0, 0)
+local ROWS_SIZE  = vector2():set(0, 0)
+
+local CLR = {}
+local FADE = {}
+local OWNER_CLR = {}
+local owner_clr = {}
+local HUD_FLAGS, HUD_TABLE, PANEL_TABLE, DETAIL_TABLE, ROWS_TABLE
+
+local function colors()
+	if CLR.normal then return end
+	local function rgba(r, g, b, a) return fcolor():set(r / 255, g / 255, b / 255, a / 255) end
+	local function blend(a, b, k) return a + (b - a) * k end
+	local function fade_ramp(r, g, b, a)
+		local t = {}
+		for i = 1, FADE_STEPS do
+			local k = (i - 1) / (FADE_STEPS - 1)
+			t[i] = rgba(blend(255, r, k), blend(255, g, k), blend(90, b, k), a)
+		end
+		return t
+	end
+
+	CLR.normal = rgba(215, 215, 215, 255)
+	CLR.warn   = rgba(235, 165, 60, 235)
+	CLR.dim    = rgba(140, 140, 140, 175)
+	CLR.alarm  = rgba(240, 80, 70, 240)
+
+	FADE["registered"] = fade_ramp(215, 215, 215, 255)
+	FADE["declared"]   = fade_ramp(235, 165, 60, 235)
+	FADE["legacy"]     = fade_ramp(140, 140, 140, 175)
+
+	OWNER_CLR = {
+		rgba(150, 200, 150, 230),
+		rgba(200, 175, 130, 230),
+		rgba(160, 185, 225, 230),
+		rgba(210, 155, 195, 230),
+		rgba(190, 205, 130, 230),
+		rgba(140, 200, 200, 230),
+	}
+
+	HUD_FLAGS = bit_bor(ImGuiWindowFlags.NoDecoration, ImGuiWindowFlags.NoInputs, ImGuiWindowFlags.AlwaysAutoResize,
+		ImGuiWindowFlags.NoSavedSettings, ImGuiWindowFlags.NoFocusOnAppearing)
+	HUD_TABLE = bit_bor(ImGuiTableFlags.SizingFixedFit, ImGuiTableFlags.NoClip, ImGuiTableFlags.NoSavedSettings)
+	PANEL_TABLE = bit_bor(ImGuiTableFlags.SizingFixedFit, ImGuiTableFlags.NoClip, ImGuiTableFlags.ScrollX,
+		ImGuiTableFlags.ScrollY, ImGuiTableFlags.RowBg, ImGuiTableFlags.Resizable, ImGuiTableFlags.BordersInnerV)
+	DETAIL_TABLE = bit_bor(ImGuiTableFlags.SizingFixedFit, ImGuiTableFlags.NoSavedSettings)
+	ROWS_TABLE = bit_bor(ImGuiTableFlags.SizingFixedFit, ImGuiTableFlags.NoSavedSettings, ImGuiTableFlags.ScrollY)
+end
+
+-- column widths from the font once a frame is open, and a first-use panel wide enough for them
+-- per column cell padding and border at the default style, then window padding and the scrollbar
+local COL_PAD, PANEL_CHROME = 9, 40
+local function widths()
+	if width[1] then return end
+	local sum = 0
+	for c = 1, COLS do
+		width[c] = ImGui.CalcTextSize(string_rep("0", CHARS[c]), false, -1).x
+	end
+	width[1] = ImGui.GetFrameHeight()
+	for c = 1, COLS do sum = sum + width[c] end
+	PANEL_SIZE:set(sum + COLS * COL_PAD + PANEL_CHROME, PANEL_SIZE.y)
+end
+
+-- text widgets read their string as a printf format
+local function esc(s)
+	return (string_gsub(s, "%%", "%%%%"))
+end
+
+local function owner_color(owner, fallback)
+	if owner == "" then return fallback end
+	local c = owner_clr[owner]
+	if c then return c end
+	local h = 0
+	for i = 1, #owner do
+		h = (h * 31 + string_byte(owner, i)) % 65536
+	end
+	c = OWNER_CLR[h % #OWNER_CLR + 1]
+	owner_clr[owner] = c
+	return c
+end
+
+local function bad(v)
+	return v ~= v or v == math_huge or v == -math_huge
+end
+
+local function differs(a, b)
+	if a ~= a and b ~= b then return false end
+	return a ~= b
+end
+
+local function cell_text(v, uint)
+	if v ~= v then return "nan" end
+	if v == math_huge then return "inf" end
+	if v == -math_huge then return "-inf" end
+	return string_format(uint and "%.0f" or "%.3f", v)
+end
+
+local function delta_text(v, uint)
+	if bad(v) then return cell_text(v) end
+	return string_format(uint and "%+.0f" or "%+.3f", v)
+end
+
+local function vec_text(x, y, z, w, uint)
+	if not x then return "n/a" end
+	return string_format("(%s, %s, %s, %s)", cell_text(x, uint), cell_text(y, uint), cell_text(z, uint), cell_text(w, uint))
+end
+
+-- a uint as eight hex digits in two halves, so the format never needs more than 16 bits
+local function hex_text(v)
+	if bad(v) or v < 0 then return cell_text(v) end
+	return string_format("0x%04X%04X", math_floor(v / 65536) % 65536, v % 65536)
+end
+
+-- uint values in hex and then in decimal
+local function detail_vec(x, y, z, w, uint)
+	if not uint or not x then return vec_text(x, y, z, w, uint) end
+	return string_format("(%s, %s, %s, %s)  %s", hex_text(x), hex_text(y), hex_text(z), hex_text(w),
+		vec_text(x, y, z, w, true))
+end
+
+local function detect_bus()
+	if not shader_bus then
+		if not bus.warned then
+			bus.warned = true
+			printf("[SHADER-BUS] monitor off, this exe has no shader bus")
+		end
+		return
+	end
+
+	bus.ok = true
+	bus.ver = type(shader_bus.version) == "function" and shader_bus.version() or 1
+	bus.stats = type(shader_bus.stats) == "function"
+	bus.pending = type(shader_bus.get_pending) == "function"
+	bus.declared = bus.stats
+	bus.uint = type(shader_bus.get_uint) == "function"
+	bus.row = type(shader_bus.get_row) == "function"
+	bus.objects = type(shader_bus.set_object) == "function"
+	bus.texture = type(shader_bus.get_texture) == "function"
+	bus.target = type(shader_bus.get_object) == "function" and level ~= nil and type(level.get_target_obj) == "function"
+	bus.writers = type(shader_bus.writers) == "function"
+end
+
+local function new_lane(id, frame)
+	return {
+		id = id, listed = frame, owner = "", description = "", source = "", writer = "", state = "registered",
+		legacy = false, engine = false, console = false, kind = "float", declared_rows = 0, texture = "", kinds = "", mixed = false,
+		shared = false, writers = 0,
+		x = 0, y = 0, z = 0, w = 0, samples = 0, changes = 0, writes = 0, last_change = 0, bound_frame = 0,
+		saw_bad = false, seen = false, min = { 0, 0, 0, 0 }, max = { 0, 0, 0, 0 },
+		pin_id = "##pin_" .. id, txt = {}, bad = {}, tip = "",
+	}
+end
+
+local function fetch()
+	if bus.declared then
+		local ok, rows = pcall(shader_bus.list, true)
+		if ok and rows then return rows end
+		bus.declared = false
+	end
+	return shader_bus.list()
+end
+
+local function relist()
+	local rows = fetch()
+	local seen_owner = {}
+	local n, d = 0, 0
+	local frame = device().frame
+	local before = #lanes
+
+	for i = 1, #rows do
+		local row = rows[i]
+		if type(row.id) == "string" then
+			local lane = index[row.id]
+			if not lane then
+				lane = new_lane(row.id, frame)
+				index[row.id] = lane
+				order_dirty = true
+			end
+
+			local owner = row.owner or ""
+			if lane.owner ~= owner then order_dirty = true end
+			lane.owner = owner
+			lane.description = row.description or ""
+			lane.source = row.source or ""
+			lane.writer = row.writer or ""
+			lane.state = row.state or (lane.owner == LEGACY and "legacy" or "registered")
+			lane.legacy = lane.state == "legacy"
+			lane.engine = lane.owner == "engine"
+			lane.console = lane.engine and string_sub(lane.id, 1, 5) == "cvar_"
+			lane.forced = row.forced
+			lane.rows = row.rows
+			lane.declared_rows = row.declared_rows or 0
+			lane.kind = bus.uint and row.kind == "uint" and "uint" or "float"
+			lane.objects = bus.objects and string_sub(lane.id, 1, 4) == "obj_" and row.objects or nil
+			lane.texture = bus.texture and row.texture or ""
+			lane.shared = bus.writers and row.shared == true
+			lane.writers = row.writers or 0
+
+			local dk = row.declared_kinds
+			if type(dk) == "table" then
+				lane.kinds = table_concat(dk, " ")
+				lane.mixed = #dk > 1 or (#dk == 1 and dk[1] ~= lane.kind)
+			end
+
+			local written = lane.legacy and lane.writer or lane.source
+			lane.tip = lane.description ~= "" and (lane.description .. "\n" .. written) or written
+
+			if lane.state == "declared" then
+				d = d + 1
+			elseif not lane.legacy and lane.owner ~= "" then
+				seen_owner[lane.owner] = true
+			end
+
+			n = n + 1
+			if lanes[n] ~= lane then order_dirty = true end
+			lanes[n] = lane
+		end
+	end
+
+	for i = n + 1, #lanes do
+		lanes[i] = nil
+	end
+	if n ~= before then order_dirty = true end
+
+	declared_n = d
+	owners = {}
+	for name in pairs(seen_owner) do
+		owners[#owners + 1] = name
+	end
+	table_sort(owners)
+end
+
+-- CCC_Vector4 reports itself as "(x, y, z, w)"
+local function console_vec4(id)
+	local s = get_console():get_string(id)
+	if type(s) ~= "string" then return NAN, NAN, NAN, NAN end
+	local a, b, c, d = string_match(s, "%(%s*([^,]+),%s*([^,]+),%s*([^,]+),%s*([^%)]+)%)")
+	if not a then return NAN, NAN, NAN, NAN end
+	return tonumber(a) or NAN, tonumber(b) or NAN, tonumber(c) or NAN, tonumber(d) or NAN
+end
+
+local function track(lane, i, v)
+	if bad(v) then
+		lane.saw_bad = true
+		return
+	end
+	if not lane.seen then
+		lane.min[i] = v
+		lane.max[i] = v
+		return
+	end
+	if v < lane.min[i] then lane.min[i] = v end
+	if v > lane.max[i] then lane.max[i] = v end
+end
+
+local function sample(lane, now, sparse)
+	local ok, x, y, z, w
+	local since = sparse and (lane.seen and lane.last_change or lane.listed)
+	if lane.legacy then
+		x, y, z, w = console_vec4(lane.id)
+	else
+		if lane.kind == "uint" then
+			ok, x, y, z, w = shader_bus.get_uint(lane.id)
+		else
+			ok, x, y, z, w = shader_bus.get(lane.id)
+		end
+		if not ok then x, y, z, w = 0, 0, 0, 0 end
+	end
+
+	track(lane, 1, x)
+	track(lane, 2, y)
+	track(lane, 3, z)
+	track(lane, 4, w)
+
+	if lane.seen and (differs(x, lane.x) or differs(y, lane.y) or differs(z, lane.z) or differs(w, lane.w)) then
+		lane.hot = now
+		lane.changed_at = now
+		lane.samples = lane.samples + 1
+	end
+
+	lane.x, lane.y, lane.z, lane.w = x, y, z, w
+	lane.seen = true
+
+	if bus.stats then
+		local found, changes, last_change, bound_frame, writes = shader_bus.stats(lane.id)
+		if found then
+			-- a slice read still sees a change the engine made between reads
+			if since and last_change > since then
+				lane.hot = now
+				lane.changed_at = now
+			end
+			lane.changes = changes
+			lane.last_change = last_change
+			lane.bound_frame = bound_frame
+			lane.writes = writes or 0
+		end
+	end
+
+	-- a lane the snapshot could not read snaps at its next read
+	if lane.snap == false then
+		lane.snap = { x = x, y = y, z = z, w = w }
+	end
+end
+
+local function lane_moved(lane)
+	local s = lane.snap
+	if s == false then return false end
+	if not s then return true end
+	-- past the budget a bus lane moved if the engine changed it after the snapshot
+	if bus.stats and not lane.legacy and #lanes > SAMPLE_LANES then return lane.last_change > snap_frame end
+	return differs(lane.x, s.x) or differs(lane.y, s.y) or differs(lane.z, s.z) or differs(lane.w, s.w)
+end
+
+local function passes(lane, pinned_only, skip_diff)
+	if pinned_only then
+		return view.pins[lane.id] == true
+	end
+
+	local f = view.owner
+	if f == "orphan" then
+		if lane.state ~= "declared" then return false end
+	elseif f == "read" then
+		if lane.bound_frame == 0 then return false end
+	elseif f == "unread" then
+		if lane.legacy or lane.bound_frame > 0 then return false end
+	elseif f == "legacy" then
+		if not lane.legacy then return false end
+	elseif f ~= "all" then
+		if lane.owner ~= f then return false end
+	end
+
+	if view.live_only and not lane.changed_at then return false end
+
+	if view.filter ~= "" then
+		local needle = string_lower(view.filter)
+		if not string_find(string_lower(lane.id), needle, 1, true)
+			and not string_find(string_lower(lane.owner), needle, 1, true) then
+			return false
+		end
+	end
+
+	if view.diff and not skip_diff and not lane_moved(lane) then return false end
+	return true
+end
+
+local sorters = {
+	["id"] = function(a, b) return a.id < b.id end,
+	["owner"] = function(a, b)
+		if a.owner == b.owner then return a.id < b.id end
+		return a.owner < b.owner
+	end,
+	["last change"] = function(a, b)
+		local ca, cb = a.changed_at or -1, b.changed_at or -1
+		if ca == cb then return a.id < b.id end
+		return ca > cb
+	end,
+	["changes"] = function(a, b)
+		local ca = bus.stats and a.changes or a.samples
+		local cb = bus.stats and b.changes or b.samples
+		if ca == cb then return a.id < b.id end
+		return ca > cb
+	end,
+}
+
+local function presort(order, sorter)
+	for i = 1, #lanes do
+		order[i] = lanes[i]
+	end
+	for i = #lanes + 1, #order do
+		order[i] = nil
+	end
+	table_sort(order, sorter)
+end
+
+-- every lane in a change sort, lanes that never changed go last in id order unsorted
+local function sort_changes(sort)
+	local n, rest = 0, 0
+	for i = 1, #by_id do
+		local lane = by_id[i]
+		if sort == "last change" and not lane.changed_at then
+			rest = rest + 1
+			unchanged[rest] = lane
+		else
+			n = n + 1
+			by_change[n] = lane
+		end
+	end
+	for i = n + 1, #by_change do
+		by_change[i] = nil
+	end
+	table_sort(by_change, sorters[sort])
+	for i = 1, rest do
+		by_change[n + i] = unchanged[i]
+	end
+end
+
+-- past the budget rows filter presorted orders, id and owner sorted again once the lanes change
+-- and the change sorts once per RELIST_MS, so a row keeps its place between those sorts
+local function ordered_rows(list, pinned_only, skip_diff, sort)
+	if order_dirty then
+		presort(by_id, sorters["id"])
+		presort(by_owner, sorters["owner"])
+		order_dirty = false
+		change_sort = nil
+	end
+
+	local order = by_id
+	if sort == "owner" then
+		order = by_owner
+	elseif sort ~= "id" then
+		if sort ~= change_sort or text_now >= next_sort then
+			change_sort = sort
+			-- halfway between relists while the lane list stays the same, a lane change sorts at once
+			next_sort = next_list + RELIST_MS / 2
+			sort_changes(sort)
+		end
+		order = by_change
+	end
+
+	local n = 0
+	for i = 1, #order do
+		local lane = order[i]
+		if passes(lane, pinned_only, skip_diff) then
+			n = n + 1
+			list[n] = lane
+		end
+	end
+	for i = n + 1, #list do
+		list[i] = nil
+	end
+end
+
+local function rows(list, pinned_only, skip_diff)
+	pinned_only = pinned_only and next(view.pins) ~= nil
+	local sort = sorters[view.sort] and view.sort or "id"
+	if #lanes > SAMPLE_LANES then
+		ordered_rows(list, pinned_only, skip_diff, sort)
+		return
+	end
+
+	local n = 0
+	for i = 1, #lanes do
+		local lane = lanes[i]
+		if passes(lane, pinned_only, skip_diff) then
+			n = n + 1
+			list[n] = lane
+		end
+	end
+	for i = n + 1, #list do
+		list[i] = nil
+	end
+	table_sort(list, sorters[view.sort] or sorters["id"])
+end
+
+local function engine_counts(lane)
+	return bus.stats and not lane.legacy
+end
+
+local function change_count(lane)
+	return engine_counts(lane) and lane.changes or lane.samples
+end
+
+local function age_text(lane, now)
+	if not lane.changed_at then return "static" end
+	local ms = now - lane.changed_at
+	if ms < 1000 then return string_format("%dms", ms) end
+	local s = ms / 1000
+	if s < 100 then return string_format("%.1fs", s) end
+	return string_format("%ds", math_floor(s))
+end
+
+local function bound_text(lane)
+	if not bus.stats or lane.legacy then return "" end
+	if lane.bound_frame == 0 then return "never" end
+	local ago = device().frame - lane.bound_frame
+	if ago > 99999 then return "stale" end
+	return string_format("%d", ago)
+end
+
+local function kind_text(lane)
+	if lane.legacy then return "cvar" end
+	local t = lane.kind == "uint" and "u" or "f"
+	if lane.declared_rows > 1 then t = string_format("%s[%d]", t, lane.declared_rows) end
+	if lane.objects then t = string_format("%s obj %d", t, lane.objects) end
+	if lane.texture ~= "" then t = t .. " tex" end
+	if lane.console then t = t .. " con"
+	elseif lane.engine then t = t .. " eng" end
+	if lane.forced then t = t .. " frc" end
+	if lane.mixed then t = t .. " mix" end
+	return t
+end
+
+local function row_color(lane, now)
+	local base = lane.state == "declared" and CLR.warn or lane.legacy and CLR.dim or CLR.normal
+	local hot = lane.hot
+	if not hot then return base end
+	local age = now - hot
+	if age < 0 or age >= HOT_MS then return base end
+	local step = math_floor(age / HOT_MS * FADE_STEPS) + 1
+	if step > FADE_STEPS then step = FADE_STEPS end
+	return (FADE[lane.state] or FADE["registered"])[step]
+end
+
+-- cell strings for TextColored, so every free text is escaped
+local function texts(lane, now)
+	if lane.text_at == now then return end
+	lane.text_at = now
+
+	local t = lane.txt
+	local uint = lane.kind == "uint"
+	local moved = view.diff and lane_moved(lane)
+	local id = string_sub(lane.id, 1, ID_CHARS) .. (lane.saw_bad and "!" or "")
+
+	t.raw = (moved and ">" or "") .. id
+	t.lane = esc(id)
+	t.owner = esc(string_sub(lane.owner, 1, OWNER_CHARS))
+	t.kind = kind_text(lane)
+
+	local x, y, z, w = lane.x, lane.y, lane.z, lane.w
+	local s = view.diff and lane.snap
+	if s then
+		x, y, z, w = x - s.x, y - s.y, z - s.z, w - s.w
+	end
+	local fmt = s and delta_text or uint and hex_text or cell_text
+	t[1], t[2], t[3], t[4] = fmt(x, uint), fmt(y, uint), fmt(z, uint), fmt(w, uint)
+	lane.bad[1], lane.bad[2], lane.bad[3], lane.bad[4] = bad(x), bad(y), bad(z), bad(w)
+
+	if lane.texture ~= "" then
+		local name = shader_bus.get_texture(lane.id) or ""
+		lane.texture = name
+		t[1], t[2], t[3], t[4] = esc(string_sub(name, -TEX_CHARS)), "", "", ""
+	end
+
+	t.age = age_text(lane, now)
+	t.chg = string_format("%d", change_count(lane))
+	t.wr = engine_counts(lane) and string_format("%d", lane.writes) or ""
+	t.bnd = bound_text(lane)
+
+	lane.clr = row_color(lane, now)
+	lane.oclr = owner_color(lane.owner, lane.clr)
+end
+
+local function add_detail(label, value)
+	detail_n = detail_n + 1
+	local d = detail[detail_n]
+	if not d then
+		d = {}
+		detail[detail_n] = d
+	end
+	d[1], d[2] = esc(label), value
+end
+
+-- a * after each component where that writer has the largest value
+local function writer_cell(v, top)
+	return v == top and cell_text(v) .. "*" or cell_text(v)
+end
+
+-- one detail row per token of a shared lane that set a value
+local function add_writers(label, list)
+	add_detail(label, string_format("%d, * marks the largest", #list))
+	local tx, ty, tz, tw = -math_huge, -math_huge, -math_huge, -math_huge
+	for i = 1, #list do
+		local r = list[i]
+		tx, ty, tz, tw = math_max(tx, r.x), math_max(ty, r.y), math_max(tz, r.z), math_max(tw, r.w)
+	end
+	for i = 1, #list do
+		local r = list[i]
+		add_detail("  " .. r.owner, string_format("(%s, %s, %s, %s)", writer_cell(r.x, tx), writer_cell(r.y, ty),
+			writer_cell(r.z, tz), writer_cell(r.w, tw)))
+	end
+end
+
+local function build_detail(now)
+	detail_n = 0
+	local lane = sel and index[sel]
+	if not lane then return end
+
+	local uint = lane.kind == "uint"
+	local mn, mx = lane.min, lane.max
+
+	add_detail("id", lane.id)
+	add_detail("owner", lane.owner)
+	add_detail("description", lane.description)
+	if lane.legacy then
+		add_detail("written by", lane.writer ~= "" and lane.writer or "none this session")
+	else
+		add_detail("source", lane.source ~= "" and lane.source or "n/a")
+	end
+	add_detail("state", lane.state)
+	add_detail("kind", lane.kinds ~= "" and string_format("%s, declared %s", lane.kind, lane.kinds) or lane.kind)
+
+	row_n = 0
+	if lane.rows and (lane.rows > 0 or lane.declared_rows > 1) then
+		add_detail("rows", string_format("%d set, %d declared", lane.rows, lane.declared_rows))
+		if bus.row and lane.declared_rows > 1 then
+			row_n = lane.declared_rows
+			for i = row_from, math_min(row_to, row_n - 1) do
+				local ok, x, y, z, w = shader_bus.get_row(lane.id, i)
+				row_txt[i] = ok and detail_vec(x, y, z, w, uint) or "n/a"
+			end
+		end
+	end
+	local target
+	if lane.objects then
+		add_detail("objects", string_format("%d", lane.objects))
+		if bus.target then
+			target = level.present() and level.get_target_obj() or nil
+			if target then
+				local ok, x, y, z, w = shader_bus.get_object(lane.id, target)
+				add_detail("target", string_format("%s, id %d", target:name(), target:id()))
+				add_detail("target value", ok and detail_vec(x, y, z, w, uint) or "n/a")
+			else
+				add_detail("target", "no target")
+			end
+		end
+	end
+	if lane.texture ~= "" then add_detail("texture", lane.texture) end
+	if lane.forced ~= nil then add_detail("forced", lane.forced and "yes" or "no") end
+
+	add_detail("bound", detail_vec(lane.x, lane.y, lane.z, lane.w, uint))
+	if bus.pending and not lane.legacy then
+		local ok, x, y, z, w = shader_bus.get_pending(lane.id)
+		add_detail("pending", ok and detail_vec(x, y, z, w, uint) or "n/a")
+	end
+	if lane.shared then
+		add_detail("tokens", string_format("%d", lane.writers))
+		add_writers("writers", shader_bus.writers(lane.id))
+		if target then add_writers("on target", shader_bus.writers(lane.id, target)) end
+	end
+	add_detail("session min", detail_vec(mn[1], mn[2], mn[3], mn[4], uint))
+	add_detail("session max", detail_vec(mx[1], mx[2], mx[3], mx[4], uint))
+	add_detail("changes", string_format("%d %s%s", change_count(lane), engine_counts(lane) and "engine" or "sampled",
+		engine_counts(lane) and string_format("   writes %d", lane.writes) or ""))
+	add_detail("last change", lane.changed_at and string_format("%.1f s ago", (now - lane.changed_at) / 1000) or "never")
+	add_detail("frames", bus.stats and string_format("change %d, bound %d", lane.last_change, lane.bound_frame) or "n/a")
+	add_detail("saw nan", lane.saw_bad and "yes" or "no")
+	add_detail("pinned", view.pins[lane.id] and "yes" or "no")
+end
+
+-- lists, cells and detail rebuild at 10 Hz
+local function refresh(now)
+	if now < next_text then return end
+	next_text = now + TEXT_MS
+	text_now = now
+
+	live_n = 0
+	for i = 1, #lanes do
+		if lanes[i].changed_at then live_n = live_n + 1 end
+	end
+
+	-- past the budget the tables build cell text only for the rows they draw
+	local all = #lanes <= SAMPLE_LANES
+	if open.hud then
+		rows(hud_rows, view.layout == "strip", false)
+		local n = all and math_min(#hud_rows, HUD_ROWS) or 0
+		for i = 1, n do
+			texts(hud_rows[i], now)
+		end
+	end
+	if open.panel then
+		rows(panel_rows, false, true)
+		local n = all and #panel_rows or 0
+		for i = 1, n do
+			texts(panel_rows[i], now)
+		end
+		build_detail(now)
+	end
+end
+
+local function read(lane, now, frame, sparse)
+	if lane.read_at == frame then return end
+	lane.read_at = frame
+	sample(lane, now, sparse)
+end
+
+-- sample once per frame and only for an open window
+local function tick(now)
+	local frame = device().frame
+	if frame == last_tick then return end
+	last_tick = frame
+
+	if now >= next_list then
+		next_list = now + RELIST_MS
+		relist()
+	end
+
+	if view.frozen then return end
+	local count = #lanes
+	if count <= SAMPLE_LANES then
+		for i = 1, count do
+			sample(lanes[i], now)
+		end
+		return
+	end
+
+	-- past the budget rebuild the lists first, then read the drawn rows, the selected lane and a rotating slice
+	refresh(now)
+	if open.hud then
+		for i = 1, math_min(#hud_rows, HUD_ROWS) do
+			read(hud_rows[i], now, frame)
+		end
+	end
+	if open.panel then
+		for i = panel_from, math_min(panel_to, #panel_rows) do
+			read(panel_rows[i], now, frame)
+		end
+	end
+	local lane = sel and index[sel]
+	if lane then read(lane, now, frame) end
+	for _ = 1, SAMPLE_LANES do
+		slice = slice % count + 1
+		read(lanes[slice], now, frame, true)
+	end
+end
+
+local function save_view()
+	local c = axr_main and axr_main.config
+	if not c then return end
+
+	local list = {}
+	for id in pairs(view.pins) do
+		list[#list + 1] = id
+	end
+	table_sort(list)
+
+	c:w_value(SECTION, "owner", view.owner)
+	c:w_value(SECTION, "sort", view.sort)
+	c:w_value(SECTION, "filter", view.filter)
+	c:w_value(SECTION, "live_only", view.live_only)
+	c:w_value(SECTION, "layout", view.layout)
+	c:w_value(SECTION, "pins", table_concat(list, ","))
+	c:save()
+end
+
+local function load_view()
+	local c = axr_main and axr_main.config
+	if not c then return end
+
+	view.owner = c:r_value(SECTION, "owner", 0, "all")
+	view.sort = c:r_value(SECTION, "sort", 0, "id")
+	view.filter = string_sub(c:r_value(SECTION, "filter", 0, ""), 1, INPUT_CAP - 1)
+	view.live_only = c:r_value(SECTION, "live_only", 1, false) == true
+	view.layout = c:r_value(SECTION, "layout", 0, "table") == "strip" and "strip" or "table"
+
+	local pins = string_gsub(c:r_value(SECTION, "pins", 0, ""), "%s", "")
+	for id in pins:gmatch("[^,]+") do
+		view.pins[id] = true
+	end
+end
+
+local function changed()
+	next_text = 0
+	save_view()
+end
+
+local function set_pin(id, on)
+	view.pins[id] = on and true or nil
+	changed()
+end
+
+local function toggle_layout()
+	view.layout = view.layout == "table" and "strip" or "table"
+	changed()
+end
+
+local function toggle_freeze()
+	view.frozen = not view.frozen
+end
+
+local function take_snapshot(now)
+	tick(now)
+	-- past the budget only a lane read this frame has its value now, the rest snap at their next read
+	local all, frame = #lanes <= SAMPLE_LANES, device().frame
+	for i = 1, #lanes do
+		local lane = lanes[i]
+		if all or lane.read_at == frame then
+			lane.snap = { x = lane.x, y = lane.y, z = lane.z, w = lane.w }
+		else
+			lane.snap = false
+		end
+	end
+	view.diff_at = now
+	snap_frame = frame
+end
+
+local function toggle_diff()
+	if view.diff then
+		view.diff = false
+	else
+		take_snapshot(time_global())
+		view.diff = true
+	end
+	next_text = 0
+end
+
+local function lane_line(lane, now)
+	local uint = lane.kind == "uint"
+	return string_format("%s owner '%s' %s %s = (%s, %s, %s, %s) age %s chg %d%s%s", lane.id, lane.owner, lane.state,
+		kind_text(lane), cell_text(lane.x, uint), cell_text(lane.y, uint), cell_text(lane.z, uint), cell_text(lane.w, uint),
+		lane.changed_at and string_format("%.1fs", (now - lane.changed_at) / 1000) or "static",
+		change_count(lane), lane.texture ~= "" and string_format(" texture '%s'", lane.texture) or "",
+		lane.saw_bad and " saw-nan" or "")
+end
+
+local function dump()
+	local now = time_global()
+	tick(now)
+	printf("[SHADER-BUS] %s", string_format("monitor %d lanes, bus v%d", #lanes, bus.ver))
+	for i = 1, #lanes do
+		printf("[SHADER-BUS] %s", lane_line(lanes[i], now))
+	end
+end
+
+local function copy()
+	local now = time_global()
+	tick(now)
+	local out = { string_format("shader bus v%d, %d lanes", bus.ver, #lanes) }
+	for i = 1, #lanes do
+		out[#out + 1] = lane_line(lanes[i], now)
+	end
+	ImGui.SetClipboardText(table_concat(out, "\n"))
+end
+
+local function force(lane)
+	local x, y, z, w
+	if lane.kind == "uint" then
+		local v = { lane.x, lane.y, lane.z, lane.w }
+		for i = 1, 4 do
+			local n = tonumber(force_txt[i])
+			v[i] = n and n >= 0 and n == math_floor(n) and n or v[i]
+		end
+		x, y, z, w = string_format("%.0f", v[1]), string_format("%.0f", v[2]), string_format("%.0f", v[3]),
+			string_format("%.0f", v[4])
+	else
+		x, y, z, w = string_format("%.9g", force_vec.x), string_format("%.9g", force_vec.y),
+			string_format("%.9g", force_vec.z), string_format("%.9g", force_vec.w)
+	end
+	get_console():execute(string_format("bus_force %s %s %s %s %s", lane.id, x, y, z, w))
+	next_list = 0
+end
+
+local function release(lane)
+	get_console():execute("bus_release " .. lane.id)
+	next_list = 0
+end
+
+local function pick(lane)
+	sel = lane.id
+	row_txt, row_from, row_to = {}, 0, DETAIL_ROWS - 1
+	force_vec:set(bad(lane.x) and 0 or lane.x, bad(lane.y) and 0 or lane.y, bad(lane.z) and 0 or lane.z,
+		bad(lane.w) and 0 or lane.w)
+	force_txt[1], force_txt[2], force_txt[3], force_txt[4] = cell_text(lane.x, true), cell_text(lane.y, true),
+		cell_text(lane.z, true), cell_text(lane.w, true)
+	next_text = 0
+end
+
+local function draw_table(list, hud, n, flags, size)
+	local first = hud and 2 or 1
+	if not ImGui.BeginTable(hud and "##bus_hud" or "##bus_lanes", COLS - first + 1, flags, size, 0) then return end
+
+	for c = first, COLS do
+		ImGui.TableSetupColumn(HEAD[c], ImGuiTableColumnFlags.WidthFixed, width[c], 0)
+	end
+	if not hud then ImGui.TableSetupScrollFreeze(0, 1) end
+	if not hud or view.layout ~= "strip" then ImGui.TableHeadersRow() end
+
+	-- past the budget the panel draws only the rows in its scrolled view and spacer rows for the rest
+	local clip = not hud and #lanes > SAMPLE_LANES
+	local from, to, top_y = 1, n, 0
+	if clip then
+		if row_h <= 0 then row_h = ImGui.GetFrameHeightWithSpacing() end
+		local span = math_ceil(size.y / row_h) + 3
+		from = math_min(math_floor(ImGui.GetScrollY() / row_h), n - span)
+		if from < 1 then from = 1 end
+		-- an odd spacer keeps the row stripes in step
+		if from > 1 and from % 2 == 1 then from = from - 1 end
+		to = math_min(n, from + span)
+		panel_from, panel_to = from, to
+		if from > 1 then ImGui.TableNextRow(0, (from - 1) * row_h) end
+	end
+
+	for i = from, to do
+		local lane = list[i]
+		if lane.text_at ~= text_now then texts(lane, text_now) end
+		local t, clr = lane.txt, lane.clr
+		ImGui.TableNextRow(0, 0)
+
+		ImGui.TableNextColumn()
+		if clip then
+			if i == from then
+				top_y = ImGui.GetCursorPosY()
+			elseif i == to then
+				row_h = (ImGui.GetCursorPosY() - top_y) / (to - from)
+			end
+		end
+		if hud then
+			ImGui.TextColored(clr, t.lane)
+		else
+			local hit, on = ImGui.Checkbox(lane.pin_id, view.pins[lane.id] == true)
+			if hit then set_pin(lane.id, on) end
+
+			ImGui.TableNextColumn()
+			ImGui.PushStyleColor(ImGuiCol.Text, clr)
+			if ImGui.Selectable(t.raw, lane.id == sel, 0, ZERO) then pick(lane) end
+			ImGui.PopStyleColor()
+			if lane.tip ~= "" and ImGui.BeginItemTooltip() then
+				ImGui.Text(lane.tip)
+				ImGui.EndTooltip()
+			end
+		end
+
+		ImGui.TableNextColumn()
+		ImGui.TextColored(lane.oclr, t.owner)
+		ImGui.TableNextColumn()
+		ImGui.TextColored(clr, t.kind)
+		for c = 1, 4 do
+			ImGui.TableNextColumn()
+			ImGui.TextColored(lane.bad[c] and CLR.alarm or clr, t[c])
+		end
+		ImGui.TableNextColumn()
+		ImGui.TextColored(clr, t.age)
+		ImGui.TableNextColumn()
+		ImGui.TextColored(clr, t.chg)
+		ImGui.TableNextColumn()
+		ImGui.TextColored(clr, t.wr)
+		ImGui.TableNextColumn()
+		ImGui.TextColored(clr, t.bnd)
+	end
+	if to < n then ImGui.TableNextRow(0, (n - to) * row_h) end
+
+	ImGui.EndTable()
+end
+
+local function mt_level_call()
+	return get_console():get_bool("mt_level_call")
+end
+
+local function title_text()
+	return string_format("shader bus v%d  %d lanes%s%s", bus.ver, #lanes, view.frozen and "  frozen" or "",
+		view.diff and "  diff" or "")
+end
+
+local function draw_hud()
+	if not open.hud then return end
+	-- Unique calls race the render thread under mt_level_call
+	if mt_level_call() or device():is_paused() then return end
+
+	local now = time_global()
+	tick(now)
+	refresh(now)
+	widths()
+
+	local strip = view.layout == "strip"
+	local total = #hud_rows
+	local n = total < HUD_ROWS and total or HUD_ROWS
+
+	if strip then
+		HUD_POS:set(device().width - 15, 15)
+		ImGui.SetNextWindowPos(HUD_POS, ImGuiCond.Always, CORNER)
+	else
+		HUD_POS:set(15, 15)
+		ImGui.SetNextWindowPos(HUD_POS, ImGuiCond.Always, ZERO)
+	end
+	ImGui.SetNextWindowBgAlpha(0.6)
+	ImGui.Begin("Shader bus HUD", true, HUD_FLAGS)
+
+	if not strip then ImGui.Text(title_text()) end
+	draw_table(hud_rows, true, n, HUD_TABLE, ZERO)
+
+	if not strip then
+		if view.diff then
+			if total == 0 then
+				ImGui.Text(string_format("no lane moved since the snapshot %.1fs ago", (now - view.diff_at) / 1000))
+			else
+				ImGui.Text(string_format("%d moved since the snapshot %.1fs ago", total, (now - view.diff_at) / 1000))
+			end
+		else
+			ImGui.Text(string_format("+%d more  %d live%s", total - n, live_n,
+				bus.declared and string_format("  %d orphans", declared_n) or ""))
+		end
+	end
+
+	ImGui.End()
+end
+
+local function draw_owner_combo()
+	ImGui.SetNextItemWidth(140)
+	if not ImGui.BeginCombo("##owner", view.owner, 0) then return end
+	local function item(name)
+		if ImGui.Selectable(name, name == view.owner, 0, ZERO) then
+			view.owner = name
+			changed()
+		end
+	end
+	for i = 1, #OWNER_HEAD do
+		item(OWNER_HEAD[i])
+	end
+	if bus.stats then
+		for i = 1, #READ_HEAD do
+			item(READ_HEAD[i])
+		end
+	end
+	for i = 1, #owners do
+		item(owners[i])
+	end
+	ImGui.EndCombo()
+end
+
+local function draw_sort_combo()
+	ImGui.SetNextItemWidth(110)
+	if not ImGui.BeginCombo("##sort", view.sort, 0) then return end
+	for i = 1, #SORTS do
+		if ImGui.Selectable(SORTS[i], SORTS[i] == view.sort, 0, ZERO) then
+			view.sort = SORTS[i]
+			changed()
+		end
+	end
+	ImGui.EndCombo()
+end
+
+local function draw_force(lane)
+	if not bus.pending or lane.legacy then return end
+	ImGui.SeparatorText("force")
+
+	if lane.kind == "uint" then
+		for i = 1, 4 do
+			if i > 1 then ImGui.SameLine() end
+			ImGui.SetNextItemWidth(90)
+			local text = ImGui.InputText("##force_u" .. i, force_txt[i], INPUT_CAP, ImGuiInputTextFlags.CharsDecimal, false)
+			force_txt[i] = text
+		end
+	else
+		ImGui.SetNextItemWidth(380)
+		local edited, v = ImGui.InputFloat4("##force_f", force_vec, "%.3f", 0)
+		if edited then force_vec = v end
+	end
+
+	if ImGui.Button("Force") then force(lane) end
+	ImGui.SameLine()
+	if ImGui.Button("Release") then release(lane) end
+end
+
+-- every declared row of the selected lane, past DETAIL_ROWS a scrolled list that draws only its view
+local function draw_rows()
+	if row_n == 0 then return end
+	local hit, on = ImGui.Checkbox("matrix view", view.matrix)
+	if hit then view.matrix = on end
+
+	local scroll = row_n > DETAIL_ROWS
+	if rows_h <= 0 then rows_h = ImGui.GetFrameHeightWithSpacing() end
+	ROWS_SIZE:set(0, scroll and (DETAIL_ROWS + 0.5) * rows_h or 0)
+	if not ImGui.BeginTable("##bus_rows", 2, scroll and ROWS_TABLE or DETAIL_TABLE, ROWS_SIZE, 0) then return end
+
+	local from, to, top_y = 0, row_n - 1, 0
+	if scroll then
+		from = math_min(math_floor(ImGui.GetScrollY() / rows_h), row_n - 1 - DETAIL_ROWS)
+		if from < 0 then from = 0 end
+		to = math_min(row_n - 1, from + DETAIL_ROWS)
+		if from > 0 then ImGui.TableNextRow(0, from * rows_h) end
+	end
+
+	for i = from, to do
+		ImGui.TableNextRow(0, 0)
+		ImGui.TableNextColumn()
+		if scroll then
+			if i == from then
+				top_y = ImGui.GetCursorPosY()
+			elseif i == to then
+				rows_h = (ImGui.GetCursorPosY() - top_y) / (to - from)
+			end
+		end
+		if view.matrix then
+			-- alternate matrices alternate colour
+			ImGui.TextColored(math_floor(i / 4) % 2 == 0 and CLR.dim or CLR.normal,
+				string_format("m%d r%d", math_floor(i / 4), i % 4))
+		else
+			ImGui.TextColored(CLR.dim, string_format("row %d", i))
+		end
+		ImGui.TableNextColumn()
+		ImGui.Text(row_txt[i] or "")
+	end
+	if to < row_n - 1 then ImGui.TableNextRow(0, (row_n - 1 - to) * rows_h) end
+	ImGui.EndTable()
+	row_from, row_to = from, to
+end
+
+local function draw_detail()
+	local lane = sel and index[sel]
+	if not lane then return end
+
+	ImGui.SeparatorText("lane")
+	if ImGui.BeginTable("##bus_detail", 2, DETAIL_TABLE, ZERO, 0) then
+		for i = 1, detail_n do
+			local d = detail[i]
+			ImGui.TableNextRow(0, 0)
+			ImGui.TableNextColumn()
+			ImGui.TextColored(CLR.dim, d[1])
+			ImGui.TableNextColumn()
+			ImGui.Text(d[2])
+		end
+		ImGui.EndTable()
+	end
+
+	draw_rows()
+	draw_force(lane)
+end
+
+local function draw_controls()
+	draw_owner_combo()
+	ImGui.SameLine()
+	draw_sort_combo()
+	ImGui.SameLine()
+	ImGui.SetNextItemWidth(140)
+	local text = ImGui.InputText("##filter", view.filter, INPUT_CAP, 0, false)
+	if text ~= view.filter then
+		view.filter = text
+		next_text = 0
+	end
+	if ImGui.IsItemDeactivatedAfterEdit() then save_view() end
+	ImGui.SameLine()
+	local hit, on = ImGui.Checkbox("live", view.live_only)
+	if hit then
+		view.live_only = on
+		changed()
+	end
+
+	if ImGui.Button(view.diff and "Unsnap" or "Snapshot") then toggle_diff() end
+	ImGui.SameLine()
+	if ImGui.Button(view.frozen and "Resume" or "Freeze") then toggle_freeze() end
+	ImGui.SameLine()
+	if ImGui.Button(open.hud and "HUD off" or "HUD on") then
+		open.hud = not open.hud
+		next_text = 0
+	end
+	ImGui.SameLine()
+	if ImGui.Button(view.layout == "strip" and "Table" or "Strip") then toggle_layout() end
+	ImGui.SameLine()
+	if ImGui.Button("Dump") then dump() end
+	ImGui.SameLine()
+	if ImGui.Button("Copy") then copy() end
+
+	-- L and F act while the panel has focus and no field is in use
+	if ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows) and not ImGui.IsAnyItemActive() then
+		if ImGui.IsKeyPressed(ImGuiKey.L, false) then toggle_layout() end
+		if ImGui.IsKeyPressed(ImGuiKey.F, false) then toggle_freeze() end
+	end
+end
+
+local function draw_panel()
+	if not open.panel then return end
+
+	local now = time_global()
+	widths()
+	ImGui.SetNextWindowSize(PANEL_SIZE, ImGuiCond.FirstUseEver)
+	local visible, still = ImGui.Begin("Shader bus", true, 0)
+	if not still then open.panel = false end
+
+	if visible then
+		if not bus.ok then
+			ImGui.Text("no shader bus on this exe")
+		else
+			tick(now)
+			refresh(now)
+
+			ImGui.Text(string_format("%s  %d live  %s%s", title_text(), live_n,
+				bus.declared and string_format("%d orphans", declared_n) or "",
+				view.diff and string_format("  snapshot %.1fs ago", (now - view.diff_at) / 1000) or ""))
+			if open.hud and mt_level_call() then
+				ImGui.TextColored(CLR.warn, "HUD off while mt_level_call is 1")
+			end
+
+			draw_controls()
+
+			local avail = ImGui.GetContentRegionAvail()
+			TABLE_SIZE:set(0, math_max(140, avail.y * 0.55))
+			draw_table(panel_rows, false, #panel_rows, PANEL_TABLE, TABLE_SIZE)
+			draw_detail()
+		end
+	end
+
+	ImGui.End()
+end
+
+local function draw_menu()
+	if not ImGui.BeginMenu("Shader bus", true) then return end
+
+	if ImGui.MenuItem("Panel", nil, open.panel, bus.ok) then
+		open.panel = not open.panel
+		next_text = 0
+	end
+	if ImGui.MenuItem("HUD", nil, open.hud, bus.ok) then
+		open.hud = not open.hud
+		next_text = 0
+	end
+	if ImGui.MenuItem("Strip", nil, view.layout == "strip", bus.ok) then toggle_layout() end
+	if ImGui.MenuItem("Snapshot", nil, view.diff, bus.ok) then toggle_diff() end
+	if ImGui.MenuItem("Freeze", nil, view.frozen, bus.ok) then toggle_freeze() end
+	if ImGui.MenuItem("Dump", nil, false, bus.ok) then dump() end
+	if ImGui.MenuItem("Copy", nil, false, bus.ok) then copy() end
+
+	ImGui.EndMenu()
+end
+
+ImGui.Groups.Widget("Debug", draw_menu)
+ImGui.Groups.Widget("Main", draw_panel)
+ImGui.Groups.Widget("Unique", draw_hud)
+
+function on_game_start()
+	colors()
+	detect_bus()
+	load_view()
+end

@@ -1,0 +1,223 @@
+; Spawn overlays: edits the engine applies on top of the loaded all.spawn, every time the spawn registry loads
+; (new game and every save load). Nothing is written back; all.spawn and the level files stay as shipped.
+; Mods contribute configs\mod_spawn_overlays_<mod>.ltx (DLTX) and extend the sections below with ![section].
+;
+; ===== What to use for what ============================================================================
+;
+;   I want to...                                          use
+;   add whole new levels (level.ai, level.spawn, ...)     a level pack: the mod's all.spawn renamed to
+;                                                         spawns\<mod>.spawn (+ [levelNN] in game.ltx per level)
+;   connect / disconnect levels                           [graph_links] / [graph_unlinks]
+;   move a level on the global map                        the [levelNN] offset in game.ltx (sync_level_offsets)
+;   add objects to an existing level                      a level.spawn fragment: spawns\<level>\<anything>.spawn
+;                                                         (SDK export or ACDC -compile -level)
+;   delete a vanilla object                               [spawn_remove]
+;   edit a vanilla object (position, logic, story id)     [spawn_patch@<name>]
+;   swap a vanilla object for my pack's / fragment's copy [spawn_replace]  (same name, same place)
+;   add patrol paths                                      a level.game fragment: spawns\<level>\<anything>.game
+;                                                         (SDK export), or patrol_paths.ltx sections with a
+;                                                         level = <name> key
+;   fix / replace a compiled patrol path                  a patrol_paths.ltx section of the same name, with
+;                                                         level = <name>
+;   delete a patrol path                                  [path_remove]
+;   take a whole level out of play                        [level_cut]
+;
+; Rules of thumb
+;   - The base all.spawn always wins over a pack: a pack record that names an object the base already has on
+;     the same level within 1 m is ignored, even when the pack's copy differs. Express the difference with
+;     [spawn_patch@] (fields it covers) or take the pack's copy with [spawn_replace]. Same for paths: a pack
+;     path whose name the base has is ignored; override it from patrol_paths.ltx.
+;   - A pack only contributes what the base lacks. Do not ship edits to vanilla levels inside a pack; ship them
+;     in this file so they survive a base all.spawn update and can be patched by other mods.
+;   - Ids are never keys: refer to objects by name (+ position when the name is shared), to levels by name, to
+;     graph vertices by "level:x,y,z". Ids differ between spawn files and between loads.
+;   - Objects and paths are new-game content: an existing save already holds its objects; removing or patching
+;     a template does not touch them. Graph edits (links, unlinks, offsets) and path additions apply to saves too.
+;   - Adding or removing a level (or a pack that brings one) changes the spawn GUID: saves made before refuse to
+;     load. Everything else is save-compatible.
+;   - A compat patch is an ordinary DLTX file: it can add to any section here, override a [spawn_patch@]
+;     key, or override a whole path section. Prefer that over editing another mod's files.
+;   - Read the log: every applied line is "* [spawn_overlays] ...", every skipped one "! [spawn_overlays]
+;     <file> [<section>] <key>: <reason>", and "- [spawn_overlays] ... level '<name>' is not installed, skipped"
+;     for lines that apply once that level is. Hints "! ... renamed? / moved?" point at pack records that look
+;     like a vanilla object the pack's build changed; settle them with [spawn_remove] / [spawn_replace].
+;
+; ===== Application order (one load) ====================================================================
+;
+;   all.spawn chunk 4 (game graph)
+;     -> [settings] sync_level_offsets: base levels moved to their game.ltx offset, their edges reweighted
+;     -> packs: levels the base lacks appended, with the pack's edges and weights
+;              (a base level whose level.ai the pack matches and the base does not is rebuilt from the pack)
+;     -> [graph_unlinks], [graph_unlinks@*]
+;     -> [graph_links], [graph_links@*]
+;     -> [level_cut]                           every edge to or from the level removed
+;   all.spawn chunk 1 (spawn templates)
+;     -> [spawn_replace]                       base templates removed so a copy below is taken
+;     -> spawns\<level>\*.spawn fragments     records the base lacks added
+;     -> spawns\<pack>.spawn packs            records the base lacks added (all packs, sorted by file name)
+;     -> [spawn_remove]                        applies to base and added templates alike
+;     -> [spawn_patch@*]                       applies to base and added templates alike
+;     -> [level_cut]                           templates on the level and level changers into it removed
+;   all.spawn chunk 3 (patrol paths)
+;     -> patrol_paths.ltx sections, with or without a level = <name> key (a section with one replaces a
+;        compiled path of the same name; one without is skipped on a clash)
+;     -> spawns\<level>\*.game fragments      paths whose names are new
+;     -> packs: paths whose names are new
+;     -> [path_remove]
+;     -> [level_cut]                           paths on the level removed
+;   spawn GUID = base GUID + every pack that added or rebuilt a level
+;
+; [graph_links] and [graph_unlinks] may also be declared with a suffix ([graph_unlinks@<mod>]): a separate section
+; with its own keys, applied the same way. Use it when a level must be the key of more than one line, or to keep
+; a mod's lines from colliding with another mod's keys.
+; A line that names a level that is not installed logs "- [spawn_overlays] ... level '<name>' is not installed,
+; skipped" and applies on a load where that level is (links, unlinks, patches, fragments, packs,
+; patrol_paths.ltx). A [spawn_patch@] section's level key is the exception: it gates the whole section, not just
+; that one line (see below).
+;
+; Endpoints are "level_name:x,y,z" - a level point of the named level. The nearest game-graph vertex of that
+; level within link_tolerance metres is used; level changers stand on graph vertices, so their coordinates work.
+
+[settings]
+link_tolerance = 2.0
+; Move each level's global position to the offset of its [levelNN] section in game.ltx (the sections listed under
+; [levels]; vanilla keeps them in game_levels.ltx, mods add or override theirs with DLTX) when it differs from the
+; one compiled into the graph, reweighting the edges that cross into that level. Level packs that relocate
+; existing levels only have to override that offset.
+sync_level_offsets = true
+
+; Adds a game-graph edge in both directions between two level points. Weight = distance between the vertices'
+; global positions, as xrAI encodes cross-level edges. An edge that already exists is left alone.
+;   level_a:x,y,z = level_b:x,y,z
+[graph_links]
+
+; Removes game-graph edges in both directions. Keys are unique within a section: to cut one level from several,
+; put that level on the value side (l09_deadcity = l07_military, k02_trucks_cemetery = l07_military) or use a
+; suffixed section per line.
+;   level_a = level_b               every edge between the two levels
+;   level_a:x,y,z = level_b:x,y,z   one specific edge
+[graph_unlinks]
+
+; Removes spawn templates by object name (one name per line). Affects new games only; objects already created
+; from the template live in the save; the removed template's story_id / spawn_story_id are freed for a later
+; add or patch to reuse. Some names are shared by several templates (furniture, boxes, ladders);
+; those need the instance's position as the value (within 0.5 m, same as match_position below):
+;   gar_smart_terrain_5_8_box
+;   level_prefix_inventory_box_0000 = 12.3, 4.5, -6.7
+; Applied after fragments and packs: a removed object stays removed even when a pack still carries it.
+[spawn_remove]
+
+; Same syntax, applied before fragments and packs: the base template goes and a fragment's or pack's record of
+; the same name at the same place (which [spawn_remove] would let the base win over) is taken instead.
+[spawn_replace]
+
+; Removes patrol paths by name (one per line), after pack paths were added. A patrol_paths.ltx section with
+; level = <name> and the name of a compiled path replaces that path without a remove.
+[path_remove]
+
+; Takes levels out of play, one level name per line (the value is ignored). The level stays in the game graph -
+; no vertex id changes, so ids baked into scripts and configs keep pointing where they did - but it is cut off:
+; every edge between it and another level, every template on it, every level changer on another level that leads
+; to it, and every patrol path on it are removed, whatever added them (base, fragments, packs, links, patches).
+; A level only a pack brings is not added at all, which also frees its level id for another pack.
+; The actor template is kept (! log). A removed object with a story id (engine story_id / spawn_story_id or a
+; custom-data [story_object] story_id) is logged "!": scripts and tasks that use it must be fixed by the mod
+; that cuts the level, as must configs naming the level's smart terrains (simulation, PDA map, start positions).
+; Anomaly's transitions are sr_teleport space restrictors (sr_teleport_sections.ltx) standing on the neighbouring
+; levels: they carry the PDA spot and the travel prompt, and are not level changers, so list them in
+; [spawn_remove] (e.g. esc_space_restrictor_to_pole_1 when cutting y04_pole).
+; Save-compatible like [spawn_remove]; objects an older save already holds stay on the level, unreachable.
+[level_cut]
+
+; Edits one spawn template; the section suffix is the object name. Keys, all optional:
+;   match_position = x, y, z          selects the instance when the name is shared (within 0.5 m)
+;   level = <level name>              move to another level; needs position too (coordinates are level-local
+;                                      and do not carry over). A level not installed skips the WHOLE
+;                                      section (no key of it is applied); an empty value or a missing position
+;                                      skips the whole section (! log).
+;   position = x, y, z                level-local position; graph vertex and AI node are re-resolved
+;   direction = x, y, z
+;   custom_data = [logic]\ncfg = scripts\x.ltx   ; \n = line break, \\ = literal backslash (needed before a
+;                                                  folder starting with 'n'); or use custom_data_cfg below to
+;                                                  avoid escaping altogether
+;   custom_data_cfg = scripts\x.ltx   shorthand for the line above
+;   story_id = <int>                  -1 = none; already held by another template is skipped (! log)
+;   spawn_story_id = <int>            -1 = none; already held by another template is skipped (! log)
+;   object_flags = 0x...
+; [spawn_patch@gar_physic_object_bandit_base_generator]
+; position = 63.9, 0.6, -23.1
+
+; Adding objects: drop SDK-format level.spawn files into spawns\<level_name>\<anything>.spawn (LevelEditor "Build ->
+; spawn" output, or Universal ACDC "-compile <dir> -level"). Every record becomes a template of that level; its
+; graph vertex and AI node come from the record position, ids baked into the file are ignored. A record the level
+; already has (same name within 1 m of the same position) is skipped silently, so a whole-level SDK export works;
+; [spawn_replace] takes the fragment's record instead.
+; Skipped with a log line: creatures (scripts spawn them), records nested in another object, unknown sections.
+; graph_point records are ignored. A record whose story_id / spawn_story_id is already taken by another
+; template has that id cleared (! log) rather than being skipped outright. A level changer whose destination
+; level is not installed is skipped, logged as "- [spawn_overlays] ... level '<name>' is not installed", and
+; applies on a load where it is. New games only, like everything above.
+
+; Patrol paths: configs\patrol_paths.ltx (vanilla root, extend with mod_patrol_paths_<mod>.ltx) accepts a section-level
+; "level = <level name>". Points of such a section may omit game_vertex_id / level_vertex_id: the engine approximates
+; them from the position at load and snaps them to the AI map when the level is entered, as xrAI would have compiled
+; them. A section with level = <name> named like a compiled path replaces it (* log); a section without cannot. Any
+; section that cannot be loaded (missing key, unknown link target) is skipped and logged instead of failing.
+; The binary equivalent is an SDK level.game (LevelEditor "Build" output, next to level.spawn) dropped into
+; spawns\<level_name>\<anything>.game: its paths are loaded the same way, approximated and snapped on that level.
+; A path whose name is already known (compiled, patrol_paths.ltx, an earlier fragment) is skipped silently, so a
+; whole-level export adds only the level's new paths; to replace a compiled path use a patrol_paths.ltx section.
+; Only the patrol path chunk is read; the multiplayer respawn points in level.game are ignored.
+;   [my_mod_walk]
+;   level = l01_escape
+;   points = p0,p1
+;   p0:name = wp00
+;   p0:position = 12.3,4.5,-6.7
+;   p0:links = p1(1)
+;   p1:name = wp01
+;   p1:position = 15.3,4.5,-6.7
+
+; Level packs: an all.spawn that adds levels, renamed to spawns\<pack name>.spawn (any name but the base spawn's).
+; Only what the base lacks is taken from it:
+;   - levels absent from the base graph, with their edges, death points and cross tables. Each such level must have
+;     a [levelNN] section listed under game.ltx [levels] (name, id, offset; see sync_level_offsets above). The level
+;     gets that section's id, never the pack's: keep it in sync with any level id the mod's scripts hardcode. A level
+;     whose id is missing, outside 1..254 or already taken (by a base level or an earlier pack) is skipped, logged
+;     "!"; a numeric id is never renumbered. Levels the base already has keep their ids. The offset also comes
+;     from that section, not from the pack;
+;     id = auto instead of a number: nothing shipped with the level depends on its number, the engine picks one.
+;     Explicit ids always win: every numeric id listed under [levels] is reserved, installed or not, and the auto
+;     levels, sorted by name, take the highest free ids from 254 down (logged "game.ltx: level 'x' id = auto -> N").
+;     Scripts of such a level find it by name (alife():level_name(id), game_graph():levels()), never by number.
+;     Name the section after the level so two mods cannot declare the same one (a duplicate section stops DLTX):
+;       ![levels]
+;       level_my_level
+;
+;       [level_my_level]
+;       name     = my_level
+;       caption  = "my_level"
+;       offset   = 3000.0, 1000.0, 3000.0
+;       weathers = [default]
+;       id       = auto
+;   - spawn records the base does not have (same name on the same level within 1 m = the same object; exact on the
+;     pack's levels, placed by position on existing ones);
+;   - patrol paths whose names are new.
+; A record's story_id / spawn_story_id already taken by another template is cleared, logged "!", same as fragments.
+; A record added on a level the pack did not add is still added but logged "!" when it looks like a base object the
+; pack's build changed: a same-section template within 1 m of it (renamed?) or its name on another level (moved?);
+; settle a rename with [spawn_remove] of the old name, a move with [spawn_replace].
+; Existing levels, records and paths in the pack are ignored - use the sections
+; above for such edits, e.g. [spawn_remove] for changers the pack retires and [graph_unlinks] for edges it drops.
+; A level that cannot be added or rebuilt (not installed, wrong build, no [levelNN] section or id) only holds back
+; that level: the pack's records and paths on levels that did work are still added, and the ones on the missing
+; level are logged as "- [spawn_overlays] ... level '<name>' is not installed, skipped" and applied on a load
+; where it is.
+; The installed levels\<level>\level.ai decides between builds of one level: a pack level whose GUID differs from
+; the installed AI map is skipped; a level already in the graph with the wrong GUID is rebuilt from the pack
+; that matches (AI nodes, death points, inner edges, cross table - vertex ids stay), so a mod that recompiles
+; a vanilla level's AI map ships that level.ai plus its all.spawn renamed.
+; Connections between two independently installed packs are ordinary [graph_links] lines plus level changer
+; fragments; a line naming a level that is not installed is skipped, logged as "- [spawn_overlays] ... level
+; '<name>' is not installed", and applies once it is. Only a pack that adds or rebuilds a level changes the spawn GUID (saves refuse
+; to load when the level set changes); a pack that only adds records or paths is save-compatible and does not
+; affect it, logged with a "(save-compatible, does not change the spawn GUID)" marker.

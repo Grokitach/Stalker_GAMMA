@@ -1,0 +1,83 @@
+--[[
+	Dynamic world items (game_setup.script, items\settings\dynamic_item_spawn.ltx) keep the game vertex id recorded
+	with each position, which is only valid for the all.spawn it was recorded with. After game_setup.init_settings
+	each position gets the nearest game vertex, by level point, of the level its dynamic_item_spawn.ltx section
+	names; a position on a level the game graph lacks is dropped. The recorded level vertex id is kept; it is local
+	to the level's level.ai.
+--]]
+
+local base_init_settings
+local resolved = false
+
+local function upvalue(fn, wanted)
+	local i = 1
+	while true do
+		local name, value = debug.getupvalue(fn, i)
+		if not name then
+			return
+		end
+		if name == wanted then
+			return value
+		end
+		i = i + 1
+	end
+end
+
+-- [position name] = level name, the section listing it under [levels]
+local function position_levels()
+	local ini = ini_file("items\\settings\\dynamic_item_spawn.ltx")
+	local result = {}
+	local n = ini:line_count("levels") or 0
+	for i = 0, n - 1 do
+		local _, level_name = ini:r_line_ex("levels", i, "", "")
+		local m = level_name and ini:section_exist(level_name) and ini:line_count(level_name) or 0
+		for j = 0, m - 1 do
+			local _, name = ini:r_line_ex(level_name, j, "", "")
+			if name then
+				result[name] = level_name
+			end
+		end
+	end
+	return result
+end
+
+local function resolve()
+	local info = upvalue(base_init_settings, "world_itm_info")
+	local off = upvalue(base_init_settings, "world_itm_off")
+	if not (info and off) then
+		printf("! [dynamic_items_by_level] game_setup.init_settings has no world_itm_info/world_itm_off, positions left as recorded")
+		return
+	end
+
+	local levels = position_levels()
+	local gg = game_graph()
+	local changed, unchanged, dropped = 0, 0, 0
+	for name, t in pairs(info) do
+		local gm_id = levels[name] and gg:nearest_vertex(levels[name], vector():set(t.x, t.y, t.z))
+		if not gm_id then
+			info[name] = nil
+			off[name] = nil
+			dropped = dropped + 1
+		elseif gm_id == t.gm_id then
+			unchanged = unchanged + 1
+		else
+			t.gm_id = gm_id
+			changed = changed + 1
+		end
+	end
+	printf("* [dynamic_items_by_level] positions: %s given their level's nearest game vertex (%s differ from the recorded one), %s dropped (level not in the game graph)", changed + unchanged, changed, dropped)
+end
+
+local function init_settings(...)
+	base_init_settings(...)
+	if resolved then
+		return
+	end
+	resolved = true
+	resolve()
+end
+
+function on_game_start()
+	base_init_settings = game_setup.init_settings
+	game_setup.init_settings = init_settings
+end

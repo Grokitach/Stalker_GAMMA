@@ -8,45 +8,6 @@ local table_insert 	= table.insert
 local table_remove 	= table.remove
 local table_sort 	= table.sort
 
--- Patches
-local xmlCallbacks = {}
-
-RSC = _G.RegisterScriptCallback
-_G.RegisterScriptCallback = function(name,func_or_userdata)
-	if name == "on_xml_read" then
-		for i = #xmlCallbacks, 1, -1 do
-			local v = xmlCallbacks[i]
-			if v == func_or_userdata then
-				return
-			end
-		end
-
-		table.insert(xmlCallbacks, func_or_userdata)
-		return
-	end
-	RSC(name, func_or_userdata)
-end
-
-URSC = _G.UnregisterScriptCallback
-_G.UnregisterScriptCallback = function(name,func_or_userdata)
-	if name == "on_xml_read" then
-		for i = #xmlCallbacks, 1, -1 do
-			local v = xmlCallbacks[i]
-			if v == func_or_userdata then
-				table.remove(xmlCallbacks, i)
-			end
-		end
-		return
-	end
-	URSC(name, func_or_userdata)
-end
-
-function xmlDispatch(xml_file_name, xml_obj, flags)
-	for i, v in ipairs(xmlCallbacks) do
-		v(xml_file_name, xml_obj, flags)
-	end
-end
-
 -- DXML MAIN
 assert(AddScriptCallback, "Cannot add callbacks to the game, reinstall Anomaly 1.5.2 and Modded Exes")
 AddScriptCallback("on_specific_character_dialog_list")
@@ -1038,7 +999,7 @@ _G.COnXmlRead = function(xml_file_name, xml_string)
 	local flags = {
 		cache = false -- If true, the result will be cached and the callback will not be fired next time
 	}
-	xmlDispatch(xml_file_name, xml_obj, flags)
+	SendScriptCallback("on_xml_read", xml_file_name, xml_obj, flags)
 	if xml_string_debug_enabled then print_parser_msg(xml_file_name, "callback") end
 
 	xml_string = parser:simple_xml(xml_table)
@@ -1084,6 +1045,6 @@ function openXMLFile(xml_file_name)
 		printf_me("error creating xml_obj for file %s", xml_file_name)
 		return
 	end
-	xmlDispatch(xml_file_name, xml_obj, {})
+	SendScriptCallback("on_xml_read", xml_file_name, xml_obj, {})
 	return xml_obj
 end

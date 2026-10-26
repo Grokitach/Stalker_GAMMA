@@ -2,6 +2,16 @@
 --[[
     
     console commands: {
+        step_sound_distance [10; 100] // max distance at which step sounds are played, hard cut-off, default 50
+        step_particle_distance [10; 100] // max distance at which step particle effects are played, hard cut-off, default 50
+        snd_max_distance_multiplier [0.2; 2.0] // multiplier for maximum sound distance before it fade into being inaudbile due to low volume, default 1.0 (base values are configured on a per ogg file basis)
+        snd_max_ai_distance_multiplier [0.2; 2.0] // multiplier for maximum distance AI reacts to sounds, default 1.0 (base values are configured on a per ogg file basis)
+
+        bus_list // Print every shader bus lane with its owner, value, state, counters and the frame a shader last bound it
+        bus_get <id> // Print one shader bus lane
+        bus_force <id> x y z w // Force a lane to finite values until bus_release, a console debug path, the lua write path still needs the token
+        bus_release <id> // Stop forcing the lane, the pending value returns on the next frame
+
         snd_doppler_power [0; 5] // Adjust power of doppler effect
         snd_doppler_smoothing [1; 100] // Adjust smoothness of pitch shifting in doppler effect
 
@@ -16,8 +26,12 @@
 
         scale_hud_motion_marks_by_speed [1; 0] // flag to scale motion marks by speed, default is on
 
+        npc_dont_drop_weapons_on_death [0; 1] // flag to disable NPCs dropping weapons on death
+
         telekinetic_objects_include_corpses [0; 1] // Enable the ability for poltergeists and burers to throw corpses
-        
+
+        npc_relaxed_idle_mode [0; 2] // Relaxed free-standing NPC torso idle source: 0 = vanilla (the player's safemode pose, idle_1), 1 = the NPC's own idle_0, 2 = per-NPC stable spread across every authored idle variant in the row (same NPC always lands on the same one). Default 0.
+
         sds_enable [0; 1] // Enable shader based scopes
         sds_speed_enable [0; 1] // Enable mouse sensitivity change on zooming
         sds_zoom_enable [0; 1] // Enable correction of max. zoom with scope_factor, if this option is enabled then max. zoom will be such as prescribed in settings regardless of scope_factor value, if this option is disabled then max. zoom will be sum of value prescribed in settings and the increase that gives scope_factor.
@@ -133,6 +147,25 @@
         table.random(t)
     }
 
+    jit.profile { // profiler-enabled build only; backported LuaJIT 2.1 timer sampler, GC64-free so saves stay compatible
+        jit.profile.start(string mode, function(thread, int samples, string vmstate)) // mode "iN" = sample every N ms; vmstate one of N/I/C/G/J; errors if jit.allocprof is running
+        jit.profile.stop()
+        string jit.profile.dumpstack(thread, string fmt, int depth) // "name@src:line;..." leaf-first; fmt accepted but ignored (fixed format)
+    }
+
+    jit.allocprof { // profiler-enabled build only; per-function allocation attribution, jit.off() recommended for exact attribution
+        jit.allocprof.start(int depth = 1) // byte-sampled (Poisson interval); depth>1 also captures full stacks for a flamegraph; errors if jit.profile is running
+        jit.allocprof.stop()
+        table jit.allocprof.dump(bool stacks, bool reset) // {{key=,bytes=},...} + dropped/pending/drains/seen; reset clears tables but keeps capturing
+        int jit.allocprof.usage() // 0..100 fill of the fullest aggregation table, snapshot before it reaches 100
+        jit.allocprof.pause() // disarm the hook to build a snapshot report at full speed
+        jit.allocprof.resume() // re-arm and continue capturing
+    }
+
+    jit.util { // additions beyond stock jit.util
+        table jit.util.gcstat() // {total, threshold, estimate, debt} in bytes plus cycles = completed GC collections since start; read-only snapshot, values may be mid-cycle under parallel GC
+    }
+
     globals {
         string dik_to_keyname(number dik, boolean localize)
         int get_modded_exes_version() // Returns modded exes version in integer format
@@ -164,11 +197,13 @@
         void iterate_objects(function(se_obj))
         void iterate_level_objects_of_clsid(number script_clsid, function(se_obj)) -- walks actor's current-level CSE registry filtered by m_script_clsid; functor returns true to stop early; must not release the currently iterated entity
         void force_update() -- forces an immediate alife scheduled update cycle
+        cse_abstract create_on_level(string section, string level_name, Fvector position, number level_vertex_id = nil) -- create(section, position, lvid, gvid) with the ids derived: exact on the current level; elsewhere the level's nearest game vertex and level_vertex_id or that vertex's own level vertex, re-snapped to position when the level loads; nil (logged) when the level is not in the game graph
     }
 
     game {
         Fvector2 world2ui(Fvector pos, bool hud = false, bool allow_offscreen = false)
-        Fvector2 world2ui_with_depth(Fvector pos, bool hud = false, bool allow_offscreen = false)
+        Fvector world2ui_with_depth(Fvector pos, bool hud = false, bool allow_offscreen = false) // x and y are screen coordinates, z is the post projection w, negative behind the camera and its magnitude is the view distance in metres
+        table world2ui_many(table positions, bool hud, bool allow_offscreen) // projects an array of Fvector in one call, result[i] is the world2ui_with_depth vector for positions[i], stops at the first missing or non vector entry, empty table if the argument is not a table
         function ui2world(Fvector2 pos) -> Fvector result, u16 object_id
         function ui2world_offscreen(Fvector2 pos) -> Fvector result, u16 object_id
         change_game_news_show_time(CUIWindow* UIWindow, float show_time)
@@ -179,16 +214,12 @@
 
     ini_file() {
         string get_filename()
+        Fvector4 r_vector4(string sec, string line) // reads four floats from one line, zero vector and a log line when the section or line is missing
+        bool remove_section(string sec) // drops a whole section with its lines, false if the name is empty, the file is read only or the section is not there
         void dltx_print(string sec = nil, string line = nil)
         string dltx_get_filename_of_line(string sec, string line)
         table dltx_get_section(string sec)
         bool dltx_is_override(string sec, string line)
-    }
-
-    // UI hud
-    // get_hud():GetWindow()
-    get_hud() {
-        CUIWindow GetWindow()
     }
 
     // Player hud
@@ -202,15 +233,94 @@
         CUIMessagesWindow get_messages_menu()
     }
 
+    class cse_alife_object {
+        vector draw_level_position() // position the map draws the object at, the interpolated point along its alife path for monsters and stalkers, the stored position otherwise
+    }
+
     // MT only
     class cse_alife_item_weapon {
         function clone_upgrades(cse_alife_item_weapon*)
+    }
+
+    class cse_visual {
+        string visual_name() // current visual path, empty string when the entity has none
+        void set_visual_name(string name) // sets the visual path, ignores an empty name and logs it
+    }
+
+    class cse_alife_inventory_item {
+        property condition // float 0 to 1, a write outside that range is dropped and logged because the net packet only carries that range
     }
 
     class cse_alife_level_changer : cse_alife_space_restrictor {
         property dest_game_vertex_id    // u16
         property dest_level_vertex_id   // u32
         property dest_position          // Fvector
+    }
+
+    // game_graph()
+    class CGameGraph {
+        table level_neighbours(number level_id) // {[level_id] = true} for every level sharing a game-graph edge with level_id; empty table when the level is unknown or has no cross-level edges (offline squads cannot path in or out)
+        number nearest_vertex(string level_name, Fvector position) // game vertex id of level_name's vertex whose level point is nearest to position; nil when the level is not in the game graph
+    }
+
+    class CUIWindow {
+        CUIWindow FindChild()
+
+        void SetHideLock(bool lock) // while locked the window hides and Show(true) is ignored
+        bool GetHideLock()
+
+        void SetMouseCapture(bool status) // take the mouse, the window then gets mouse actions from outside its rect and OnMouseMoveRelative
+        bool IsMouseCapturer()
+        void OnMouseMoveRelative(float dx, float dy) // script window callback, cursor movement in window units while this window holds the capture
+
+        void EnableClip(bool enable) // clip the textured children of this window to a rect, text and frame lines are not clipped
+        bool IsClipEnabled()
+        void SetClipRect(Frect rect) // absolute rect to clip to, an empty rect is refused, without it the window rect is used
+        void ResetClipRect()
+
+		CUI3tButton cast_3tButton()
+		CUIActorMenu cast_ActorMenu()
+		CUIButton cast_Button()
+		CUICheckButton cast_CheckButton()
+		CUIComboBox cast_ComboBox()
+		CUICustomEdit cast_CustomEdit()
+		CUICustomSpin cast_CustomSpin()
+		CUIDialogWnd cast_DialogWnd()
+		CUIEditBox cast_EditBox()
+		CUIFrameLineWnd cast_FrameLineWnd()
+		CUIFrameWindow cast_FrameWindow()
+		UIHint cast_Hint()
+		CUIHudStatesWnd cast_HudStatesWnd()
+		CUIListBox cast_ListBox()
+		CUIListBoxItem cast_ListBoxItem()
+		CUIListBoxItemMsgChain cast_ListBoxItemMsgChain()
+		CUIMMShniaga cast_MMShniaga()
+		CUIMainIngameWnd cast_MainIngameWnd()
+		CUIMapInfo cast_MapInfo()
+		CUIMapList cast_MapList()
+		CUIMessageBox cast_MessageBox()
+		CUIMessageBoxEx cast_MessageBoxEx()
+		CUIMessagesWindow cast_MessagesWindow()
+		CUIMotionIcon cast_MotionIcon()
+		CUIPdaWnd cast_PdaWnd()
+		CUIProgressBar cast_ProgressBar()
+		CUIPropertiesBox cast_PropertiesBox()
+		CUIDialogWndEx cast_ScriptWnd()
+		CUIScrollView cast_ScrollView()
+		CServerList cast_ServerList()
+		CUISleepStatic cast_SleepStatic()
+		CUISpinFlt cast_SpinFlt()
+		CUISpinNum cast_SpinNum()
+		CUISpinText cast_SpinText()
+		CUIStatic cast_Static()
+		CUITabButton cast_TabButton()
+		CUITabControl cast_TabControl()
+		CUITextWnd cast_TextWnd()
+		CUITrackBar cast_TrackBar()
+    }
+    
+    class CUIGameCustom {
+        CUIWindow GetWindow() // get_hud():GetWindow()
     }
 
     class CUIProgressBar {
@@ -221,6 +331,10 @@
     }
 
     class CUIStatic {
+        void SetHeadingPivot(Fvector2 pivot, Fvector2 offset, bool fixedLT) // rotation centre in window units, offset shifts the drawn quad, fixedLT keeps the top left in place
+        void ResetHeadingPivot()
+        float SetLineTo(float x1, float y1, float x2, float y2, float thickness) // size, place and rotate the static as a segment between two points in parent units, returns the segment length
+
     	void SetColorAnimation(string name, number flags, float delay)
 		void ResetColorAnimation()
 		void RemoveColorAnimation()
@@ -264,6 +378,7 @@
         void AddHeader(string str) // Adds a non-selectable, colored title row (used to group items in a merged context menu)
         CUIPropertiesBox AddSubmenu(string label) // Adds a "label >" row whose submenu expands on hover; returns the child box to populate (AddItem/AddHeader/nested AddSubmenu)
         bool AddItem(string str, u32 id) // Adds a selectable item row carrying a u32 id (read back via GetSelectedItem():GetTAG() / map_spot_menu_property_clicked prop_id); lets a menu carry duplicate labels
+        void ShowAt(Frect parent_rect, vector2 point) // Opens the box at `point`, kept inside `parent_rect`; both in the box's PARENT space. AttachChild and AutoUpdateSize() first (submenus too)
     }
 
     class CUIListBoxItem : CUIFrameLineWnd {
@@ -278,6 +393,53 @@
         property m_QuickSlotText4
 
         table GetQuickSlotIcons()
+    }
+
+    class CGameTask {
+        int get_type() // the task type set by set_type
+    }
+
+    // Standalone mini map, owns its own spot pool and draws the level map, the world map under it and the map spots
+    class CUIMiniMapWidget : CUIWindow {
+        CUIMiniMapWidget()
+
+        bool init(string level_name) // build the map for a level, "" for the current one, false when the level declares no map
+        bool init(string level_name, string shader) // same, drawing every quad with the named shader instead of hud\default
+        bool has_map()
+        string map_texture() // the level map texture in use, "" before init succeeds
+        void set_map_texture(string texture) // draw a different texture as the level map, "" restores the one the level declares
+        void set_zoom_span(float meters) // metres of world covered by the height of the widget
+        bool set_active_point(vector pos) // centre the map on a world position, false when the position is outside the level bounds and had to be clamped
+        void set_heading(float radians) // map rotation used while set_rotate is on
+        void set_rotate(bool b) // rotate the map with the heading instead of keeping it north up
+        void set_texture_color(u32 color) // tint of the level map and the world map
+        void set_update_interval(u32 ms) // milliseconds between spot rebuilds, 0 rebuilds every frame
+        Fvector2 local_of(vector pos) // widget local position of a world point, zero before init succeeds
+        u16 spot_at(float x, float y) // object id of the spot under a widget local point, 65535 when there is none
+        u32 spot_count() // spots currently drawn
+        u32 pointer_count() // off screen pointers currently drawn
+
+        void set_global_visible(bool b) // draw the world map behind the level map
+        void set_global_texture(string texture) // world map texture, "" restores the one game.ltx names
+
+        void set_spot_shader(string shader) // shader for the spots and pointers, "" falls back to the shader init took
+        void set_spot_texture(string spot_type, string texture, float width, float height) // replace the icon of a spot type, size in screen units
+        void set_spot_height_textures(string spot_type, string above, string below) // icons used when the spot is above or below the actor
+        void clear_spot_textures()
+        void set_spot_scale(float scale) // multiplier on every spot size
+        void set_spot_color(u16 object_id, u32 color) // tint one object's spot and pointer, 0 restores the declared color
+        void set_spot_type_visible(string spot_type, bool visible) // hide or show a whole spot type
+        void clear_spot_type_filter()
+
+        void set_pointers_visible(bool visible) // draw pointers for off screen spots
+        void set_pointer_type(string spot_type, bool point) // opt a spot type into pointers, no type points by default
+        void clear_pointer_types()
+        void set_pointer_target(u16 object_id) // one object keeps its pointer even from another level
+        void clear_pointer_target()
+        void set_pointer_scale(float scale) // multiplier on every pointer size, 0 uses the spot scale
+        void set_pointer_texture(string texture, float x, float y, float w, float h) // pointer art for every type, rect in texture pixels
+        void set_pointer_texture(string spot_type, string texture, float x, float y, float w, float h) // pointer art for one spot type, rect in texture pixels
+        void clear_pointer_texture()
     }
 
     // MT only
@@ -320,6 +482,7 @@
         sphere,
         box,
     }
+
     debug_render {
         DBG_ScriptObject* add_object(u32 id, DebugRenderType type)
         DBG_ScriptObject* add_object(LPCSTR id, DebugRenderType type)
@@ -383,6 +546,36 @@
 		eDXE_BC7 = 3,
 		eDXE_undefined = 4,
     }
+
+    shader_bus { -- float4 lanes bound to hlsl constants called bus_<id>, see docs/shader_bus.md
+        number version() -- 7
+        number register(string id, string owner, string description) -- the write token, fatal when the id is registered with a different owner, nil for an id starting engine_ or cvar_
+        number try_register(string id, string owner, string description) -- nil instead of the fatal
+        number register_shared(string id, string owner, string description) -- a token of a shared lane, every writer gets its own and the lane binds the largest value, obj_hotness is shared and register and try_register give its token too
+        -- engine lanes engine_sun_los and engine_sky_open are registered by the engine, owner_of returns engine, and fill while a shader declares them
+        -- a shader declaring bus_cvar_<name> reads the console value <name>, no script writes it
+        bool set(number token, number x, number y, number z, number w) -- false for a bad token or a value that is not finite
+        bool set_array(number token, number first, table rows) -- rows {x, y, z, w} from 0-based row first, DX10 and DX11 arrays and matrices, false past row 4095
+        bool set_uint(number token, number a, number b, number c, number d) -- whole numbers 0 to 4294967295 for uint lanes, DX10 and DX11
+        bool set_array_uint(number token, number first, table rows) -- set_array with unsigned rows
+        bool set_object(number token, game_object obj, number x, number y, number z, number w) -- the object's own value on a lane whose id starts obj_, HUD draws read the actor's
+        bool clear_object(number token, game_object obj) -- the object reads the lane's value again
+        bool set_texture(number token, string name) -- the texture or render target $user$bus_<id> shows from the next frame, "" empties it
+        function get(string id) -> bool ok, number x, number y, number z, number w -- the bound value, one frame behind set
+        function get_uint(string id) -> bool ok, number a, number b, number c, number d -- the bound value as unsigned integers
+        function get_row(string id, number i) -> bool ok, number x, number y, number z, number w -- bound row i, false past the rows a shader declared, unsigned on a uint lane
+        function get_object(string id, game_object obj) -> bool ok, number x, number y, number z, number w -- what draws of obj read, its own value or the lane's
+        string get_texture(string id) -- what $user$bus_<id> shows, nil for none or an unknown id
+        function get_pending(string id) -> bool ok, number x, number y, number z, number w -- the value last written through the token, the largest of the tokens on a shared lane, unsigned on a uint lane
+        table writers(string id) -- rows {owner, x, y, z, w}, one per token of a shared lane that called set, empty for any other lane
+        table writers(string id, game_object obj) -- the same rows for the tokens that gave obj an object value
+        bool has(string id)
+        string describe(string id) -- nil for an unknown or unregistered id
+        string owner_of(string id) -- nil for an unknown or unregistered id
+        table list(bool include_declared = false) -- rows {id, owner, description, state, source, forced, rows, declared_rows, kind, declared_kinds, objects, shared, writers, texture, writer}, registered lanes then the twelve legacy console lanes, state is registered, declared or legacy
+        function stats(string id) -> bool ok, number changes, number last_change_frame, number bound_frame, number writes
+    }
+
     level {
         float get_music_volume()
         void set_music_volume(float)
@@ -401,6 +594,9 @@
         // Removes all engine-spawned per-animation HUD camera effectors
         // Scripted effectors added via add_cam_effector are not touched.
         void remove_hud_motion_cam_effectors()
+
+        // level.add_cam_effector, but contains one more variable that dictates the speed of the cam effector, returns anim length
+        float add_cam_effector(LPCSTR fn, int id, bool cyclic, LPCSTR cb_func, float cam_fov, bool b_hud, float power, float speed)
 
         game_object get_target_obj(ETraceTarget)
         game_object get_target_obj()
@@ -463,12 +659,27 @@
         //    }
         //    level.add_bullet(t)
 
-         // Script Attachments
+        // Script Attachments
         function add_attachment(string, string)
         function get_attachment(string)
         function remove_attachment(string)
         function remove_attachment(script_attachment)
         function iterate_attachments(function)
+
+        // Map spots
+        table map_get_all_object_spots() // one row per live map location, {id, spot_type, current_spot_type, hint, level_name, x, y, z}, empty table outside a level
+        table map_get_spot_declaration(string spot_type) // {texture, width, height} of the mini map spot declared in the spot xml, empty table when the type declares none
+
+        Fvector2 get_texture_size(string texture) // texture size in pixels, zero when the texture is not loaded
+        function nearest_object(vector pos, float radius) -> game_object obj, float distance // closest game object within radius metres, nil and 0 when nothing is in range
+        function nearest_object(vector pos, float radius, int clsid) -> game_object obj, float distance // same limited to one class id, a negative clsid matches any
+
+        // Post-Process Effectors
+        float get_pp_effector_factor(int id)
+        float get_pp_effector_length(int id)
+        bool check_pp_effector(int id)
+
+        bool is_input_captured() // true while input is disabled or a UI dialog holds the top input receiver, so game keys will not reach scripts
 
         // MT only
         function scheduler_flush(bool)
@@ -626,9 +837,52 @@
         function place_skeleton (game_object obj, string section, Fvector start, Fvector dir, float size, float ttl)
     }
 
+    // monster_on_combat_action callback flags.substate: the attack substates the shared monster
+    // and group attack selectors can honor; any other value is ignored and vanilla selection runs.
+    // Values are EMonsterState ids.
+    enum monster_state {
+        eStateAttack_Run             = 262145,
+        eStateAttack_Melee           = 262146,
+        eStateAttack_RunAttack       = 262147,
+        eStateAttack_RunAway         = 262148,
+        eStateAttack_FindEnemy       = 262149,
+        eStateAttack_Steal           = 262150,
+        eStateAttack_AttackHidden    = 262151,
+        eStateAttack_ControlFire     = 262157,
+        eStateAttackCamp             = 262160,
+        eStateAttack_MoveToHomePoint = 262165,
+        eStateAttack_Attack_On_Run   = 262169,
+        eStateCustom                 = 1073741824
+    }
+    
+    // slot ids, the same numbers move_to_slot and active_slot use, read as inventory.knife
+    enum inventory.slot {
+        no_active   = 0,
+        knife       = 1,
+        slot_2      = 2,
+        slot_3      = 3,
+        grenade     = 4,
+        binocular   = 5,
+        bolt        = 6,
+        outfit      = 7,
+        pda         = 8,
+        detector    = 9,
+        torch       = 10,
+        artefact    = 11,
+        helmet      = 12,
+        backpack    = 13,
+        custom_1,   // custom_1 to custom_5 only exist in a build with the extra inventory slots
+        custom_2,
+        custom_3,
+        custom_4,
+        custom_5,
+        last,       // highest valid slot id in this build, backpack without the extra slots
+    }
+
     class game_object {
 		// Class casting
 		function cast_Knife()
+		function cast_Binoculars() // CWeaponBinoculars, nil when the object is not a pair of binoculars
         function get_projector()
         function get_stmgun()
         function cast_Missile()
@@ -671,6 +925,8 @@
 		function set_actor_box_y_offset(u32 box_num, float offset) -- box_num: 0 for stand, 1 for crouch, 2 for prone;
         function g_fireParams()
         function move_to_slot(game_object* pItem, number slot_id, bool doNotActivate)
+        function get_actor_damage_stagger_time_factor() // returns the damage stagger time factor that scales the slow down from mutant hit
+        function set_actor_damage_stagger_time_factor(float val) // writes to the damage stagger time factor variable that scales the slow down from mutant hit
 
         // Stalker and Monster
         function invalidate_restrictions()
@@ -679,6 +935,63 @@
         void set_hit_redirect(float max, float falloff) // Per-object bonus toward the last attacker in enemy selection, replacing the flat CQB step. max < 0 keeps vanilla. max >= 0 subtracts max*(1 - d2/falloff^2) from the attacker cost within falloff metres, so a close attacker is prioritised and a distant one fades to 0. The victim turns toward the shooter without a forced sighting. Not serialized, re-set on spawn.
         void set_view_distance_factor(float factor) // Per-object view-DISTANCE factor, the range sibling of set_vision_speed: multiplies object_visible_distance's return, composing with the per-state max_view_distance LTX multiplier. 1.0 = vanilla, higher sees farther, negative clamps to 0. Persists while online; re-set on spawn.
         void set_health_restore_boost(float value) // Per-object additive passive health-restore boost: adds value to the condition's m_fV_HealthRestore velocity applied every UpdateHealth while alive (base ~0.00003/s for stalkers), so the entity regenerates HP over time with no item. 0 = vanilla, higher = faster idle regen, negative clamps to 0. Stalkers and monsters (any CEntityAlive). Persists while online; re-set on spawn (condition rebuilt on re-online).
+        void set_movement_hold(bool value) // Per-object movement hold: while true, parse_velocity_mask routes into its Stand branch, so the stalker stays planted (speed 0, movement type Stand) with the path and destination preserved; movement resumes when cleared. false = vanilla. Stalkers only. Not serialized; the caller owns clearing it - a stale true holds the NPC in place indefinitely.
+
+        // CBaseMonster - FSM memory readers. Report what the monster currently believes, distinct from live ground truth off the enemy game_object.
+        MonsterEnemyInfo get_monster_enemy_info() // The EnemyMan record: enemy game_object (nil when none), last-seen position and vertex (the monster's cached belief, diverges from the live object while the enemy is unseen), time_last_seen (ms), enemies_count (remembered, not live-visible), my_vertex_enemy_last_seen + enemy_vertex_enemy_last_seen. Empty record on a non-monster.
+        MonsterHomeInfo get_monster_home_info() // The CMonsterHome record: point (home anchor), radius_min/mid/max, aggressive, has_home, at_home. has_home false = no home set. Empty record on a non-monster.
+        // get_monster_hit_info gains .position (last hit world pos) + .count (remembered hits); get_sound_info gains .type (TSoundDangerValue) + .count (remembered sounds).
+        
+        // CBaseMonster - rear-strike lever. Default = exact vanilla; not serialized, re-apply on net_spawn.
+        void set_monster_melee_strike(string anim_left, string anim_right, float rear_arc_deg) // Arms the dormant rear-strike component (CControlMeleeJump, registered for every species but inert without motions): with the enemy in the rear cone under 4m the monster spin-strikes left or right, rate-limited 500-1000ms. rear_arc_deg sizes that cone (the enemy must sit beyond 180 - arc/2 degrees off the front); <= 0 keeps 120. Pass the model's own strike motions; an unknown motion name stays invalid and the component keeps refusing. Damage comes from the motions' attack_params rows - a motion without a row deals the first row's numbers, so supply motions that have rows.
+        
+        // CBaseMonster - FSM and combat-state readers. All return -1 / false on a non-monster object.
+        number get_monster_state() // Deepest resolved FSM state id (EMonsterState) via StateMan->get_state_type(): recurses into the current substate, so an attacking monster reports the substate it runs (e.g. Attack_Run, Attack_Melee), not just eStateAttack. eStateUnknown while no state is active.
+        bool is_monster_jumping() // True while a jump control is active on the monster.
+        number get_monster_rank() // m_rank integer (Rank()).
+        bool ability_invisibility() // Per-species class flags, hints only - NOT the live capability envelope: a species can report false yet execute the maneuver through a registered component (a dog reports can_jump false and still jumps). The try_* invoke booleans below are the authoritative capability read.
+        bool ability_can_drag()
+        bool ability_psi_attack()
+        bool ability_earthquake()
+        bool ability_can_jump()
+        bool ability_distant_feel()
+        bool ability_run_attack()
+        bool ability_rotation_jump()
+        bool ability_jump_over_physics()
+        bool can_attack_on_move() // True when the monster's attack-on-move params are enabled and applicable.
+        number get_monster_morale() // Current morale value (CMonsterMorale::get_morale).
+        number get_psy_influence() // Aura influence reads on the monster.
+        number get_radiation_influence()
+        number get_fire_influence()
+        number get_monster_cover_vertex(Fvector enemy_position, float min_dist, float max_dist) // Best monster cover level-vertex against enemy_position within the distance band (CMonsterCoverManager::find_cover - the camp state's own query). 4294967295 when none found. Feed level.vertex_position for a retreat/ambush point.
+
+        // CBaseMonster - combat-param setters. Neutral per-object levers over params loaded once from LTX.
+        // A negative argument keeps the current value. Not serialized - re-apply on net_spawn. No-op + error log on a non-matching class.
+        void set_monster_attack_dist(float min_dist, float max_dist) // MeleeChecker min/max attack distance.
+        void set_monster_jump_params(float min_dist, float max_dist, float max_angle, float max_height, float delay_ms) // CControlJump distance/angle/height/post-jump delay.
+        void set_chimera_attack_params(float attack_radius, float prepare_timeout_ms, float attack_timeout_ms, int num_prepare_jumps, int num_attack_jumps) // Chimera/lurker only. attack_radius passes through unclamped; the circle-run geometry clamps its own sqrt argument below jump_max_distance, so an oversized radius cannot NaN it. int args negative = keep.
+        void set_burer_gravi_params(float cooldown_ms, float min_dist, float max_dist, float speed, float radius, float hit_power) // Burer only. Gravity-attack family.
+        void set_burer_tele_params(int max_objects, float find_radius, float min_dist, float max_dist, float fly_velocity) // Burer only. Telekinesis family.
+        void set_controller_tube_params(float damage, float see_duration_ms, float min_delay_ms, float min_distance) // Controller only. Psi tube-attack family.
+        void set_controller_stamina_hit(float value) // Controller only. Per-hit stamina drain.
+        void set_poltergeist_detection_params(float near_factor, float far_factor, float far_range, float speed_factor, float loose_speed) // Poltergeist only. Actor-detection family.
+        void set_poltergeist_height_params(float height_min, float height_max, float change_velocity, float min_time_ms, float max_time_ms) // Poltergeist only. Hover-height family.
+        void set_monster_attack_on_move_params(float max_go_close_time, float far_radius, float prepare_radius, float prepare_time, float attack_radius, float update_side_period, float prediction_factor) // The attack-on-move circle geometry and side-flip cadence (times in seconds, read per attack tick). Geometry only - the enabled switch stays config-owned.
+        void set_monster_run_attack_params(float min_dist, float max_dist, float min_delay_ms, float max_delay_ms) // CControlRunAttack distance band and re-arm delay roll. Errors when the species carries no run-attack component.
+        void set_monster_jump_flags(bool auto_aim, bool prepare_in_move, bool ground_skip, float auto_aim_factor) // Script-forced jump flags, OR'd onto every jump's own flag fill at activation - auto_aim steers the glide onto a moving target, prepare_in_move winds up in motion (engages only where the species has the motion), ground_skip drops the landing animation. auto_aim_factor >= 0 writes the air-control gain the steering reads; configs ship it 0, so the flag alone steers nothing - set both. Negative keeps the loaded gain. All false + negative = vanilla. Never clears an engine-set flag.
+        void set_monster_aura_params(string aura_name, float linear, float quadratic, float max_power, float max_distance) // One monster aura by name: psy, radiation, fire or base. Writes the falloff pair, power cap and range the aura's calculate() reads live. Error log on an unknown name.
+        void set_bloodsucker_vis_timing(float min_delay_ms) // Bloodsucker only. The minimum delay between visibility-state changes (the predator flicker pacing).
+        void set_monster_turn_factor(float factor) // The monster's base-path heading-turn speed multiplier (CControlDirectionBase::update_frame): it re-faces a moving target faster on the ground. 1 = vanilla, <= 0 keeps the current value. The jump control's in-flight alignment is untouched.
+
+
+        // CBaseMonster - maneuver invokes. Lua commands a control component; the engine executes it.
+        // Returns true if the component was captured and activated, false if refused: start conditions failed, required data missing, or the monster is under script control (mob_capture / scheme logic) - the invokes always defer to a scheme owner. All but try_monster_jump also consult the monster FSM's own start gate (e.g. a follower dog denies a jump at a non-elevated enemy); the jump bypasses it, see its line.
+        bool try_monster_jump(Fvector position, float factor, bool skip_prepare) // Jump toward a world position (the script_jump path). Bypasses the FSM's own jump pacing (e.g. the chimera attack state's m_allow_jump veto), like the engine's scripted CChimera::jump does - the command is the caller's policy. Refused while another jump is active or the manager is pure-captured. skip_prepare = true launches without the crouch wind-up (SControlJumpData::ePrepareSkip). The leap launches along the body axis.
+        bool try_monster_rotation_jump() // Start a rotation-jump from the loaded rotation-jump data (false if none loaded).
+        bool try_monster_run_attack() // Start a run-attack.
+        bool try_monster_threaten() // Start a threaten animation (false if no threaten data set).
+        bool monster_capture_control(number type) // Capture a ControlCom::EControlType for script control; true if this manager holds it after. Refuses under script control (a scheme owner holds the monster) and while a pure capture is in flight (an active jump owns the control stack; stealing movement or path mid-flight destabilizes it).
+        bool monster_release_control(number type) // Release a ControlCom::EControlType; true if this manager no longer holds it. Never refused - a caller can always clean up its own capture.
 
         // Stalker NPCs
         function get_enable_anomalies_pathfinding()
@@ -711,6 +1024,16 @@
 
         // Anomalies
         function is_enabled_anomaly()
+
+        // Inventory items (including weapons, outfits, helmets and backpacks)
+        Frect get_inv_grid_rect() // Current inv_grid values, including upgrades; units are inventory grid cells.
+        Frect get_upgr_icon_rect() // Current upgr_icon values, including upgrades; units are pixels.
+        // Both return a copy: x1 = x, y1 = y, x2 = width, y2 = height (not bottom-right coordinates).
+        // Modifying the returned Frect does not change the item. Non-inventory objects log an error and return all zeros.
+        // Example: local grid = item:get_inv_grid_rect(); local width, height = grid.x2, grid.y2
+        // To construct a UI pixel rectangle from the upgrade icon:
+        // local icon = item:get_upgr_icon_rect()
+        // local uv = Frect():set(icon.x1, icon.y1, icon.x1 + icon.x2, icon.y1 + icon.y2)
 
         // Artefact
         function get_artefact_additional_inventory_weight()
@@ -802,6 +1125,12 @@
 		function set_shader(number, string, string, bool)
 		function get_default_shaders(bool)
 		function reset_shader(number, bool)
+		function get_hud_motion_item_shaders()
+		function set_hud_motion_item_shader(number, string, string)
+		function reset_hud_motion_item_shader(number)
+		function get_legs_shaders()
+		function set_legs_shader(number, string, string)
+		function reset_legs_shader(number)
 		
 		get_shaders(hud_mode)
 		hud_mode is optional and will default to false
@@ -829,6 +1158,27 @@
 		
 		reset_shader(id, hud_mode)
 		same as set_shader but resets to the default shader/texture values, so you don't need to store them in a table to reset them later
+		
+		get_hud_motion_item_shaders(), set_hud_motion_item_shader(id, shader, texture), reset_hud_motion_item_shader(id)
+		actor only, same as get_shaders, set_shader and reset_shader but for the item model of the running game.play_hud_motion
+		does nothing when no animation with an item model is playing
+		
+		get_legs_shaders(), set_legs_shader(id, shader, texture), reset_legs_shader(id)
+		actor only, same as get_shaders, set_shader and reset_shader but for the first person legs model
+		does nothing when the legs are not shown
+    }
+
+    class CActorCondition : CEntityCondition {
+        enum influence_type
+            infl_rad
+            infl_fire
+            infl_acid
+            infl_psi
+            infl_electra
+
+        function GetInjuriousMaterialDamage() // damage per second of the injurious material the actor stands on, 0 on a normal material
+        function GetZoneMaxPower(influence_type) // the actor's max power for that influence, the value zone danger is measured against, 0 and a log line on a bad type
+        function GetZoneDanger(influence_type) // current danger for that influence, 0 to 1, 0 and a log line on a bad type
     }
 
     class CArtefact : CGameObject {
@@ -861,6 +1211,27 @@
         
         functiom Action(number id, number flags, string sec)
         functiom SetParam(number id, Fvector val, string sec)
+    }
+
+    // hud states shared by every hud item, read as hud_state.idle, compare against item:get_state()
+    enum hud_state.states {
+        idle,
+        showing,
+        hiding,
+        hidden,
+        bore,       // the idle fidget animation
+    }
+
+    // weapon only states, read as weapon_state.fire, they continue the hud_state numbering
+    enum weapon_state.states {
+        fire,
+        fire2,      // second fire mode, grenade launcher or underbarrel
+        reload,
+        misfire,
+        switch,     // switching ammo type
+        switch_mode, // switching fire mode
+        aim_start,  // rotating into ADS
+        aim_end,    // rotating out of ADS
     }
 
     class CWeapon : CGameObject {
@@ -957,6 +1328,10 @@
 		
 		
 
+        // Zoom
+        bool StopZoom() // leaves ADS, plays the aim end animation when the weapon has one, false if the weapon was not zoomed
+        bool IsTextureZoomActive() // true only while the scope texture UI is actually drawn, so zoomed in with a scope texture and no longer rotating into ADS
+
         //Scope UI
         //Returns table containing this data
         {
@@ -1013,6 +1388,7 @@
         function get_object() : game_object
         function get_distance() : float
         function get_element() : int (number of triangle)
+        function get_multiply_add() : vector
         function get_normal() : vector
     }
 
@@ -1195,5 +1571,5 @@
         property userdata
     }
     
-    Script Attachment Guide: https://igigog.github.io/anomaly-modding-book/tutorials/scripting/script-attachments.html
+    Script Attachment Guide: https://anomaly-modding-book.netlify.app/docs/tutorials/scripting/script-attachments
 --]]
