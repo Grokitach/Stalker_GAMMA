@@ -1,6 +1,6 @@
 -- Dynamic Anomaly Generator by DoctorX
 -- Revisited by demonized, 2022
--- Improved and optimized logic by Jack Harris, 2026
+-- Improved optimized logic and script cleanup by Jack Harris, 2026
 -- Creating anomalies at the start of level after emission/psi-storm and removing anomalies after emission/psi-storm instead of just disabling them, allowing for truly dynamic generation
 -- Anomalies behaviour:
 --	enable/disable with randomized periods, duration and cooldowns for every single anomaly
@@ -35,7 +35,7 @@ local abs = math.abs
 local ceil = math.ceil
 local cos = math.cos
 local floor = math.floor
-local max = math.max
+--local max = math.max
 local min = math.min
 local random = math.random
 local sin = math.sin
@@ -76,29 +76,30 @@ end
 -- UTILS
 --Recursive print of tables similar to PHP print_r function
 local print_r = print_r or function(t)
-	local print_r_cache={}
-	local function sub_print_r(t,indent)
-		if (print_r_cache[tostring(t)]) then
-			printf(indent.."*"..tostring(t))
+	local print_r_cache = {}
+	local function sub_print_r(tbl, indent)
+		if (print_r_cache[tostring(tbl)]) then
+			printf(indent .. "*" .. tostring(tbl))
 		else
-			print_r_cache[tostring(t)]=true
-			if (type(t)=="table") then
-				for pos,val in pairs(t) do
-					if (type(val)=="table") then
-						printf(indent.."["..pos.."] => "..tostring(t).." {")
-						sub_print_r(val,indent..string.rep(" ",string.len(pos)+8))
-						printf(indent..string.rep(" ",string.len(pos)+6).."}")
+			print_r_cache[tostring(tbl)] = true
+			if (type(tbl) == "table") then
+				for pos, val in pairs(tbl) do
+					if (type(val) == "table") then
+						printf(indent .. "[" .. pos .. "] => " .. tostring(tbl) .. " {")
+						sub_print_r(val, indent .. string.rep(" ", string.len(pos) + 8))
+						printf(indent .. string.rep(" ", string.len(pos) + 6) .. "}")
 					else
-						printf(indent.."["..pos.."] => "..tostring(val))
+						printf(indent .. "[" .. pos .. "] => " .. tostring(val))
 					end
 				end
 			else
-				printf(indent..tostring(t))
+				printf(indent .. tostring(tbl))
 			end
 		end
 	end
-	sub_print_r(t,"	 ")
+	sub_print_r(t, "	")
 end
+
 
 --Protected function call to prevent crashes to desktop
 --Prints error in console if occured, otherwise proceed normally
@@ -115,13 +116,13 @@ end
 
 -- Shuffle table, Fisher-Yates shuffle with preserving original table
 local function shuffle(t)
-   local s = {}
-   for i = 1, #t do s[i] = t[i] end
-   for i = #t, 2, -1 do
-	 local j = random(i)
-	 s[i], s[j] = s[j], s[i]
-   end
-   return s
+	local s = {}
+	for i = 1, #t do s[i] = t[i] end
+	for i = #t, 2, -1 do
+		local j = random(i)
+		s[i], s[j] = s[j], s[i]
+	end
+	return s
 end
 
 -- Get time elapsed from the start of the game in IRL seconds
@@ -136,7 +137,7 @@ local function round(amount)
 end
 
 local og_printf = printf
-local function printf(str, ...)
+function printf(str, ...)
 	if settings.debug_mode then
 		og_printf("DRX DA: " .. str, ...)
 	end
@@ -147,8 +148,8 @@ local default_smoothing = 11.5
 local smoothed_values = {}
 
 local function ema(key, value, def, steps, delta)
-	local steps = steps or default_smoothing
-	local delta = delta or steps
+	steps = steps or default_smoothing
+	delta = delta or steps
 	local smoothing_alpha = 2.0 / (steps + 1)
 
 	smoothed_values[key] = smoothed_values[key] and smoothed_values[key] + min(smoothing_alpha * (delta / steps), 1) * (value - smoothed_values[key]) or def or value
@@ -157,6 +158,7 @@ local function ema(key, value, def, steps, delta)
 	return smoothed_values[key]
 end
 
+
 local get_safe_sound_object = xr_sound.get_safe_sound_object
 local function play_sound_on_actor(snd, volume, frequency, obj)
 	if not snd then
@@ -164,7 +166,7 @@ local function play_sound_on_actor(snd, volume, frequency, obj)
 		return
 	end
 	local actor = db.actor
-	local snd = get_safe_sound_object(snd)
+	snd = get_safe_sound_object(snd)
 	if snd then
 		if obj and obj:id() ~= AC_ID then
 			snd:play_at_pos(obj, obj:position(), 0, sound_object.s3d)
@@ -196,12 +198,12 @@ function add_timed_effect(timer, effect_function, effect_args, on_end_function, 
 	printf("current_time %s, adding effect %s", time_elapsed, time_elapsed + (timer or 0))
 
 	local dump = string.dump
-	local load = loadstring
+	--local load = loadstring
 	local unpack = unpack
 	local table_insert = table.insert
 
-	local effect_args = effect_args or {}
-	local on_end_args = on_end_args or {}
+	effect_args = effect_args or {}
+	on_end_args = on_end_args or {}
 	local effect = {
 		timer = time_elapsed + (timer or 0),
 		effect = effect_function and function()
@@ -224,6 +226,7 @@ function add_timed_effect(timer, effect_function, effect_args, on_end_function, 
 	end
 end
 
+
 -- This is the simpler version of the function above if you do not care about persistence and saving states
 function add_simple_timed_effect(timer, effect_function, on_end_function, key, overwrite_mode)
 	-- printf("current_time %s, adding effect %s", time_elapsed, time_elapsed + (timer or 0))
@@ -238,9 +241,9 @@ function add_simple_timed_effect(timer, effect_function, on_end_function, key, o
 		end
 	end
 
-	local dump = string.dump
-	local load = loadstring
-	local unpack = unpack
+	--local dump = string.dump
+	--local load = loadstring
+	--local unpack = unpack
 	local table_insert = table.insert
 
 	local effect = {
@@ -249,9 +252,9 @@ function add_simple_timed_effect(timer, effect_function, on_end_function, key, o
 		on_end = on_end_function
 	}
 
-	if effect.on_end then
+	--if effect.on_end then
 		-- printf("effect has on end function %s", effect.on_end)
-	end
+	--end
 
 	if key then
 		timed_effects[key] = effect
@@ -304,12 +307,13 @@ function register_callback(callback, callback_function, on_end_function, key)
 		on_end = on_end_function
 	}
 
-	local key = key or (#callbacks + 1)
+	key = key or (#callbacks + 1)
 	callbacks[key] = t
 	printf("registering callback %s, key %s", callback, key)
 	RegisterScriptCallback(callbacks[key].callback, callbacks[key].func)
 	return key
 end
+
 
 function unregister_callback(key)
 	if not callbacks[key] then return end
@@ -417,7 +421,7 @@ local vanilla_anomaly_cache = {}
 local vanilla_cache_built = {}
 
 function init_anomaly_table_on_level(level_name)
-	local level_name = level_name or level.name()
+	level_name = level_name or level.name()
 	if not updated_anomaly_levels[level_name] then updated_anomaly_levels[level_name] = {} end
 	if not updated_anomaly_levels[level_name].cleaned_old_anomalies then updated_anomaly_levels[level_name].cleaned_old_anomalies = false end
 	if not updated_anomaly_levels[level_name].anomalies then updated_anomaly_levels[level_name].anomalies = {} end
@@ -430,6 +434,7 @@ function init_anomaly_table_on_level(level_name)
 	if not updated_anomaly_levels[level_name].time then updated_anomaly_levels[level_name].time = -1 end
 	if not updated_anomaly_levels[level_name].disabled then updated_anomaly_levels[level_name].disabled = false end
 end
+
 
 function init_anomaly_table_global(current_level)
 	init_anomaly_table_on_level(current_level)
@@ -462,15 +467,15 @@ function get_obj_restrictions(clean)
 	local gg_vertex = gg.vertex
 	local level_name = level.name()
 	local get_monster_data = utils_stpk.get_monster_data
-	local get_stalker_data = utils_stpk.get_stalker_data
+	--local get_stalker_data = utils_stpk.get_stalker_data
 
 	local function get_nearest_smart_id(se_obj)
-		local dist
+		--local dist
 		local min_dist
 		local nearest
 		local nearest_name
 
-		for name,smart in pairs( SIMBOARD.smarts_by_names ) do
+		for name, smart in pairs(SIMBOARD.smarts_by_names) do
 			local dist = smart.position:distance_to(se_obj.position)
 			if (not min_dist) then
 				min_dist = dist
@@ -482,10 +487,9 @@ function get_obj_restrictions(clean)
 				nearest_name = name
 			end
 		end
-		if (nearest) then
-			if (simulation_objects.is_on_the_same_level(nearest, se_obj)) then
-				return nearest.id, nearest_name
-			end
+
+		if nearest and simulation_objects.is_on_the_same_level(nearest, se_obj) then
+			return nearest.id, nearest_name
 		end
 	end
 
@@ -496,63 +500,69 @@ function get_obj_restrictions(clean)
 		["base_in_restrictors"] = true,
 	}
 
-	for i = 1, 65534 do
+	local function process_obj_restrictions(i)
 		local se_obj = alife_object(alife, i)
-		if se_obj then
-			local cls = se_obj:clsid()
-			if IsMonster(_, cls) then
-				local se_obj_level = alife_level_name(alife, gg_vertex(gg, se_obj.m_game_vertex_id):level_id())
-				if true or se_obj_level == level_name then
-					local monster_data = get_monster_data(se_obj)
-					if monster_data then
-						-- printf(".")
-						-- printf("monster_data for %s, %s, level %s", se_obj:section_name(), se_obj.id, se_obj_level)
-						for k, v in spairs(restrictions) do
-							-- printf("[%s] => %s", k, v)
-							if monster_data[k] and type(monster_data[k]) == "table" then
-								-- printf("..")
-								for k1, v1 in spairs(monster_data[k]) do
-									if not obj_restrictions[se_obj.id] then obj_restrictions[se_obj.id] = {} end
-									if not obj_restrictions[se_obj.id][k] then obj_restrictions[se_obj.id][k] = {} end
-									obj_restrictions[se_obj.id][k][v1] = true
-									in_restrictions[v1] = true
-									local nearest_smart_id, nearest_smart_name = get_nearest_smart_id(se_obj)
-									if	nearest_smart_name then
-										-- printf("%s",	 nearest_smart_name)
-										smart_restrictions[nearest_smart_name] = v1
-									end
-									-- printf("[%s] => %s", k1, v1)
-								end
-							end
-						end
+		if not se_obj then return end
+
+		local cls = se_obj:clsid()
+		if not IsMonster(_, cls) then return end
+
+		local se_obj_level = alife_level_name(alife, gg_vertex(gg, se_obj.m_game_vertex_id):level_id())
+		if not (true or se_obj_level == level_name) then return end
+
+		local monster_data = get_monster_data(se_obj)
+		if not monster_data then return end
+
+		-- printf(".")
+		-- printf("monster_data for %s, %s, level %s", se_obj:section_name(), se_obj.id, se_obj_level)
+		for k, v in spairs(restrictions) do
+			-- printf("[%s] => %s", k, v)
+			local data_table = monster_data[k]
+			if data_table and type(data_table) == "table" then
+				-- printf("..")
+				for k1, v1 in spairs(data_table) do
+					if not obj_restrictions[se_obj.id] then obj_restrictions[se_obj.id] = {} end
+					if not obj_restrictions[se_obj.id][k] then obj_restrictions[se_obj.id][k] = {} end
+					obj_restrictions[se_obj.id][k][v1] = true
+					in_restrictions[v1] = true
+					local _, nearest_smart_name = get_nearest_smart_id(se_obj)
+					if nearest_smart_name then
+						-- printf("%s",	 nearest_smart_name)
+						smart_restrictions[nearest_smart_name] = v1
 					end
+					-- printf("[%s] => %s", k1, v1)
 				end
 			end
 		end
 	end
+
+	for i = 1, 65534 do
+		process_obj_restrictions(i)
+	end
+
 	-- print_r(smart_restrictions)
 	-- print_r(obj_restrictions)
 	return obj_restrictions
 end
 
 function remove_all_restrictions(level_name)
-	local alife_release_id = alife_release_id
+	--local alife_release_id = alife_release_id
 	local gg = game_graph()
 	local gg_vertex = gg.vertex
 	local invert_table = invert_table
-	local is_not_empty = is_not_empty
+	--local is_not_empty = is_not_empty
 	local IsMonster = IsMonster
-	local load_var = load_var
+	--local load_var = load_var
 	local pairs = pairs
 	local printf = printf
 	local sim = alife()
 	local sim_level_name = sim.level_name
 	local sim_object = sim.object
-	local sim_release = sim.release
+	--local sim_release = sim.release
 	local sim_remove_in_restriction = sim.remove_in_restriction
 	local sim_remove_out_restriction = sim.remove_out_restriction
-	local spairs = spairs
-	local strformat = strformat
+	--local spairs = spairs
+	--local strformat = strformat
 	local type = type
 
 	local globally = not level_name
@@ -569,33 +579,40 @@ function remove_all_restrictions(level_name)
 
 	local anomalies_ids = {}
 
-	for i = 1, 65534 do
+	local function process_restriction_cleanup(i)
 		local se_obj = sim_object(sim, i)
-		if se_obj then
-			local cls = se_obj:clsid()
-			if IsMonster(_, cls) or IsStalker(_, cls) then
-				local se_obj_level = sim_level_name(sim, gg_vertex(gg, se_obj.m_game_vertex_id):level_id())
-				if globally or se_obj_level == level_name then
-					if not anomalies_ids[se_obj_level] then
-						anomalies_ids[se_obj_level] = updated_anomaly_levels[se_obj_level] and invert_table(updated_anomaly_levels[se_obj_level].anomalies) or {}
-					end
-					local monster_data = IsMonster(_, cls) and get_monster_data(se_obj) or get_stalker_data(se_obj)
-					if monster_data then
-						for k, v in pairs(restrictions) do
-							if monster_data[k] and type(monster_data[k]) == "table" then
-								for k1, v1 in pairs(monster_data[k]) do
-									if anomalies_ids[se_obj_level][v1] then
-										printf("removed restriction %s for level %s", se_obj:name(), se_obj_level)
-										sim_remove_in_restriction(sim, se_obj, v1)
-										sim_remove_out_restriction(sim, se_obj, v1)
-									end
-								end
-							end
-						end
+		if not se_obj then return end
+
+		local cls = se_obj:clsid()
+		local is_monster = IsMonster(_, cls)
+		if not (is_monster or IsStalker(_, cls)) then return end
+
+		local se_obj_level = sim_level_name(sim, gg_vertex(gg, se_obj.m_game_vertex_id):level_id())
+		if not (globally or se_obj_level == level_name) then return end
+
+		if not anomalies_ids[se_obj_level] then
+			anomalies_ids[se_obj_level] = updated_anomaly_levels[se_obj_level] and invert_table(updated_anomaly_levels[se_obj_level].anomalies) or {}
+		end
+
+		local monster_data = is_monster and get_monster_data(se_obj) or get_stalker_data(se_obj)
+		if not monster_data then return end
+
+		for k, v in pairs(restrictions) do
+			local data_table = monster_data[k]
+			if type(data_table) == "table" then
+				for k1, v1 in pairs(data_table) do
+					if anomalies_ids[se_obj_level][v1] then
+						printf("removed restriction %s for level %s", se_obj:name(), se_obj_level)
+						sim_remove_in_restriction(sim, se_obj, v1)
+						sim_remove_out_restriction(sim, se_obj, v1)
 					end
 				end
 			end
 		end
+	end
+
+	for i = 1, 65534 do
+		process_restriction_cleanup(i)
 	end
 
 	-- for i = 1, 65534 do
@@ -607,32 +624,32 @@ function remove_all_restrictions(level_name)
 	-- end
 end
 
-function get_anomaly_obj(id, level_name)
-	local level_name = level_name or level.name()
-	local obj = alife():object(id)
+	function get_anomaly_obj(id, level_name)
+		level_name = level_name or level.name()
+		local obj = alife():object(id)
 
-	if not obj or obj == 0 or obj.id == 0 then
-		-- printf("Error, anomaly game object not found by id %s, level %s", id, level_name)
-		return
+		if not obj or obj == 0 or obj.id == 0 then
+			-- printf("Error, anomaly game object not found by id %s, level %s", id, level_name)
+			return
+		end
+
+		if not IsAnomaly(_, obj:clsid()) then
+			-- printf("Error, object is not an anomaly, %s, %s, on level %s", obj:section_name(), obj.id, level_name)
+			return
+		end
+
+		local sim = alife()
+		local sim_level_name = sim.level_name
+		local gg = game_graph()
+		local gg_vertex = gg.vertex
+		local obj_level = sim_level_name(sim, gg_vertex(gg, obj.m_game_vertex_id):level_id())
+		if obj_level ~= level_name then
+			-- printf("Error, anomaly game object found by id %s but on different level %s, requested level %s", id, obj_level, level_name)
+			return
+		end
+
+		return obj
 	end
-
-	if not IsAnomaly(_, obj:clsid()) then
-		-- printf("Error, object is not an anomaly, %s, %s, on level %s", obj:section_name(), obj.id, level_name)
-		return
-	end
-
-	local sim = alife()
-	local sim_level_name = sim.level_name
-	local gg = game_graph()
-	local gg_vertex = gg.vertex
-	local obj_level = sim_level_name(sim, gg_vertex(gg, obj.m_game_vertex_id):level_id())
-	if obj_level ~= level_name then
-		-- printf("Error, anomaly game object found by id %s but on different level %s, requested level %s", id, obj_level, level_name)
-		return
-	end
-
-	return obj
-end
 
 function get_anomaly_smart(id, level_name)
 	local obj = get_anomaly_obj(id, level_name)
@@ -642,40 +659,48 @@ function get_anomaly_smart(id, level_name)
 end
 
 function get_anomalies_by_smart(level_name)
-	local level_name = level_name or level.name()
-	if not updated_anomaly_levels[level_name].anomalies_by_smart or is_empty(updated_anomaly_levels[level_name].anomalies_by_smart) then
-		local sim = alife()
-		local gg = game_graph()
-		for _, id in pairs(updated_anomaly_levels[level_name].anomalies) do
-			local se_obj = alife_object(id)
-			if se_obj then
-				for smart_name, smart in pairs(SIMBOARD.smarts_by_names) do
-					if smart and smart.m_game_vertex_id == se_obj.m_game_vertex_id then
-						printf("adding anomaly %s to smart %s", se_obj:section_name(), smart_name)
-						if not updated_anomaly_levels[level_name].anomalies_by_smart then
-							updated_anomaly_levels[level_name].anomalies_by_smart = {}
-						end
+	level_name = level_name or level.name()
+	if not (not updated_anomaly_levels[level_name].anomalies_by_smart or is_empty(updated_anomaly_levels[level_name].anomalies_by_smart)) then return end
 
-						if not updated_anomaly_levels[level_name].smart_by_anomalies then
-							updated_anomaly_levels[level_name].smart_by_anomalies = {}
-						end
+	-- local sim = alife()
+	-- local gg = game_graph()
 
-						if not updated_anomaly_levels[level_name].anomalies_by_smart[smart_name] then
-							updated_anomaly_levels[level_name].anomalies_by_smart[smart_name] = {}
-						end
+	local function link_anomaly_to_smart(id)
+		local se_obj = alife_object(id)
+		if not se_obj then return end
 
-						if not updated_anomaly_levels[level_name].anomaly_types_by_smart[smart_name] then
-							updated_anomaly_levels[level_name].anomaly_types_by_smart[smart_name] = ""
-						end
+		for smart_name, smart in pairs(SIMBOARD.smarts_by_names) do
+			if smart and smart.m_game_vertex_id == se_obj.m_game_vertex_id then
+				printf("adding anomaly %s to smart %s", se_obj:section_name(), smart_name)
 
-						updated_anomaly_levels[level_name].anomalies_by_smart[smart_name][id] = true
-						updated_anomaly_levels[level_name].smart_by_anomalies[id] = smart_name
-					end
+				if not updated_anomaly_levels[level_name].anomalies_by_smart then
+					updated_anomaly_levels[level_name].anomalies_by_smart = {}
 				end
+
+				if not updated_anomaly_levels[level_name].smart_by_anomalies then
+					updated_anomaly_levels[level_name].smart_by_anomalies = {}
+				end
+
+				if not updated_anomaly_levels[level_name].anomalies_by_smart[smart_name] then
+					updated_anomaly_levels[level_name].anomalies_by_smart[smart_name] = {}
+				end
+
+				if not updated_anomaly_levels[level_name].anomaly_types_by_smart[smart_name] then
+					updated_anomaly_levels[level_name].anomaly_types_by_smart[smart_name] = ""
+				end
+
+				updated_anomaly_levels[level_name].anomalies_by_smart[smart_name][id] = true
+				updated_anomaly_levels[level_name].smart_by_anomalies[id] = smart_name
 			end
 		end
 	end
+
+	for _, id in pairs(updated_anomaly_levels[level_name].anomalies) do
+		link_anomaly_to_smart(id)
+	end
 end
+
+
 
 function disable_anomaly_obj(id, level_name)
 	local obj = get_anomaly_obj(id, level_name)
@@ -689,7 +714,7 @@ function disable_anomaly_obj(id, level_name)
 end
 
 function disable_anomalies_on_level(level_name)
-	local level_name = level_name or level.name()
+	level_name = level_name or level.name()
 	for _, id in pairs(updated_anomaly_levels[level_name].anomalies) do
 		disable_anomaly_obj(id, level_name)
 	end
@@ -707,7 +732,7 @@ function enable_anomaly_obj(id, level_name)
 end
 
 function enable_anomalies_on_level(level_name)
-	local level_name = level_name or level.name()
+	level_name = level_name or level.name()
 	for _, id in pairs(updated_anomaly_levels[level_name].anomalies) do
 		enable_anomaly_obj(id, level_name)
 	end
@@ -770,37 +795,43 @@ end
 
 -- Delete old anomalies persisting from old code
 function clean_old_dynamic_anomalies_on_level(level_name)
-	if not updated_anomaly_levels[level_name].cleaned_old_anomalies then
-		local load_var = load_var
-		local pairs = pairs
-		local sim = alife()
-		local sim_level_name = sim.level_name
-		local gg = game_graph()
-		local gg_vertex = gg.vertex
-		local strformat = strformat
+	if updated_anomaly_levels[level_name].cleaned_old_anomalies then
+		printf("old anomalies already cleaned on level %s", level_name)
+		return
+	end
 
-		local fully_cleaned = true
+	local load_var = load_var
+	local pairs = pairs
+	local sim = alife()
+	local sim_level_name = sim.level_name
+	local gg = game_graph()
+	local gg_vertex = gg.vertex
+	local strformat = strformat
 
-		for smart_name, v in pairs(SIMBOARD.smarts_by_names) do
-			local smart_level = sim_level_name(sim, gg_vertex(gg, v.m_game_vertex_id):level_id())
-			if smart_level == level_name then
-				for j = 1, 1000 do
-					local anom_id = load_var(db.actor, strformat("drx_da_anom_id_%s_%s", smart_name, j), nil)
-					if anom_id then
-						if not in_restrictions[anom_id] then
-							remove_anomaly_obj(anom_id, level_name)
-						else
-							printf("Error, can't remove old anomaly %s, level %s, in restriction", anom_id, level_name)
-							fully_cleaned = false
-						end
-					end
+	local fully_cleaned = true
+
+	local function clean_smart_anomalies(smart_name, smart_data)
+		local smart_level = sim_level_name(sim, gg_vertex(gg, smart_data.m_game_vertex_id):level_id())
+		if smart_level ~= level_name then return end
+
+		for j = 1, 1000 do
+			local anom_id = load_var(db.actor, strformat("drx_da_anom_id_%s_%s", smart_name, j), nil)
+			if anom_id then
+				if not in_restrictions[anom_id] then
+					remove_anomaly_obj(anom_id, level_name)
+				else
+					printf("Error, can't remove old anomaly %s, level %s, in restriction", anom_id, level_name)
+					fully_cleaned = false
 				end
 			end
 		end
-		updated_anomaly_levels[level_name].cleaned_old_anomalies = fully_cleaned
-	else
-		printf("old anomalies already cleaned on level %s", level_name)
 	end
+
+	for smart_name, v in pairs(SIMBOARD.smarts_by_names) do
+		clean_smart_anomalies(smart_name, v)
+	end
+
+	updated_anomaly_levels[level_name].cleaned_old_anomalies = fully_cleaned
 end
 
 -- Clean dynamic anomalies on level, normally after surge on level change or forcefully
@@ -811,13 +842,13 @@ function clean_dynamic_anomalies_on_level_func(level_name)
 		return
 	end
 
-	local t = t.anomalies
-	for i, id in pairs(t) do
-		if t[i] and not in_restrictions[t[i]] then
-			remove_anomaly_obj(t[i], level_name)
+	local anom_t = t.anomalies
+	for i, id in pairs(anom_t) do
+		if anom_t[i] and not in_restrictions[anom_t[i]] then
+			remove_anomaly_obj(anom_t[i], level_name)
 
 			for k, v in pairs(updated_anomaly_levels[level_name].anomalies_by_smart) do
-				v[t[i]] = nil
+				v[anom_t[i]] = nil
 				updated_anomaly_levels[level_name].anomaly_types_by_smart[k] = nil
 				if is_empty(v) then
 					updated_anomaly_levels[level_name].anomalies_by_smart[k] = nil
@@ -825,11 +856,11 @@ function clean_dynamic_anomalies_on_level_func(level_name)
 				end
 			end
 
-			updated_anomaly_levels[level_name].smart_by_anomalies[t[i]] = nil
-			updated_anomaly_levels[level_name].anomalies_properties[t[i]] = nil
-			t[i] = nil
+			updated_anomaly_levels[level_name].smart_by_anomalies[anom_t[i]] = nil
+			updated_anomaly_levels[level_name].anomalies_properties[anom_t[i]] = nil
+			anom_t[i] = nil
 		else
-			printf("Error, can't remove anomaly %s, level %s, in restriction", t[i], level_name)
+			printf("Error, can't remove anomaly %s, level %s, in restriction", anom_t[i], level_name)
 		end
 	end
 
@@ -850,13 +881,71 @@ function clean_dynamic_anomalies_on_level(level_name, dont_clean_restrictions)
 	-- clean_restriction_tables()
 end
 
+local function remove_old_anomaly_by_index(j, smart_name, k, sim, state)
+	local anom_id = load_var(db.actor, strformat("drx_da_anom_id_%s_%s", smart_name, j), nil)
+	if not anom_id then return end
+
+	if in_restrictions[anom_id] then
+		printf("Error, can't remove old anomaly %s, level %s, in restriction", anom_id, k)
+		state.fully_cleaned = false
+		return
+	end
+
+	local o = alife_object(anom_id)
+	if o then
+		alife_record(o, false)
+		sim:release(o, true)
+	end
+end
+
+
+local function process_old_smart_anomalies(smart_name, smart_data, k, sim, sim_level_name, gg, gg_vertex, state)
+	local smart_level = sim_level_name(sim, gg_vertex(gg, smart_data.m_game_vertex_id):level_id())
+	if smart_level ~= k then return end
+
+	for j = 1, 1000 do
+		remove_old_anomaly_by_index(j, smart_name, k, sim, state)
+	end
+end
+
+local function process_current_anomaly_cleanup(k1, v1, k, v, sim, sim_object)
+	if in_restrictions[v1] then
+		printf("can't delete anomaly %s globally, level %s, in restriction", v1, k)
+		return
+	end
+
+	local se_obj = sim_object(sim, v1)
+	if se_obj then
+		if IsAnomaly(_, se_obj:clsid()) then
+			printf("Deleting anomaly %s, %s globally, level %s", se_obj:section_name(), v1, k)
+			alife_record(se_obj, false)
+			sim:release(se_obj, true)
+		else
+			printf("Error, object is not an anomaly, %s, %s, on level %s", se_obj:section_name(), v1, k)
+		end
+	end
+
+	for k2, v2 in pairs(v.anomalies_by_smart) do
+		v2[v1] = nil
+		v.anomaly_types_by_smart[k2] = nil
+		if is_empty(v2) then
+			v.anomalies_by_smart[k2] = nil
+			v.available_smarts_reduced[k2] = nil
+		end
+	end
+
+	v.smart_by_anomalies[v1] = nil
+	v.anomalies_properties[v1] = nil
+	v.anomalies[k1] = nil
+end
+
 function clean_dynamic_anomalies_global()
 	remove_all_restrictions()
 	get_obj_restrictions(true)
 
 	unregister_anomalies_behaviour()
 
-	local alife_release_id = alife_release_id
+	-- local alife_release_id = alife_release_id
 	local gg = game_graph()
 	local gg_vertex = gg.vertex
 	local level_name = level.name()
@@ -866,8 +955,8 @@ function clean_dynamic_anomalies_global()
 	local sim = alife()
 	local sim_level_name = sim.level_name
 	local sim_object = sim.object
-	local sim_release = sim.release
-	local alife_record = alife_record
+	-- local sim_release = sim.release
+	-- local alife_record = alife_record
 	local strformat = strformat
 
 	for k, v in pairs(updated_anomaly_levels) do
@@ -879,60 +968,17 @@ function clean_dynamic_anomalies_global()
 			-- clean_dynamic_anomalies_on_level_func(level_name)
 		else
 			for k1, v1 in pairs(v.anomalies) do
-				if not in_restrictions[v1] then
-					local se_obj = sim_object(sim, v1)
-					if se_obj then
-						if IsAnomaly(_, se_obj:clsid()) then
-							printf("Deleting anomaly %s, %s globally, level %s", se_obj:section_name(), v1, k)
-							alife_record(se_obj ,false)
-							sim:release(se_obj, true)
-						else
-							printf("Error, object is not an anomaly, %s, %s, on level %s", se_obj:section_name(), v1, k)
-						end
-					end
-
-					for k2, v2 in pairs(v.anomalies_by_smart) do
-						v2[v1] = nil
-						v.anomaly_types_by_smart[k2] = nil
-						if is_empty(v2) then
-							v.anomalies_by_smart[k2] = nil
-							v.available_smarts_reduced[k2] = nil
-						end
-					end
-
-					v.smart_by_anomalies[v1] = nil
-					v.anomalies_properties[v1] = nil
-					v.anomalies[k1] = nil
-				else
-					printf("can't delete anomaly %s globally, level %s, in restriction", v1, k)
-				end
+				process_current_anomaly_cleanup(k1, v1, k, v, sim, sim_object)
 			end
 
 			-- Old anomalies
 			if not v.cleaned_old_anomalies then
-				local fully_cleaned = true
+				local state = { fully_cleaned = true }
 
-				for smart_name, v in pairs(SIMBOARD.smarts_by_names) do
-					local smart_level = sim_level_name(sim, gg_vertex(gg, v.m_game_vertex_id):level_id())
-					if smart_level == k then
-						for j = 1, 1000 do
-							local anom_id = load_var(db.actor, strformat("drx_da_anom_id_%s_%s", smart_name, j), nil)
-							if anom_id then
-								if not in_restrictions[anom_id] then
-									local o = alife_object(anom_id)
-									if o then
-										alife_record(o ,false)
-										sim:release(o, true)
-									end
-								else
-									printf("Error, can't remove old anomaly %s, level %s, in restriction", anom_id, k)
-									fully_cleaned = false
-								end
-							end
-						end
-					end
+				for smart_name, smart_v in pairs(SIMBOARD.smarts_by_names) do
+					process_old_smart_anomalies(smart_name, smart_v, k, sim, sim_level_name, gg, gg_vertex, load_var, strformat, state)
 				end
-				v.cleaned_old_anomalies = fully_cleaned
+				v.cleaned_old_anomalies = state.fully_cleaned
 			else
 				printf("old anomalies already cleaned on level %s", k)
 			end
@@ -1021,6 +1067,54 @@ function generate_random_anomaly_properties()
 	}
 end
 
+local function process_smart_anomaly_spawning(smart_name, level_name, anomaly_list, anomalies_by_smart, smart_list_reduced, anomaly_max_number, spawn_percent, level_file, anomalies, smart_by_anomalies, anomaly_types_by_smart, available_smarts_reduced, anomalies_properties)
+	if not ((true or not smart_restrictions[smart_name]) and random() <= settings.anomaly_zone_spawn_chance) then
+		printf("no anomalies spawn on smart %s, level %s in restriction", smart_name, level_name)
+		return
+	end
+
+	if not (anomaly_list and #anomaly_list >= 1) then
+		printf("No dynamic anomaly types specified for level %s", level_name)
+		return
+	end
+
+	local anomaly_type = anomaly_list[random(#anomaly_list)]
+	printf("picked anomaly type %s", anomaly_type)
+
+	if not anomalies_by_smart[smart_name] then anomalies_by_smart[smart_name] = {} end
+	local j = size_table(anomalies_by_smart[smart_name])
+
+	-- Store position data of generated anomalies
+	local position_data = kd_tree.buildTreeVectors()
+
+	if j > 0 then
+		for k, v in pairs(anomalies_by_smart[smart_name]) do
+			local se_obj = get_anomaly_obj(k)
+			if se_obj then
+				local pos = se_obj.position
+				if pos then
+					position_data:insertAndRebuild({x = pos.x, y = pos.y, z = pos.z})
+				end
+			end
+		end
+	end
+
+	while j < (smart_list_reduced[smart_name] and random(3) or anomaly_max_number) do
+		if random() <= (smart_list_reduced[smart_name] and 0.5 or spawn_percent) then
+			local anom_id = drx_da_spawn_anomaly_on_smart(level_file, smart_name, anomaly_type, level_name, position_data)
+			if anom_id then
+				anomalies[#anomalies + 1] = anom_id
+				anomalies_by_smart[smart_name][anom_id] = true
+				smart_by_anomalies[anom_id] = smart_name
+				anomaly_types_by_smart[smart_name] = anomaly_type
+				available_smarts_reduced[smart_name] = smart_list_reduced[smart_name]
+				anomalies_properties[anom_id] = generate_random_anomaly_properties()
+			end
+		end
+		j = j + 1
+	end
+end
+
 function drx_da_spawn_anomalies_on_level(level_name)
 	local level_data = get_level_data(level_name)
 	if not level_data then
@@ -1031,11 +1125,11 @@ function drx_da_spawn_anomalies_on_level(level_name)
 	local level_file = level_data.level_file
 	local spawn_percent = level_data.spawn_percent
 	local anomaly_max_number = level_data.anomaly_max_number * settings.anomaly_amount_modifier
-	local anomaly_max_active = level_data.anomaly_max_active
+	-- local anomaly_max_active = level_data.anomaly_max_active
 
 	local pairs = pairs
 	local collect_section = utils_data.collect_section
-	local size_table = size_table
+	-- local size_table = size_table
 	local invert_table = invert_table
 	local is_not_empty = is_not_empty
 	local is_empty = is_empty
@@ -1044,16 +1138,14 @@ function drx_da_spawn_anomalies_on_level(level_name)
 	-- Build a list of available smart terrains:
 	local smart_list = collect_section(level_file, "available_smarts")
 
-	if is_not_empty(smart_list) then
-		if reduced_chance_levels[level_name] then
-			local t = {}
-			for k, v in pairs(smart_list) do
-				if random(100) <= 50 then
-					t[#t + 1] = v
-				end
+	if is_not_empty(smart_list) and reduced_chance_levels[level_name] then
+		local t = {}
+		for k, v in pairs(smart_list) do
+			if random(100) <= 50 then
+				t[#t + 1] = v
 			end
-			smart_list = t
 		end
+		smart_list = t
 	end
 
 	-- Build a list of available smart terrains with reduced amount:
@@ -1118,55 +1210,11 @@ function drx_da_spawn_anomalies_on_level(level_name)
 		local available_smarts_reduced = updated_anomaly_levels[level_name].available_smarts_reduced or {}
 
 		for i, smart_name in pairs(smart_list) do
-			if (true or not smart_restrictions[smart_name]) and random() <= settings.anomaly_zone_spawn_chance then
-				-- Choose an anomaly type to spawn:
-				if anomaly_list and #anomaly_list >= 1 then
-					local anomaly_type = anomaly_list[random(#anomaly_list)]
-
-					-- if anomaly_type == "zone_radiation_field" then
-					--	anomaly_type = rad_fields[math.random(#rad_fields)]
-					-- end
-
-					printf("picked anomaly type %s", anomaly_type)
-
-					if not anomalies_by_smart[smart_name] then anomalies_by_smart[smart_name] = {} end
-					local j = size_table(anomalies_by_smart[smart_name])
-
-					-- Store position data of generated anomalies
-					local position_data = kd_tree.buildTreeVectors()
-
-					if j > 0 then
-						for k, v in pairs(anomalies_by_smart[smart_name]) do
-							local se_obj = get_anomaly_obj(k)
-							if se_obj then
-								local pos = se_obj.position
-								if pos then
-									position_data:insertAndRebuild({x = pos.x, y = pos.y, z = pos.z})
-								end
-							end
-						end
-					end
-
-					while j < (smart_list_reduced[smart_name] and random(3) or anomaly_max_number) do
-						if random() <= (smart_list_reduced[smart_name] and 0.5 or spawn_percent) then
-							local anom_id = drx_da_spawn_anomaly_on_smart(level_file, smart_name, anomaly_type, level_name, position_data)
-							if anom_id then
-								anomalies[#anomalies + 1] = anom_id
-								anomalies_by_smart[smart_name][anom_id] = true
-								smart_by_anomalies[anom_id] = smart_name
-								anomaly_types_by_smart[smart_name] = anomaly_type
-								available_smarts_reduced[smart_name] = smart_list_reduced[smart_name]
-								anomalies_properties[anom_id] = generate_random_anomaly_properties()
-							end
-						end
-						j = j + 1
-					end
-				else
-					printf("No dynamic anomaly types specified for level %s", level_name)
-				end
-			else
-				printf("no anomalies spawn on smart %s, level %s in restriction", smart_name, level_name)
-			end
+			process_smart_anomaly_spawning(
+				smart_name, level_name, anomaly_list, anomalies_by_smart, smart_list_reduced,
+				anomaly_max_number, spawn_percent, level_file, anomalies, smart_by_anomalies,
+				anomaly_types_by_smart, available_smarts_reduced, anomalies_properties
+			)
 		end
 		return #anomalies > 0
 	end
@@ -1206,7 +1254,7 @@ end
 -- ------------------------------------------------------------------------------------------------
 -- Spawn a single anomaly:
 function drx_da_spawn_anomaly(anom_type, pos, lvid, gvid, level_file)
-	local function abort_creation(se_obj_id, anom_type)
+	local function abort_creation(se_obj_id)
 		CreateTimeEvent("drx_da_abort_creation" .. se_obj_id, "drx_da_abort_creation" .. se_obj_id, 0.2, function()
 			local obj = alife():object(se_obj_id)
 			if obj then
@@ -1232,7 +1280,7 @@ function drx_da_spawn_anomaly(anom_type, pos, lvid, gvid, level_file)
 	local data = utils_stpk.get_anom_zone_data(se_obj)
 	if (not data) then
 		printf("Error: Unable to set dynamic anomaly properties")
-		abort_creation(se_obj.id, anom_type)
+		abort_creation(se_obj.id)
 		return
 	end
 
@@ -1333,6 +1381,33 @@ anomalies_radiation_fields = {
 }
 
 -- Generate positional data:
+local function validate_distance(anomaly_type, position_data, pos, pos_x, pos_y, pos_z)
+	if not (anomaly_type and anomaly_radii[anomaly_type] and position_data and position_data.root) then
+		if position_data then
+			printf("Anomaly type %s, Position data provided, saving %s, %s, %s", anomaly_type, pos_x, pos_y, pos_z)
+			position_data:insertAndRebuild({x = pos_x, y = pos_y, z = pos_z})
+		end
+		return true
+	end
+
+	local nearest = position_data:nearest(pos)
+	if not (nearest and nearest[1] and nearest[1][2]) then
+		printf("Anomaly type %s, Can't check position data %s, %s, %s", anomaly_type, pos_x, pos_y, pos_z)
+		position_data:insertAndRebuild({x = pos_x, y = pos_y, z = pos_z})
+		return true
+	end
+
+	local distance = sqrt(nearest[1][2]) - anomaly_radii[anomaly_type].max * 2
+	if distance >= settings.anomaly_zone_anomalies_distance_min then
+		printf("Anomaly type %s, Position data valid, distance %s, saving %s, %s, %s", anomaly_type, distance, pos_x, pos_y, pos_z)
+		position_data:insertAndRebuild({x = pos_x, y = pos_y, z = pos_z})
+		return true
+	else
+		printf("Anomaly type %s, Position data invalid, too close, distance %s, %s, %s, %s", anomaly_type, distance, pos_x, pos_y, pos_z)
+		return false
+	end
+end
+
 function drx_da_generate_position(smart_name, anomaly_type, position_data)
 
 	-- Get the smart terrain:
@@ -1363,21 +1438,21 @@ function drx_da_generate_position(smart_name, anomaly_type, position_data)
 		-- Randomly offset anomaly x-position from center of smart terrain:
 		local offset_x = max_offset_x * random()
 		if (random() <= 0.5) then
-			offset_x = -(offset_x)
+			offset_x = -offset_x
 		end
 		local pos_x = (smart.position.x + offset_x)
 
 		-- Randomly offset anomaly y-position from center of smart terrain:
 		local offset_y = (max_offset_y * random())
 		if (random() <= 0.5) then
-			offset_y = -(offset_y)
+			offset_y = -offset_y
 		end
 		local pos_y = (smart.position.y + offset_y)
 
 		-- Randomly offset anomaly z-position from center of smart terrain:
 		local offset_z = max_offset_z * random()
 		if (random() <= 0.5) then
-			offset_z = -(offset_z)
+			offset_z = -offset_z
 		end
 		local pos_z = (smart.position.z + offset_z)
 
@@ -1393,30 +1468,7 @@ function drx_da_generate_position(smart_name, anomaly_type, position_data)
 			else
 				-- If position data exists and distance of generated position is more than anomaly radius - valid
 				try(function()
-					if anomaly_type and anomaly_radii[anomaly_type] and position_data and position_data.root then
-						local nearest = position_data:nearest(pos)
-						if nearest and nearest[1] and nearest[1][2] then
-							local distance = sqrt(nearest[1][2]) - anomaly_radii[anomaly_type].max * 2
-							if distance >= settings.anomaly_zone_anomalies_distance_min then
-								printf("Anomaly type %s, Position data valid, distance %s, saving %s, %s, %s", anomaly_type, distance, pos_x, pos_y, pos_z)
-								position_data:insertAndRebuild({x = pos_x, y = pos_y, z = pos_z})
-								valid_lvid = true
-							else
-								printf("Anomaly type %s, Position data invalid, too close, distance %s, %s, %s, %s", anomaly_type, distance, pos_x, pos_y, pos_z)
-								valid_lvid = false
-							end
-						else
-							printf("Anomaly type %s, Can't check position data %s, %s, %s", anomaly_type, pos_x, pos_y, pos_z)
-							position_data:insertAndRebuild({x = pos_x, y = pos_y, z = pos_z})
-							valid_lvid = true
-						end
-					else
-						if position_data then
-							printf("Anomaly type %s, Position data provided, saving %s, %s, %s", anomaly_type, pos_x, pos_y, pos_z)
-							position_data:insertAndRebuild({x = pos_x, y = pos_y, z = pos_z})
-						end
-						valid_lvid = true
-					end
+					valid_lvid = validate_distance(anomaly_type, position_data, pos, pos_x, pos_y, pos_z)
 				end)
 			end
 		end
@@ -1434,7 +1486,7 @@ function drx_da_generate_position(smart_name, anomaly_type, position_data)
 end
 
 function clean_artefacts_on_level(level_name)
-	local level_name = level_name or level.name()
+	level_name = level_name or level.name()
 
 	init_anomaly_table_on_level(level_name)
 	local artefacts = updated_anomaly_levels[level_name].artefacts
@@ -1450,7 +1502,7 @@ end
 
 -- Spawn single artefact on smart
 function spawn_artefact_on_smart(level_file, smart_name, picked_artefact, level_name)
-	local level_name = level_name or level.name()
+	level_name = level_name or level.name()
 
 	if not picked_artefact then
 		printf("Error: Unable to create artefact %s, is nil", picked_artefact)
@@ -1488,8 +1540,79 @@ function spawn_artefact_on_smart(level_file, smart_name, picked_artefact, level_
 end
 
 -- Spawn artefacts on level
+local function gather_tier_artefacts(anomaly_type, artefacts_map_tiers, anomaly_type_to_artefacts, allowed_artefacts_flipped, level_name)
+	local res
+	local tries = 40
+	while tries > 0 and (not res or not allowed_artefacts_flipped[res]) do
+		if anomaly_type_to_artefacts[anomaly_type] then
+			local t = {}
+			for k, v in pairs(artefacts_map_tiers) do
+				if anomaly_type_to_artefacts[anomaly_type][v] then
+					t[#t + 1] = v
+				end
+			end
+			printf("picking artefact by level %s, anomaly zone %s has defined arty list", level_name, anomaly_type)
+			res = t[random(#t)]
+		else
+			printf("picking artefact by level %s", level_name)
+			res = artefacts_map_tiers[random(#artefacts_map_tiers)]
+		end
+
+		if not allowed_artefacts_flipped[res] then
+			printf("artefact is not allowed to spawn, repicking")
+		end
+
+		tries = tries - 1
+	end
+	return res
+end
+
+local function handle_single_artefact_roll(smart_name, level_name, artefacts_map_chances, level_file, artefacts, artefacts_map_tiers, allowed_artefacts_flipped, anomaly_type_to_artefacts, allowed_artefacts)
+	-- Increased chance by 2 times for underground levels
+	local dice_roll = random(100)
+	local chance = artefacts_map_chances or ceil(settings.artefacts_spawn_chance * ((level_weathers.bLevelUnderground or small_levels[level_name]) and 2 or 1))
+	printf("artefacts dice roll %s, chance %s, spawn %s", dice_roll, chance, dice_roll <= chance)
+
+	if dice_roll > chance then return end
+
+	-- Choose an artefact to spawn:
+	local anomaly_type = updated_anomaly_levels[level_name].anomaly_types_by_smart[smart_name]
+	local picked_artefact
+
+	if artefacts_map_tiers and random(100) > settings.random_artefact_spawn_chance then
+		picked_artefact = gather_tier_artefacts(anomaly_type, artefacts_map_tiers, anomaly_type_to_artefacts, allowed_artefacts_flipped, level_name)
+	else
+		printf("picking random artefacts")
+		picked_artefact = allowed_artefacts[random(#allowed_artefacts)]
+	end
+
+	if not picked_artefact then
+		printf("failed to pick artefact by level, pick random from allowed, level_name %s, anomaly_type %s, has artefacts_map_tiers %s, has anomaly_type_to_artefacts %s", level_name, anomaly_type, artefacts_map_tiers ~= nil, anomaly_type_to_artefacts[anomaly_type] ~= nil)
+		picked_artefact = allowed_artefacts[random(#allowed_artefacts)]
+	end
+
+	-- Artefact Variationizer compatibility
+	if artefact_variationizer then
+		local av = artefact_variationizer
+		picked_artefact = av.get_artefact_base(picked_artefact)
+		if av.valid_artys[picked_artefact] then
+			local variationizer_tier = av.artefact_chances[random(#av.artefact_chances)]
+			local arty = av.artefact_by_variationizer_tier[picked_artefact][variationizer_tier]
+			picked_artefact = arty[random(#arty)]
+		end
+	end
+
+	printf("picked artefact to spawn %s, anomaly_type %s, smart %s level %s", picked_artefact, anomaly_type, smart_name, level_name)
+	local artefact_id = spawn_artefact_on_smart(level_file, smart_name, picked_artefact, level_name)
+	if artefact_id then
+		artefacts[artefact_id] = picked_artefact
+	else
+		printf("error, unabled to spawn artefact %s, anomaly_type %s, smart %s level %s", picked_artefact, anomaly_type, smart_name, level_name)
+	end
+end
+
 function spawn_artefacts_on_level(level_name)
-	local level_name = level_name or level.name()
+	level_name = level_name or level.name()
 
 	local level_data = get_level_data(level_name)
 	if not level_data then
@@ -1509,7 +1632,7 @@ function spawn_artefacts_on_level(level_name)
 	smart_list = invert_table(smart_list)
 
 	local pairs = pairs
-	local collect_section = utils_data.collect_section
+	-- local collect_section = utils_data.collect_section
 	local size_table = size_table
 
 	local allowed_artefacts = drx_da_main_artefacts.allowed_artefacts
@@ -1522,79 +1645,16 @@ function spawn_artefacts_on_level(level_name)
 	if is_not_empty(smart_list) then
 		printf("%s has smarts with anomalies, try to spawn artefacts", level_name)
 		local artefacts = updated_anomaly_levels[level_name].artefacts or {}
-		local anomalies_by_smart =	updated_anomaly_levels[level_name].anomalies_by_smart
+		local anomalies_by_smart = updated_anomaly_levels[level_name].anomalies_by_smart
 		for smart_name, _ in pairs(anomalies_by_smart) do
 			printf("checking smart %s for spawning artefacts", smart_name)
 			if is_not_empty(anomalies_by_smart[smart_name]) and smart_list[smart_name] then
 				printf("try to spawn artefacts on smart %s", smart_name)
 				for i = 1, settings.max_artefacts_per_zone do
-
-					-- Increased chance by 2 times for underground levels
-					local dice_roll = random(100)
-					local chance = artefacts_map_chances or ceil(settings.artefacts_spawn_chance * ((level_weathers.bLevelUnderground or small_levels[level_name]) and 2 or 1))
-					printf("artefacts dice roll %s, chance %s, spawn %s", dice_roll, chance, dice_roll <= chance)
-
-					if dice_roll <= chance then
-						-- Choose an artefact to spawn:
-						local anomaly_type = updated_anomaly_levels[level_name].anomaly_types_by_smart[smart_name]
-						local picked_artefact = (function()
-
-							local res
-							if artefacts_map_tiers and random(100) > settings.random_artefact_spawn_chance then
-								local tries = 40
-								while tries > 0 and (not res or not allowed_artefacts_flipped[res]) do
-									if anomaly_type_to_artefacts[anomaly_type] then
-										local t = {}
-										for k, v in pairs(artefacts_map_tiers) do
-											if anomaly_type_to_artefacts[anomaly_type][v] then
-												t[#t + 1] = v
-											end
-										end
-										printf("picking artefact by level %s, anomaly zone %s has defined arty list", level_name, anomaly_type)
-										res = t[random(#t)]
-									else
-										printf("picking artefact by level %s", level_name)
-										res = artefacts_map_tiers[random(#artefacts_map_tiers)]
-									end
-
-									if not allowed_artefacts_flipped[res] then
-										printf("artefact is not allowed to spawn, repicking")
-									end
-
-									tries = tries - 1
-								end
-							else
-								printf("picking random artefacts")
-								res = allowed_artefacts[random(#allowed_artefacts)]
-							end
-
-							if not res then
-								printf("failed to pick artefact by level, pick random from allowed, level_name %s, anomaly_type %s, has artefacts_map_tiers %s, has anomaly_type_to_artefacts %s", level_name, anomaly_type, artefacts_map_tiers ~= nil, anomaly_type_to_artefacts[anomaly_type] ~= nil)
-								res = allowed_artefacts[random(#allowed_artefacts)]
-							end
-
-							return res
-						end)()
-
-						-- Artefact Variationizer compatibility
-						if artefact_variationizer then
-							local av = artefact_variationizer
-							picked_artefact = av.get_artefact_base(picked_artefact)
-							if av.valid_artys[picked_artefact] then
-								local variationizer_tier = av.artefact_chances[random(#av.artefact_chances)]
-								local arty = av.artefact_by_variationizer_tier[picked_artefact][variationizer_tier]
-								picked_artefact = arty[random(#arty)]
-							end
-						end
-
-						printf("picked artefact to spawn %s, anomaly_type %s, smart %s level %s", picked_artefact, anomaly_type, smart_name, level_name)
-						local artefact_id = spawn_artefact_on_smart(level_file, smart_name, picked_artefact, level_name)
-						if artefact_id then
-							artefacts[artefact_id] = picked_artefact
-						else
-							printf("error, unabled to spawn artefact %s, anomaly_type %s, smart %s level %s", picked_artefact, anomaly_type, smart_name, level_name)
-						end
-					end
+					handle_single_artefact_roll(
+						smart_name, level_name, artefacts_map_chances, level_file, artefacts,
+						artefacts_map_tiers, allowed_artefacts_flipped, anomaly_type_to_artefacts, allowed_artefacts
+					)
 				end
 			end
 		end
@@ -1666,11 +1726,9 @@ function drx_da_actor_on_update_callback()
 	printf("saved level %s, current level %s", alife_storage_manager.get_state().drx_da_previous_level, level.name())
 	if level.name() == alife_storage_manager.get_state().drx_da_previous_level then
 		local level_name = level.name()
-		if level_name and updated_anomaly_levels[level_name] and updated_anomaly_levels[level_name].disabled then
-			if last_surge_time > updated_anomaly_levels[level_name].time then
-				clean_dynamic_anomalies_on_level(level_name)
-				updated_anomaly_levels[level_name].disabled = false
-			end
+		if level_name and updated_anomaly_levels[level_name] and updated_anomaly_levels[level_name].disabled and last_surge_time > updated_anomaly_levels[level_name].time then
+			clean_dynamic_anomalies_on_level(level_name)
+			updated_anomaly_levels[level_name].disabled = false
 		end
 
 		printf("on the same level, only register behaviour")
@@ -1681,18 +1739,16 @@ function drx_da_actor_on_update_callback()
 		return
 	else
 		local level_name = alife_storage_manager.get_state().drx_da_previous_level
-		if level_name and updated_anomaly_levels[level_name] and updated_anomaly_levels[level_name].disabled then
-			if last_surge_time > updated_anomaly_levels[level_name].time then
-				clean_dynamic_anomalies_on_level(level_name)
-				updated_anomaly_levels[level_name].disabled = false
-			end
+		if level_name and updated_anomaly_levels[level_name] and updated_anomaly_levels[level_name].disabled and last_surge_time > updated_anomaly_levels[level_name].time then
+			clean_dynamic_anomalies_on_level(level_name)
+			updated_anomaly_levels[level_name].disabled = false
 		end
 	end
 
 	get_anomalies_by_smart(level.name())
 
 	-- Update dynamic anomalies:
-	local updated = drx_da_update_dynamic_anomalies()
+	drx_da_update_dynamic_anomalies()
 	unregister_drx_da()
 	build_anomalies_pos_tree()
 	RegisterScriptCallback("actor_on_update", actor_on_update)
@@ -1895,9 +1951,9 @@ end
 
 -- Rays
 local function ray_main(pos1, pos2, args)
-	local pos1 = vector():set(pos1.x or pos1[1], pos1.y or pos1[2], pos1.z or pos1[3])
-	local pos2 = vector():set(pos2.x or pos2[1], pos2.y or pos2[2], pos2.z or pos2[3])
-	local args = args or {}
+	pos1 = vector():set(pos1.x or pos1[1], pos1.y or pos1[2], pos1.z or pos1[3])
+	pos2 = vector():set(pos2.x or pos2[1], pos2.y or pos2[2], pos2.z or pos2[3])
+	args = args or {}
 
 	local pick = ray_pick()
 	pick:set_position(pos1)
@@ -2033,7 +2089,7 @@ anomalies_near_actor_functions = {
 
 	-- Green Dragon, lower speed by 50% near it
 	zone_mine_green_dragon = function(anomaly, actor, distance_to_sqr, radius_sqr)
-		local key ="zone_mine_green_dragon_speed"
+		local key = "zone_mine_green_dragon_speed"
 		local steps_in = 70
 		local steps_out = 22
 
@@ -2108,12 +2164,12 @@ anomalies_near_actor_functions = {
 	-- Springboard, camera effect dependant on distance
 	zone_mine_gravitational_weak = function(anomaly, actor, distance_to_sqr, radius_sqr, power_modifier)
 		local key = "zone_mine_gravitational_weak"
-		local tg = time_global()
+		tg = time_global()
 
 		if tg < anomalies_vars.zone_mine_gravitational_weak_tg and timed_effects[key] then return end
 		anomalies_vars.zone_mine_gravitational_weak_tg = tg + 1000
 
-		local power_modifier = (power_modifier or 2) * settings.gravitational_shake_modifier
+		power_modifier = (power_modifier or 2) * settings.gravitational_shake_modifier
 		local earthquake_cam_eff = 98323
 		if power_modifier > 0 then
 			local power = (1.03 - distance_to_sqr / radius_sqr) * power_modifier
@@ -2266,8 +2322,8 @@ anomalies_near_actor_functions = {
 					local shock_immunity = SYS_GetParam(2, immunities_sec, "shock_immunity", 0) * cond
 					shock_immunity = shock_immunity + artefacts_protection
 
-					local hit_modifier = shock_immunity >= 0 and 1 + shock_immunity or 1 / (1 - shock_immunity)
-					obj:set_condition(cond - hit_power / hit_modifier * 0.00015)
+					local outfit_hit_modifier = shock_immunity >= 0 and 1 + shock_immunity or 1 / (1 - shock_immunity)
+					obj:set_condition(cond - hit_power / outfit_hit_modifier * 0.00015)
 				end
 			end
 
@@ -2280,8 +2336,8 @@ anomalies_near_actor_functions = {
 					local shock_immunity = SYS_GetParam(2, immunities_sec, "shock_immunity", 0) * cond
 					shock_immunity = shock_immunity + artefacts_protection
 
-					local hit_modifier = shock_immunity >= 0 and 1 + shock_immunity or 1 / (1 - shock_immunity)
-					obj:set_condition(cond - hit_power / hit_modifier * 0.00015)
+					local helm_hit_modifier = shock_immunity >= 0 and 1 + shock_immunity or 1 / (1 - shock_immunity)
+					obj:set_condition(cond - hit_power / helm_hit_modifier * 0.00015)
 				end
 			end
 		end
@@ -2290,7 +2346,7 @@ anomalies_near_actor_functions = {
 		local mine_factor = clamp(anomalies_vars:find_factor_sum(anomaly, actor, distance_to_sqr, radius_sqr, anomalies_vars.zone_mine_electric_factor_function), 0, 1)
 
 		-- PPE effector
-		local effector_modifier = effector_modifier or 0.66
+		effector_modifier = effector_modifier or 0.66
 		local effector_power = (mine_factor + 0.05) * effector_modifier
 		local pps = anomalies_vars.zone_mine_electric_pp_effectors
 		for i = 1, #pps do
@@ -2357,7 +2413,6 @@ anomalies_near_actor_functions = {
 		anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
 	end,
 
-
 	-- Ball Lightning, charges batteries
 	zone_mine_point = function(anomaly, actor, distance_to_sqr, radius_sqr)
 		for i = 8, 10 do
@@ -2404,12 +2459,12 @@ anomalies_spawn_functions = {
 			local spawn_position = anomaly.spawn_position
 			local obj = anomaly.object
 			local obj_set_anomaly_position = obj.set_anomaly_position
-			local vector = vector()
-			local vector_set = vector.set
+			local vec_inst = vector()
+			local vector_set = vec_inst.set
 			local key = obj:name()
 
 			local sin_lut = anomalies_vars.sin_lut
-			local cos_lut = anomalies_vars.cos_lut
+			-- local cos_lut = anomalies_vars.cos_lut
 
 			local i = random_choice(0, 45, 90, 135, 180)
 			local i_step = random_choice(1, 2, 3)
@@ -2432,17 +2487,17 @@ anomalies_spawn_functions = {
 			local x_modifier = generate_distance() * random_choice(1, -1)
 			local z_modifier = generate_distance() * random_choice(1, -1)
 
-			local function wrap(i)
-				return i >= full_circle and i % full_circle or i
-			end
+			-- local function wrap(wrap_i)
+			-- 	return wrap_i >= full_circle and wrap_i % full_circle or wrap_i
+			-- end
 
 			local max_offset_y = 0.5
-			local max_offset_y_low = spawn_position.y - max_offset_y
-			local max_offset_y_high = spawn_position.y + max_offset_y
+			-- local max_offset_y_low = spawn_position.y - max_offset_y
+			-- local max_offset_y_high = spawn_position.y + max_offset_y
 
-			local prev_pos_x = spawn_position.x
+			-- local prev_pos_x = spawn_position.x
 			local prev_pos_y = spawn_position.y
-			local prev_pos_z = spawn_position.z
+			-- local prev_pos_z = spawn_position.z
 			register_callback("actor_on_update", function()
 				if i >= full_circle then
 					i = i % full_circle
@@ -2457,7 +2512,7 @@ anomalies_spawn_functions = {
 				local offset_y = spawn_position.y
 
 				-- Adjust to height by checking lvid
-				local lvid = level_vertex_id(vector_set(vector, offset_x, offset_y, offset_z))
+				local lvid = level_vertex_id(vector_set(vec_inst, offset_x, offset_y, offset_z))
 				if (lvid < 4294967295) then
 					local pos_y = level_vertex_position(lvid).y
 					if abs(pos_y - prev_pos_y) < max_offset_y then
@@ -2466,10 +2521,10 @@ anomalies_spawn_functions = {
 					-- offset_y = clamp(pos_y, max_offset_y_low, max_offset_y_high)
 				end
 
-				obj_set_anomaly_position(obj, vector_set(vector, offset_x, offset_y, offset_z))
-				prev_pos_x = offset_x
+				obj_set_anomaly_position(obj, vector_set(vec_inst, offset_x, offset_y, offset_z))
+				-- prev_pos_x = offset_x
 				prev_pos_y = offset_y
-				prev_pos_z = offset_z
+				-- prev_pos_z = offset_z
 
 				local delta = min(50, device().time_delta) / 22 -- Frame independent movement, less than 20 fps will be slower due to prevent sudden pops
 				i = floor(i + i_step * delta)
@@ -2643,32 +2698,36 @@ detector_functions = {
 	end,
 
 	detector_anomaly = function(self, anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
-		if not custom_callback then return end
-		if actor:active_detector() then
-			local sec = anomaly.section
+		-- Force update if player is actively holding the detector, regardless of event callback flag
+		local active_det = actor:active_detector()
+		custom_callback = custom_callback or (active_det ~= nil)
 
+		local ui = tasks_measure and tasks_measure.get_UI()
+		if not custom_callback then return end
+		if active_det then
+			local sec = anomaly.section
 			self:detector_anomaly_add_factor(anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
 			local factor = self:detector_anomaly_find_max_factor(anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
 
-			local ui = tasks_measure.get_UI()
-			if ui and ui.step <= 0 then
-				for i = 1, ui.step_tot do
-					ui.m_seg[i]:InitTextureEx(i <= min(ui.step_tot, ceil(factor * 10)) and "green_seg_ano" or "green_black_ano", "hud\\p3d")
+			if ui and ui.step <= 0 and ui.m_seg then
+				for i = 1, (ui.step_tot or 0) do
+					if ui.m_seg[i] then
+						ui.m_seg[i]:InitTextureEx(i <= math.min(ui.step_tot, math.ceil(factor * 10)) and "green_seg_ano" or "green_black_ano", "hud\\p3d")
+					end
 				end
 			end
 
-			-- Play sound when detector is active
-			if	game_difficulties.get_game_factor("notify_anomaly")
-			and (drx_da_main_mcm.new_anomalies_sections[sec] or drx_da_main_mcm.variations_anomalies_sections[sec])
-			or	(not game_difficulties.get_game_factor("notify_anomaly") and actor:active_detector())
-			then
+			local notify_fac = game_difficulties.get_game_factor("notify_anomaly")
+			local is_target_sec = (drx_da_main_mcm.new_anomalies_sections[sec] or drx_da_main_mcm.variations_anomalies_sections[sec])
+			if (notify_fac and is_target_sec) or (not notify_fac and active_det) then
 				self:play_anomaly_sound(anomaly, actor, distance_to_sqr, radius_sqr)
 			end
 		else
-			local ui = tasks_measure.get_UI()
-			if ui and ui.step <= 0 then
-				for i = 1, ui.step_tot do
-					ui.m_seg[i]:InitTextureEx("green_black_ano", "hud\\p3d")
+			if ui and ui.step <= 0 and ui.m_seg then
+				for i = 1, (ui.step_tot or 0) do
+					if ui.m_seg[i] then
+						ui.m_seg[i]:InitTextureEx("green_black_ano", "hud\\p3d")
+					end
 				end
 			end
 		end
@@ -2693,24 +2752,24 @@ function notify_anomaly(anomaly, actor, distance_to_sqr, radius_sqr, custom_call
 	end
 end
 
-local function dynamic_anomaly_loop_processor(queue_key, self)
+local function dynamic_anomaly_loop_processor(queue_key, anom_state)
 	local actor = db.actor
 	if not actor then
 		-- Actor not loaded yet, reschedule loop to check in 1 sec
-		CreateTimeEvent(queue_key, "check", 1.0, dynamic_anomaly_loop_processor, queue_key, self)
+		CreateTimeEvent(queue_key, "check", 1.0, dynamic_anomaly_loop_processor, queue_key, anom_state)
 		return true
 	end
 
-	local tg = time_global()
-	local radius_sqr = self.radius_sqr
-	local distance_to_sqr = self.spawn_position:distance_to_sqr(actor:position())
+	-- tg = time_global()
+	local radius_sqr = anom_state.radius_sqr
+	local distance_to_sqr = anom_state.spawn_position:distance_to_sqr(actor:position())
 	local level_name = level.name()
 
 	if distance_to_sqr <= radius_sqr then
 		-- [ACTIVE ZONE]
-		local engine_obj_id = self.object:id()
+		local engine_obj_id = anom_state.object:id()
 		if not (
-			anomaly_detector_ignore[self.section]
+			anomaly_detector_ignore[anom_state.section]
 		or	(
 			level_name
 			and updated_anomaly_levels[level_name]
@@ -2721,42 +2780,43 @@ local function dynamic_anomaly_loop_processor(queue_key, self)
 		) then
 			local og_dyn_anomalies = bind_anomaly_field.dyn_anomalies
 			if not og_dyn_anomalies then
-				notify_anomaly(self, actor, distance_to_sqr, radius_sqr, true)
+				notify_anomaly(anom_state, actor, distance_to_sqr, radius_sqr, true)
 			else
 				if og_dyn_anomalies[level_name] and og_dyn_anomalies[level_name][engine_obj_id] ~= nil then
 					if og_dyn_anomalies[level_name][engine_obj_id] then
-						notify_anomaly(self, actor, distance_to_sqr, radius_sqr, true)
+						notify_anomaly(anom_state, actor, distance_to_sqr, radius_sqr, true)
 					end
 				else
-					notify_anomaly(self, actor, distance_to_sqr, radius_sqr, true)
+					notify_anomaly(anom_state, actor, distance_to_sqr, radius_sqr, true)
 				end
 			end
 		end
-		self.was_near_actor = true
+		anom_state.was_near_actor = true
 
 		-- Reschedule for standard high-speed update 100ms
-		CreateTimeEvent(queue_key, "check", 0.1, dynamic_anomaly_loop_processor, queue_key, self)
+		CreateTimeEvent(queue_key, "check", 0.1, dynamic_anomaly_loop_processor, queue_key, anom_state)
 	else
 		-- [OUTSIDE THE ACTIVE ZONE]
-		if self.was_near_actor then
-			detector_functions.detector_anomaly_remove_factor(detector_functions, self, actor, distance_to_sqr, radius_sqr, true)
-			self.was_near_actor = nil
+		if anom_state.was_near_actor then
+			detector_functions.detector_anomaly_remove_factor(detector_functions, anom_state, actor, distance_to_sqr, radius_sqr, true)
+			anom_state.was_near_actor = nil
 			-- Just left the zone, reschedule
-			CreateTimeEvent(queue_key, "check", 0.1, dynamic_anomaly_loop_processor, queue_key, self)
+			CreateTimeEvent(queue_key, "check", 0.1, dynamic_anomaly_loop_processor, queue_key, anom_state)
 		else
 			if distance_to_sqr > (radius_sqr * 2) then
 				-- Put the thread to sleep for 45 sec
-				CreateTimeEvent(queue_key, "check", 45.0, dynamic_anomaly_loop_processor, queue_key, self)
+				CreateTimeEvent(queue_key, "check", 45.0, dynamic_anomaly_loop_processor, queue_key, anom_state)
 			else
-				detector_functions.detector_anomaly_remove_factor(detector_functions, self, actor, distance_to_sqr, radius_sqr, true)
+				detector_functions.detector_anomaly_remove_factor(detector_functions, anom_state, actor, distance_to_sqr, radius_sqr, true)
 				-- Mid-range buffer update speed 15 sec sleep
-				CreateTimeEvent(queue_key, "check", 15.0, dynamic_anomaly_loop_processor, queue_key, self)
+				CreateTimeEvent(queue_key, "check", 15.0, dynamic_anomaly_loop_processor, queue_key, anom_state)
 			end
 		end
 	end
 
 	return true
 end
+
 
 bind_anomaly_field_spawn = bind_anomaly_field.anomaly_field_binder.net_spawn
 bind_anomaly_field.anomaly_field_binder.net_spawn = function(self, se_abstract)
@@ -2798,7 +2858,7 @@ bind_anomaly_field.anomaly_field_binder.net_spawn = function(self, se_abstract)
 	local queue_key = "da_anom_loop_" .. self.object:id()
 
 	-- Delays the first tick randomly to distribute initialization load cleanly.
-	CreateTimeEvent(queue_key, "check", (math.random(10, 100) * 0.1), dynamic_anomaly_loop_processor, queue_key, self)
+	CreateTimeEvent(queue_key, "check", math.random(10, 100) * 0.1, dynamic_anomaly_loop_processor, queue_key, self)
 
 	return true
 end
@@ -2923,9 +2983,9 @@ end
 local actor_on_update_time = 0
 local actor_on_update_timer = 100
 function actor_on_update()
-	local tg = time_global()
-	if tg < actor_on_update_time then return end
-	actor_on_update_time = tg + actor_on_update_timer
+	local update_tg = time_global()
+	if update_tg < actor_on_update_time then return end
+	actor_on_update_time = update_tg + actor_on_update_timer
 
 	time_elapsed = get_time_elapsed()
 	process_timed_effects()
@@ -2996,7 +3056,7 @@ anomalies_hit_functions = {
 			fatigue_light.enabled = false
 		end
 		CreateTimeEvent("zone_mine_flash", "zone_mine_flash", 0.1, function()
-			local new_health = actor.health
+			-- local new_health = actor.health
 			actor:set_health_ex(health)
 			actor:change_health(-random_float(0.01, 0.04))
 
@@ -3133,16 +3193,16 @@ function monster_on_before_hit(monster, s_hit, bone_id, flags)
 end
 
 function load_state(m_data)
-	local dump = string.dump
+	-- local dump = string.dump
 	local load = loadstring
 	local unpack = unpack
 
 	local t = m_data.drx_da_effects or {}
 	for key, effect in pairs(t) do
 		if t[key].effect_function then
-			local effect = load(t[key].effect_function)
+			local compiled_effect = load(t[key].effect_function)
 			t[key].effect = function()
-				effect(unpack(t[key].effect_args))
+				compiled_effect(unpack(t[key].effect_args))
 			end
 		end
 		if t[key].on_end_function then
@@ -3356,8 +3416,39 @@ end
 
 -- Buggy consecutive update leading to softlocks and crashes
 -- Refresh anomalies on level after surge, in concurrent fashion
+local function gather_smart_generation_steps(smart_name, level_file, level_name, anomaly_max_number, spawn_percent, anomalies_by_smart, collect_section, to_generate)
+	if not (true or not smart_restrictions[smart_name]) then
+		printf("no anomalies spawn on smart %s, level %s in restriction", smart_name, level_name)
+		return
+	end
+
+	-- Choose an anomaly type to spawn:
+	local anomaly_list = collect_section(level_file, "anomaly_types")
+	if not (anomaly_list and #anomaly_list >= 1) then
+		printf("No dynamic anomaly types specified for level %s", level_name)
+		return
+	end
+
+	local anomaly_type = anomaly_list[random(#anomaly_list)]
+	printf("picked anomaly type %s", anomaly_type)
+
+	if not anomalies_by_smart[smart_name] then anomalies_by_smart[smart_name] = {} end
+	local j = size_table(anomalies_by_smart[smart_name])
+	while j < anomaly_max_number do
+		if random() <= spawn_percent then
+			to_generate[#to_generate + 1] = {
+				anomaly_type = anomaly_type,
+				level_file = level_file,
+				smart_name = smart_name,
+				level_name = level_name
+			}
+		end
+		j = j + 1
+	end
+end
+
 function update_dynamic_anomalies_on_level_after_surge(level_name)
-	local level_name = level_name or level.name()
+	level_name = level_name or level.name()
 
 	-- Clean all anomalies in one action first
 	clean_dynamic_anomalies_global()
@@ -3372,65 +3463,42 @@ function update_dynamic_anomalies_on_level_after_surge(level_name)
 		local level_file = level_data.level_file
 		local spawn_percent = level_data.spawn_percent
 		local anomaly_max_number = level_data.anomaly_max_number
-		local anomaly_max_active = level_data.anomaly_max_active
+		-- local anomaly_max_active = level_data.anomaly_max_active
 
 		-- Build a list of available smart terrains:
 		local smart_list = utils_data.collect_section(level_file, "available_smarts")
 
-		local pairs = pairs
 		local collect_section = utils_data.collect_section
-		local size_table = size_table
+		-- local size_table = size_table
 
 		local to_generate = {}
 
 		-- Build anomalies table
 		if is_not_empty(smart_list) then
-			local anomalies = updated_anomaly_levels[level_name].anomalies or {}
+			-- local anomalies = updated_anomaly_levels[level_name].anomalies or {}
 			local anomalies_by_smart = updated_anomaly_levels[level_name].anomalies_by_smart or {}
-			local smart_by_anomalies = updated_anomaly_levels[level_name].smart_by_anomalies or {}
+			-- local smart_by_anomalies = updated_anomaly_levels[level_name].smart_by_anomalies or {}
 
-			for i, smart_name in pairs(smart_list) do
-				if true or not smart_restrictions[smart_name] then
-					-- Choose an anomaly type to spawn:
-					local anomaly_list = collect_section(level_file, "anomaly_types")
-					if anomaly_list and #anomaly_list >= 1 then
-						local anomaly_type = anomaly_list[random(#anomaly_list)]
-						printf("picked anomaly type %s", anomaly_type)
-
-						if not anomalies_by_smart[smart_name] then anomalies_by_smart[smart_name] = {} end
-						local j = size_table(anomalies_by_smart[smart_name])
-						while j < anomaly_max_number do
-							if random() <= spawn_percent then
-								to_generate[#to_generate + 1] = {
-									anomaly_type = anomaly_type,
-									level_file = level_file,
-									smart_name = smart_name,
-									level_name = level_name
-								}
-							end
-							j = j + 1
-						end
-					else
-						printf("No dynamic anomaly types specified for level %s", level_name)
-					end
-				else
-					printf("no anomalies spawn on smart %s, level %s in restriction", smart_name, level_name)
-				end
+			for _, smart_name in pairs(smart_list) do
+				gather_smart_generation_steps(
+					smart_name, level_file, level_name, anomaly_max_number, spawn_percent,
+					anomalies_by_smart, collect_section, to_generate
+				)
 			end
 		end
 		return to_generate
 	end
 
-	local anomalies = generate_anomalies()
-	if is_not_empty(anomalies) then
-		local tg_interval = 100
-		local tg = time_global() + 500
+	local tracking_anomalies = generate_anomalies()
+	if is_not_empty(tracking_anomalies) then
+		local local_spawn_interval = 100
+		local local_spawn_tg = time_global() + 500
 
-		local anomalies_ids = {}
-		process_queue("drx_da_spawn_anomalies_on_level", anomalies, function(k, anomaly)
+		-- local anomalies_ids = {}
+		process_queue("drx_da_spawn_anomalies_on_level", tracking_anomalies, function(k, anomaly)
 			local t = time_global()
-			if t < tg then return end
-			tg = t + tg_interval
+			if t < local_spawn_tg then return end
+			local_spawn_tg = t + local_spawn_interval
 
 			local anom_id = drx_da_spawn_anomaly_on_smart(anomaly.level_file, anomaly.smart_name, anomaly.anomaly_type, level_name)
 			if anom_id then
@@ -3447,93 +3515,81 @@ function update_dynamic_anomalies_on_level_after_surge(level_name)
 end
 
 -- Removes all anomalies forcefully
+local function force_process_anomaly_pruning(k1, v1, k, v, sim, sim_object)
+	local se_obj = sim_object(sim, v1)
+	if se_obj then
+		if IsAnomaly(_, se_obj:clsid()) then
+			printf("Deleting anomaly %s, %s globally, level %s", se_obj:section_name(), v1, k)
+			alife_record(se_obj, false)
+			sim:release(se_obj, true)
+		else
+			printf("Error, object is not an anomaly, %s, %s, on level %s", se_obj:section_name(), v1, k)
+		end
+	end
+
+	for k2, v2 in pairs(v.anomalies_by_smart) do
+		v2[v1] = nil
+		v.anomaly_types_by_smart[k2] = nil
+		if is_empty(v2) then
+			v.anomalies_by_smart[k2] = nil
+			v.available_smarts_reduced[k2] = nil
+		end
+	end
+
+	v.smart_by_anomalies[v1] = nil
+	v.anomalies_properties[v1] = nil
+	v.anomalies[k1] = nil
+end
+
+local function force_clean_old_smart_anomalies(smart_name, smart_data, k, sim, sim_level_name, gg, gg_vertex)
+	local smart_level = sim_level_name(sim, gg_vertex(gg, smart_data.m_game_vertex_id):level_id())
+	if smart_level ~= k then return end
+
+	for j = 1, 1000 do
+		local anom_id = load_var(db.actor, strformat("drx_da_anom_id_%s_%s", smart_name, j), nil)
+		if anom_id then
+			local o = alife_object(anom_id)
+			if o then
+				alife_record(o, false)
+				sim:release(o, true)
+			end
+		end
+	end
+end
+
 function force_clean_dynamic_anomalies_global()
 	remove_all_restrictions()
 	get_obj_restrictions(true)
 
 	unregister_anomalies_behaviour()
 
-	local alife_release_id = alife_release_id
+	-- local alife_release_id = alife_release_id
 	local gg = game_graph()
 	local gg_vertex = gg.vertex
-	local level_name = level.name()
-	local load_var = load_var
+	-- local level_name = level.name()
+	-- local load_var = load_var
 	local pairs = pairs
 	local printf = printf
 	local sim = alife()
 	local sim_level_name = sim.level_name
 	local sim_object = sim.object
 	local sim_release = sim.release
-	local alife_record = alife_record
-	local strformat = strformat
+	-- local alife_record = alife_record
+	-- local strformat = strformat
 
 	for k, v in pairs(updated_anomaly_levels) do
 		get_anomalies_by_smart(k)
 		clean_artefacts_on_level(k)
-		if false then
-			-- disable_anomalies_on_level(level_name)
-			-- v.disabled = true
-			-- clean_dynamic_anomalies_on_level_func(level_name)
-		else
-			for k1, v1 in pairs(v.anomalies) do
-				if true then
-					local se_obj = sim_object(sim, v1)
-					if se_obj then
-						if IsAnomaly(_, se_obj:clsid()) then
-							printf("Deleting anomaly %s, %s globally, level %s", se_obj:section_name(), v1, k)
-							alife_record(se_obj ,false)
-							sim:release(se_obj, true)
-						else
-							printf("Error, object is not an anomaly, %s, %s, on level %s", se_obj:section_name(), v1, k)
-						end
-					end
 
-					for k2, v2 in pairs(v.anomalies_by_smart) do
-						v2[v1] = nil
-						v.anomaly_types_by_smart[k2] = nil
-						if is_empty(v2) then
-							v.anomalies_by_smart[k2] = nil
-							v.available_smarts_reduced[k2] = nil
-						end
-					end
-
-					v.smart_by_anomalies[v1] = nil
-					v.anomalies_properties[v1] = nil
-					v.anomalies[k1] = nil
-				else
-					printf("can't delete anomaly %s globally, level %s, in restriction", v1, k)
-				end
-			end
-
-			-- Old anomalies
-			if true then
-				local fully_cleaned = true
-
-				for smart_name, v in pairs(SIMBOARD.smarts_by_names) do
-					local smart_level = sim_level_name(sim, gg_vertex(gg, v.m_game_vertex_id):level_id())
-					if smart_level == k then
-						for j = 1, 1000 do
-							local anom_id = load_var(db.actor, strformat("drx_da_anom_id_%s_%s", smart_name, j), nil)
-							if anom_id then
-								if true then
-									local o = alife_object(anom_id)
-									if o then
-										alife_record(o ,false)
-										sim:release(o, true)
-									end
-								else
-									printf("Error, can't remove old anomaly %s, level %s, in restriction", anom_id, k)
-									fully_cleaned = false
-								end
-							end
-						end
-					end
-				end
-				v.cleaned_old_anomalies = fully_cleaned
-			else
-				printf("old anomalies already cleaned on level %s", k)
-			end
+		for k1, v1 in pairs(v.anomalies) do
+			force_process_anomaly_pruning(k1, v1, k, v, sim, sim_object)
 		end
+
+		-- Old anomalies
+		for smart_name, smart_v in pairs(SIMBOARD.smarts_by_names) do
+			force_clean_old_smart_anomalies(smart_name, smart_v, k, sim, sim_level_name, gg, gg_vertex)
+		end
+		v.cleaned_old_anomalies = true
 	end
 
 	-- Clean from new sections
