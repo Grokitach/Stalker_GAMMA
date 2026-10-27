@@ -1,0 +1,324 @@
+
+local mcm_enable_animation = true
+local mcm_auto_loot_all = false
+local mcm_every_part_pickup = false
+local ini_mut = {}
+local first_take = true
+local target_mutant = nil
+local bone_list  = {
+	[1] = "bip01_spine1",
+	[2] = "bip01_spine2",
+	[3] = "bip01_spine",
+	[4] = "bip01_pelvis",
+	[5] = "bip01_head",
+}
+
+function on_game_start()
+    RegisterScriptCallback("on_game_load", initialize)
+    RegisterScriptCallback("on_option_change", initialize)
+    RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+end
+
+function initialize()
+    ini_mut = ini_file("items\\items\\anims_loot_list.ltx")
+    mcm_enable_animation = liz_fdda_redone_mcm.get_config("skinning/enable")
+    mcm_auto_loot_all = liz_fdda_redone_mcm.get_config("skinning/auto_loot_all")
+    mcm_every_part_pickup = liz_fdda_redone_mcm.get_config("skinning/every_part_pickup")
+end
+
+function actor_on_first_update()
+    RegisterScriptCallback("GUI_on_show", GUI_on_show)
+    RegisterScriptCallback("GUI_on_hide", GUI_on_hide)
+    -- RegisterScriptCallback("monster_on_actor_use_callback", monster_on_actor_use_callback)
+end
+
+-- function monster_on_actor_use_callback(obj)
+--     if not mcm_enable_animation then return end
+--     first_take = false
+--     -- target_mutant = obj
+--     used_knife = db.actor:active_item()
+--     local action_skin = get_template_action_mutant_skin(obj, used_knife)
+--     lam2.add_action(action_skin)
+--     local action_skin_open_ui = get_template_action_mutant_skin_open_ui(obj)
+--     lam2.add_action(action_skin_open_ui)
+-- end
+
+function GUI_on_show(name)
+    if not mcm_enable_animation then return end
+    if mcm_auto_loot_all then return end
+    if name == "UIMutantLoot" then
+        local gui = ui_mutant_loot.GUI
+        if gui then
+            first_take = true
+            target_mutant = gui.obj
+	        RegisterScriptCallback("actor_on_item_take", actor_on_item_take)
+        end
+    end
+end
+
+function GUI_on_hide(name)
+    if not mcm_enable_animation then return end
+    if mcm_auto_loot_all then return end
+    if name == "UIMutantLoot" then
+        local action_loot_on_close_ui = get_template_action_mutant_loot_on_close_ui()
+        lam2.add_action(action_loot_on_close_ui)
+    end
+end
+
+function actor_on_item_take(item_obj)
+    if first_take and target_mutant then
+        first_take = false
+        if uni_anim_knives then uni_anim_knives.force_quick = true end
+        lam2.add_action(get_template_action_mutant_skin(target_mutant))
+    end
+    local sec = item_obj:section()
+    local anim_index = ini_mut:section_exist(sec) and ini_mut:r_string_ex(sec, "indx"):match("(.+),(.+)") or math.random(14)
+    local anim_sec_name = "item_ea_harv_meat_" .. anim_index .. "_hud"
+    lam2.log("[MUTANT SKINNING] Monster part taken. anm section name: %s", anim_sec_name) --will check how many times it will be called
+    local action_take = get_template_action_mutant_loot(item_obj, anim_sec_name)
+    lam2.add_action(action_take)
+    if not mcm_every_part_pickup then
+        UnregisterScriptCallback("actor_on_item_take", actor_on_item_take)
+    end
+end
+
+--- ---------------------------------------
+--- patches
+--- ---------------------------------------
+
+-- harvest without ui
+local OrigianlUIMLS = ui_mutant_loot.start
+ui_mutant_loot.start = function (obj, for_bug1, for_bug2)
+    if not mcm_auto_loot_all then
+        OrigianlUIMLS(obj, for_bug1, for_bug2)
+        return
+    end
+    if not obj then return end
+    if not ui_mutant_loot.GUI then
+        ui_mutant_loot.GUI = ui_mutant_loot.UIMutantLoot()
+    end
+
+    if ui_mutant_loot.GUI and not ui_mutant_loot.GUI:IsShown() then
+        local can_show = ui_mutant_loot.GUI:Reset(obj, for_bug1, for_bug2)
+        if can_show then
+            ui_mutant_loot.GUI:Close()
+            first_take = true
+            target_mutant = obj
+            RegisterScriptCallback("actor_on_item_take", actor_on_item_take)
+            ui_mutant_loot.GUI:Loot(true)
+            lam2.add_action(get_template_action_mutant_loot_on_close_ui())
+        end
+    end
+end
+
+-- disable vanilla animation
+local originalPIF = actor_effects.play_item_fx
+function actor_effects.play_item_fx(item)
+    if
+        item == "mutant_looting"
+        or item == "mutant_looting_boost_1"
+        or item == "mutant_looting_boost_2"
+    then
+        return
+    end
+    originalPIF(item)
+end
+
+--- ---------------------------------------
+--- utils
+--- ---------------------------------------
+
+function play_blood_fx(target)
+    lam2.log("[MUTANT SKINNING] Play blood fx called on object: %s", target:id())
+    if not target or target:id() == 65535 then return end
+    local fx_pos = target:bone_position(bone_list[math.random(1,5)])
+    fx_pos.y = fx_pos.y + 0.1
+    local blood_trace = vector():set(0, -1, 0)
+    wallmarks_manager():place_skeleton(target, "bloody_marks", fx_pos, blood_trace, 0.2, -1)
+    wallmarks_manager():place(blood_trace, fx_pos, 15, 0.3, "bloody_marks", target, -1)
+	local hit_fx = particles_object("hit_fx\\hit_flesh_01")
+    hit_fx:play_at_pos(fx_pos)
+	local hit_fx2 = particles_object("hit_fx\\hit_flesh_02a")
+	hit_fx2:play_at_pos(fx_pos)
+	local hit_fx3 = particles_object("hit_fx\\hit_knife_flesh_00")
+	hit_fx3:play_at_pos(fx_pos)
+end
+
+function get_mutant_skin_speed(knife_object)
+    local speed = 0.9 + math.random() * 0.2 --just for fun. anim speed will be in range from 0.9 to 1.1
+    local backpack = db.actor:item_in_slot(13)
+    if backpack then
+        speed = speed + (ini_sys:r_float_ex(backpack:section(), "bonus_mutant_skin_speed") or 0)
+    end
+    if knife_object then
+        speed = speed + (ini_sys:r_float_ex(knife_object:section(), "bonus_mutant_skin_speed") or 0)
+    end
+    if game_achievements.has_achievement("well_dressed") then
+        speed = speed + 0.2
+    end
+    return speed
+end
+
+function get_knife_object()
+    --check active item
+    local obj = db.actor:active_item()
+    if obj and obj:clsid() == clsid.wpn_knife_s then
+        return obj
+    end
+    --compatibility with skinning from inventory inife (gamma and s.k.i.n)
+    local chosen_knife = nil
+    local highest_tier = -1
+    local fallback_knife = nil
+    local fallback_highest_tier = -1
+
+    db.actor:iterate_inventory(function(owner, inv_obj)
+        if inv_obj:clsid() == clsid.wpn_knife_s then
+            local sec = inv_obj:section()
+            
+            local tier = 1
+            if ini_sys:line_exist(sec, "tier") then
+                tier = ini_sys:r_u32(sec, "tier")
+            elseif sec == "wpn_knife4" or sec == "wpn_knife5" then
+                tier = 2
+            elseif sec == "wpn_knife6" or sec == "wpn_knife7" or sec == "wpn_knife8" then
+                tier = 3
+            end
+
+            if inv_obj:condition() >= 0.15 then
+                if tier > highest_tier then
+                    highest_tier = tier
+                    chosen_knife = inv_obj
+                end
+            else
+                if tier > fallback_highest_tier then
+                    fallback_highest_tier = tier
+                    fallback_knife = inv_obj
+                end
+            end
+        end
+    end, db.actor)
+
+    if not chosen_knife then
+        chosen_knife = fallback_knife
+    end
+
+    --check weapon slots
+    for _, slot_idx in ipairs({11, 12, 0}) do
+        local slot_item = db.actor:item_in_slot(slot_idx)
+        if slot_item and slot_item:clsid() == clsid.wpn_knife_s and slot_item:condition() >= 0.15 then
+            obj = slot_item
+            break
+        end
+    end
+    if obj and obj:clsid() == clsid.wpn_knife_s then
+        return obj
+    end
+    --check inventory
+    if chosen_knife then
+        obj = chosen_knife
+    end
+    if obj and obj:clsid() == clsid.wpn_knife_s then
+        return obj
+    end
+    --found nothing, use default
+    return nil
+end
+
+
+--- ---------------------------------------
+--- action templates
+--- ---------------------------------------
+
+function get_template_action_mutant_loot_on_close_ui()
+    local a = lam2.get_template_action_wait_for_seconds(0.1)
+    a.on_exit = function (self)
+        UnregisterScriptCallback("actor_on_item_take", actor_on_item_take)
+    end
+    a.on_skip = function (self)
+        UnregisterScriptCallback("actor_on_item_take", actor_on_item_take)
+    end
+    return a
+end
+
+function get_template_action_mutant_skin(obj)
+    --if we have knife try to play harverst animation with it
+    --or fallback to default one with the knfie5
+    local knife_section = "item_ea_harv_wpn_knife5_hud"
+    local knife_object = get_knife_object()
+    if knife_object then
+        local tmp_knife_section = "item_ea_harv_" .. knife_object:section() .. "_hud"
+        if ini_sys:section_exist(tmp_knife_section) then
+            knife_section = tmp_knife_section
+        end
+    end
+
+    -- fdda config is kinda messy.
+    -- Added sound and camera motion to the animation through dltx
+    local a = lam2.get_template_action_play_animation()
+    -- a.sec = "item_ea_harv_" .. knife_section .. "_hud"
+    a.name = "mutant_skin"
+    a.sec = knife_section
+    a.anm = "anm_ea_show"
+    a.speed = get_mutant_skin_speed(knife_object)
+    a.only_allow_movekeys = false
+    a.disable_input = true
+    a.target = obj
+    a.flags = {}
+    a.on_enter = function (self)
+        --look at target
+        local mp = self.target:bone_position("bip01_spine1")
+        mp.y = mp.y + 0.8
+        db.actor:actor_look_at_point(mp)
+        --play camera effects
+    	level.add_cam_effector("itemuse_anm_effects\\test.anm", 8559, false, "")
+    end
+    a.on_execute = function (self, time)
+        --play blood fx
+        if time > (self.duration * 0.34904) and not self.flags["blood_fx_1"] then
+            play_blood_fx(self.target)
+            self.flags["blood_fx_1"] = true
+        end
+        if time > (self.duration * 0.558464) and not self.flags["blood_fx_2"] then
+            play_blood_fx(self.target)
+            self.flags["blood_fx_2"] = true
+        end
+        if time > (self.duration * 0.732984) and not self.flags["blood_fx_3"] then
+            play_blood_fx(self.target)
+            self.flags["blood_fx_3"] = true
+        end
+        if time > (self.duration * 0.767888) and not self.flags["blood_fx_4"] then
+            play_blood_fx(self.target)
+            self.flags["blood_fx_4"] = true
+        end
+    end
+    a.on_exit = function (self)
+        db.actor:actor_stop_look_at_point()
+        lam2.log("[MUTANT SKINNING] Knife Degrade applied")
+        item_knife.degradate()
+        -- UnregisterScriptCallback("actor_on_item_take", actor_on_item_take)
+    end
+    a.on_skip = function (self)
+        level.remove_cam_effector(8559)
+        db.actor:actor_stop_look_at_point()
+        -- UnregisterScriptCallback("actor_on_item_take", actor_on_item_take)
+    end
+
+    return a
+end
+
+function get_template_action_mutant_loot(obj, anim_sec_name)
+    local a = lam2.get_template_action_play_animation()
+    a.name = "mutant_loot"
+    a.sec = anim_sec_name
+    a.anm = "anm_ea_show"
+    a.speed = 0.9 + math.random() * 0.2 -- animation speed range from 0.9 to 1.1
+    a.target = obj
+    a.can_skip = true
+    a.disable_input = true
+    a.on_skip = function (self)
+        if self.target then
+            db.actor:drop_item(self.target)
+        end
+    end
+    return a
+end
