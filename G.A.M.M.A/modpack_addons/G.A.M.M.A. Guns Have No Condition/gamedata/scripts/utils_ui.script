@@ -3129,7 +3129,7 @@ function UIInfoUpgr:InitControls()
 	self.prop = {}
 	self.prop_h = self.prop_frame:GetHeight()
 	local pos
-	for i=1,5 do
+	for i=1,9 do
 		self.prop[i] = {}
 		self.prop[i].ico = XMLP:InitStatic("upgrade_info:properties:icon", self.prop_frame)
 		pos = self.prop[i].ico:GetWndPos()
@@ -3138,6 +3138,9 @@ function UIInfoUpgr:InitControls()
 		self.prop[i].txt = XMLP:InitTextWnd("upgrade_info:properties:txt", self.prop_frame)
 		pos = self.prop[i].txt:GetWndPos()
 		self.prop[i].txt:SetWndPos(vector2():set( pos.x , pos.y + (self.prop_h * i) ))
+
+		-- maybe no necessary
+		self.prop[i].txt:SetWndSize(vector2():set(self.prop[i].txt:GetWidth() + 10, self.prop[i].txt:GetHeight()))
 	end
 end
 
@@ -3177,7 +3180,8 @@ function UIInfoUpgr:Update(upgr, prereq, installed)
 	self.prereq:AdjustHeightToText()
 	self:Sync_Y(self.desc, self.prereq, 10)
 
-	local props = parse_list(ini_sys, upgr, "property")
+	-- use the helper script to parse the properties if it exists
+	local props = better_upgrade_tooltips and better_upgrade_tooltips.property_parse(ini_sys, upgr, "property") or parse_list(ini_sys, upgr, "property")
 	for i,prop in ipairs(props) do
 		local icon = ini_sys:r_string_ex(prop,"icon")
 		self.prop[i].ico:InitTexture(icon)
@@ -3190,13 +3194,14 @@ function UIInfoUpgr:Update(upgr, prereq, installed)
 		--printf("$UIInfoUpgr | i: %s - prop: %s - icon: %s - value: %s", i, prop, icon, value)
 	end
 	
-	for i=(#props + 1), 5 do
+	for i=(#props + 1), 9 do
 		self.prop[i].ico:Show(false)
 		self.prop[i].txt:Show(false)
 	end
 	
 	self:Sync_Y(self.prereq, self.prop_frame, 10)
-	self:Sync_H(self.prop_frame, self.frame, (self.prop_h * #props) )
+	-- increase in length for some extra space
+	self:Sync_H(self.prop_frame, self.frame, (self.prop_h * #props + 20) )
 	return
 end
 
