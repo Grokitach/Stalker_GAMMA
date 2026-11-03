@@ -1,4 +1,4 @@
-af_spawn_duration_limit = 432000 -- time in game time seconds after which artefacts are released if not looted
+af_spawn_duration_limit = 259200 -- time in game time seconds after which artefacts are released if not looted ; 86400 = how many seconds in 1 day
 ah_af_sections = {
     ["af_ah_o1"] = true,
     ["af_ah_o1"] = true,
@@ -50,6 +50,45 @@ function c2t(ct)
     }
 end
 
+local function is_in_display(id, displays)
+    if not displays then return false end
+    for _, case_items in pairs(displays) do
+        for _, world_id in pairs(case_items) do
+            if world_id == id then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function process_se_artefact(se_obj, actor_id, sim, current_level_id, local_displays)
+    local af_sec = se_obj:section_name()
+    local kind = SYS_GetParam(0, af_sec, "kind")
+    if kind ~= "i_arty_junk" and kind ~= "i_arty" then return end
+
+    local artifact_level = sim:level_name(game_graph():vertex(se_obj.m_game_vertex_id):level_id())
+    if artifact_level ~= current_level_id then return end
+
+    local parent_id = se_obj.parent_id
+    local is_owned = false
+
+    if parent_id then
+        local se_parent = parent_id < 65535 and sim:object(parent_id)
+        is_owned = (parent_id == actor_id or IsStalker(se_parent) or IsInvbox(se_parent) or IsMonster(se_parent))
+    end
+
+    if not is_owned and is_in_display(se_obj.id, local_displays) then
+        is_owned = true
+    end
+
+    if is_owned and artefacts_spawned_time and artefacts_spawned_time[se_obj.id] then
+        artefacts_spawned_time[se_obj.id] = nil
+    elseif not is_owned then
+        delete_artefacts(se_obj)
+    end
+end
+
 function clear_old_artefacts()
     --printf("\\\\ Checking IDs for artefacts")
     local actor_id = db.actor:id()
@@ -57,27 +96,12 @@ function clear_old_artefacts()
     if not sim then return end
 
     local current_level_id = level.name()
+    local local_displays = (weapon_showcase and weapon_showcase.weapon_displays) or {}
 
     for i = 1, 65534 do
         local se_obj = sim:object(i)
         if se_obj and IsArtefact(se_obj) then
-            local artifact_level = sim:level_name(game_graph():vertex(se_obj.m_game_vertex_id):level_id())
-            
-            if artifact_level == current_level_id then
-                local parent_id = se_obj.parent_id
-                local is_owned = false
-
-                if parent_id then
-                    local se_parent = parent_id < 65535 and sim:object(parent_id)
-                    if parent_id == actor_id or IsStalker(se_parent) or IsInvbox(se_parent) or IsMonster(se_parent) then
-                        is_owned = true
-                    end
-                end
-
-                if not is_owned then
-                    delete_artefacts(se_obj)
-                end
-            end
+            process_se_artefact(se_obj, actor_id, sim, current_level_id, local_displays)
         end
     end
 end
@@ -86,12 +110,8 @@ function delete_artefacts(artefact)
     curr_time = game.get_game_time()
     if not artefact then return end
 
-    local af_sec = artefact:section_name()
-    local kind = SYS_GetParam(0, af_sec, "kind")
-    --printf("// scanning IDs for artefacts")
     local af_id = artefact.id
-
-    if kind ~= "i_arty_junk" and kind ~= "i_arty" then return end
+    local af_sec = artefact:section_name()
 
     if not artefacts_spawned_time then
         artefacts_spawned_time = {}
@@ -129,6 +149,12 @@ function delete_artefacts(artefact)
     end
 end
 
+function actor_on_item_take(item)
+    if item and IsArtefact(item) and artefacts_spawned_time and artefacts_spawned_time[item:id()] then
+        artefacts_spawned_time[item:id()] = nil
+    end
+end
+
 function save_state(m_data)
     --printf("/// saving artefacts spawn time")
     m_data.artefacts_spawned_time = artefacts_spawned_time
@@ -136,10 +162,21 @@ end
 
 function load_state(m_data)
     artefacts_spawned_time = m_data.artefacts_spawned_time or {}
+
+    local sim = alife()
+    if sim then
+        for id, _ in pairs(artefacts_spawned_time) do
+            local se_obj = sim:object(id)
+            if not (se_obj and IsArtefact(se_obj)) then
+                artefacts_spawned_time[id] = nil
+            end
+        end
+    end
 end
 
 function on_game_start()
     RegisterScriptCallback("actor_on_first_update", clear_old_artefacts)
+    RegisterScriptCallback("actor_on_item_take", actor_on_item_take)
     RegisterScriptCallback("save_state", save_state)
     RegisterScriptCallback("load_state", load_state)
 end
