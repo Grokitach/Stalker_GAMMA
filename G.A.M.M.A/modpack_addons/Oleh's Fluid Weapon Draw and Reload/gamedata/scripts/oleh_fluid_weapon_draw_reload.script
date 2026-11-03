@@ -1,0 +1,208 @@
+-- allows to fire/reload weapon before draw animation completely ends
+-- oleh5230, 11.05.26
+
+-- To Do:
+-- add key hold binds
+
+-- keybinds that can interrupt animations
+keybinds_whitelist = {
+	[key_bindings.kWPN_FIRE] = true,
+	[key_bindings.kWPN_ZOOM] = true,
+	[key_bindings.kWPN_RELOAD] = true,
+	[key_bindings.kWPN_FIREMODE_PREV] = true,
+	[key_bindings.kWPN_FIREMODE_NEXT] = true,
+	[key_bindings.kWPN_FUNC] = true,
+	-- grenade launcher toggle key
+	[key_bindings.kCUSTOM21] = true,
+}
+
+-- motion marks that will be ignored
+motion_mark_blacklist = {
+	["lmg_reload"] = true,
+	["clear_jam"] = true,
+}
+
+local debug = false
+local function print_dbg(txt, ...)
+	if debug then printf("[oleh_fluid_weapon_draw_reload] %s ".. txt, time_global(), ...) end
+end
+
+local fluid_draw_flag = false
+local fluid_draw_item_id
+local fluid_reload_flag = false
+local fluid_reload_item_id
+
+local nextTick = _G.nextTick or function(f, n)
+	n = floor(max(n or 1, 1))
+	AddUniqueCall(function()
+		if n == 1 then
+			return f()
+		else
+			n = n - 1
+			return false
+		end
+	end)
+end
+
+function draw_start(anm_table, item)
+	if not item or not IsWeapon(item) then return end
+
+	fluid_draw_flag = false
+	fluid_draw_item_id = nil
+	if anm_table.anm_name and string.find(tostring(anm_table.anm_name), "anm_show") then
+		local sec = item:section()
+		local id = item:id()
+		local hud = ini_sys:r_string_ex(sec, "hud")
+		local state = item:get_state()
+		local length = hud and game.get_motion_length(hud, anm_table.anm_name, anm_table.anm_speed) or 500
+		local length_mod = ini_sys:r_string_ex(sec,"draw_time_modifier") or 0.35
+		--print_dbg("draw start; flag: %s full length: %s, modified length: %s; state %s", fluid_draw_flag, length, length / 1000 * length_mod, state)
+		if length and state and state == 1 and not fluid_draw_flag then
+			CreateTimeEvent("fluid_weapon_draw", "fluid_draw_flag_enable", length / 1000 * length_mod,
+			function()
+				local active_item = db.actor:active_item()
+				local active_item_state = active_item and active_item:get_state()
+				if active_item and active_item:id() == id and
+				active_item_state and active_item_state == 1 then
+					--print_dbg("draw | enable flag")
+					fluid_draw_flag = true
+					fluid_draw_item_id = id
+				end
+				return true
+			end, id)
+
+			CreateTimeEvent("fluid_weapon_draw", "fluid_draw_flag_expire", length / 1000, function()
+				fluid_draw_flag = false
+				fluid_draw_item_id = nil
+				--print_dbg("draw | expire flag")
+				return true
+			end, id)
+		end
+	end
+end
+
+local reload = {}
+function reload_start(anm_table, item)
+	if item and IsWeapon(item) then
+		reload = {}
+		if anm_table.anm_name and string.find(tostring(anm_table.anm_name), "anm_reload") then
+			local sec = item:section()
+			local tri_state = ini_sys:r_string_ex(sec, "tri_state_reload")
+			if tri_state and tri_state ~= "off" then return end
+			local id = item:id()
+			local hud = ini_sys:r_string_ex(sec, "hud")
+
+			reload.length = hud and game.get_motion_length(hud, anm_table.anm_name, anm_table.anm_speed)
+			reload.length_mod = ini_sys:r_string_ex(sec, "reload_end_time_modifier") or 0.35
+			reload.start_tg = time_global()
+			reload.wpn_id = id
+			reload.flag = false
+
+			--print_dbg("reload | length: %s mod: %s", reload.length, reload.length_mod)
+		end
+	end
+end
+
+function reload_mark(state, mark, hud_item, owner)
+	if owner and owner:id() == AC_ID then
+		if state ~= 7 or motion_mark_blacklist[mark] then return end
+
+		local active_item = db.actor:active_item()
+		local tg = time_global()
+		if active_item and reload.wpn_id and active_item:id() == reload.wpn_id and
+		reload.length and reload.start_tg and tg < reload.start_tg + reload.length then
+			reload.mark_tg = tg
+
+			CreateTimeEvent("fluid_weapon_reload", "fluid_reload_flag_enable", (reload.start_tg + reload.length - reload.mark_tg) / 1000 * reload.length_mod,
+			function()
+				local active_item = db.actor:active_item()
+				local active_item_state = active_item and active_item:get_state()
+				if active_item and active_item:id() == reload.wpn_id and
+				active_item_state and active_item_state == 7 then
+					--print_dbg("reload | enable flag")
+					fluid_reload_flag = true
+					fluid_reload_item_id = reload.wpn_id
+				end
+				return true
+			end, reload.wpn_id)
+
+			CreateTimeEvent("fluid_weapon_reload", "fluid_reload_flag_expire", (reload.mark_tg - reload.start_tg) / 1000, function()
+				fluid_reload_flag = false
+				fluid_reload_item_id = nil
+				--print_dbg("reload | expire flag")
+				return true
+			end)
+		end
+	end
+end
+
+function end_draw(key, bind)
+	if not keybinds_whitelist[bind] then return end
+
+	if fluid_draw_flag then
+		local active_item = db.actor:active_item()
+		local active_item_state = active_item and active_item:get_state()
+		if active_item and IsWeapon(active_item) and not IsMelee(active_item) and
+		active_item:id() == fluid_draw_item_id and active_item_state and active_item_state == 1 then
+			--print_dbg("draw | switch state")
+			active_item:switch_state(0)
+			fluid_draw_flag = false
+			fluid_draw_item_id = nil
+
+			if bind == key_bindings.kWPN_ZOOM then
+				if get_console():get_bool("wpn_aim_toggle") then
+					level.press_action(key)
+				else
+					level.hold_action(key)
+				end
+			else
+				nextTick(function() level.press_action(key) return true end)
+			end
+		end
+	end
+end
+
+function end_reload(key, bind)
+	if not keybinds_whitelist[bind] then return end
+
+	if fluid_reload_flag then
+		local active_item = db.actor:active_item()
+		local active_item_state = active_item and active_item:get_state()
+		if active_item and IsWeapon(active_item) and not IsMelee(active_item) and
+		active_item:id() == fluid_reload_item_id and active_item_state and active_item_state == 7 then
+			--print_dbg("reload | switch state %s", time_global() - reload.start_tg)
+			active_item:switch_state(0)
+			fluid_reload_flag = false
+			fluid_reload_item_id = nil
+
+			if bind == key_bindings.kWPN_ZOOM then
+				if get_console():get_bool("wpn_aim_toggle") then
+					level.press_action(key)
+				else
+					level.hold_action(key)
+				end
+			else
+				nextTick(function() level.press_action(key) return true end)
+			end
+		end
+	end
+end
+
+function expire_flags()
+	fluid_draw_flag = false
+	fluid_draw_item_id = nil
+	fluid_reload_flag = false
+	fluid_reload_item_id = nil
+end
+
+function on_game_start()
+	if magazines == nil then -- can't be bothered with patching
+		RegisterScriptCallback("actor_on_hud_animation_play",reload_start)
+		RegisterScriptCallback("on_before_key_press",end_reload)
+	end
+
+	RegisterScriptCallback("actor_on_hud_animation_play",draw_start)
+	RegisterScriptCallback("actor_on_hud_animation_play",expire_flags)
+	RegisterScriptCallback("actor_on_hud_animation_mark",reload_mark)
+	RegisterScriptCallback("on_before_key_press",end_draw)
+end
