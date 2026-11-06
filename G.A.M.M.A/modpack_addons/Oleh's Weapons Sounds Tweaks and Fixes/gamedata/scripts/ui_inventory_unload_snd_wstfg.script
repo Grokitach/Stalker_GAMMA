@@ -1,0 +1,31 @@
+-- play unload sound unique to the weapon
+local enabled = true
+local volume = 1
+
+Action_Unload = ui_inventory.UIInventory.Action_Unload
+function ui_inventory.UIInventory:Action_Unload(obj, bag)
+
+	local itm = obj and self:CheckItem(obj)
+	local path = itm and ini_sys:r_string_ex(itm:section(),"snd_unload")
+	if enabled and path and itms_manager.timeout_snd_on_take then
+		itms_manager.timeout_snd_on_take(250)
+
+		local snd = sound_object(path)
+		snd:play(db.actor,0,sound_object.s2d)
+		snd.volume = volume
+	end
+
+	Action_Unload(self, obj, bag)
+end
+
+function load_mcm_options()
+    if ui_mcm and oleh_sounds_mcm and oleh_sounds_mcm.on_mcm_load then
+        enabled = ui_mcm.get("oleh_sounds/inventory/enabled_inventory_unload")
+        volume = ui_mcm.get("oleh_sounds/inventory/volume_inventory_unload")
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("on_option_change", load_mcm_options)
+    load_mcm_options()
+end

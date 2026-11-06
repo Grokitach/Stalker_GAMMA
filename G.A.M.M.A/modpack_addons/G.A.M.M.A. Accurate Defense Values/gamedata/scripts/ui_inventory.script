@@ -22,9 +22,7 @@ local enable_item_picker	= true
 local is_shift_pressed = false
 
 local weight_unit = game.translate_string("st_kg")
-local snd_open         = sound_object([[interface\inv_open]])
 local snd_open_loot	   = sound_object([[interface\inv_open_loot]])
-local snd_close        = sound_object([[interface\inv_close]])
 local snd_item_to_slot = sound_object([[interface\inv_slot]])
 local snd_item_to_belt = sound_object([[interface\inv_belt]])
 local snd_item_to_ruck = sound_object([[interface\inv_ruck]])
@@ -36,6 +34,22 @@ local snd_detach_addon = sound_object([[interface\inv_detach_addon]])
 local snd_item_use     = sound_object([[interface\inv_none]])
 local snd_trade        = sound_object([[interface\inv_trade]])
 local snd_button	   = sound_object([[interface\inv_button]])
+
+local last_open = 0
+local snd_open = {
+	[1] = sound_object([[interface\inv_open1]]),
+	[2] = sound_object([[interface\inv_open2]]),
+	[3] = sound_object([[interface\inv_open3]]),
+	[4] = sound_object([[interface\inv_open4]]),
+}
+
+local last_close = 0
+local snd_close = {
+	[1] = sound_object([[interface\inv_close1]]),
+	[2] = sound_object([[interface\inv_close2]]),
+	[3] = sound_object([[interface\inv_close3]]),
+	[4] = sound_object([[interface\inv_close4]]),
+}
 
 local snd_addon = {
 	["snd_attach_scope"] 	= sound_object([[interface\inv_attach_scope]]),
@@ -1309,7 +1323,7 @@ function UIInventory:Action_Attach(obj, bag, temp, slot, wpn)
 	
 	utils_item.attach_addon(wpn, obj, typ, true)
 
-	if itms_manager.timeout_snd_on_take then itms_manager.timeout_snd_on_take(50) end
+	if itms_manager.timeout_snd_on_take then itms_manager.timeout_snd_on_take() end
 	self:PlaySND(snd_addon["snd_attach_" .. typ])
 	self:On_Item_Update()
 end
@@ -1338,7 +1352,7 @@ function UIInventory:Action_Detach_Silencer(obj, bag)
 	utils_item.detach_addon(obj, nil, "sil")
 	self:On_Item_Update()
 	
-	if itms_manager.timeout_snd_on_take then itms_manager.timeout_snd_on_take(50) end
+	if itms_manager.timeout_snd_on_take then itms_manager.timeout_snd_on_take() end
 	self:PlaySND(snd_addon["snd_detach_sil"])
 end
 
@@ -1347,7 +1361,7 @@ function UIInventory:Action_Detach_Scope(obj, bag)
 
 	utils_item.detach_addon(obj, nil, "scope")
 	
-	if itms_manager.timeout_snd_on_take then itms_manager.timeout_snd_on_take(50) end
+	if itms_manager.timeout_snd_on_take then itms_manager.timeout_snd_on_take() end
 	self:PlaySND(snd_addon["snd_detach_scope"])
 	self:On_Item_Update()
 end
@@ -1357,7 +1371,7 @@ function UIInventory:Action_Detach_GL(obj, bag)
 	
 	utils_item.detach_addon(obj, nil, "gl")
 
-	if itms_manager.timeout_snd_on_take then itms_manager.timeout_snd_on_take(50) end
+	if itms_manager.timeout_snd_on_take then itms_manager.timeout_snd_on_take() end
 	self:PlaySND(snd_addon["snd_detach_gl"])
 	self:On_Item_Update()
 end
@@ -2383,7 +2397,14 @@ function UIInventory:IMode_Init()
 	if ui_mcm and ui_mcm.get("fddar/backpack/enable") then
 		--printf("FDDAR backpack enabled, omit ui_inventory sound effect")
 	else
-		self:PlaySND(snd_open)
+		local roll = math.random(#snd_open)
+		if roll == last_open then
+			roll = last_open % #snd_open + 1
+		end
+		last_open = roll
+
+		local snd = snd_open[roll]
+		self:PlaySND(snd)
 	end
 end
 
@@ -2639,7 +2660,14 @@ function UIInventory:TMode_Init(npc)
 	self:UpdateInfo(true)
 
 	-- Sound effect
-	self:PlaySND(snd_open)
+	local roll = math.random(#snd_open)
+	if roll == last_open then
+		roll = last_open % #snd_open + 1
+	end
+	last_open = roll
+
+	local snd = snd_open[roll]
+	self:PlaySND(snd)
 end
 
 function UIInventory:TMode_ResetInventories(only_bags)
@@ -2820,7 +2848,7 @@ function UIInventory:TMode_Sell()
 	end
 
 	-- Sound effect
-	if itms_manager.timeout_snd_on_take then itms_manager.timeout_snd_on_take(50) end
+	if itms_manager.timeout_snd_on_take then itms_manager.timeout_snd_on_take() end
 	self:PlaySND(snd_trade)
 	
 	-- Transfer items
@@ -2880,6 +2908,7 @@ function UIInventory:TMode_Buy()
 	db.actor:give_money(-tot_cost)
 
 	-- Sound effect
+	if itms_manager.timeout_snd_on_take then itms_manager.timeout_snd_on_take() end
 	self:PlaySND(snd_trade)
 	
 	-- Update UI
@@ -2906,7 +2935,14 @@ function UIInventory:RMode_Init(npc)
 	self:UpdateInfo(true)
 	
 	-- Sound effect
-	self:PlaySND(snd_open)
+	local roll = math.random(#snd_open)
+	if roll == last_open then
+		roll = last_open % #snd_open + 1
+	end
+	last_open = roll
+
+	local snd = snd_open[roll]
+	self:PlaySND(snd)
 end
 
 function UIInventory:RMode_InitElements()
@@ -4051,7 +4087,14 @@ function UIInventory:Close()
 	if ui_mcm and ui_mcm.get("fddar/backpack/enable") then
 		--printf("FDDAR backpack enabled, omit ui_inventory sound effect")
 	else
-		self:PlaySND(snd_close)
+		local roll = math.random(#snd_close)
+		if roll == last_close then
+			roll = last_close % #snd_close + 1
+		end
+		last_close = roll
+
+		local snd = snd_close[roll]
+		self:PlaySND(snd)
 	end
 	
 	self:HideDialog()

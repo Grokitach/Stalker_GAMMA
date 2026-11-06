@@ -1,111 +1,116 @@
--- Edited by CustomBeerFairy. Special thanks for ForserX for idea about ray casting.
-
 -- revised by oleh5230, 17.04.25
 -- Last edit: 07.07.25
+-- credits: CustomBeerFairy, ForserX
 
 local debug = false
 
-available_materials = {
-    ["default"]                        = "dirt_",
-    ["materials\\asphalt"]             = "asphalt_", -- РђСЃС„Р°Р»СЊС‚
-    ["materials\\bricks"]              = "asphalt_", -- РљРёСЂРїРёС‡РЅР°СЏ СЃС‚РµРЅР°
-    ["materials\\bush"]                = "grass_", -- РљСѓСЃС‚С‹, РєСЂРѕРЅР° РґРµСЂРµРІСЊРµРІ, РєР°РјС‹С€С‹, Р»РёСЃС‚СЊСЏ 
-    ["materials\\bush_sux"]            = "grass_", -- РљСѓСЃС‚С‹, РєСЂРѕРЅР° РґРµСЂРµРІСЊРµРІ, РєР°РјС‹С€С‹, Р»РёСЃС‚СЊСЏ СЃСѓС…РёРµ
-    ["materials\\cloth"]               = "dirt_", -- РўРєР°РЅСЊ
-    ["materials\\concrete"]            = "asphalt_", -- РњРѕРЅРѕР»РёС‚РЅС‹Р№ Р±РµС‚РѕРЅ
-    ["materials\\death"]               = "dirt_", -- РЎРјРµСЂС‚РѕРЅРѕСЃРЅР°СЏ Р·РµРјР»СЏ (РЅРµСЃС‚Р°РЅРґР°СЂС‚РЅС‹Р№ РјР°С‚РµСЂРёР°Р»)
-    ["materials\\dirt"]                = "dirt_", -- РњРѕРєСЂР°СЏ РіСЂСЏР·СЊ, Р±РѕР»РѕС‚Рѕ 
-    ["materials\\earth"]               = "dirt_", -- РЎСѓС…Р°СЏ С‚РІРµСЂРґР°СЏ Р·РµРјР»СЏ (СЃС‚Р°РЅРґР°СЂС‚РЅС‹Р№ РјР°С‚РµСЂРёР°Р»)
-    ["materials\\earth_death"]         = "dirt_", -- РЎСѓС…Р°СЏ С‚РІРµСЂРґР°СЏ Р·РµРјР»СЏ (РЅРµСЃС‚Р°РЅРґР°СЂС‚РЅС‹Р№ РјР°С‚РµСЂРёР°Р»)
-    ["materials\\earth_slide"]         = "dirt_", -- РЎСѓС…Р°СЏ С‚РІРµСЂРґР°СЏ Р·РµРјР»СЏ (СЃС‚Р°РЅРґР°СЂС‚РЅС‹Р№ РјР°С‚РµСЂРёР°Р»)
-    ["materials\\flooring_tile"]       = "asphalt_", -- РџР»РёС‚РєР°, РєР°С„РµР»СЊ
-    ["materials\\glass"]               = "asphalt_", -- РЎС‚РµРєР»Рѕ
-    ["materials\\grass"]               = "dirt_", -- Р—РµРјР»СЏ, РїРѕРєСЂС‹С‚Р°СЏ С‚СЂР°РІРѕР№
-    ["materials\\gravel"]              = "gravel_", -- Р“СЂР°РІРёР№
-    ["materials\\metal"]               = "metal_", -- РњРѕРЅРѕР»РёС‚РЅС‹Р№ РјРµС‚Р°Р», С‚РѕР»СЃС‚С‹Р№ РєСѓСЃРѕРє Р¶РµР»РµР·Р°, С‚Р°РЅРє
-    ["materials\\metal_pipe"]          = "metal_", -- РњРµС‚Р°Р»Р»РёС‡РµСЃРєР°СЏ С‚СЂСѓР±Р°
-    ["materials\\metal_plate"]         = "metal_", --"metal_thin_", -- РњРµС‚Р°Р»Р»РёС‡РµСЃРєР°СЏ РїР»Р°СЃС‚РёРЅР° (С‚РѕР»С‰РёРЅР° 2-5СЃРј), РЎС‚СѓРїРµРЅСЊРєРё
-    ["materials\\sand"]                = "gravel_", -- РџРµСЃРѕРє, РЅР°СЃС‹РїСЊ
-    ["materials\\setka_rabica"]        = "metal_", -- РЎРµС‚РєР° СЂР°Р±РёС†Р°, РєРѕР»СЋС‡Р°СЏ РїСЂРѕРІРѕР»РѕРєР°
-    ["materials\\shifer"]              = "asphalt_", -- РЁРёС„РµСЂ
-    ["materials\\stucco"]              = "asphalt_", -- С€С‚СѓРєР°С‚СѓСЂРєР°
-    ["materials\\tin"]                 = "metal_", --"metal_thin_", -- Р–РµСЃС‚СЊ, РєСЂС‹С€Р° РґРѕРјРѕРІ
-    ["materials\\tree_trunk"]          = "wood_", -- Р”РµСЂРµРІРѕ (СЃС‚РІРѕР»)
-    ["materials\\water"]               = "water_", -- Р’РѕРґР°
-    ["materials\\water_radiation"]     = "water_", -- Р’РѕРґР°
-    ["materials\\wood"]                = "wood_", -- Р”РµСЂРµРІСЏРЅРЅР°СЏ РїРѕРІРµСЂС…РЅРѕСЃС‚СЊ, РґРµСЂРµРІСЏРЅРЅС‹Р№ РїРѕР», РґРµСЂРµРІСЏРЅРЅС‹Рµ СЃС‚СѓРїРµРЅСЊРєРё
-    ["materials\\wooden_board"]        = "wood_", -- Р”РµСЂРµРІСЏРЅРЅР°СЏ РґРѕСЃРєР° (С‚РѕР»С‰РёРЅР° 2-5СЃРј), РґРµСЂРµРІСЏРЅРЅС‹Р№ РІР°РіРѕРЅ, СЏС‰РёРє
-    ["materials\\occ"]                 = "dirt_", -- РњР°С‚РµСЂРёР°Р» РґР»СЏ РѕРєР»СЋР¶РµРЅ РіРµРѕРјРµС‚СЂРёРё
-    ["materials\\fake"]                = "dirt_", -- РњР°С‚РµСЂРёР°Р» РґР»СЏ РєРѕР»РёР¶РµРЅР° (РЅРµС‚ Р·РІСѓРєР°, СЃР»РµРґРѕРІ РѕС‚ РїСѓР»СЊ, С‚РµРЅРµР№)
-    ["materials\\fake_ladders"]        = "dirt_", -- РЅРµРІРёРґРёРјР°СЏ Р»РµСЃС‚РЅРёС†Р°
-    ["materials\\fake_ladders_woods"]  = "dirt_", -- РЅРµРІРёРґРёРјР°СЏ РґРµСЂРµРІСЏРЅРЅР°СЏ Р»РµСЃС‚РЅРёС†Р°
-    ["materials\\fake_slide"]          = "dirt_", -- РњР°С‚РµСЂРёР°Р» РґР»СЏ РєРѕР»РёР¶РµРЅР° (РЅРµС‚ Р·РІСѓРєР°, СЃР»РµРґРѕРІ РѕС‚ РїСѓР»СЊ, С‚РµРЅРµР№)
-}
-
-fake_materials = {
-    ["materials\\death"]               = true, -- РЎРјРµСЂС‚РѕРЅРѕСЃРЅР°СЏ Р·РµРјР»СЏ (РЅРµСЃС‚Р°РЅРґР°СЂС‚РЅС‹Р№ РјР°С‚РµСЂРёР°Р»)
-    ["materials\\occ"]                 = true, -- РњР°С‚РµСЂРёР°Р» РґР»СЏ РѕРєР»СЋР¶РµРЅ РіРµРѕРјРµС‚СЂРёРё
-    ["materials\\fake"]                = true, -- РњР°С‚РµСЂРёР°Р» РґР»СЏ РєРѕР»РёР¶РµРЅР° (РЅРµС‚ Р·РІСѓРєР°, СЃР»РµРґРѕРІ РѕС‚ РїСѓР»СЊ, С‚РµРЅРµР№)
-    ["materials\\fake_ladders"]        = true, -- РЅРµРІРёРґРёРјР°СЏ Р»РµСЃС‚РЅРёС†Р°
-    ["materials\\fake_ladders_woods"]  = true, -- РЅРµРІРёРґРёРјР°СЏ РґРµСЂРµРІСЏРЅРЅР°СЏ Р»РµСЃС‚РЅРёС†Р°
-    ["materials\\fake_slide"]          = true, -- РњР°С‚РµСЂРёР°Р» РґР»СЏ РєРѕР»РёР¶РµРЅР° (РЅРµС‚ Р·РІСѓРєР°, СЃР»РµРґРѕРІ РѕС‚ РїСѓР»СЊ, С‚РµРЅРµР№)
-}
-
-water_materials = {
-    ["materials\\water"]               = true,
-    ["materials\\water_radiation"]     = true,
-}
-
-local jump_sound, land_sound
 local volume = 0.5
 local enabled = true
-
 local servo_volume = 0.5
 local servo_enabled = true
-local exo_classes = {
-    ["outfit_exo_proto"]    = "light",
-    ["outfit_exo"]          = "medium",
-    ["outfit_exo_nosorog"]  = "medium",
-}
+local servo_legacy = false
+local ice_patch = false
+local grass_patch = false
 
+local jump_sound, land_sound
+local exo_jump = servo_legacy and "exo_legacy\\servo_exo_jump_" or "exo\\servo_exo_jump_"
+local exo_land = servo_legacy and "exo_legacy\\servo_exo_land_" or "exo\\servo_exo_land_"
+
+local utils = oleh_sound_utils
+local gear_rattle = footstep_sounds and footstep_sounds.play_gear_rattle and footstep_sounds.play_cloth_sound
+local wpn_rattle = eft_rattle and eft_rattle.play_sprint_rattle_sound
+
+local ssfx = ssfx_rain_footsteps and ssfx_rain_footsteps.module_installed
+local Footstep_Jump_Snd = {}
+local Footstep_Land_Snd = {}
+
+local last_jump = 0
 function actor_on_jump()
     if not enabled then return end
-    local outfit_class = oleh_sound_utils.get_outfit_class()
 
-    local material = available_materials[get_material()]
-    if not material then return false end
-    jump_sound = sound_object("jump\\jump_" .. material .. math.random(5))
+    local roll = math.random(3)
+    if roll == last_jump then
+        roll = last_jump % 4
+    end
+    last_jump = roll
+
+    local material = get_material(debug)
+    local _material = available_materials[material]
+    if not _material then return false end
+    jump_sound = sound_object("jump\\jump_" .. _material .. roll)
     jump_sound:play(db.actor, 0, sound_object.s2d)
     jump_sound.volume = volume
 
+    -- play gear rattle
+    if gear_rattle then
+        footstep_sounds.play_gear_rattle(1, "sprint")
+        footstep_sounds.play_cloth_sound(1, "sprint")
+    end
+
+    -- play weapon rattle
+    if wpn_rattle then
+        eft_rattle.play_sprint_rattle_sound(1, 1)
+    end
+
+    -- play puddle splash
+    if ssfx and puddle_materials[material] then
+        ssfx_rain_footsteps.ssfx_JumpLand_Snd(Footstep_Jump_Snd, level.rain_wetness() * level.rain_hemi(), "jump")
+    end
+
     -- play exo servo sounds
-    if servo_enabled and exo_classes[outfit_class] then
-        local sound = sound_object("exo-gear-walk-jump-land\\servo_exo_jump_" .. exo_classes[outfit_class])
+    local exo_class = utils.exo_classes[utils.outfit.class]
+    if servo_enabled and exo_class then
+        local sound = sound_object(exo_jump .. exo_class)
         sound:play(db.actor, 0, sound_object.s2d)
-        sound.volume = servo_volume
+        sound.volume = servo_volume * 2
     end
 end
 
+local last_land = 0
 function actor_on_land(landing_speed)
     if not enabled then return end
-    local outfit_class = oleh_sound_utils.get_outfit_class()
 
     -- hack for speed set to 0 by fake geometry
     if landing_speed == 0 then landing_speed = 6.66 end
     print_dbg("landing_speed: %s", landing_speed)
-	if landing_speed > 2 then
-        local material = available_materials[get_material(true)]
-        if not material then return false end
-        land_sound = sound_object("landing\\landing_" .. material .. math.random(3))
-        land_sound:play(db.actor, 0, sound_object.s2d)
-        land_sound.volume = volume * (landing_speed / 5)
+	if landing_speed < 2 then return end
+
+    local roll = math.random(3)
+    if roll == last_land then
+        roll = last_land % 4
+    end
+    last_land = roll
+
+    local speed_mod = clamp(landing_speed / 5, 0, 4)
+    local material = get_material(debug)
+    local _material = available_materials[material]
+    if not _material then return false end
+    land_sound = sound_object("landing\\landing_" .. _material .. roll)
+    land_sound:play(db.actor, 0, sound_object.s2d)
+    land_sound.volume = volume * speed_mod
+
+    -- play gear rattle
+    if gear_rattle then
+        footstep_sounds.play_gear_rattle(2 * speed_mod, "sprint")
+        -- footstep_sounds.play_cloth_sound(1, "sprint")
+    end
+
+    -- play weapon rattle
+    if wpn_rattle then
+        eft_rattle.play_sprint_rattle_sound(2 * speed_mod, 1)
+    end
+
+    -- play puddle splash
+    if ssfx and puddle_materials[material] then
+        ssfx_rain_footsteps.ssfx_JumpLand_Snd(Footstep_Land_Snd, level.rain_wetness() * level.rain_hemi(), "land")
     end
 
     -- play exo servo sounds
-    if servo_enabled and exo_classes[outfit_class] then
-        local sound = sound_object("exo-gear-walk-jump-land\\servo_exo_land_" .. exo_classes[outfit_class])
+    local exo_class = utils.exo_classes[utils.outfit.class]
+    if servo_enabled and exo_class then
+        local sound = sound_object(exo_land .. exo_class)
         sound:play(db.actor, 0, sound_object.s2d)
-        sound.volume = servo_volume
+        sound.volume = 2 * servo_volume * speed_mod
     end
 end
 
@@ -128,7 +133,7 @@ local function ray_cast(pos, dir, range, visualize)
         ignore_object = db.actor,
         visualize = debug and visualize or false,
     })
-    return ray:get(pos, dir).result.material_name
+    return ray:get(pos, dir).result
 end
 
 -- vertical x-shaped raycast pattern;
@@ -149,14 +154,20 @@ function get_material(print)
     local ray_hits = {}
 
     for k,v in pairs(ray_cast_offsets) do
-        material = ray_cast(vector():set(pos.x + v[1], pos.y + v[2], pos.z + v[3]), vector():set(0, -1, 0), v[4], print)
+        local ray = ray_cast(vector():set(pos.x + v[1], pos.y + v[2], pos.z + v[3]), vector():set(0, -1, 0), v[4], print)
+        material = ray.material_name
 
+        -- dead bodies return water material somehow
+        if ray.object and ray.object.clsid == 35 then
+            material = "materials\\dirt"
         -- short circuit if centre ray hits water
-        if k == 1 and water_materials[material] then return material end
+        elseif k == 1 and water_materials[material] then
+            return "materials\\water"
+        end
 
         -- inversed ray cast to hit surfaces covered by fake geometry
         if fake_materials[material] then
-            local inv_material = ray_cast(vector():set(pos.x, pos.y - 0.5, pos.z), vector():set(0, 1, 0), 0.5, print)
+            local inv_material = ray_cast(vector():set(pos.x, pos.y - 0.5, pos.z), vector():set(0, 1, 0), 0.5, print).material_name
             if inv_material then material = inv_material end
         end
 
@@ -170,51 +181,71 @@ function get_material(print)
         end
     end
 
-    -- if print then
-    --     for k,v in pairs(ray_hits) do
-    --         print_dbg("raycast result: %s %s", k,v)
-    --     end
-    -- end
+    if print then
+        for k,v in pairs(ray_hits) do
+            print_dbg("raycast result: %s %s", k,v)
+        end
+    end
 
-    -- local final_material = get_highest_value(ray_hits)
-    -- if final_material then
-    --     --print_dbg("selected material: %s", final_material)
-    --     return final_material
-    -- else
-    --     -- backup horizontal plus-shaped ray cast
-    --     final_material = ray_cast(vector():set(pos.x + 0.225, pos.y - 0.001, pos.z), vector():set(-1, 0, 0), 0.45, debug)
-    --     if not final_material then
-    --         final_material = ray_cast(vector():set(pos.x, pos.y - 0.001, pos.z + 0.225), vector():set(0, 0, -1), 0.45, debug)
-    --     end
-    --     print_dbg("backup material: %s", final_material)
-    --     return final_material
-    -- end
+    local final_material = get_highest_value(ray_hits)
+    if not final_material then
+        -- backup horizontal plus-shaped ray cast
+        final_material = ray_cast(vector():set(pos.x + 0.225, pos.y - 0.001, pos.z), vector():set(-1, 0, 0), 0.45, debug).material_name
+        if not final_material then
+            final_material = ray_cast(vector():set(pos.x, pos.y - 0.001, pos.z + 0.225), vector():set(0, 0, -1), 0.45, debug).material_name
+        end
+        print_dbg("backup material: %s", final_material)
+    end
 
-    return get_highest_value(ray_hits)
+    return grass_patch and utils.is_actually_grass(final_material) and "materials\\grass"
+    or final_material
 end
 
 function on_option_change()
-    if ui_mcm and oleh_sounds_mcm then
-        enabled         = ui_mcm.get("oleh_sounds/movement/enabled_jump_sounds")
-	    volume          = ui_mcm.get("oleh_sounds/movement/volume_jump_sounds") or 0.5
-        servo_enabled   = ui_mcm.get("oleh_sounds/movement/enabled_servo_sounds")
-        servo_volume    = ui_mcm.get("oleh_sounds/movement/volume_servo_sounds") or 0.5
-    -- old MCM compatibility
-    elseif ui_mcm and extended_movement_sounds_mcm then
-        enabled         = ui_mcm.get("extended_movement_sounds/enabled_jump_sounds")
-	    volume          = ui_mcm.get("extended_movement_sounds/volume_jump_sounds") or 0.5
-        servo_enabled   = ui_mcm.get("extended_movement_sounds/enabled_servo_sounds")
-        servo_volume    = ui_mcm.get("extended_movement_sounds/volume_servo_sounds") or 0.5
+    if ui_mcm and oleh_sounds_mcm and oleh_sounds_mcm.on_mcm_load then
+        enabled       = ui_mcm.get("oleh_sounds/movement/enabled_jump_sounds")
+        volume        = ui_mcm.get("oleh_sounds/movement/volume_jump_sounds") or 0.5
+        servo_enabled = ui_mcm.get("oleh_sounds/movement/enabled_servo_sounds")
+        servo_volume  = ui_mcm.get("oleh_sounds/movement/volume_servo_sounds") or 0.5
+        servo_legacy  = ui_mcm.get("oleh_sounds/movement/legacy_servo_sounds")
+        grass_patch   = ui_mcm.get("oleh_sounds/general/grass_patch")
+        ice_patch     = ui_mcm.get("oleh_sounds/general/ice_patch")
+    elseif ui_mcm and extended_movement_sounds_mcm and extended_movement_sounds_mcm.on_mcm_load then
+        enabled       = ui_mcm.get("extended_movement_sounds/enabled_jump_sounds")
+        volume        = ui_mcm.get("extended_movement_sounds/volume_jump_sounds") or 0.5
+        servo_enabled = ui_mcm.get("extended_movement_sounds/enabled_servo_sounds")
+        servo_volume  = ui_mcm.get("extended_movement_sounds/volume_servo_sounds") or 0.5
     end
+
+    exo_jump = servo_legacy and "exo_legacy\\servo_exo_jump_" or "exo\\servo_exo_jump_"
+    exo_land = servo_legacy and "exo_legacy\\servo_exo_land_" or "exo\\servo_exo_land_"
+
+    available_materials["materials\\water"] = ice_patch and "concrete_" or "water_"
 end
 
 function on_game_start()
-    RegisterScriptCallback("actor_on_jump", actor_on_jump)
+assert(oleh_sound_utils and oleh_sound_utils.VERSION and oleh_sound_utils.VERSION >= 5, "\n\n"..
+"MovementSFX: oleh_sound_utils.script is missing or outdated, update MSIG (Miscellaneous Sound Improvements) or move it to higher priority\nhttps://github.com/oleh5230/MSIG")
+
+RegisterScriptCallback("actor_on_jump", actor_on_jump)
     RegisterScriptCallback("actor_on_land", actor_on_land)
+    RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
     RegisterScriptCallback("on_option_change", on_option_change)
+    RegisterScriptCallback("on_game_load", on_game_load)
 	on_option_change()
 
     --RegisterScriptCallback("actor_on_footstep", actor_on_footstep) -- uncomment to disable footsteps sounds
+end
+
+function on_game_load()
+	-- Preload SSS sounds
+	Footstep_Jump_Snd[0] = sound_object([[material\human\step\rain_jump_01]])
+	Footstep_Jump_Snd[1] = sound_object([[material\human\step\rain_jump_02]])
+	Footstep_Jump_Snd[2] = sound_object([[material\human\step\rain_jump_03]])
+
+	Footstep_Land_Snd[0] = sound_object([[material\human\step\rain_land_01]])
+	Footstep_Land_Snd[1] = sound_object([[material\human\step\rain_land_02]])
+	Footstep_Land_Snd[2] = sound_object([[material\human\step\rain_land_03]])
 end
 
 function actor_on_footstep(material, power, hud_view, flags)
@@ -226,3 +257,73 @@ function print_dbg(txt, ...)
 		printf("[eft_jump_sounds] " .. txt, ...)
 	end
 end
+
+available_materials = {
+    ["default"]                        = "concrete_", -- primarily used in Dead City
+    ["materials\\asphalt"]             = "concrete_", -- Асфальт
+    ["materials\\bricks"]              = "concrete_", -- Кирпичная стена
+    ["materials\\bush"]                = "grass_", -- Кусты, крона деревьев, камышы, листья 
+    ["materials\\bush_sux"]            = "grass_", -- Кусты, крона деревьев, камышы, листья сухие
+    ["materials\\cloth"]               = "dirt_", -- Ткань
+    ["materials\\concrete"]            = "concrete_", -- Монолитный бетон
+    ["materials\\death"]               = "dirt_", -- Смертоносная земля (нестандартный материал)
+    ["materials\\dirt"]                = "dirt_", -- Мокрая грязь, болото 
+    ["materials\\earth"]               = "dirt_", -- Сухая твердая земля (стандартный материал)
+    ["materials\\earth_death"]         = "dirt_", -- Сухая твердая земля (нестандартный материал)
+    ["materials\\earth_slide"]         = "dirt_", -- Сухая твердая земля (стандартный материал)
+    ["materials\\flooring_tile"]       = "concrete_", -- Плитка, кафель
+    ["materials\\glass"]               = "concrete_", -- Стекло
+    ["materials\\grass"]               = "grass_", -- Земля, покрытая травой
+    ["materials\\gravel"]              = "gravel_", -- Гравий
+    ["materials\\metal"]               = "metal_plate_", -- Монолитный метал, толстый кусок железа, танк
+    ["materials\\metal_pipe"]          = "metal_plate_", -- Металлическая труба
+    ["materials\\metal_plate"]         = "metal_plate_", -- Металлическая пластина (толщина 2-5см), Ступеньки
+    ["materials\\sand"]                = "dirt_", -- Песок, насыпь
+    ["materials\\setka_rabica"]        = "metal_grate_", -- Сетка рабица, колючая проволока
+    ["materials\\shifer"]              = "slate_", -- Шифер
+    ["materials\\stucco"]              = "concrete_", -- штукатурка
+    ["materials\\tin"]                 = "metal_plate_", -- Жесть, крыша домов
+    ["materials\\tree_trunk"]          = "wood_solid_", -- Дерево (ствол)
+    ["materials\\water"]               = "water_", -- Вода
+    ["materials\\water_radiation"]     = "water_", -- Вода
+    ["materials\\wood"]                = "wood_plank_", -- Деревянная поверхность, деревянный пол, деревянные ступеньки
+    ["materials\\wooden_board"]        = "wood_plank_", -- Деревянная доска (толщина 2-5см), деревянный вагон, ящик
+    ["materials\\occ"]                 = "dirt_", -- Материал для оклюжен геометрии
+    ["materials\\fake"]                = "concrete_", -- Материал для колижена (нет звука, следов от пуль, теней)
+    ["materials\\fake_ladders"]        = "dirt_", -- невидимая лестница
+    ["materials\\fake_ladders_woods"]  = "wood_plank_", -- невидимая деревянная лестница
+    ["materials\\fake_slide"]          = "dirt_", -- Материал для колижена (нет звука, следов от пуль, теней)
+}
+-- in Swamps fake is used primarily for wood bridges
+function actor_on_first_update()
+    if level.name() == "k00_marsh" then
+        available_materials["materials\\fake"] = "wood_plank_"
+    else
+        available_materials["materials\\fake"] = "concrete_"
+    end
+end
+
+fake_materials = {
+    ["materials\\death"]               = true, -- Смертоносная земля (нестандартный материал)
+    ["materials\\occ"]                 = true, -- Материал для оклюжен геометрии
+    ["materials\\fake"]                = true, -- Материал для колижена (нет звука, следов от пуль, теней)
+    ["materials\\fake_ladders"]        = true, -- невидимая лестница
+    ["materials\\fake_ladders_woods"]  = true, -- невидимая деревянная лестница
+    ["materials\\fake_slide"]          = true, -- Материал для колижена (нет звука, следов от пуль, теней)
+}
+
+water_materials = {
+    ["materials\\water"]               = true,
+    ["materials\\water_radiation"]     = true,
+}
+
+puddle_materials = {
+    ["default"]                        = true, -- primarily used in Dead City
+    ["materials\\asphalt"]             = true, -- Асфальт
+    -- ["materials\\bush"]                = true, -- Кусты, крона деревьев, камышы, листья 
+    -- ["materials\\bush_sux"]            = true, -- Кусты, крона деревьев, камышы, листья сухие
+    --["materials\\concrete"]            = true, -- Монолитный бетон
+    ["materials\\dirt"]                = true, -- Мокрая грязь, болото 
+    ["materials\\earth"]               = true, -- Сухая твердая земля (стандартный материал)
+    ["materials\\grass"]               = true, -- Земля, покрытая травой
+}

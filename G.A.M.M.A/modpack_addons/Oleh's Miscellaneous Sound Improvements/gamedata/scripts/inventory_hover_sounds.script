@@ -1,19 +1,35 @@
-local enabled = false
+local enabled = true
 local base_vol = 1
 local sound = sound_object("interface\\inv_hover")
+local lmb = false
 
 function item_focus_receive_sound()
-    if not enabled then return end
+    if not enabled or lmb then return end
+
     sound:play(db.actor, 0, sound_object.s2d)
     sound.volume = base_vol or 1
 end
 
+-- sometimes ActorMenu_on_item_focus_receive seems to fire every tick when you drag an item over other items
+function on_key_hold(key)
+	if key == 337 then
+		lmb = true
+	end
+end
+
+-- on_before because base callback is blocked by ui_inventory
+function on_before_key_release(key)
+	if key == 337 then
+		lmb = false
+	end
+end
+
 function load_mcm_options()
-    if ui_mcm and oleh_sounds_mcm then
+    if ui_mcm and oleh_sounds_mcm and oleh_sounds_mcm.on_mcm_load then
         enabled = ui_mcm.get("oleh_sounds/inventory/enabled_inventory_hover")
         base_vol = ui_mcm.get("oleh_sounds/inventory/volume_inventory_hover") or 1
     -- old MCM compatibility
-    elseif ui_mcm and extended_misc_sounds_mcm then
+    elseif ui_mcm and oleh_misc_sounds_mcm and oleh_misc_sounds_mcm.on_mcm_load then
         enabled = ui_mcm.get("oleh_misc_sounds/enabled_inventory_hover")
         base_vol = ui_mcm.get("oleh_misc_sounds/volume_inventory_hover") or 1
     end
@@ -21,6 +37,8 @@ end
 
 function on_game_start()
     RegisterScriptCallback("ActorMenu_on_item_focus_receive", item_focus_receive_sound)
+    RegisterScriptCallback("on_key_hold", on_key_hold)
+    RegisterScriptCallback("on_before_key_release", on_before_key_release)
     RegisterScriptCallback("on_option_change", load_mcm_options)
     load_mcm_options()
 end

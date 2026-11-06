@@ -4,26 +4,15 @@
 
 --[[
 Revisited by oleh5230, 19/03/2024:
-- Calls up to six sound playbacks simultaneously
-- Positional sounds (with offset depending on ejection port orintation)
+- Positional sounds
 - Volume and delay adjustments if player is crouched or prone
 - Mud sounds during rain
 - Tables updated and moved to .ltx files
 - MCM settings
-
-oleh5230, 15/05/2024:
 - Switched to play_no_feedback(): no concurrent playbacks limit, minimized time events usage
 - Separated eject and falling delay
 - Most parameters are now fetched on first shot only
-- .ltx parsed to lua tables instead of direct reading
 - UBGL reload casings sounds
-
-oleh5230, 06/09/2024:
-- Rain mud material indoors fix
-- Delay calculation tweak
-
-oleh5230, 10/11/2024:
-- Offset accepts arbitrary values
 
 Credits:
 - xcvb: get_body_state()
@@ -33,6 +22,7 @@ To Do:
 - last shot exception?
 ]]
 
+local utils = oleh_sound_utils
 local ini_wpn = ini_file_ex("plugins\\grok_casings_sounds_weapons.ltx")
 local ini_ammo = ini_file_ex("plugins\\grok_casings_sounds_ammo.ltx")
 local ini_gren = ini_file_ex("plugins\\grok_casings_sounds_grenades.ltx")
@@ -69,21 +59,22 @@ soft_mats = {
 local enabled = true
 local ubgl_enabled = true
 local ice_patch = false
+local grass_patch = false
 local volume_base = 2
 local last_weapon_id
 
 function load_mcm_options()
-    if ui_mcm and oleh_sounds_mcm then
+    if ui_mcm and oleh_sounds_mcm and oleh_sounds_mcm.on_mcm_load then
         enabled = ui_mcm.get("oleh_sounds/weapons/enabled")
         ubgl_enabled = ui_mcm.get("oleh_sounds/weapons/ubgl_enabled")
-        -- volume_base = ui_mcm.get("oleh_sounds/weapons/volume") or 2
-        ice_patch = ui_mcm.get("oleh_sounds/weapons/ice_patch")
-    -- old MCM compatibility
-    elseif ui_mcm and grok_casings_sounds_mcm then
+        ice_patch = ui_mcm.get("oleh_sounds/general/ice_patch")
+        grass_patch = ui_mcm.get("oleh_sounds/general/grass_patch")
+        -- volume_base = ui_mcm.get("oleh_sounds/weapons/volume")
+    elseif ui_mcm and grok_casings_sounds_mcm and grok_casings_sounds_mcm.on_mcm_load then
         enabled = ui_mcm.get("grok_casings_sounds/enabled")
         ubgl_enabled = ui_mcm.get("grok_casings_sounds/ubgl_enabled")
-        -- volume_base = ui_mcm.get("grok_casings_sounds/volume") or 2
         ice_patch = ui_mcm.get("grok_casings_sounds/ice_patch")
+        -- volume_base = ui_mcm.get("grok_casings_sounds/volume")
     end
 
     if ice_patch then
@@ -93,8 +84,9 @@ function load_mcm_options()
     end
 end
 
+current_material_sound = "_dirt_"
 function actor_on_footstep(material, power, hud_view, flags)
-    current_material = tostring(material)
+    local current_material = tostring(material)
 
 	for k,v in pairs(mat_to_sound) do
 		found_mat = string.find(current_material, k)
@@ -103,10 +95,10 @@ function actor_on_footstep(material, power, hud_view, flags)
 			break
 		end
 	end
-    current_material_sound = mat_to_sound[current_material]
+    current_material_sound = grass_patch and utils.is_actually_grass(material) and "_grass_" or mat_to_sound[current_material]
 
     -- change soft material to mud during rain
-    if level.rain_wetness() > 0.25 and level.rain_hemi() > 0.25 and soft_mats[current_material_sound] then
+    if level.rain_wetness() > 0.25 and level.rain_hemi() > 0.25 and current_material_sound == "_dirt_" then
         -- local roll = math.random(50)
         -- if wetness * 100 > roll then
         current_material_sound = "_mud_"
@@ -342,6 +334,9 @@ function actor_on_first_update()
 end
 
 function on_game_start()
+    assert(oleh_sound_utils and oleh_sound_utils.VERSION and oleh_sound_utils.VERSION >= 5, "\n\n"..
+    "Oleh's Weapon Sounds: oleh_sound_utils.script is missing or outdated, update MSIG (Miscellaneous Sound Improvements) or move it to higher priority\nhttps://github.com/oleh5230/MSIG")
+
     RegisterScriptCallback("actor_on_footstep", actor_on_footstep)
     RegisterScriptCallback("actor_on_weapon_fired", actor_on_weapon_fired)
     RegisterScriptCallback("actor_on_hud_animation_play", actor_on_hud_animation_play)
