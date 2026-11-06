@@ -1,6 +1,9 @@
 -- removes redundant snd_open sound when unjamming tri_state_reload weapons
 -- oleh5230, 04.02.26
 
+-- removes snd_empty when using a UBGL
+-- oleh5230, 01.09.26
+
 isMisfireWeapon = function(wpn, wpn_id)
     return false
 end
@@ -22,12 +25,22 @@ else
 end
 
 function on_before_play_hud_sound(alias, parent, result)
-    if alias == "sndOpen" and parent and parent:id() == AC_ID then
-        local wpn = db.actor:active_item()
-        if not wpn or not isMisfireWeapon(wpn, wpn:id()) then return end
+    if parent and parent:id() == AC_ID then
+        if alias == "sndOpen" then
+            local wpn = db.actor:active_item()
+            if not wpn or not isMisfireWeapon(wpn, wpn:id()) then return end
 
-        result.section = "base_sounds"
-        result.line = "snd_blank"
+            result.section = "base_sounds"
+            result.line = "snd_blank"
+
+        elseif alias == "sndEmptyClick" then
+            local wpn = db.actor:active_item()
+            local zoom_type = wpn and wpn:cast_Weapon():GetZoomType() or 0
+            if not zoom_type or zoom_type ~= 2 then return end
+
+            result.section = "base_sounds"
+            result.line = "snd_blank"
+        end
     end
 end
 

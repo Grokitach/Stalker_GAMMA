@@ -1,0 +1,124 @@
+-- plays scope zoom adjustment sound effect
+-- oleh5230, 20.05.26
+
+local enabled = true
+local volume = 0.5
+
+def_sounds = {"scope\\scope_zoom_1","scope\\scope_zoom_2","scope\\scope_zoom_3","scope\\scope_zoom_4"}
+weapons = {
+    [1] = {
+        section = "",
+        dynamic = "off",
+        zoom = get_console_cmd(2, "fov") or 80,
+        zoom_step_count = 2,
+        toggle = false,
+
+        sounds_in = def_sounds,
+        sounds_out = def_sounds,
+    }
+}
+
+-- Postpone on next n tick
+local nextTick = _G.nextTick or function(f, n)
+	n = floor(max(n or 1, 1))
+	AddUniqueCall(function()
+		if n == 1 then
+			return f()
+		else
+			n = n - 1
+			return false
+		end
+	end)
+end
+
+function on_mouse_wheel(scroll_dir, flags)
+    if not enabled or not axr_main.weapon_is_zoomed then return end
+
+    local actor = db.actor
+    local itm = actor and actor:active_item()
+    if not itm then return end
+    local id = itm:id()
+    if not weapons[id] then weapons[id] = get_const_params(itm:section()) end
+    if not weapons[id] then return end
+
+    -- for k,v in pairs(weapons[id]) do
+    --     printf("%s: %s", k, v)
+    -- end
+
+    -- GetZoomFactor() seems to update after callback
+    nextTick(function()
+        local obj = get_object_by_id(id)
+        local cwpn = obj and obj:cast_Weapon()
+        local zoom = cwpn and cwpn:GetZoomFactor() or 80
+        local type = cwpn and cwpn:GetZoomType() or 1
+        if not zoom or type ~= 0 then return end
+
+        if (weapons[id].dynamic == "on" or axr_main.binoc_is_zoomed)
+        and weapons[id].zoom ~= zoom then
+            -- special handling for 2-position scopes
+            if weapons[id].zoom_step_count == 1 then
+                if scroll_dir ~= weapons[id].toggle then
+                    play_scope_sound(id, scroll_dir)
+                end
+                weapons[id].toggle = scroll_dir
+            else
+                play_scope_sound(id, scroll_dir)
+            end
+        end
+
+        weapons[id].zoom = zoom
+        return true
+    end)
+end
+
+function play_scope_sound(id, scroll_dir)
+    local snd_obj
+    if scroll_dir == 1 then
+        snd_obj = sound_object(weapons[id].sounds_in[math.random(#weapons[id].sounds_in)])
+    else
+        snd_obj = sound_object(weapons[id].sounds_out[math.random(#weapons[id].sounds_out)])
+    end
+    if not snd_obj then return false end
+
+    snd_obj:play(actor, 0, sound_object.s2d)
+    snd_obj.volume = volume * 2
+end
+
+-- build a table with static values per weapon id
+function get_const_params(sec)
+    if not sec then return nil end
+    --printf("get_const_params")
+
+    local params = {}
+    params.section = sec
+    params.dynamic = ini_sys:r_string_ex(sec, "scope_dynamic_zoom") or "off"
+    params.zoom_step_count = ini_sys:r_float_ex(sec, "zoom_step_count") or 2
+    params.toggle = 0
+    params.zoom = get_console_cmd(2, "fov") or 80
+
+    local sounds_in = ini_sys:r_string_ex(sec, "snd_zoom_in")
+    params.sounds_in = sounds_in and str_explode(sounds_in, ",") or def_sounds
+    local sounds_out = ini_sys:r_string_ex(sec, "snd_zoom_out")
+    params.sounds_out = sounds_out and str_explode(sounds_out, ",") or def_sounds
+
+    return params
+end
+
+function load_mcm_options()
+    assert(oleh_sound_utils and oleh_sound_utils.VERSION and oleh_sound_utils.VERSION >= 5, "\n\n"..
+    "Oleh's Weapon Sounds: oleh_sound_utils.script is missing or outdated, update MSIG (Miscellaneous Sound Improvements) or move it to higher priority\nhttps://github.com/oleh5230/MSIG")
+
+    if ui_mcm and oleh_sounds_mcm and oleh_sounds_mcm.on_mcm_load then
+        enabled = ui_mcm.get("oleh_sounds/weapons/enabled_scope_zoom")
+        volume  = ui_mcm.get("oleh_sounds/weapons/volume_scope_zoom") or 0.5
+    elseif ui_mcm and grok_casings_sounds_mcm and grok_casings_sounds_mcm.on_mcm_load then
+        enabled = ui_mcm.get("grok_casings_sounds/enabled_scope_zoom")
+        volume  = ui_mcm.get("grok_casings_sounds/volume_scope_zoom") or 0.5
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("on_mouse_wheel", on_mouse_wheel)
+    RegisterScriptCallback("on_option_change", load_mcm_options)
+    load_mcm_options()
+end
