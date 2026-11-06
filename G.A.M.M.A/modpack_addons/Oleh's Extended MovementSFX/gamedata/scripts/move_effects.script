@@ -8,6 +8,11 @@ local debug = false
 
 MovementAllowed = true
 local crouch_toggle, accel_toggle, lookout_toggle
+local utils = oleh_sound_utils
+
+local servo_enabled = true
+local servo_legacy = false
+local servo_volume = 0.5
 
 local toggle_settings = {
     ["crouch"]      = true,
@@ -21,49 +26,39 @@ local volume_settings = {
     ["lookout"]     = 0.5,
     ["lookback"]    = 0.5,
 }
-local count = {
-    ["crouch"]      = 1,
-    ["stand"]       = 1,
-    ["lookout"]     = 1,
-    ["lookback"]    = 1,
-}
-local limit = {
-    ["crouch"]      = 8,
-    ["stand"]       = 8,
-    ["lookout"]     = 4,
-    ["lookback"]    = 4,
-}
-
 local states_blacklist = {
     ['mcJump']      = true,
     ['mcFall']      = true,
     ['mcClimb']     = true,
 }
 
-local servo_enabled = true
-local servo_volume = 0.5
-local exo_classes = {
-    ["outfit_exo_proto"]    = "light_",
-    ["outfit_exo"]          = "",
-    ["outfit_exo_nosorog"]  = "",
+-- number of footstep sound files (samples) per move state
+limit = {
+    ["crouch"]      = 4,
+    ["stand"]       = 4,
+    ["lookout"]     = 4,
+    ["lookback"]    = 4,
 }
-
 -- create sample queues to mitigate the issue of same sample playing multiple time in a row
-queues = {
-    ["crouch"] = {},
-    ["stand"] = {},
-    ["lookout"] = {},
-    ["lookback"] = {},
-}
-for k,v in pairs(queues) do
-    for i=1, limit[k] do
-        table.insert(queues[k], i)
+queues = {}
+count = {}
+function init()
+    for k,v in pairs(limit) do
+        queues[k] = {}
+        count[k] = 1
     end
-    shuffle_table(queues[k])
+
+    for k,v in pairs(queues) do
+        for i=1, limit[k] do
+            table.insert(queues[k], i)
+        end
+        shuffle_table(queues[k])
+    end
 end
 
+local backpack_rattle = footstep_sounds and footstep_sounds.play_backpack_rattle
 function on_key_press(key)
-    if device():is_paused() or not is_hud_free() or not MovementAllowed then return end
+    if device():is_paused() or not utils.is_hud_free() or not MovementAllowed then return end
 
     local bind = dik_to_bind(key)
     local volume = 1
@@ -77,28 +72,36 @@ function on_key_press(key)
     if bind == key_bindings.kCROUCH then
         if body_st == "stand" then
             play_sound("crouch", volume)
+            play_exo_servo_sound(volume)
+            if backpack_rattle then footstep_sounds.play_backpack_rattle(volume) end
         else
             play_sound("stand", volume)
+            play_exo_servo_sound(volume)
+            if backpack_rattle then footstep_sounds.play_backpack_rattle(volume) end
         end
 
     elseif (bind == key_bindings.kACCEL and IsMoveState('mcCrouch')) then
         if body_st == "crouch" then
             play_sound("crouch", volume)
+            play_exo_servo_sound(volume)
+            if backpack_rattle then footstep_sounds.play_backpack_rattle(volume) end
         else
             play_sound("stand", volume)
+            play_exo_servo_sound(volume)
+            if backpack_rattle then footstep_sounds.play_backpack_rattle(volume) end
         end
 
     elseif (bind == key_bindings.kSPRINT_TOGGLE and IsMoveState('mcCrouch')) and crouch_toggle then
         if IsMoveState('mcAccel') then volume = 1.5 end
         play_sound("stand", volume)
 
-    elseif (bind == key_bindings.kR_LOOKOUT or bind == key_bindings.kL_LOOKOUT) and not oleh_sound_utils.FreelookActive then
+    elseif (bind == key_bindings.kR_LOOKOUT or bind == key_bindings.kL_LOOKOUT) and not utils.FreelookActive then
         play_sound("lookout", volume)
     end
 end
 
 function on_key_release(key)
-    if device():is_paused() or not is_hud_free() or not MovementAllowed then return end
+    if device():is_paused() or not utils.is_hud_free() or not MovementAllowed then return end
 
     local bind = dik_to_bind(key)
     local volume = 1
@@ -107,18 +110,24 @@ function on_key_release(key)
 
     if bind == key_bindings.kCROUCH and not crouch_toggle then
         play_sound("stand", volume)
+        play_exo_servo_sound(volume)
+        if backpack_rattle then footstep_sounds.play_backpack_rattle(volume) end
 
     elseif (bind == key_bindings.kACCEL and IsMoveState('mcCrouch')) and not accel_toggle then
         play_sound("stand", volume)
+        play_exo_servo_sound(volume)
+        if backpack_rattle then footstep_sounds.play_backpack_rattle(volume) end
 
-    elseif (bind == key_bindings.kR_LOOKOUT or bind == key_bindings.kL_LOOKOUT) and not lookout_toggle and not oleh_sound_utils.FreelookActive then
+    elseif (bind == key_bindings.kR_LOOKOUT or bind == key_bindings.kL_LOOKOUT) and not lookout_toggle and not utils.FreelookActive then
         play_sound("lookback", volume)
     end
 end
 
 function play_sound(movement, volume)
     if not toggle_settings[movement] then return end
-    local outfit_class = oleh_sound_utils.get_outfit_class()
+    if not count[movement] or not limit[movement] then
+        printe("!ERROR move_effects | missing parameters: %s %s", count[movement], limit[movement])
+    return end
 
     local sound = sound_object(movement .. "\\" .. movement .. "_" .. queues[movement][count[movement]])
     sound:play(db.actor, 0, sound_object.s2d)
@@ -130,39 +139,15 @@ function play_sound(movement, volume)
         shuffle_table(queues[movement])
     end
     --print_dbg("movement_sounds // movement: %s volume: %s", movement, volume)
-
-    -- play exo servo sounds
-    if servo_enabled and exo_classes[outfit_class] then
-        local num = movement == "stand" and 2 or movement == "crouch" and 1 or nil
-        if num then
-            sound = sound_object("exo-gear-walk-jump-land\\exo_crouch_stand_" .. exo_classes[outfit_class] .. math.random(9))
-            sound:play(db.actor, 0, sound_object.s2d)
-            sound.volume = servo_volume * 0.5
-        end
-    end
-
-    --[[ apparently can cause crashes
-    -- Exo servo sounds
-    if exo_servo_sounds then
-        if exo_servo_sounds.exo_flag or
-        -- Powered Exos patch
-        exo_servo_sounds.exo_flag == nil and exo_servo_sounds:check_exo_suit() then
-            local num = movement == "stand" and 2 or movement == "crouch" and 1 or nil
-            if num then
-                sound = sound_object("exo-servo\\" .. exo_servo_sounds.exo_type .. "_servo_exo_walk" .. num)
-                sound:play(db.actor, 0, sound_object.s2d)
-                sound.volume = volume * exo_servo_sounds.volume_walk * 0.5
-            end
-        end
-    end
-    ]]
 end
 
-function is_hud_free()
-    return  actor_menu.is_hud_free()
-    or      _GUIs["UIInventory"] and ui_inventory.GUI and ui_inventory.GUI.mode == "inventory"
-    or      _GUIs["UIWheelAmmo"]
-    or      _GUIs["UIWheelCompanion"]
+function play_exo_servo_sound(volume)
+    local exo_class = utils.exo_classes[utils.outfit.class]
+    if servo_enabled and not servo_legacy and exo_class then
+        local sound = sound_object("exo\\exo_crouch_stand_" .. exo_class .. math.random(6))
+        sound:play(db.actor, 0, sound_object.s2d)
+        sound.volume = servo_volume * volume
+    end
 end
 
 function get_body_state()
@@ -183,47 +168,50 @@ function get_body_state()
 end
 
 function load_settings()
-    crouch_toggle   = get_console_cmd(1,"g_crouch_toggle")  or false
-    accel_toggle    = get_console_cmd(1,"g_walk_toggle")    or false
-    lookout_toggle  = get_console_cmd(1,"g_lookout_toggle") or false
+    crouch_toggle  = get_console_cmd(1,"g_crouch_toggle")  or false
+    accel_toggle   = get_console_cmd(1,"g_walk_toggle")    or false
+    lookout_toggle = get_console_cmd(1,"g_lookout_toggle") or false
 
-    if ui_mcm and oleh_sounds_mcm then
-        servo_enabled   = ui_mcm.get("oleh_sounds/movement/enabled_servo_sounds")
-        servo_volume    = ui_mcm.get("oleh_sounds/movement/volume_servo_sounds") or 0.5
-
-        volume_settings = {
-            ["crouch"]      = ui_mcm.get("oleh_sounds/movement/volume_stance_sounds")   or 0.5,
-            ["stand"]       = ui_mcm.get("oleh_sounds/movement/volume_stance_sounds")   or 0.5,
-            ["lookout"]     = ui_mcm.get("oleh_sounds/movement/volume_lookout_sounds")  or 0.5,
-            ["lookback"]    = ui_mcm.get("oleh_sounds/movement/volume_lookout_sounds")  or 0.5,
-        }
-        toggle_settings = {
-            ["crouch"]      = ui_mcm.get("oleh_sounds/movement/enabled_stance_sounds"),
-            ["stand"]       = ui_mcm.get("oleh_sounds/movement/enabled_stance_sounds"),
-            ["lookout"]     = ui_mcm.get("oleh_sounds/movement/enabled_lookout_sounds"),
-            ["lookback"]    = ui_mcm.get("oleh_sounds/movement/enabled_lookout_sounds"),
-        }
-    -- old MCM compatibility
-    elseif ui_mcm and extended_movement_sounds_mcm then
-        servo_enabled   = ui_mcm.get("extended_movement_sounds/enabled_servo_sounds")
-        servo_volume    = ui_mcm.get("extended_movement_sounds/volume_servo_sounds") or 0.5
+    if ui_mcm and oleh_sounds_mcm and oleh_sounds_mcm.on_mcm_load then
+        servo_enabled = ui_mcm.get("oleh_sounds/movement/enabled_servo_sounds")
+        servo_volume  = ui_mcm.get("oleh_sounds/movement/volume_servo_sounds") or 0.5
+        servo_legacy  = ui_mcm.get("oleh_sounds/movement/legacy_servo_sounds")
 
         volume_settings = {
-            ["crouch"]      = ui_mcm.get("extended_movement_sounds/volume_stance_sounds")   or 0.5,
-            ["stand"]       = ui_mcm.get("extended_movement_sounds/volume_stance_sounds")   or 0.5,
-            ["lookout"]     = ui_mcm.get("extended_movement_sounds/volume_lookout_sounds")  or 0.5,
-            ["lookback"]    = ui_mcm.get("extended_movement_sounds/volume_lookout_sounds")  or 0.5,
+            ["crouch"]   = ui_mcm.get("oleh_sounds/movement/volume_stance_sounds") or 0.5,
+            ["stand"]    = ui_mcm.get("oleh_sounds/movement/volume_stance_sounds") or 0.5,
+            ["lookout"]  = ui_mcm.get("oleh_sounds/movement/volume_lookout_sounds") or 0.5,
+            ["lookback"] = ui_mcm.get("oleh_sounds/movement/volume_lookout_sounds") or 0.5,
         }
         toggle_settings = {
-            ["crouch"]      = ui_mcm.get("extended_movement_sounds/enabled_stance_sounds"),
-            ["stand"]       = ui_mcm.get("extended_movement_sounds/enabled_stance_sounds"),
-            ["lookout"]     = ui_mcm.get("extended_movement_sounds/enabled_lookout_sounds"),
-            ["lookback"]    = ui_mcm.get("extended_movement_sounds/enabled_lookout_sounds"),
+            ["crouch"]   = ui_mcm.get("oleh_sounds/movement/enabled_stance_sounds"),
+            ["stand"]    = ui_mcm.get("oleh_sounds/movement/enabled_stance_sounds"),
+            ["lookout"]  = ui_mcm.get("oleh_sounds/movement/enabled_lookout_sounds"),
+            ["lookback"] = ui_mcm.get("oleh_sounds/movement/enabled_lookout_sounds"),
+        }
+    elseif ui_mcm and extended_movement_sounds_mcm and extended_movement_sounds_mcm.on_mcm_load then
+        servo_enabled = ui_mcm.get("extended_movement_sounds/enabled_servo_sounds")
+        servo_volume  = ui_mcm.get("extended_movement_sounds/volume_servo_sounds") or 0.5
+
+        volume_settings = {
+            ["crouch"]   = ui_mcm.get("extended_movement_sounds/volume_stance_sounds") or 0.5,
+            ["stand"]    = ui_mcm.get("extended_movement_sounds/volume_stance_sounds") or 0.5,
+            ["lookout"]  = ui_mcm.get("extended_movement_sounds/volume_lookout_sounds") or 0.5,
+            ["lookback"] = ui_mcm.get("extended_movement_sounds/volume_lookout_sounds") or 0.5,
+        }
+        toggle_settings = {
+            ["crouch"]   = ui_mcm.get("extended_movement_sounds/enabled_stance_sounds"),
+            ["stand"]    = ui_mcm.get("extended_movement_sounds/enabled_stance_sounds"),
+            ["lookout"]  = ui_mcm.get("extended_movement_sounds/enabled_lookout_sounds"),
+            ["lookback"] = ui_mcm.get("extended_movement_sounds/enabled_lookout_sounds"),
         }
     end
 end
 
 function on_game_start()
+    assert(oleh_sound_utils and oleh_sound_utils.VERSION and oleh_sound_utils.VERSION >= 5, "\n\n"..
+    "MovementSFX: oleh_sound_utils.script is missing or outdated, update MSIG (Miscellaneous Sound Improvements) or move it to higher priority\nhttps://github.com/oleh5230/MSIG")
+
     RegisterScriptCallback("on_before_key_press", on_key_press)
     RegisterScriptCallback("on_key_release", on_key_release)
 
@@ -241,6 +229,7 @@ function on_game_start()
     RegisterScriptCallback("on_option_change", load_settings)
     RegisterScriptCallback("on_console_execute",load_settings)
     load_settings()
+    init()
 end
 
 function print_dbg(...)
