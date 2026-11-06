@@ -1435,6 +1435,7 @@ function UIOptions:Reset_opt(curr_tree, path, flags)
 	flags = flags or {}
 	local xml = self.xml
 	self.scroll_opt:Clear()
+	empty_table(self._Input) -- controls are gone; Flush_Inputs must already have run if wanted
 	
 	-- If options tree has a precondition that must be met, don't show it if it returns false
 	if curr_tree.precondition and (not exec(unpack(curr_tree.precondition))) then
@@ -1480,7 +1481,6 @@ function UIOptions:Reset_opt(curr_tree, path, flags)
 		empty_table(self._Cap)
 		empty_table(self._Check)
 		empty_table(self._List)
-		empty_table(self._Input)
 		empty_table(self._Track)
 		empty_table(self._Radio)
 		
@@ -1813,6 +1813,9 @@ function UIOptions:Register_Input(xml, handler, path, opt, v, flags)
 	-- Register
 	local id_ctrl = self:Stacker(path, opt, v)
 	
+	-- Edit boxes only commit on Enter/Tab/capture loss; keep them so Flush_Inputs can read uncommitted text
+	self._Input[id_ctrl] = { ctrl = ctrl, path = path, opt = opt, v = v, shown = value }
+	
 	self:Register(ctrl, id_ctrl)
 	local _wrapper = function(handler) -- we need wrapper in order to pass ctrl to method
 		self:Callback_Input(ctrl, path, opt, v)
@@ -1839,6 +1842,21 @@ function UIOptions:Callback_Input(ctrl, path, opt, v)
 	
 	self:CacheValue(path, opt, value, v)
 	ctrl:SetText(value)
+end
+
+-- Commit text typed into edit boxes that never received Enter/Tab. Must run while the controls
+-- still exist: before scroll_opt:Clear() on a tab switch and before Unregister_UI on accept.
+function UIOptions:Flush_Inputs()
+	for _, t in pairs(self._Input) do
+		local id = cc(t.path, t.opt)
+		local ref = opt_temp[id]
+		if (ref == nil) then
+			ref = t.shown
+		end
+		if (t.ctrl:GetText() ~= tostring(ref)) then
+			self:Callback_Input(t.ctrl, t.path, t.opt, t.v)
+		end
+	end
 end
 
 function UIOptions:Register_Track(xml, handler, path, opt, v, flags)
@@ -2190,6 +2208,7 @@ function UIOptions:Callback_Tree(tr, path, group, ctrl, i)
 		
 	-- If its an option list, show it
 	if group.sh then
+		self:Flush_Inputs() -- keep text typed on the tab we are leaving
 		self:Reset_opt(group, path)
 		
 		-- Caching current options
@@ -2467,6 +2486,8 @@ function UIOptions:OnButton_Cancel()
 end
 
 function UIOptions:On_Accept()
+	self:Flush_Inputs() -- pick up edit boxes the player typed in without pressing Enter
+	
 	for id, val in pairs(opt_temp) do
 	
 		local v = self:GetOption(id)
@@ -2581,6 +2602,7 @@ function UIOptions:On_Cancel()
 	self.Keybinds_Shown = false
 	
 	Unregister_UI("UIOptions")
+	empty_table(self._Input)
 end
 
 function UIOptions:On_Discard()
