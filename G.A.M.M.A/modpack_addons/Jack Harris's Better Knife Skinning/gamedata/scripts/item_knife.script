@@ -1,12 +1,12 @@
 --[[
 	Modified by Faustle (2018)
-    Modified by xCoiotex --// function degradate() (21/07/2025)
+	Modified by xCoiotex --// function degradate() (21/07/2025)
 	Revision by Jack_Harris to modernize, optimize and remove hardcoded tables for improved modularity (21/10/2026)
 ]]--
 
 --// If adding new custom knife, define Tier manually in .ltx as, for example "Tier = 3"
 
---// Tier Durability & Degradation 
+--// Tier Durability & Degradation
 --// Tier 1 (0.04) -> Basic knives
 --// Tier 2 (0.03) -> Hunting knives
 --// Tier 3 (0.02) -> Good quality knives
@@ -16,17 +16,27 @@ local sys_ini_file = ini_file("system.ltx")
 
 local active_knife = nil -- We need this to correctly assign degradation if we have multiple knives
 local active_variable = nil -- We need this to correctly assign Pelt Quality if we have multiple knives
+local active_knife_id = nil -- Lock directly to the unique item ID to prevent loop leaks
+
+local last_sec = nil
+local last_var = nil
+local ltx_section_cache = {}
 
 --// compat table to prevent crashes from other mods reading the script
 knifes = setmetatable({}, {
 	__index = function(t, section)
 		if not section then return nil end
-		if sys_ini_file:line_exist(section, "kind") then
-			local kind = sys_ini_file:r_string(section, "kind")
-			if kind == "w_melee" or kind == "w_knife" then
-				return get_degrade_value(section)
-			end
+		if ltx_section_cache[section] ~= nil then
+			return ltx_section_cache[section]
 		end
+		if sys_ini_file:line_exist(section, "kind") and sys_ini_file:r_string(section, "kind") == "w_knife" then
+			ltx_section_cache[section] = get_degrade_value(section)
+			return ltx_section_cache[section]
+		elseif sys_ini_file:line_exist(section, "slot") and sys_ini_file:r_u32(section, "slot") == 11 then
+			ltx_section_cache[section] = get_degrade_value(section)
+			return ltx_section_cache[section]
+		end
+		ltx_section_cache[section] = false
 		return nil
 	end
 })
@@ -37,20 +47,29 @@ function get_best_hunting_tool()
 	local active_item = db.actor:active_item()
 	if active_item and active_item:clsid() == clsid.wpn_knife_s then
 		local sec = active_item:section()
-		if not string.find(sec, "animation_hit") then
+		if not string.find(sec, "animation_hit") and not string.find(sec, "axe") and not string.find(sec, "cleaver") then
 			active_knife = active_item
 			active_variable = sec
+			active_knife_id = active_item:id()
 			return active_item
+		end
+	else
+		if active_item then
+			active_knife = nil active_variable = nil active_knife_id = nil
+		elseif active_knife and active_knife:condition() <= 0.15 then
+			active_knife = nil active_variable = nil active_knife_id = nil
 		end
 	end
 
-	if active_knife then
-		if db.actor:object(active_knife:section()) and active_knife:condition() > 0.01 then
-			return active_knife
-		else
-			active_knife = nil
-			active_variable = nil
+	if active_knife_id then
+		local cached_obj = level.object_by_id(active_knife_id)
+		if cached_obj and cached_obj:condition() > 0.01 then
+			local c_sec = cached_obj:section()
+			if not string.find(c_sec, "axe") and not string.find(c_sec, "cleaver") then
+				return cached_obj
+			end
 		end
+		active_knife = nil active_variable = nil active_knife_id = nil
 	end
 
 	local chosen_knife = nil
@@ -62,7 +81,9 @@ function get_best_hunting_tool()
 		if obj:clsid() ~= clsid.wpn_knife_s then return end
 
 		local sec = obj:section()
-		if string.find(sec, "animation_hit") then return end
+		if string.find(sec, "animation_hit") or string.find(sec, "axe") or string.find(sec, "cleaver") then
+			return
+		end
 
 		local tier = get_knife_tier_value(sec)
 
@@ -88,6 +109,15 @@ end
 
 function get_knife_tier_value(section)
 	local target_sec = active_variable or section
+
+	local ui_open = level.main_input_receiver and level.main_input_receiver()
+	local is_harvesting = active_variable or (ui_open and ui_open:WindowName() == "UIMutantLoot")
+
+	if is_harvesting and ((section ~= last_sec) or (active_variable ~= last_var)) then
+		last_sec = section
+		last_var = active_variable
+	end
+
 	if sys_ini_file:line_exist(target_sec, "tier") then
 		return sys_ini_file:r_u32(target_sec, "tier")
 	end
@@ -114,6 +144,14 @@ end
 
 --// function to check if a knife or axe is equipped
 function is_equipped()
+	local active_item = db.actor and db.actor:active_item()
+	if active_item then
+		local sec = active_item:section()
+		if string.find(sec, "axe") or string.find(sec, "cleaver") then
+			return false
+		end
+	end
+
 	return get_best_hunting_tool() ~= nil
 end
 
@@ -130,6 +168,14 @@ end
 function can_loot(monster_section)
 	if not monster_section then
 		return false
+	end
+
+	local active_item = db.actor and db.actor:active_item()
+	if active_item then
+		local sec = active_item:section()
+		if string.find(sec, "axe") or string.find(sec, "cleaver") then
+			return false
+		end
 	end
 
 	local obj = get_best_hunting_tool()
@@ -163,8 +209,7 @@ function degradate()
 		local num = get_degrade_value(obj:section())
 
 		if cond <= 0.01 then
-			active_knife = nil
-			active_variable = nil
+			active_knife = nil active_variable = nil active_knife_id = nil
 			return
 		end
 
@@ -174,16 +219,5 @@ function degradate()
 			obj:set_condition(0.01)
 		end
 	end
-	active_knife = nil
-	active_variable = nil
-end
-
---// weapon in hand is an axe?
-function is_axe()
-	local obj = get_best_hunting_tool()
-	if obj ~= nil then
-		local sec = obj:section()
-		return string.find(sec, "axe") or string.find(sec, "cleaver") or false
-	end
-	return false
+	active_knife = nil active_variable = nil active_knife_id = nil
 end
