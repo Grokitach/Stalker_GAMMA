@@ -1,8 +1,8 @@
+-- plays sounds when disassembling items/using repair items
 -- oleh5230, 18.11.25
--- Last edit: 07.05.26
-debug = false
+-- Last edit: 01.09.26
 
-local ini_parts = itms_manager.ini_parts
+debug = false
 
 function itms_manager.print_dbg(txt, ...)
 	if debug then
@@ -57,68 +57,4 @@ function itms_manager.play_use_sound(item, vol)
 		snd_obj.volume = vol or 1
 	end
 	time_snd_prev = time_g
-end
-
-function item_parts.play_disassembly_snd(path, vol)
-	if (not path) then
-		return
-	end
-
-	local snd_obj = sound_object(path)
-	local time_g = time_global()
-	if snd_obj and (time_g > time_snd_prev + 200) then
-		snd_obj:play(db.actor,0,sound_object.s2d)
-		snd_obj.volume = vol or 1
-	end
-	time_snd_prev = time_g
-end
-
-disassembly_outfit = item_parts.disassembly_outfit
-function item_parts.disassembly_outfit(obj, obj_d)
-	if not ui_options.get("video/player/animations") and itms_manager.timeout_snd_on_take then
-		itms_manager.timeout_snd_on_take(50)
-		item_parts.play_disassembly_snd("interface\\inv_disassemble_cloth")
-	end
-	disassembly_outfit(obj, obj_d)
-end
-
-disassembly_weapon = item_parts.disassembly_weapon
-function item_parts.disassembly_weapon(obj, obj_d)
-	if not ui_options.get("video/player/animations") and itms_manager.timeout_snd_on_take then
-		itms_manager.timeout_snd_on_take(50)
-		item_parts.play_disassembly_snd("interface\\inv_disassemble_weapon")
-	end
-	disassembly_weapon(obj, obj_d)
-end
-
-device_parts = {
-	"prt_i_capacitors",
-	"prt_i_transistors",
-	"prt_i_resistors",
-	-- "prt_i_copper",
-}
-
-disassembly_item = item_parts.disassembly_item
-function item_parts.disassembly_item(obj, obj_d)
-	disassembly_item(obj, obj_d)
-	if obj and not ui_options.get("video/player/animations") and itms_manager.timeout_snd_on_take then
-		local parts = ini_parts:r_string_ex("nor_parts_list",obj:section())
-		if not parts then return end
-
-		local is_device = false
-		for i in pairs(device_parts) do
-			if string.find(parts,device_parts[i]) then
-				is_device = true
-				break
-			end
-		end
-
-		if is_device then
-			item_parts.play_disassembly_snd("interface\\inv_disassemble_device")
-			itms_manager.timeout_snd_on_take(50)
-		else
-			itms_manager.play_item_sound(obj)
-			itms_manager.timeout_snd_on_take(50)
-		end
-	end
 end

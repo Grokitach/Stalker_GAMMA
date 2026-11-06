@@ -1,9 +1,13 @@
+if not ui_inventory then return end
+printf("loading monkeypatch: ui_inventory_sounds_oleh")
+
+-- play 'move all' items sound
 LMode_TakeAll = ui_inventory.UIInventory.LMode_TakeAll
 ui_inventory.UIInventory.LMode_TakeAll = function(self)
 	LMode_TakeAll(self)
 	if itms_manager.timeout_snd_on_take then
-		itms_manager.timeout_snd_on_take(250)
-		utils_obj.play_sound("interface\\inv_move_all")
+		itms_manager.timeout_snd_on_take()
+		utils_obj.play_sound("interface\\inv_move_all_"..math.random(4))
 	end
 end
 
@@ -11,7 +15,56 @@ LMode_PutAll = ui_inventory.UIInventory.LMode_PutAll
 ui_inventory.UIInventory.LMode_PutAll = function(self)
 	LMode_PutAll(self)
 	if itms_manager.timeout_snd_on_take then
-		itms_manager.timeout_snd_on_take(250)
-		utils_obj.play_sound("interface\\inv_move_all")
+		itms_manager.timeout_snd_on_take()
+		utils_obj.play_sound("interface\\inv_move_all_"..math.random(4))
 	end
+end
+
+sounds = {
+    sound_object([[interface\inv_open1]]),
+    sound_object([[interface\inv_open2]]),
+    sound_object([[interface\inv_open3]]),
+    sound_object([[interface\inv_open4]]),
+}
+
+sounds_body = {
+    sound_object([[interface\inv_loot_body1]]),
+    sound_object([[interface\inv_loot_body2]]),
+    sound_object([[interface\inv_loot_body3]]),
+    sound_object([[interface\inv_loot_body4]]),
+    sound_object([[interface\inv_loot_body5]]),
+    sound_object([[interface\inv_loot_body6]]),
+}
+
+local last = 0
+local last_body = 0
+local time_snd_prev = 0
+LMode_Init = ui_inventory.UIInventory.LMode_Init
+ui_inventory.UIInventory.LMode_Init = function(self, obj)
+    local tg = time_global()
+    if obj and tg > time_snd_prev + 200 then
+        if IsStalker(obj) then
+            local roll = math.random(#sounds_body)
+            if roll == last_body then
+                roll = last_body % #sounds_body + 1
+            end
+            last_body = roll
+
+            local snd_open = sounds_body[roll]
+            self:PlaySND(snd_open)
+
+        else
+            local roll = math.random(#sounds)
+            if roll == last then
+                roll = last % #sounds + 1
+            end
+            last = roll
+
+            local snd_open = sounds[roll]
+            self:PlaySND(snd_open)
+        end
+        time_snd_prev = tg
+    end
+
+    LMode_Init(self, obj)
 end
