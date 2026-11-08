@@ -38,8 +38,9 @@ function npc_on_death_callback(victim, killer)
 	end
 end
 
-function on_before_key_press(key, bind, dis, flags)
-	if bind ~= key_bindings.kUSE then return end
+local function use_target()
+	local target = db.actor.get_actor_object_looking_at and db.actor:get_actor_object_looking_at()
+	if target then return target end
 
 	local max_dist = 10
 	local ray = ray_pick()
@@ -50,9 +51,11 @@ function on_before_key_press(key, bind, dis, flags)
 	ray:set_ignore_object(db.actor)
 	ray:query()
 	result = ray:get_result()
+	return result and result.object
+end
 
-	if result then
-		obj = result.object
+local function check_claim(obj, flags)
+	if obj then
 		if (obj and IsStalker(obj)) or (obj and IsMonster(obj)) then
 			if obj:alive() then return end
 			id = obj:id()
@@ -98,6 +101,15 @@ function on_before_key_press(key, bind, dis, flags)
 	end
 end
 
+function on_before_key_press(key, bind, dis, flags)
+	if bind ~= key_bindings.kUSE then return end
+	check_claim(use_target(), flags)
+end
+
+local function dotmarks_on_manual_interact_release(id, mark, flags)
+	check_claim(level.object_by_id(id), flags)
+end
+
 local function save_state(m_data)
 	if claimed then
 		m_data.claimed = claimed
@@ -131,6 +143,11 @@ local function load_state(m_data)
 	end
 end
 
+local function server_entity_on_unregister(se_obj)
+	claimed[se_obj.id] = nil
+	looted[se_obj.id] = nil
+end
+
 function on_level_changing()
 	claimed = {}
 	looted = {}
@@ -143,4 +160,8 @@ function on_game_start()
 	RegisterScriptCallback("save_state",save_state)
 	RegisterScriptCallback("load_state",load_state)
 	RegisterScriptCallback("on_level_changing",on_level_changing)
+	RegisterScriptCallback("server_entity_on_unregister",server_entity_on_unregister)
+	if dotmarks_callbacks then
+		RegisterScriptCallback("dotmarks_on_manual_interact_release",dotmarks_on_manual_interact_release)
+	end
 end
