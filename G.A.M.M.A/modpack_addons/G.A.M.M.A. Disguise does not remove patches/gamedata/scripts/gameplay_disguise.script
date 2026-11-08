@@ -207,13 +207,13 @@ end
 function has_comms()
 	local could_communicate = can_communicate
 	can_communicate = false
-	db.actor:iterate_inventory( 
-		function(temp, obj)
-			if list_contains(comms_list, obj:section()) then
-				can_communicate = true
-			end
-		end 
-	)
+	-- Look each comms section up directly instead of traversing every inventory item in Lua
+	for _, sec in ipairs(comms_list) do
+		if db.actor:object(sec) then
+			can_communicate = true
+			break
+		end
+	end
 	
 	-- Change player actor_faction relation according to communication possibilities
 	local curr_comm = character_community(db.actor):sub(7)
@@ -1087,14 +1087,15 @@ end
 local function actor_on_item_take(obj)
 	need_inv_scan = true
 	
-	if actor_is_loaded then has_comms() end -- Otherwise it seems that this callback happens before actor_on_first_update
+	-- Only a comms device can change can_communicate, so skip the comms rescan for anything else
+	if actor_is_loaded and list_contains(comms_list, obj:section()) then has_comms() end -- Otherwise it seems that this callback happens before actor_on_first_update
 end
 
 local function actor_on_item_drop(obj)
 	need_inv_scan = true
 	spike = 15
 	
-	if actor_is_loaded then has_comms() end -- Otherwise it seems that this callback happens before actor_on_first_update
+	if actor_is_loaded and list_contains(comms_list, obj:section()) then has_comms() end -- Otherwise it seems that this callback happens before actor_on_first_update
 end
 
 local function actor_on_weapon_zoom_in(obj)
