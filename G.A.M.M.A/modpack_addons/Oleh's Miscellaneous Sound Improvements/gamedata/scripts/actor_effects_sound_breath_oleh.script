@@ -1,0 +1,90 @@
+-- more maskless breathing samples
+-- no low health sounds
+-- MCM settings
+-- oleh5230, 18.09.26
+
+local opt
+local breath_sound
+local snd_tg = 0
+
+local volume = 1
+local volume_mask = 1
+local enabled = true
+local enabled_mask = true
+
+samples = 10
+
+local last_snd = 0
+local run_play = false
+play_sound_breath = actor_effects.play_sound_breath
+function actor_effects.play_sound_breath(actor)
+	local tg = time_global()
+    local health = actor.health
+
+	if (tg < snd_tg) or (health < 0) or not enabled then
+		return
+	end
+
+    if (actor_effects.actor_speed_time > opt.speed.time_mini) or (actor.power < opt.speed.stamina) then
+        local level = math.ceil(3*actor_effects.actor_speed_time/44) or 0
+
+        local roll = math.random(10)
+        -- if roll == last_snd then
+        --     roll = last_snd % 11
+        -- end
+        -- last_snd = roll
+
+        breath_sound = sound_object("actor\\" .. (run_play and "exhale_" or "inhale_") .. (level > 1 and "fast" or "med") .. roll)
+        breath_sound:play(actor, 0, sound_object.s2d)
+        --breath_sound.volume = (actor_effects.cam_dist > opt.cam_dist) and 0 or (1 - actor_effects.cam_dist/opt.cam_dist)
+        breath_sound.volume = volume
+        snd_tg = tg+breath_sound:length() --*1.15
+        run_play = not run_play
+    end
+end
+
+local last_snd_m = 0
+local gas_play = 0
+function actor_effects.play_sound_breath_mask(actor)
+	local tg = time_global()
+    local health = actor.health
+
+    if not enabled_mask then
+        actor_effects.play_sound_breath(actor)
+        return
+    end
+
+	if (tg < snd_tg) or (health < 0) then
+		return
+	end
+
+    gas_play = gas_play + 1
+    if (gas_play > 8) then
+        gas_play = 1
+    end
+
+    breath_sound = sound_object("actor\\gas_breath_" .. tostring(math.ceil((1.01 - actor.power)*3 + actor_effects.actor_speed_time/8) or 8) .. "_" .. gas_play)
+    snd_tg = tg + breath_sound:length()--*1.25
+    breath_sound:play(actor, 0, sound_object.s2d)
+    --breath_sound.volume = (cam_dist > opt.cam_dist) and 0 or (1 - cam_dist/opt.cam_dist) * 0.5
+    breath_sound.volume = volume_mask * 0.5
+end
+
+local function on_option_change()
+    if actor_effects then
+        actor_effects.opt.enable_breathing_sound = true
+        opt = actor_effects.opt
+    end
+
+	if ui_mcm and oleh_sounds_mcm and oleh_sounds_mcm.on_mcm_load then
+		enabled       = ui_mcm.get("oleh_sounds/movement/enabled_sprint_breathing")
+		volume        = ui_mcm.get("oleh_sounds/movement/volume_sprint_breathing")
+		enabled_mask  = ui_mcm.get("oleh_sounds/movement/enabled_mask_breathing")
+		volume_mask   = ui_mcm.get("oleh_sounds/movement/volume_mask_breathing")
+	end
+end
+
+function on_game_start()
+    RegisterScriptCallback("on_option_change",on_option_change)
+    on_option_change()
+end

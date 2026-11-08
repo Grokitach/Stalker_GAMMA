@@ -1,0 +1,60 @@
+function hf_on_furniture_place(obj_id)
+	-- furniture spawns with a delay
+	-- callback only has an id param, might be better to just monkeypatch instead
+	CreateTimeEvent("placeable_furniture", "place_sound", 0.5, function(id)
+		local obj = get_object_by_id(id)
+		local itm_sec = obj and ini_sys:r_string_ex(obj:section(),"item_section")
+		local snd_type = itm_sec and ini_sys:r_string_ex(itm_sec,"snd_on_take")
+		if not (snd_type and snd_type ~= "" and snd_type ~= "other") then
+			return true
+		end
+
+		local snd = itms_manager_snd_on_take.snd_on_take[snd_type]
+		if (not snd) then
+			return true
+		end
+
+		local snd_obj
+		if (#snd == 1) then
+			snd_obj = sound_object(snd[1])
+		else
+			snd_obj = sound_object(snd[1] .. tostring(math.random(snd[2],snd[3])))
+		end
+
+		snd_obj:play(db.actor,0,sound_object.s2d)
+		-- some furniture models seem to occlude positional sounds
+		-- snd_obj.volume = 2
+		-- snd_obj:play_at_pos(obj, obj:position())
+		return true
+	end, obj_id)
+end
+
+function hf_on_before_furniture_release(id)
+	local obj = get_object_by_id(id)
+	local itm_sec = obj and ini_sys:r_string_ex(obj:section(),"item_section")
+	local snd_type = itm_sec and ini_sys:r_string_ex(itm_sec,"snd_on_take")
+	if not (snd_type and snd_type ~= "") then
+		return
+	end
+
+	local snd = itms_manager_snd_on_take.snd_on_take[snd_type]
+	if (not snd) then
+		return
+	end
+
+	local snd_obj
+	if (#snd == 1) then
+		snd_obj = sound_object(snd[1])
+	else
+		snd_obj = sound_object(snd[1] .. tostring(math.random(snd[2],snd[3])))
+	end
+
+	snd_obj:play(db.actor,0,sound_object.s2d)
+end
+
+function on_game_start()
+	if itms_manager_snd_on_take.gamma_ver then
+		RegisterScriptCallback("hf_on_furniture_place", hf_on_furniture_place)
+		--RegisterScriptCallback("hf_on_before_furniture_release", hf_on_before_furniture_release)
+	end
+end

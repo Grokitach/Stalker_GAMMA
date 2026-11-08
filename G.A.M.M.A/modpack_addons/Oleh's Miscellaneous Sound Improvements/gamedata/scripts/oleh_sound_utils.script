@@ -1,0 +1,185 @@
+VERSION = 6
+
+FreelookActive = false
+local freelook_toggle = false
+
+land_tg = 0
+
+function freelook_hold(key)
+    local bind = dik_to_bind(key)
+	if bind == key_bindings.kFREELOOK then
+		FreelookActive = true
+	end
+end
+
+function freelook_release(key)
+    local bind = dik_to_bind(key)
+	if bind == key_bindings.kFREELOOK then
+		FreelookActive = false
+	end
+end
+
+function load_settings()
+    freelook_toggle = get_console_cmd(1,"g_freelook_toggle") or false
+end
+
+function actor_on_land()
+    land_tg = time_global()
+end
+
+exo_classes = {
+    ["outfit_exo_proto"]    = "light",
+    ["outfit_exo"]          = "medium",
+    ["outfit_exo_nosorog"]  = "medium",
+}
+
+function is_hud_free()
+    return  actor_menu.is_hud_free()
+    or      _GUIs["UIInventory"] and ui_inventory.GUI and ui_inventory.GUI.mode == "inventory"
+    or      _GUIs["UIWheelAmmo"]
+    or      _GUIs["UIWheelCompanion"]
+end
+
+outfit = {
+    id = nil,
+    class = "default",
+    weight = 10
+}
+local cached_item_id
+function update_outfit()
+    local item = db.actor:item_in_slot(7)
+    if not item then
+        cached_item_id = nil
+        outfit = {
+        id = nil,
+        class = "default",
+        weight = 10}
+        return
+    end
+    if item:id() == cached_item_id then return end
+
+    local section = item:section()
+    if not section then return end
+    outfit.id = item:id()
+    outfit.weight = SYS_GetParam(2, section, "inv_weight", 10)
+    outfit.class = SYS_GetParam(0, section, "repair_type", "default")
+
+    if string.find(section, "proto") then
+        outfit.class = "outfit_exo_proto"
+    end
+
+    if string.find(section, "nosorog") then
+        outfit.class = "outfit_exo_nosorog"
+    end
+    --printf("%s %s %s" , outfit.id, outfit.class, outfit.weight)
+    cached_item_id = item:id()
+end
+
+total_weight = 0
+function update_weight()
+    total_weight = db.actor:get_total_weight()
+end
+
+max_weight = 60
+-- credits: demonized
+function update_actor_max_weight()
+	local maxWeight = db.actor:get_actor_max_walk_weight()
+	local outfit = db.actor:item_in_slot(7)
+	local backpack = db.actor:item_in_slot(13)
+	maxWeight = maxWeight + (outfit and outfit:get_additional_max_weight() or 0)
+	maxWeight = maxWeight + (backpack and backpack:get_additional_max_weight() or 0)
+	db.actor:iterate_belt(function(owner, obj)
+		local c_arty = obj:cast_Artefact()
+		maxWeight = maxWeight + (c_arty and c_arty:AdditionalInventoryWeight() or 0)
+	end)
+	max_weight = maxWeight
+end
+
+-- legacy methods
+function get_outfit_params()
+    return outfit
+end
+
+local cached_outfit_id = nil
+local cached_outfit_class = "default"
+function get_outfit_class()
+    local outfit = db.actor:item_in_slot(7)
+    if not outfit then return "default" end
+
+    if outfit:id() ~= cached_outfit_id then
+        local section = outfit:section()
+        if not section then return end
+        local outfit_class = SYS_GetParam(0, section, "repair_type") or "default"
+
+        if string.find(section, "proto") then
+            outfit_class = "outfit_exo_proto"
+        end
+
+        if string.find(section, "nosorog") then
+            outfit_class = "outfit_exo_nosorog"
+        end
+
+        cached_outfit_class = outfit_class
+        cached_outfit_id = outfit:id()
+    end
+
+    return cached_outfit_class
+end
+
+burn_tg = 0
+no_grass_near_anomaly_levels = {
+    ["zaton"]       = true,
+    ["jupiter"]     = true,
+    ["pripyat"]     = true,
+}
+
+function actor_on_before_hit(shit, bone_id, flags)
+    if shit.type == hit.burn then
+        burn_tg = time_global()
+    end
+end
+
+-- some levels use 'earth' material for grassy terrain
+-- horrendous levels like Dead City are still beyond repair
+function is_actually_grass(material)
+    if material == "materials\\earth"
+    -- no grass underground/indoors
+    and level.rain_hemi() > 0.25 then
+        -- no grass near some thermal anomalies
+        if no_grass_near_anomaly_levels[level.name()] and (time_global() < burn_tg + 1000) then
+        else
+            return true
+        end
+    end
+    return false
+end
+
+function on_game_start()
+    RegisterScriptCallback("on_key_hold", freelook_hold)
+    RegisterScriptCallback("on_key_release", freelook_release)
+
+    RegisterScriptCallback("actor_on_land", actor_on_land)
+
+    RegisterScriptCallback("actor_item_to_slot", update_outfit)
+    RegisterScriptCallback("actor_item_to_ruck", update_outfit)
+    RegisterScriptCallback("actor_on_item_drop", update_outfit)
+    RegisterScriptCallback("actor_on_first_update", update_outfit)
+
+    RegisterScriptCallback("actor_item_to_slot", update_weight)
+    RegisterScriptCallback("actor_item_to_ruck", update_weight)
+    RegisterScriptCallback("actor_on_item_drop", update_weight)
+    RegisterScriptCallback("actor_on_first_update", update_weight)
+
+    RegisterScriptCallback("actor_item_to_slot", update_actor_max_weight)
+    RegisterScriptCallback("actor_item_to_belt", update_actor_max_weight)
+    RegisterScriptCallback("actor_on_first_update", update_actor_max_weight)
+
+    RegisterScriptCallback("actor_on_item_drop", update_weight)
+    RegisterScriptCallback("actor_item_to_ruck", update_weight)
+
+    RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
+
+    RegisterScriptCallback("on_option_change", load_settings)
+    RegisterScriptCallback("on_console_execute", load_settings)
+    load_settings()
+end
