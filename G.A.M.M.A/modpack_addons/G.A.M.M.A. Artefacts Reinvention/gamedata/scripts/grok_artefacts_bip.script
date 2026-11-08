@@ -112,44 +112,51 @@ function actor_on_update()
 		trigger = 1
 	end
 
-	if (trigger == 1 and tg > grok_delay) then
-		trigger = 0
-		local available_det_tier = 0
-
-		local mode = grok_artefacts_bip_mcm.get_config("mode") or "slot"
-		local extended = grok_artefacts_bip_mcm.get_config("extended_range")
-		local current_dist = extended and 910 or af_detection_dist
-
-		local det = nil
-
-		if mode == "passive" then
-			db.actor:iterate_inventory(function(npc, item)
-				local sec = item:section()
-				if detectors[sec] and detectors[sec] > available_det_tier then
-					available_det_tier = detectors[sec]
-				end
-			end)
-		else
-			det = db.actor:item_in_slot(9)
-			if det then
-				local sec = det:section()
-				if sec and detectors[sec] then
-					available_det_tier = detectors[sec]
-				end
-			end
-		end
-
-		if available_det_tier > 0 and zz_item_artefact.dist_t then
-			for af, dist in pairs(zz_item_artefact.dist_t) do
-				if dist and dist >= 0.1 and af_by_tiers[af] and (af_by_tiers[af] <= available_det_tier) and (dist < current_dist) then
-					af_detected = 1
-					return
-				end
-			end
-		end
-
-		af_detected = 0
+	if not (trigger == 1 and tg > grok_delay) then
+		return
 	end
+
+	trigger = 0
+	local available_det_tier = 0
+	local mode = grok_artefacts_bip_mcm.get_config("mode") or "slot"
+	local extended = grok_artefacts_bip_mcm.get_config("extended_range")
+	local current_dist = extended and 910 or af_detection_dist
+
+	if mode == "passive" then
+		db.actor:iterate_inventory(function(npc, item)
+			local sec = item:section()
+			if detectors[sec] and detectors[sec] > available_det_tier then
+				available_det_tier = detectors[sec]
+			end
+		end)
+	else
+		local det = db.actor:item_in_slot(9)
+		if det then
+			local sec = det:section()
+			if sec and detectors[sec] then
+				available_det_tier = detectors[sec]
+			end
+		end
+	end
+
+	if available_det_tier > 0 and zz_item_artefact.dist_t then
+		for af, dist in pairs(zz_item_artefact.dist_t) do
+			if dist and dist >= 0.1 and af_by_tiers[af] and (af_by_tiers[af] <= available_det_tier) and (dist < current_dist) then
+				af_detected = 1
+
+				local active_device = db.actor:active_detector()
+				if grok_artefacts_bip_mcm.get_config("audio_cue") and not active_device then
+					local snd = sound_object("detectors\\art_beep1")
+					if snd then
+						snd:play(db.actor, 0, sound_object.s2d)
+					end
+				end
+				return
+			end
+		end
+	end
+
+	af_detected = 0
 end
 
 function get_artefact(visual)
