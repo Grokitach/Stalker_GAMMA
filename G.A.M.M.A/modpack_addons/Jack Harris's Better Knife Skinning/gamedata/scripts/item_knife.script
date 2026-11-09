@@ -1,12 +1,12 @@
 --[[
 	Modified by Faustle (2018)
-    Modified by xCoiotex --// function degradate() (21/07/2025)
+	Modified by xCoiotex --// function degradate() (21/07/2025)
 	Revision by Jack_Harris to modernize, optimize and remove hardcoded tables for improved modularity (21/10/2026)
 ]]--
 
 --// If adding new custom knife, define Tier manually in .ltx as, for example "Tier = 3"
 
---// Tier Durability & Degradation 
+--// Tier Durability & Degradation
 --// Tier 1 (0.04) -> Basic knives
 --// Tier 2 (0.03) -> Hunting knives
 --// Tier 3 (0.02) -> Good quality knives
@@ -14,19 +14,28 @@
 local strong_monsters = { ["chimera"] = true, ["gigant"] = true, ["giant"] = true }
 local sys_ini_file = ini_file("system.ltx")
 
-local active_knife = nil -- We need this to correctly assign degradation if we have multiple knives
 local active_variable = nil -- We need this to correctly assign Pelt Quality if we have multiple knives
+local active_knife_id = nil -- Lock directly to the unique item ID to prevent loop leaks
+
+local last_sec = nil
+local last_var = nil
+local ltx_section_cache = {}
 
 --// compat table to prevent crashes from other mods reading the script
 knifes = setmetatable({}, {
 	__index = function(t, section)
 		if not section then return nil end
-		if sys_ini_file:line_exist(section, "kind") then
-			local kind = sys_ini_file:r_string(section, "kind")
-			if kind == "w_melee" or kind == "w_knife" then
-				return get_degrade_value(section)
-			end
+		if ltx_section_cache[section] ~= nil then
+			return ltx_section_cache[section]
 		end
+		if sys_ini_file:line_exist(section, "kind") and sys_ini_file:r_string(section, "kind") == "w_knife" then
+			ltx_section_cache[section] = get_degrade_value(section)
+			return ltx_section_cache[section]
+		elseif sys_ini_file:line_exist(section, "slot") and sys_ini_file:r_u32(section, "slot") == 11 then
+			ltx_section_cache[section] = get_degrade_value(section)
+			return ltx_section_cache[section]
+		end
+		ltx_section_cache[section] = false
 		return nil
 	end
 })
@@ -35,24 +44,45 @@ function get_best_hunting_tool()
 	if not db.actor then return nil end
 
 	local active_item = db.actor:active_item()
+
+	-- 1. If a knife is physically in our hands right now, prioritize it and update cache
 	if active_item and active_item:clsid() == clsid.wpn_knife_s then
 		local sec = active_item:section()
-		if not string.find(sec, "animation_hit") then
-			active_knife = active_item
+		if not string.find(sec, "animation_hit") and not string.find(sec, "axe") and not string.find(sec, "cleaver") then
 			active_variable = sec
+			active_knife_id = active_item:id()
 			return active_item
 		end
-	end
+	else
+		-- Clear cache if the active item is a non-knife weapon, or if we are not skinning
+		local ui_open = level.main_input_receiver and level.main_input_receiver()
+		local is_skinning = ui_open and ui_open:WindowName() == "UIMutantLoot"
 
-	if active_knife then
-		if db.actor:object(active_knife:section()) and active_knife:condition() > 0.01 then
-			return active_knife
-		else
-			active_knife = nil
+		if active_item or not is_skinning then
 			active_variable = nil
+			active_knife_id = nil
+		end
+
+		if active_item then
+			local sec = active_item:section()
+			if string.find(sec, "axe") or string.find(sec, "cleaver") then
+				return nil
+			end
 		end
 	end
 
+	-- 2. Persistence Cache: If active_item went 'nil' (hidden by animation), rely on the cached ID
+	if active_knife_id then
+		local cached_obj = level.object_by_id(active_knife_id)
+		-- Check if the cached object still exists and is in a usable condition
+		if cached_obj and cached_obj:condition() > 0.01 then
+			return cached_obj
+		end
+		-- Only clear the cache if the knife itself was broken or deleted
+		active_variable = nil active_knife_id = nil
+	end
+
+	-- 3. Fallback: Manual inventory scanner with your working priority suffix tie-breaker
 	local chosen_knife = nil
 	local highest_tier = -1
 	local fallback_knife = nil
@@ -62,7 +92,9 @@ function get_best_hunting_tool()
 		if obj:clsid() ~= clsid.wpn_knife_s then return end
 
 		local sec = obj:section()
-		if string.find(sec, "animation_hit") then return end
+		if string.find(sec, "animation_hit") or string.find(sec, "axe") or string.find(sec, "cleaver") then
+			return
+		end
 
 		local tier = get_knife_tier_value(sec)
 
@@ -70,11 +102,23 @@ function get_best_hunting_tool()
 			if tier > highest_tier then
 				highest_tier = tier
 				chosen_knife = obj
+			elseif tier == highest_tier and chosen_knife then
+				local current_num = tonumber(string.match(sec, "%d+")) or 0
+				local chosen_num = tonumber(string.match(chosen_knife:section(), "%d+")) or 0
+				if current_num > chosen_num then
+					chosen_knife = obj
+				end
 			end
 		else
 			if tier > fallback_highest_tier then
 				fallback_highest_tier = tier
 				fallback_knife = obj
+			elseif tier == fallback_highest_tier and fallback_knife then
+				local current_num = tonumber(string.match(sec, "%d+")) or 0
+				local chosen_num = tonumber(string.match(fallback_knife:section(), "%d+")) or 0
+				if current_num > chosen_num then
+					fallback_knife = obj
+				end
 			end
 		end
 	end, db.actor)
@@ -88,6 +132,15 @@ end
 
 function get_knife_tier_value(section)
 	local target_sec = active_variable or section
+
+	local ui_open = level.main_input_receiver and level.main_input_receiver()
+	local is_harvesting = active_variable or (ui_open and ui_open:WindowName() == "UIMutantLoot")
+
+	if is_harvesting and ((section ~= last_sec) or (active_variable ~= last_var)) then
+		last_sec = section
+		last_var = active_variable
+	end
+
 	if sys_ini_file:line_exist(target_sec, "tier") then
 		return sys_ini_file:r_u32(target_sec, "tier")
 	end
@@ -114,6 +167,14 @@ end
 
 --// function to check if a knife or axe is equipped
 function is_equipped()
+	local active_item = db.actor and db.actor:active_item()
+	if active_item then
+		local sec = active_item:section()
+		if string.find(sec, "axe") or string.find(sec, "cleaver") then
+			return false
+		end
+	end
+
 	return get_best_hunting_tool() ~= nil
 end
 
@@ -130,6 +191,14 @@ end
 function can_loot(monster_section)
 	if not monster_section then
 		return false
+	end
+
+	local active_item = db.actor and db.actor:active_item()
+	if active_item then
+		local sec = active_item:section()
+		if string.find(sec, "axe") or string.find(sec, "cleaver") then
+			return false
+		end
 	end
 
 	local obj = get_best_hunting_tool()
@@ -156,34 +225,61 @@ function can_loot(monster_section)
 end
 
 --// function to degrade knife condition
+local last_degrade_time = 0
+local locked_degrade_id = nil
+local tick_count = 0
+
 function degradate()
-	local obj = get_best_hunting_tool()
+	-- Short timer to filter out same frame duplicates
+	local current_time = time_global()
+	if (current_time - last_degrade_time) < 100 then
+		return
+	end
+
+	local obj = nil
+
+	if locked_degrade_id then
+		obj = level.object_by_id(locked_degrade_id)
+	end
+
+	if not obj then
+		obj = get_best_hunting_tool()
+		if obj then
+			tick_count = 0
+			locked_degrade_id = obj:id()
+		end
+	end
+
 	if obj ~= nil then
 		local cond = obj:condition()
 		local num = get_degrade_value(obj:section())
 
+		-- printf("~ [Step 1] %s , Cond Before: %s", tostring(obj:section()), tostring(cond))
+
 		if cond <= 0.01 then
-			active_knife = nil
-			active_variable = nil
+			locked_degrade_id = nil
+			tick_count = 0
 			return
 		end
 
-		if (cond > num) then
-			obj:set_condition(cond - num / 4)
+		if (cond > num / 2) then
+			obj:set_condition(cond - num / 2)
 		else
 			obj:set_condition(0.01)
 		end
-	end
-	active_knife = nil
-	active_variable = nil
-end
 
---// weapon in hand is an axe?
-function is_axe()
-	local obj = get_best_hunting_tool()
-	if obj ~= nil then
-		local sec = obj:section()
-		return string.find(sec, "axe") or string.find(sec, "cleaver") or false
+		-- printf("~ [Step 2] Cond After: %s", tostring(obj:condition()))
+
+		last_degrade_time = current_time
+		tick_count = tick_count + 1
+
+		if tick_count >= 2 then
+			locked_degrade_id = nil
+			tick_count = 0
+		end
+	else
+		locked_degrade_id = nil
+		tick_count = 0
 	end
-	return false
+	active_variable = nil active_knife_id = nil
 end
