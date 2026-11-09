@@ -1,0 +1,52 @@
+-- Fix for crafting windows that cap a crafted artefact at 98.9% when its inputs average 99% or more
+-- Remove once the winning zz_ui_workshop_keep_crafting_window_open crafts at the plain average
+
+-- Average of the artefact inputs, read the same way Craft does before it releases them
+local function input_average(self)
+	local total = self._stash_arty_total_cond or 0
+	local count = self._stash_arty_counter or 0
+	if (self._stash_arty_randomize or 0) == 1 then
+		return
+	end
+	for i = 1, #self.craft_item do
+		for j = 1, #self.craft_item[i] do
+			local itm = get_object_by_id(self.craft_item[i][j])
+			if itm then
+				local kind = SYS_GetParam(0, itm:section(), "kind")
+				if kind == "i_arty" then
+					total = total + itm:condition()
+					count = count + 1
+				elseif kind == "i_arty_junk" then
+					return
+				end
+			end
+		end
+	end
+	if count > 0 and total > 0 then
+		return total / count
+	end
+end
+
+function on_game_start()
+	local base_craft = ui_workshop.UIWorkshopCraft.Craft
+	ui_workshop.UIWorkshopCraft.Craft = function(self)
+		local avg = self.craft_allow_r and self.craft_item and self.craft_item_r and input_average(self)
+		if not (avg and avg >= 0.99) then
+			return base_craft(self)
+		end
+
+		local section = self.craft_item_r[1]
+		local base_create = _G.alife_create_item
+		_G.alife_create_item = function(sec, obj, t)
+			if sec == section and t and t.cond == 0.989 then
+				t.cond = avg
+			end
+			return base_create(sec, obj, t)
+		end
+		local ok, err = pcall(base_craft, self)
+		_G.alife_create_item = base_create
+		if not ok then
+			error(err, 0)
+		end
+	end
+end
