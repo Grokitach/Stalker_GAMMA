@@ -1,5 +1,27 @@
 local sf = string.find
+local human_blocks_count = 0
+
 function tasks_recover_mutant_data.check(pid, name)
-	printf("tasks_recover_mutant_data_oleh.check")
-	return sf(name,'simulation') and sf(pid,'monster') and not sf(name,'poltergeist') and not (sf(pid,'night') or sf(pid,'zombied') or sf(pid,'special'))
+
+    if not sf(pid, 'monster') or sf(pid, 'zombied') then
+        human_blocks_count = human_blocks_count + 1
+        return false
+    end
+
+    if human_blocks_count > 0 then
+        -- printf("~ Skipped %s human/stalker squads", tostring(human_blocks_count))
+        human_blocks_count = 0 -- Reset counter
+    end
+
+    local is_valid = sf(name, 'simulation')
+       and not sf(name, 'poltergeist')
+       and not (sf(pid, 'night') or sf(pid, 'special'))
+
+    -- if is_valid then
+        -- printf("~ Mutant ALLOWED: pid=%s, name=%s", tostring(pid), tostring(name))
+    -- else
+        -- printf("~ Mutant REJECTED: pid=%s, name=%s", tostring(pid), tostring(name))
+    -- end
+
+    return is_valid
 end
