@@ -1,0 +1,47 @@
+local health_regen = 0.002
+local check_delay  = 800
+local campfire_dist = 100.0
+
+local next_update = 0
+local campfires_list = bind_campfire.campfires_all
+
+local function is_near_lit_campfire(dist_sqr)
+	local actor_pos = db.actor:position()
+
+	for id, binder in pairs(campfires_list) do
+		if binder and binder.campfire and binder.campfire:is_on() then
+			local actual_dist_sqr = actor_pos:distance_to_sqr(binder.object:position())
+			-- printf(string.format("~ Checking Lit ID: %s | Distance Sqr: %.2f (Target <= %.2f)", tostring(id), actual_dist_sqr, dist_sqr))
+
+			if actual_dist_sqr <= dist_sqr then
+				-- printf(string.format("~ Near fire ID %s.", tostring(id)))
+				return true
+			end
+		end
+	end
+	return false
+end
+
+function actor_on_update()
+	if not db.actor then
+		return
+	end
+
+	local tg = time_global()
+	if tg < next_update then
+		return
+	end
+	next_update = tg + check_delay
+
+	if is_near_lit_campfire(campfire_dist) then
+		db.actor:change_health(health_regen)
+		-- printf("Regenerating HP")
+	-- else
+		-- printf("~ Not near any lit fire.")
+	end
+end
+
+function on_game_start()
+	-- UnregisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+end
