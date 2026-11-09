@@ -1186,10 +1186,13 @@ function ItemProcessor:update()
 			else
 				self:Remove_Process(id,"!","can't set condition!")
 			end
-			
+
 		elseif alife_object(id) then
-			self:Remove_Process(id,"~","server object exists, no game object yet")
-			
+			-- An online server object is still spawning, an offline one already holds the condition
+			if not alife_object(id).online then
+				self:Remove_Process(id,"~","server object offline, condition stored on it")
+			end
+
 		else
 			self:Remove_Process(id,"!","no game object!")
 		end
@@ -1249,6 +1252,24 @@ function ItemProcessor:update()
 		else
 			self:Remove_Process(id,"!","no game object!")
 		end
+	end
+end
+
+-- Write the condition to the server entity too, so offline items and reloads keep it
+-- Exes that bind cse_abstract.condition take it directly, older ones go through the state packet
+local function set_server_condition(se_obj, cond)
+	if not se_obj then
+		return
+	end
+	cond = clamp(cond, 0, 1)
+	if type(se_obj.condition) == "number" then
+		se_obj.condition = cond
+		return
+	end
+	local data = utils_stpk.get_object_data(se_obj)
+	if data and data.condition then
+		data.condition = cond
+		utils_stpk.set_object_data(data, se_obj)
 	end
 end
 
@@ -1380,6 +1401,7 @@ function ItemProcessor:Create_Item(section, owner, t)
 					
 					-- Send to process
 					if cond then
+						set_server_condition(se_itm, cond)
 						self.Cond[se_itm.id] = cond --self:Process_Item(section, se_itm.id, { cond = cond })
 					end
 				end
@@ -1407,6 +1429,7 @@ function ItemProcessor:Process_Item(section, id, t)
 			self.Uses[id] = t.uses
 		
 		elseif t.cond then
+			set_server_condition(alife_object(id), t.cond)
 			self.Cond[id] = t.cond
 			
 		elseif t.ammo then
