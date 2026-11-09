@@ -367,24 +367,21 @@ local knifesm = {
 -- Adding mutant loot condition setup
 local create_part = alife_create_item
 local function new_create_part(section, obj, t)
-	function itr(_, item)
-        if knifesm[item:section()] then
-			if max_mutant_part_cond then
-				if max_mutant_part_cond < knifesm[item:section()].max then
-            		max_mutant_part_cond = knifesm[item:section()].max
-					min_mutant_part_cond = knifesm[item:section()].min
-				end
-			else
-				max_mutant_part_cond = knifesm[item:section()].max
-				min_mutant_part_cond = knifesm[item:section()].min
-			end
-        end
-    end
+	-- range of the best knife carried right now
+	local best
+	local function itr(_, item)
+		local knife = knifesm[item:section()]
+		if knife and ((not best) or best.max < knife.max) then
+			best = knife
+		end
+	end
 	db.actor:iterate_inventory(itr, db.actor)
-	t.cond_r = {min_mutant_part_cond, max_mutant_part_cond}
-	t.cond_cr = {min_mutant_part_cond, max_mutant_part_cond}
+	if best then
+		t.cond_r = {best.min, best.max}
+		t.cond_cr = {best.min, best.max}
+	end
 	return create_part(section, obj, t)
-end  
+end
 
 ui_mutant_loot.alife_create_item = new_create_part
 if zz_ui_mutant_loot_hunter_backpacks then zz_ui_mutant_loot_hunter_backpacks.alife_create_item = new_create_part end -- Hunting Backpacks DLTX
