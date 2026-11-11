@@ -176,8 +176,10 @@ local important_npcs = Set {
 
 --dist_threshold = 300000
 
-check_tasks = grok_dynamic_despawner_mcm.get_config("check_tasks") or true
-enabled = grok_dynamic_despawner_mcm.get_config("enabled") or true
+check_tasks = grok_dynamic_despawner_mcm.get_config("check_tasks")
+if check_tasks == nil then check_tasks = true end
+enabled = grok_dynamic_despawner_mcm.get_config("enabled")
+if enabled == nil then enabled = true end
 npc_threshold = grok_dynamic_despawner_mcm.get_config("npc_threshold") or 40
 
 online_npcs = {}
@@ -227,7 +229,7 @@ local function monster_on_update(npc)
 	end
 
 	if (trigger3 == 1 and tg > grok_delay3) then
-		trigger = 0
+		trigger3 = 0
 		
 		if npc then
 			if get_object_story_id(npc:id()) then return end
@@ -259,42 +261,32 @@ local function actor_on_update()
 	if (trigger2 == 1 and tg > grok_delay2) then
 		trigger2 = 0
 			
---		printf("checking if NPCs need to be deleted")
-		nrows = 0
-		for k,v in pairs(online_npcs) do
-			nrows = nrows + 1
+		-- Object IDs form a sparse map; shuffle a dense list instead.
+		local candidates = {}
+		for _, id in pairs(online_npcs) do
+			candidates[#candidates + 1] = id
 		end
-		if nrows > npc_threshold then
-			number_to_remove = nrows - npc_threshold
-			counter = 0
-			shuffle_table(online_npcs)
-			for k,v in pairs(online_npcs) do
-				counter = counter + 1
-				if counter >= number_to_remove then
-					online_npcs = {}
-					return
-				else
-					local npc_id_to_remove = v
-					local npc = get_object_by_id(npc_id_to_remove)
-							
-					if npc then
-						if check_tasks then
-							axr_task_manager.generate_ongoing_tasks(npc,nil)
-						end
-						
-						if check_tasks and axr_task_manager.ongoing_tasks and axr_task_manager.ongoing_tasks[npc:id()] then
-							table.remove(online_npcs,k)
-						else
-							se_item = alife_object(npc_id_to_remove)
+		local number_to_remove = #candidates - npc_threshold
+		if number_to_remove > 0 then
+			local removed = 0
+			shuffle_table(candidates)
+			for _, id in ipairs(candidates) do
+				if removed >= number_to_remove then break end
+				local npc = get_object_by_id(id)
+				if npc then
+					if check_tasks then
+						axr_task_manager.generate_ongoing_tasks(npc,nil)
+					end
+					local has_task = check_tasks and axr_task_manager.ongoing_tasks and axr_task_manager.ongoing_tasks[npc:id()]
+					if not has_task then
+						local se_item = alife_object(id)
+						if se_item then
 							alife_release(se_item)
-							table.remove(online_npcs,k)
-							--printf("//Grok Dynamic Despawner: release of %s %s", npc_id_to_remove, npc:section())
+							removed = removed + 1
 						end
 					end
 				end
 			end
-		else
-			online_npcs = {}
 		end
 		online_npcs = {}
 	else return end
