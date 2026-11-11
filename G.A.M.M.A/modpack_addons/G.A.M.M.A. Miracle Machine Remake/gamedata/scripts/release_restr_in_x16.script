@@ -1,26 +1,42 @@
-local function on_game_load()
-	
-	if has_alife_info("x16_restr_release") then
+local target_name = "yan_attack_zombies_space_restrictor"
+local restr_released = false
+
+local function release_x16_restrictor()
+	if restr_released or has_alife_info("x16_restr_release") then
+		restr_released = true
 		return
 	end
-	
-	for i=1, 65534 do
-		
-		local sobj = alife_object(i)
-		
-		if sobj and sobj:name() == "yan_attack_zombies_space_restrictor" then
-			
-			alife_release(sobj, true)
-			give_info("x16_restr_release")
-			
-			break
-		
-		end
-		
+
+	if level.name() ~= "l08_yantar" then
+		return
 	end
-	
+
+	local alife_mgr = alife()
+	if not alife_mgr then return end
+
+	for i = 1, 65534 do
+		local se_obj = alife_mgr:object(i)
+		if se_obj and se_obj:name() == target_name then
+			alife_mgr:release(se_obj, true)
+			give_info("x16_restr_release")
+			restr_released = true
+			break
+		end
+	end
+end
+
+local function load_state(m_data)
+	if m_data.x16_restr_released ~= nil then
+		restr_released = m_data.x16_restr_released
+	end
+end
+
+local function save_state(m_data)
+	m_data.x16_restr_released = restr_released
 end
 
 function on_game_start()
-	RegisterScriptCallback("on_game_load", on_game_load)
+	RegisterScriptCallback("actor_on_first_update", release_x16_restrictor)
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
 end
