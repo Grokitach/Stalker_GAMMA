@@ -1113,17 +1113,14 @@ function drx_da_spawn_anomalies_on_level(level_name)
 	local level_file = level_data.level_file
 	local spawn_percent = level_data.spawn_percent
 	local anomaly_max_number = level_data.anomaly_max_number * settings.anomaly_amount_modifier
-	-- local anomaly_max_active = level_data.anomaly_max_active
 
 	local pairs = pairs
 	local collect_section = utils_data.collect_section
-	-- local size_table = size_table
 	local invert_table = invert_table
 	local is_not_empty = is_not_empty
 	local is_empty = is_empty
 	local table_remove = table.remove
 
-	-- Build a list of available smart terrains:
 	local smart_list = collect_section(level_file, "available_smarts")
 
 	if is_not_empty(smart_list) and reduced_chance_levels[level_name] then
@@ -1136,7 +1133,6 @@ function drx_da_spawn_anomalies_on_level(level_name)
 		smart_list = t
 	end
 
-	-- Build a list of available smart terrains with reduced amount:
 	local smart_list_reduced = collect_section(level_file, "available_smarts_reduced")
 	if is_not_empty(smart_list_reduced) then
 		smart_list_reduced = invert_table(smart_list_reduced)
@@ -1145,7 +1141,6 @@ function drx_da_spawn_anomalies_on_level(level_name)
 		end
 	end
 
-	-- Build a list of available anomalies:
 	local anomaly_list = collect_section(level_file, "anomaly_types")
 	if settings.disable_new_anomalies then
 		local t = {}
@@ -1173,7 +1168,6 @@ function drx_da_spawn_anomalies_on_level(level_name)
 		anomaly_list = t
 	end
 
-	-- Combine radiation fields to one type
 	local rad_fields = {}
 	for i = #anomaly_list, 1, -1 do
 		if anomalies_radiation_fields[anomaly_list[i]] then
@@ -1188,10 +1182,12 @@ function drx_da_spawn_anomalies_on_level(level_name)
 		end
 	end
 
-	-- Build anomalies table
 	if is_not_empty(smart_list) then
-		local anomalies = updated_anomaly_levels[level_name].anomalies or {}
-		local anomalies_by_smart = updated_anomaly_levels[level_name].anomalies_by_smart or {}
+		if not updated_anomaly_levels[level_name].anomalies then updated_anomaly_levels[level_name].anomalies = {} end
+		if not updated_anomaly_levels[level_name].anomalies_by_smart then updated_anomaly_levels[level_name].anomalies_by_smart = {} end
+
+		local anomalies = updated_anomaly_levels[level_name].anomalies
+		local anomalies_by_smart = updated_anomaly_levels[level_name].anomalies_by_smart
 		local smart_by_anomalies = updated_anomaly_levels[level_name].smart_by_anomalies or {}
 		local anomaly_types_by_smart = updated_anomaly_levels[level_name].anomaly_types_by_smart or {}
 		local anomalies_properties = updated_anomaly_levels[level_name].anomalies_properties or {}
@@ -1840,7 +1836,6 @@ function build_anomalies_pos_tree()
 	local sim = alife()
 	if not sim then return end
 	local sim_level_name = sim.level_name
-	local sim_object = sim.object
 
 	local objects = {}
 	local obj_to_pos = {}
@@ -1869,18 +1864,27 @@ function build_anomalies_pos_tree()
 
 	if not vanilla_cache_built[level_name] then
 		vanilla_anomaly_cache[level_name] = {}
-		for i = 1, 65534 do
-			local se_obj = sim_object(sim, i)
-			if se_obj then
-				local cls = se_obj:clsid()
-				if IsAnomaly(_, cls) then
-					local obj_level = sim_level_name(sim, gg_vertex(gg, se_obj.m_game_vertex_id):level_id())
-					if obj_level == level_name and not all_anomaly_ids[i] then
-						vanilla_anomaly_cache[level_name][i] = true
-					end
+
+		local start_benchmark = time_global()
+		local total_objects_found = 0
+
+		sim:iterate_objects(function(se_obj)
+			total_objects_found = total_objects_found + 1
+			local id = se_obj.id
+			local cls = se_obj:clsid()
+
+			if IsAnomaly(_, cls) then
+				local obj_level = sim_level_name(sim, gg_vertex(gg, se_obj.m_game_vertex_id):level_id())
+				if obj_level == level_name and not all_anomaly_ids[id] then
+					vanilla_anomaly_cache[level_name][id] = true
 				end
 			end
-		end
+
+			return false
+		end)
+		local end_benchmark = time_global()
+		og_printf("DRX DA: Functor Scan streamed engine map registry. Checked %s actual objects. Spent: %s ms.", total_objects_found, end_benchmark - start_benchmark)
+
 		vanilla_cache_built[level_name] = true
 	end
 
@@ -1911,11 +1915,6 @@ function build_anomalies_pos_tree()
 			vanilla_anomaly_cache[level_name][id] = nil
 		end
 	end
-
-	-- try(function()
-	--	anomalies_pos_tree = kd_tree.buildTreeSeObjects(objects)
-	--	anomalies_obj_to_pos = anomalies_pos_tree and obj_to_pos
-	-- end)
 
 	empty_table(detectable_anomalies_ids)
 	local t = {}
@@ -2659,13 +2658,25 @@ detector_functions = {
 		local ui = tasks_measure.get_UI()
 		if active_det then
 			local sec = anomaly.section
+			local current_anom_name = anomaly.object:name()
 
-			if self.last_tracked_anomaly and self.last_tracked_anomaly ~= anomaly.object:name() then
-				empty_table(self.detector_anomaly_factors)
-				empty_table(anomalies_vars.factors)
-				pda_glitch_value = nil
+			local now = time_global()
+			if self.last_tracked_anomaly and self.last_tracked_anomaly ~= current_anom_name then
+				if not self.flicker_throttle_tg then self.flicker_throttle_tg = 0 end
+
+				if now > self.flicker_throttle_tg then
+					empty_table(self.detector_anomaly_factors)
+					empty_table(anomalies_vars.factors)
+					pda_glitch_value = nil
+					self.last_tracked_anomaly = current_anom_name
+					self.flicker_throttle_tg = now + 1000
+				else
+					current_anom_name = self.last_tracked_anomaly
+				end
+			else
+				self.flicker_throttle_tg = now + 1000
+				self.last_tracked_anomaly = current_anom_name
 			end
-			self.last_tracked_anomaly = anomaly.object:name()
 
 			self:detector_anomaly_add_factor(anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
 			local factor = self:detector_anomaly_find_max_factor(anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
@@ -2870,7 +2881,7 @@ bind_anomaly_field.anomaly_field_binder.update = function(self, delta)
 	local actor = db.actor
 	if actor and actor:active_detector() then
 		local radius_sqr = self.radius_sqr or 0
-		local distance_to_sqr = self.object:position():distance_to_sqr(actor:position())
+		local distance_to_sqr = self.spawn_position:distance_to_sqr(actor:position())
 
 		if distance_to_sqr <= radius_sqr then
 			local level_name = level.name()
@@ -3263,7 +3274,7 @@ function on_game_start()
 	RegisterScriptCallback("on_before_level_changing", on_before_level_changing)
 	RegisterScriptCallback("save_state", save_anomalies)
 	RegisterScriptCallback("save_state", save_level)
-	-- RegisterScriptCallback("load_state", load_state)
+	RegisterScriptCallback("load_state", load_state)
 	-- RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
 	RegisterScriptCallback("on_game_load", load_settings)
 	RegisterScriptCallback("on_option_change", on_option_change)
@@ -3304,12 +3315,6 @@ function open_anomaly_article(section)
 	-- If already opened - return
 	if opened_articles.encyclopedia_anomalies[additional_articles_to_category.encyclopedia_anomalies[section]] then
 		printf("article already opened for %s", section)
-		return
-	end
-
-	-- Return if the player didn't spend 3 hours in the zone
-	if not (has_alife_info("actor_spent_2_hrs_in_zone") or utils_obj.is_time_spent_in_zone(0,0,2)) then
-		printf("youre too stupid for article boy")
 		return
 	end
 
