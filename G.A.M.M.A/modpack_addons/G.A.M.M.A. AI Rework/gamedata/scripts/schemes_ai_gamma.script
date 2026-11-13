@@ -1,324 +1,307 @@
+-->>> Exposed global value for any mod that wants to disable GAMMA AI remotely <<<--
+	_G.GAMMA_AI = {disabled = false}
+-->>> Exposed global value for any mod that wants to disable GAMMA AI remotely <<<--
+
 local verification_npc = {}
-local verification_npc2 = {}
-local weapon = nil
-local sec = nil
+local swicth_table2 = {}
+-- local time_table = {}
+-- local time_table2 = {}
+local table_npc = {}
+local dumb_table = {}
 
-local trained_f = {
-			["killer"] = "merc",
-			["dolg"] = "duty",
-			["freedom"] = "freedom",
-			["army"] = "military",
-			}
-			
-local untrained_f = {
-			["stalker"] = "stalker",
-			["bandit"] = "bandit",
-			["ecolog"] = "ecolog",
-			["csky"] = "csky",
-			["renegade"] = "renegade",
-			}
-			
 local antagonist_f = {
-			["monolith"] = "monolith",
-			["greh"] = "sin",
-			["isg"] = "unisg",
-			}
-			
-local ranks = {
-			["novice"] = "Rookie",
-			["trainee"] = "Trainee",
-			["experienced"] = "Experienced",
-			["professional"] = "Professional",
-			["veteran"] = "Veteran",
-			["expert"] = "Expert",
-			["master"] = "Master",
-			["legend"] = "Legend",
-			}
-			
-local function npc_on_hit_callback(npc,amount,local_direction,who,bone_index)
-	if (amount > 0) then
-		db.storage[npc:id()].hitted_by = who and who:id()
-	end
-	
-	if who:id() == AC_ID then
-		verification_npc[npc:id()] = 0
-	end
-end
-
-function on_game_start()
-	RegisterScriptCallback("npc_on_hit_callback",npc_on_hit_callback)
-	RegisterScriptCallback("save_state", save_state)
-    RegisterScriptCallback("load_state", load_state)
-end
+	["monolith"] = "monolith",
+	["greh"] = "sin",
+	["isg"] = "unisg",
+}
 
 function save_state(m_data)
-    m_data.dumb_table = dumb_table
+	m_data.dumb_table = dumb_table
 	m_data.table_npc = table_npc
 	m_data.swicth_table2 = swicth_table2
 end
 
 function load_state(m_data)
-    dumb_table = m_data.dumb_table
-	table_npc = m_data.table_npc
-	swicth_table2 = m_data.swicth_table2
+	dumb_table = m_data.dumb_table or {}
+	table_npc = m_data.table_npc or {}
+	swicth_table2 = m_data.swicth_table2 or {}
 end
 
-local swicth_table2 = {}
-
-local time_table = {}
-local time_table2 = {}
-local swicth_table = {}
-
-local table_npc = {}
-local dumb_table = {}
-math.randomseed(os.time())
-local rnd = math.random(18000,25000)
-local rnd2 = math.random(35000,50000)						 
-function trace_this(to_trace1)
-    local log_file = io.open("log_memory_npc", "a")
-    log_file:write(to_trace1)
-    log_file:close(log_file)
+local function npc_on_hit_callback(npc, amount, local_direction, who, bone_index)
+	if not npc or not who then return end
+	if (amount > 0) and db.storage[npc:id()] then
+		db.storage[npc:id()].hitted_by = who:id()
+	end
+	verification_npc[npc:id()] = 0
 end
 
-function dumb_npc(npc, id)
+function dumb_npc(npc)
+	if not npc or type(npc) ~= "userdata" or not IsStalker(npc) then return end
+	local id = npc:id()
+	local faction = character_community(npc)
+	if dumb_table[id] ~= nil then return end
 
-	if IsStalker(id) then
-		local rank = ranks.get_obj_rank_name(npc)
-		local faction = character_community(npc)	
-		local fchance = 5
-		local rchance = 5
-		local tchance = fchance + rchance
-		local rnd3 = math.random(1,tchance)	
-	
-		
-		if faction == "bandit" or "stalker" or"csky" or "ecolog" or "renegade" then 
-			if rank == "master" then fchance = 4 return
-				elseif rank == "legend" then fchance = 5 return
-				else
-				fchance = 4 return
-			end
-		else
-			fchance = 5
-			return 
+	local rank = (ranks and ranks.get_obj_rank_name and ranks.get_obj_rank_name(npc)) or "experienced"
+	local fchance = 5
+	local rchance = 5
+
+	if faction == "bandit" or faction == "stalker" or faction == "csky" or faction == "ecolog" or faction == "renegade" then
+		if rank == "master" then fchance = 4
+		elseif rank == "legend" then fchance = 5
+		else fchance = 4
 		end
-		
-		if not antagonist_f[faction] then
-			if rank == "novice" then rchance = 3 return
-			elseif rank == "trainee" then rchance = 3 return
-			elseif rank == "experienced" then rchance = 4 return
-			elseif rank == "professional" then rchance = 4 return
-			else
-				rchance = 5
-				return
-			end
+	else
+		fchance = 5
+	end
+
+	if not antagonist_f[faction] then
+		if rank == "novice" or rank == "trainee" then rchance = 3
+		elseif rank == "experienced" or rank == "professional" then rchance = 4
+		else rchance = 5
 		end
-		
-		if dumb_table[id] == nil and not antagonist_f[faction] then
-			if (rnd3 == 1) then
-				dumb_table[id] = 1
-			else dumb_table[id] = 2
-			end
-		end
+	end
+
+	local tchance = fchance + rchance
+	local rnd3 = math.random(1, tchance)
+
+	if not antagonist_f[faction] and (rnd3 == 1) then
+		dumb_table[id] = 1
+	else
+		dumb_table[id] = 2
 	end
 end
 
 function is_dumb(id, distance, my_memory)
-
-		if dumb_table[id] ~= nil then
-			if (dumb_table[id] == 1 and distance >= 250 and my_memory < rnd2) then
-				return true
-			end
-		end
+	if dumb_table[id] ~= nil and dumb_table[id] == 1 and distance >= 250 and my_memory < 50000 then
+		return true
+	end
+	return false
 end
 
 function pure_enemy_distance(npc, enemy)
-		
-		local st = db.storage[npc:id()]
-		local enemy = st and st.enemy_id and (db.storage[st.enemy_id] and db.storage[st.enemy_id].object or level.object_by_id(st.enemy_id))
-		local pos1 = npc:position()
-		local pos2 = enemy:position()
-		local dist = pos1:distance_to_sqr(pos2)
-		if (dist < 30000) then
-			return true
-		end
-end
-	
-function scheme_camper(enemy,npc,actor)
-	local enemy_id = db.storage[npc:id()].enemy_id
-	local enemy2 = enemy_id and level.object_by_id(enemy_id)
-	local time_in_memory = time_global()
+	if not npc then return false end
+	local st = db.storage[npc:id()]
+	local ene = enemy or (st and st.enemy_id and (db.storage[st.enemy_id] and db.storage[st.enemy_id].object or level.object_by_id(st.enemy_id)))
+	if not ene or not ene:alive() then return false end
+
 	local pos1 = npc:position()
-	local pos2 = enemy:position()
-	local is_actor = (enemy_id == db.actor:id())
+	local pos2 = ene:position()
 	local dist = pos1:distance_to_sqr(pos2)
-
-	time_table[npc:id()] = time_global() - npc:memory_time(enemy)
-	
-	local weapon = npc:active_item()
-			
-	if (enemy_id ~= nil and enemy_id == db.actor:id()) then	
-		dumb_npc(npc:id())
-			if pure_enemy_distance(npc,enemy) then
-				return false
-			end
-				
-			if (npc:see(enemy)) then
-				table_npc[npc:id()] = true
-			end
-				
-				if (table_npc[npc:id()] == true and time_table[npc:id()] >= 100) and swicth_table2[npc:id()] ~= true then 
-					swicth_table2[npc:id()] = true
-				end
-			
-			if verification_npc[npc:id()] == nil then
-				verification_npc[npc:id()] = 0
-			end
-			
-			if IsStalker(npc) then
-				if weapon ~= nil then
-					if ranged(weapon) == true then
-						return true
-					else
-						return false
-					end	
-				end
-			end
-
-			if (dumb_table[npc:id()] ~= 1) then 
-				if (dist < 2000 and dist > 125) and time_table2[npc:id()] < rnd2 then  
-						
-					if swicth_table2[npc:id()] == true then
-						else 
-					end 
-					
-					if swicth_table2[npc:id()] == true and verification_npc[npc:id()] ~= 15 then
-						if verification_npc[npc:id()] < 15 then
-							verification_npc[npc:id()] = verification_npc[npc:id()] + 1
-						end
-						return true
-					end
-					
-				else 
-					return false
-				end
-			return false
-			end
-	return false
-	end	
-			
-			if (npc.health >= 0.3) then 
-				if time_table[npc:id()] ~= nil then	
-					if dist >= 2000 and dist < 15000 and time_table[npc:id()] < rnd then
-						if (swicth_table2[npc:id()] == true and enemy.health > 0.4) then
-							return true
-						end		 
-					end
-				
-					if dist >= 15000 and time_table[npc:id()] < rnd2 then
-						
-						if (swicth_table2[npc:id()] == true and enemy.health > 0.4) then
-							return true
-						end	
-					return false
-					end
-				end
-			end
-	return false
+	return (dist < 30000)
 end
 
-
-function scheme_cover(enemy,npc,actor)
-	
-	local enemy_id = db.storage[npc:id()].enemy_id
-	local pos1 = npc:position()
-	local pos2 = enemy:position()
-	local dist = pos1:distance_to_sqr(pos2)
-	local is_actor = (enemy_id == db.actor:id())
-
-	time_table2[npc:id()] = time_global() - npc:memory_time(enemy)
-	
-	local weapon = npc:active_item()
-	
-	if (enemy_id ~= nil and enemy_id == db.actor:id()) then
-	
-		dumb_npc(npc:id())
-						
-			if is_actor == true then
-			else if (enemy_id ~= nil and enemy_id > 0) then 
-			end
-			end		
-			
-			if pure_enemy_distance(npc,enemy) then
-				return false
-			end
-				
-			if (npc:see(db.actor)) then
-				table_npc[npc:id()] = true
-			end
-			
-			
-				if (table_npc[npc:id()] == true and time_table2[npc:id()] >= 100) and swicth_table2[npc:id()] ~= true then 
-					swicth_table2[npc:id()] = true
-				end
-			
-			if verification_npc[npc:id()] == nil then
-				verification_npc[npc:id()] = 0
-			end
-			
-			if IsStalker(npc) then
-				if weapon ~= nil then
-					if ranged(weapon) == true then
-						return false
-					else
-						return true
-					end	
-				end
-			end
-
-			if (dumb_table[npc:id()] ~= 1) then 
-				if (dist < 2000 and dist > 125) and time_table2[npc:id()] < rnd2 then  
-
-						if swicth_table2[npc:id()] == true and verification_npc[npc:id()] ~= 15 then
-							if verification_npc[npc:id()] < 15 then
-								verification_npc[npc:id()] = verification_npc[npc:id()] + 1
-							end
-							return true
-						end
-				else 
-					return false
-				end
-				return false
-			end
-		return false
-	end	
-		
-end
-
-function scheme_mono(enemy,npc,actor)
-	local faction = character_community(npc)
-	
-	if antagonist_f[faction] then
-		return true
-	else
-		return false
-	end
-end
-	
 function ranged(weapon)
+	if not weapon or not IsWeapon(weapon) then return false end
+	local sec = weapon:section()
+	local kind = ini_sys:r_string_ex(sec, "kind") or "unknown"
+	return kind == "w_rifle" or kind == "w_sniper" or kind == "w_launcher"
+end
 
-	local wpn = weapon
-	local sec = wpn:section()
-	local kind = ini_sys:r_string_ex(sec,"kind") or "unknown"
+function scheme_camper(enemy, npc, actor)
+	return false
+end
 
-	local lr = {
-		["w_rifle"] = true,
-		["w_sniper"] = true,
-		["w_launcher"] = true,
-	}
+function scheme_cover(enemy, npc, actor)
+	return false
+end
 
-	if lr[kind] then
-		return true
-	else
-		return false
+function scheme_mono(enemy, npc, actor)
+	if not npc or not (enemy and enemy:alive()) then return false end
+	local faction = character_community(npc)
+	if antagonist_f[faction] == nil then return false end
+
+	if npc:alive() and not npc:see(enemy) then
+		local d = npc:position():distance_to(enemy:position())
+		local st = db.storage[npc:id()]
+		local tg = time_global()
+		if st and st.__mono_bush_timer and tg < st.__mono_bush_timer then
+			return false
+		end
+
+		if (d > 40) or (d < 15) then
+			if d < 15 and st then
+				st.__mono_bush_timer = tg + 3000
+			end
+			return false
+		end
 	end
+	return true
+end
+
+local function get_shuffle_vertex(npc, enemy, max_allowed_dist)
+	local current_pos = npc:position()
+	local enemy_pos = enemy:position()
+
+	local dir_away_x = current_pos.x - enemy_pos.x
+	local dir_away_z = current_pos.z - enemy_pos.z
+
+	local current_dist = math.sqrt(dir_away_x * dir_away_x + dir_away_z * dir_away_z)
+	local base_angle = math.atan2(dir_away_z, dir_away_x)
+
+	local random_spread
+	if current_dist >= (max_allowed_dist - 5) then
+		random_spread = math.random(0, 1) == 1 and (math.pi / 2) or (-math.pi / 2)
+	else
+		random_spread = (math.random() * 2 / 3 * math.pi) - (math.pi / 3)
+	end
+
+	local final_angle = base_angle + random_spread
+	local offset_x = math.cos(final_angle) * 2.5
+	local offset_z = math.sin(final_angle) * 2.5
+
+	local target_pos = vector():set(current_pos.x + offset_x, current_pos.y, current_pos.z + offset_z)
+	local v_id = level.vertex_id(target_pos)
+
+	if v_id and v_id ~= 4294967295 and v_id ~= npc:level_vertex_id() and npc:accessible(v_id) then
+		return v_id
+	end
+	return npc:level_vertex_id()
+end
+
+local function smarter_behavior(npc)
+	if GAMMA_AI.disabled then return end
+
+	if not npc or not npc:alive() then return end
+
+	if xr_wounded and xr_wounded.is_wounded(npc) then
+		return
+	end
+
+	local st = db.storage[npc:id()]
+	if not st then return end
+
+	local enemy = npc:best_enemy()
+	if not enemy or not enemy:alive() then
+		if st.__stalker_combat_state then
+			st.__stalker_combat_state = nil
+			npc:set_movement_type(move.walk)
+			npc:set_body_state(move.standing)
+		end
+		return
+	end
+
+	local tg = time_global()
+	local enemy_id = enemy:id()
+
+	if xr_wounded and xr_wounded.is_wounded(enemy) then
+		if not st.__wounded_execution_lockout or tg >= st.__wounded_execution_lockout then
+			st.__wounded_execution_lockout = tg + 10000
+			st.__stalker_combat_state = nil
+			-- printf(string.format("---[AI_DEBUG] %s target is wounded. 10s bypass.", npc:name()))
+		end
+		return
+	end
+
+	if st.__wounded_execution_lockout and tg < st.__wounded_execution_lockout then
+		return
+	end
+
+	if not st.__cached_faction then st.__cached_faction = character_community(npc) or "unknown" end
+	if tactical_behavior and tactical_behavior.check_antagonist(st.__cached_faction) or st.__cached_faction == "zombied" then return end
+
+	local offset = tactical_behavior and tactical_behavior.get_weapon_offset(npc) or 0
+	local dynamic_trigger_dist = 40 + offset
+
+	local current_see = npc:see(enemy)
+
+	if not st.__stalker_combat_state or st.__stalker_combat_state.target_id ~= enemy_id then
+		st.__stalker_combat_state = { target_id = enemy_id }
+	end
+	local c_state = st.__stalker_combat_state
+
+	if c_state.bush_timer then
+		if tg < c_state.bush_timer then
+			if current_see then
+				-- printf(string.format("---[AI_DEBUG] %s sees target %s. Clearing defensive state.", npc:name(), enemy:name()))
+				st.__stalker_combat_state = nil
+				npc:set_movement_type(move.walk)
+				npc:set_body_state(move.standing)
+				return
+			end
+			if not c_state.shuffle_timer or tg >= c_state.shuffle_timer then
+				c_state.shuffle_timer = tg + 3000
+				c_state.shuffle_vertex = get_shuffle_vertex(npc, enemy, dynamic_trigger_dist)
+				npc:set_dest_level_vertex_id(c_state.shuffle_vertex)
+
+				-- printf(string.format("---[AI_DEBUG] %s can't see the target. Shuffle to node %d.", npc:name(), tonumber(c_state.shuffle_vertex) or 0))
+			end
+			if c_state.shuffle_vertex then
+				if c_state.shuffle_vertex == npc:level_vertex_id() then
+					npc:set_movement_type(move.stand)
+					npc:set_body_state(move.crouch)
+				else
+					npc:set_movement_type(move.walk)
+					npc:set_body_state(move.crouch)
+				end
+			end
+			return
+		else
+			local d = npc:position():distance_to(enemy:position())
+
+			if not current_see and d < dynamic_trigger_dist then
+				local rush_chance = tactical_behavior and tactical_behavior.get_rank_rush(npc) or 36
+				local roll = math.random(1, 100)
+
+				if roll <= rush_chance then
+					-- printf(string.format("---[AI_DEBUG] %s lost patience! Roll: %d <= %d ; Breaking defensive stance.", npc:name(), roll, rush_chance))
+					c_state.bush_timer = nil
+					c_state.shuffle_timer = nil
+					c_state.shuffle_vertex = nil
+
+					c_state.unseen_start = time_global() + 30000 -- Lockout timer so NPC doesn't enter defensive stance again after 3sec
+
+					npc:set_movement_type(move.run)
+					npc:set_body_state(move.standing)
+					return
+				end
+
+				local refresh_window = tactical_behavior and tactical_behavior.get_rank_refresh(npc) or 16000
+				c_state.bush_timer = tg + refresh_window
+				c_state.shuffle_timer = tg + 3000
+				c_state.shuffle_vertex = get_shuffle_vertex(npc, enemy, dynamic_trigger_dist)
+				npc:set_dest_level_vertex_id(c_state.shuffle_vertex)
+				npc:set_movement_type(move.stand)
+				npc:set_body_state(move.crouch)
+
+				-- printf(string.format("---[AI_DEBUG] %s maintained patience. Rolled %d > %d. Holding for %dms.", npc:name(), roll, rush_chance, refresh_window))
+				return
+			end
+		end
+	end
+
+	if current_see then
+		c_state.unseen_start = nil
+	else
+		if c_state.unseen_start and tg < c_state.unseen_start then
+			return
+		end
+		if not c_state.unseen_start then c_state.unseen_start = tg end
+		if tg - c_state.unseen_start < 3000 then return end
+		local d = npc:position():distance_to(enemy:position())
+		if d < dynamic_trigger_dist then
+			local refresh_window = tactical_behavior and tactical_behavior.get_rank_refresh(npc) or 16000
+			c_state.bush_timer = tg + refresh_window
+			c_state.shuffle_timer = tg + 3000
+			c_state.shuffle_vertex = get_shuffle_vertex(npc, enemy, dynamic_trigger_dist)
+			npc:set_dest_level_vertex_id(c_state.shuffle_vertex)
+			npc:set_movement_type(move.stand)
+			npc:set_body_state(move.crouch)
+
+			-- printf(string.format("---[AI_DEBUG] %s lost sight for 3s within dynamic %dm. Defensively hold for %dms.", npc:name(), dynamic_trigger_dist, refresh_window))
+		end
+	end
+end
+
+local function actor_on_first_update()
+	if GAMMA_AI.disabled then
+		printf("~ GAMMA AI is Disabled")
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("npc_on_hit_callback", npc_on_hit_callback)
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
+	RegisterScriptCallback("npc_on_update", smarter_behavior)
 end

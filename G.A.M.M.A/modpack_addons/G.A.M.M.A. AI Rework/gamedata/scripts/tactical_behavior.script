@@ -1,0 +1,134 @@
+local antagonist_f = {
+    ["monolith"] = "monolith",
+    ["greh"] = "sin",
+    ["isg"] = "unisg",
+}
+
+-- Chances of NPC losing patience based off their rank
+local rank_rush_chances = {
+    ["legend"]       = 6,
+    ["master"]       = 12,
+    ["expert"]       = 18,
+    ["veteran"]      = 24,
+    ["professional"] = 30,
+    ["experienced"]  = 36,
+    ["trainee"]      = 42,
+    ["novice"]       = 50
+}
+
+-- Timer to keep NPC in defensive stance based off their rank
+local rank_refresh_windows = {
+    ["legend"]       = 8000,
+    ["master"]       = 9000,
+    ["expert"]       = 10000,
+    ["veteran"]      = 11000,
+    ["professional"] = 12000,
+    ["experienced"]  = 13000,
+    ["trainee"]      = 14000,
+    ["novice"]       = 15000
+}
+
+function get_weapon_offset(npc)
+    local weapon = npc:active_item()
+    if not weapon or not IsWeapon(weapon) then return 0 end
+
+    local sec = weapon:section()
+    local kind = ini_sys:r_string_ex(sec, "kind") or "unknown"
+
+    if kind == "w_shotgun" then return -15
+    elseif kind == "w_pistol" or kind == "w_smg" then return -10
+    elseif kind == "w_rifle" then return 0
+    elseif kind == "w_sniper" then return 10
+    end
+    return 0
+end
+
+function get_rank_refresh(npc)
+    local rank = ranks and ranks.get_obj_rank_name and ranks.get_obj_rank_name(npc) or "experienced"
+    return rank_refresh_windows[rank] or 16000
+end
+
+function get_rank_rush(npc)
+    local rank = ranks and ranks.get_obj_rank_name and ranks.get_obj_rank_name(npc) or "experienced"
+    return rank_rush_chances[rank] or 36
+end
+
+function check_antagonist(faction)
+    return antagonist_f[faction] ~= nil
+end
+
+function on_game_start()
+    if not (xrs_kill_wounded and xrs_kill_wounded.act_kill_wounded) then
+        return
+    end
+
+    xrs_kill_wounded.act_kill_wounded.execute = function(self)
+        if GAMMA_AI and GAMMA_AI.disabled then
+            action_base.execute(self)
+            return
+        end
+
+        action_base.execute(self)
+
+        local npc = self.object
+        local st = self.st
+
+        local vo = st.selected_id and db.storage[st.selected_id] and db.storage[st.selected_id].object
+        if not (vo and IsStalker(vo) and vo:alive() and is_wounded(vo)) then
+            st.selected_id = nil
+            return
+        end
+
+        if npc:path_type() ~= game_object.level_path then
+            npc:set_path_type(game_object.level_path)
+        end
+
+        local dist = npc:position():distance_to(vo:position())
+        if dist < 1 then
+            self:reset()
+        end
+
+        local dst = db.storage[npc:id()]
+        if dst and dst.rx_dont_shoot then
+            st.timer = nil
+            state_mgr.set_state(npc, "raid", nil, nil, {look_object = vo})
+            st.vertex_id = utils_obj.send_to_nearest_accessible_vertex(npc, npc:level_vertex_id(), "kill_wounded")
+            return
+        end
+
+        if not st.vertex_id then
+            local vid = xrs_kill_wounded.get_rand_vertex(npc, vo)
+            if xrs_kill_wounded.validate(npc, vid) and level.vertex_position(vid):distance_to_sqr(vo:position()) >= xrs_kill_wounded.MinDistance then
+                st.vertex_id = vid
+                st.vertex_position = level.vertex_position(st.vertex_id)
+            end
+        end
+
+        local dir = vec_sub(utils_obj.safe_bone_pos(vo, "bip01_spine"), utils_obj.safe_bone_pos(npc, "bip01_r_finger02"))
+
+        local tg = time_global()
+        if st.timer and tg > st.timer and not axr_task_manager.hostages_by_id[vo:id()] and npc:see(vo) then
+            state_mgr.set_state(npc, "threat_sniper_fire", nil, nil, {look_object = vo, look_dir = dir})
+            return
+        end
+
+        if st.vertex_id then
+            if npc:level_vertex_id() == st.vertex_id or dist <= xrs_kill_wounded.MinDistance + 1 then
+                state_mgr.set_state(npc, "threat", nil, nil, {look_dir = dir})
+                if db.used_level_vertex_ids[st.vertex_id] then
+                    db.used_level_vertex_ids[st.vertex_id] = nil
+                end
+                st.vertex_id = utils_obj.send_to_nearest_accessible_vertex(npc, npc:level_vertex_id(), "kill_wounded")
+                db.used_level_vertex_ids[st.vertex_id] = npc:id()
+                self:begin_kill_wounded(vo)
+            else
+                state_mgr.set_state(npc, "assault", nil, nil, {look_position = vo:position()}, {fast_set = true})
+                if db.used_level_vertex_ids[st.vertex_id] then
+                    db.used_level_vertex_ids[st.vertex_id] = nil
+                end
+                st.vertex_id = utils_obj.send_to_nearest_accessible_vertex(npc, st.vertex_id, "kill_wounded")
+                db.used_level_vertex_ids[st.vertex_id] = npc:id()
+            end
+        end
+    end
+end
