@@ -119,7 +119,7 @@ item_artefact.artefact_binder.net_spawn = function(self, se_abstract)
 	end
 
 	self.first_call = true
-	-- the engine respawns items at their server condition, so full condition is only a reset on the first update
+	-- the engine respawns items at their server condition, so the stored condition is restored on the first update
 	self.check_spawn_cond = true
 
 	local tg = time_global()
@@ -149,7 +149,8 @@ item_artefact.artefact_binder.update = function(self, delta)
 		end
 
 		-- if condition of stored artefact was changed by online transition / loading
-		if cond_t[self.object:id()] and self.object:condition() >= 1 then
+		-- the engine respawns it at its server condition, which is its creation value when it was created with one
+		if cond_t[self.object:id()] and math.abs(self.object:condition() - cond_t[self.object:id()]) > 0.001 then
 			-- set stored condition back
 			pr("condition changed from online/loading, prev: %s || curr: %s", r(self.object:condition()), r(cond_t[self.object:id()]))
 			self.object:set_condition(cond_t[self.object:id()])
