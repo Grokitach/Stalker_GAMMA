@@ -1,0 +1,308 @@
+local tg_update = 0
+local tg_update_step = 1000
+
+local withinsafebounds = false
+local last_underground_state = nil
+local iconsplaced = false
+local cubesplaced = false
+local active_cube_ids = {}
+
+-- local sur_ini = ini_file("misc\\surge_manager.ltx")
+-- local safe_covers_list = utils_data.collect_section(sur_ini, "list", true)
+local mapiconobject = "tb_tiny_cube"
+
+local tbiconobjs = {
+	{-173.84014892578, 7.6612520217896, -225.28094482422, 32679, 2410}, --dead city southwest red house
+	{-96.394798278809, -1.8241307735443, -100.85829162598, 74820, 2386}, --dead city southwest flats
+	{-157.99807739258, 1.4176292419434, -110.58934020996, 42008, 2411}, --dead city southwest green house
+	{-153.51763916016, 1.4506330490112, -90.70336151123, 44764, 2412}, --dead city southwest white house
+	{-153.24339294434, 2.5091569423676, -47.769592285156, 44819, 2413}, --dead city west supermarket
+	{-153.57014465332, 2.2491862773895, -19.16693687439, 44853, 2360}, --dead city west garage
+	{-98.481544494629, 19.055006027222, -54.095142364502, 70959, 2348}, --dead city west flats south stairs
+	{-121.7673034668, 19.049163818359, -19.534187316895, 69913, 2360}, --dead city west flats west stairs
+	{-113.39792633057, 3.1756725311279, 24.075304031372, 67509, 2361}, --dead city northwest white house
+	{42.393173217773, 24.949106216431, 100.73115539551, 69619, 2361}, --dead city northeast flats top
+	{39.418869018555, 24.977867126465, 60.4621925354, 69619, 2361}, --dead city northeast flats middle
+	{42.47444152832, 24.968975067139, 22.121118545532, 69615, 2361}, --dead city northeast flats bottom
+	{116.73725891113, 1.4194025993347, 63.301048278809, 208784, 2416}, --dead city northeast white house
+	{113.42926025391, 1.4279770851135, 20.095323562622, 206428, 2415}, --dead city northeast green house
+	{-42.178592681885, 1.9045604467392, 270.24957275391, 121376, 76}, --great swamps northwest bunker
+	{516.11499023438, 3.3741240501404, -153.53628540039, 494597, 253}, --great swamps southeast bunker
+	{69.757049560547, -1.5019578933716, 160.634765625, 85501, 5305}, --the meadow flooded basement
+	{-88.229278564453, 0.94593930244446, 64.59553527832, 30643, 5314}, --the meadow shop by electros
+	{68.546226501465, 3.2373993396759, 336.80999755859, 832822, 4656}, --jupiter under service station
+	{-340.42114257813, -2.8598012924194, 261.23764038086, 140978, 4526}, --jupiter kopachy
+	{322.07189941406, 34.592552185059, -225.97982788086, 1232590, 4694}, --jupiter northmost plant building 2F
+	{399.58026123047, 27.979948043823, -211.11834716797, 1345485, 4487}, --jupiter northmost plant building corridor
+	{340.80618286133, 34.259426116943, -276.79296875, 1260187, 4694}, --jupiter midnorth plant building GF & 2F
+	{449.83190917969, 27.314088821411, -460.67965698242, 1430287, 4700}, --jupiter southwest plant building small room
+	{-314.68417358398, 9.7915678024292, 418.90582275391, 320564, 4137}, --zaton house at sawmill
+	{235.62362670898, 11.584729194641, -4.1525192260742, 1368018, 4147}, --zaton dock cranes house
+	{170.58749389648, -5.5146474838257, 69.969009399414, 253825, 2935}, --pripyat southeastern subway
+	{-15.63098526001, -5.5362749099731, 69.970832824707, 83974, 2955}, --pripyat southwestern subway
+	{-33.121124267578, -1.7326965332031, 35.356594085693, 65587, 2955}, --pripyat ground floor building by chopper
+	{153.05656433105, 1.5991151332855, 110.77601623535, 40987, 1710}, --rostok tower ground floor
+	{-13.052764892578, 2.4327080249786, -349.6103515625, 179202, 4994}, --outskirts southern green cabin
+	{-101.19021606445, 0.83981251716614, -96.235885620117, 90383, 4948}, --outskirts kindergarten west under stairs
+	{-56.195117950439, 0.84070229530334, -96.357955932617, 133347, 4947}, --outskirts kindergarten east under stairs
+	{124.07121276855, 28.92071723938, 248.35722351074, 350478, 5024}, --outskirts top apartment at vine anomaly
+	{132.36140441895, 5.8223166465759, -293.93814086914, 312236, 1432}, --dark valley industrial complex southern barn
+	{37.879180908203, 3.5487730503082, -214.34707641602, 208986, 1474}, --dark valley cabin in middle of level
+}
+
+local level_safe_zones = {
+	["l09_deadcity"] = {
+		{-178.24769592285, 7.6646862030029, -221.11883544922, -169.53253173828, 10.358658790588, -229.21249389648}, --southwest red house
+		{-182.14568786621, 5.898768901825, -220.68852539062, -178.98251647949, 6.6624450683594, -224.48362426758}, --southwest red house cellar
+		{-102.87242584229, 2.8849911689758, -79.666705322266, -88.512873840332, 17.933387756348, -120.94742279053}, --southwest flats
+		{-161.51362304688, 1.6279361248016, -103.9550201416, -154.17099304199, 2.6276440620422, -117.23564605713}, --southwest green house
+		{-158.2169921875, 1.4549105167389, -86.402041625977, -148.90446777344, 2.1479554176331, -95.092251586914}, --southwest white house
+		{-161.81565551758, -0.31286942958832, -86.267939758301, -158.70680541992, -0.57697606086731, -90.003971862793}, --southwest white house cellar
+		{-161.00887756348, 2.6226572990417, -40.059317779541, -143.37709350586, 5.5428185462952, -55.902165222168}, --west supermarket
+		{-162.48785095215, 2.2505040168762, -14.636952590942, -143.24643249512, 5.1515207290649, -23.186764526367}, --west garage
+		{-105.0811126709, 4.4874787330627, -51.572737884521, -98.043894958496, 17.040777206421, -61.752709197998}, --west flats south stairs
+		{-129.23637084961, 2.8849649429321, -20.104043197632, -119.0228225708, 17.054906845093, -27.186753082275}, --west flats west stairs
+		{-117.86443786621, 3.1772592067719, 29.017140197754, -110.76177520752, 4.2941718101501, 18.757741165161}, --northwest white house
+		{-111.13683776855, -0.55959415435791, 24.022984313965, -106.41773529053, 0.77539491653442, 18.223120880127}, --northwest white house cellar
+		{21.635571670532, 2.8857576847076, 107.79086761475, 63.179249572754, 18.061290740967, 93.432002258301}, --northeast flats top
+		{18.680894088745, 2.8853464126587, 67.648503112793, 60.227810668945, 18.194946289063, 53.285994720459}, --northeast flats middle
+		{21.630433273315, 2.8819890022278, 29.391455459595, 63.176220703125, 18.066284179688, 15.032674980164}, --northeast flats bottom
+		{111.91090698242, 1.4238719940186, 67.625790405273, 121.40249328613, 2.1050009727478, 58.898833465576}, --northeast white house
+		{108.30961914063, -0.34125995635986, 67.760304260254, 111.65288238525, -0.59528982639313, 63.79196472168}, --northeast white house cellar
+		{106.75142211914, 1.4278571605682, 23.706141281128, 120.06432800293, 2.6197209358215, 16.292855453491}, --northeast green house
+	},
+	["k00_marsh"] = {
+		{-44.160824584961, -1.5210056304932, 270.74081420898, -40.339030456543, 0.77160829305649, 265.69438476562}, --northwest bunker
+		{514.25377197266, 0.84623569250107, -149.00194091797, 518.13135986328, 1.9918670654297, -154.09034729004}, --southeast bunker
+	},
+	["y04_pole"] = {
+		{59.677401733398, -1.5779840946198, 171.15076904297, 78.116314697266, -0.39284414052963, 150.16044921875}, --flooded basement
+		{-91.838650512695, 1.2449088096619, 72.057682800293, -84.884295654297, 3.4152307510376, 57.964088439941}, --shop by electros
+	},
+	["jupiter"] = {
+		{65.053088378906, -0.76303219795227, 336.63312988281, 75.748852539062, 2.0795383453369, 328.74116821289}, --under service station
+		{-351.79780273438, -2.8619587421417, 260.2391784668, -342.6873046875, -0.50516891479492, 254.73866577148}, --kopachy west room
+		{-339.07435302734, -2.8618650436401, 268.80256347656, -330.00279541016, -0.51712870597839, 254.73460693359}, --kopachy east rooms
+		{386.49956054687, 4.1886868476868, -84.343707275391, 425.70911865234, 19.037999153137, -138.61864929199}, --eastern tunnel warehouse
+		{312.29582519531, 34.698307037354, -223.60928649902, 338.89829711914, 38.447559356689, -229.05338745117}, --northmost plant building 2F
+		{397.34352416992, 27.980133056641, -188.72868652344, 402.01713256836, 30.770919799805, -232.84048156738}, --northmost plant building corridor
+		{347.43471069336, 27.183853149414, -269.97630615234, 356.47755126953, 30.716825485229, -278.57661132813}, --midnorth plant building GF
+		{318.73201293945, 34.25866317749, -274.34214111328, 359.48414306641, 37.407783508301, -278.57841186523}, --midnorth plant building 2F
+		{447.02272338867, 27.542930603027, -458.68440551758, 452.81870727539, 30.732931137085, -462.38709716797}, --southwest plant building small room
+	},
+	["zaton"] = {
+		{-319.84037475586, 9.7976169586182, 428.44819335938, -309.36030883789, 11.362489700317, 412.45897216797}, --house at sawmill
+		{231.75024414063, 8.0890645980835, -0.30566340684891, 239.8588104248, 9.5831346511841, -8.3532037734985}, --dock cranes house
+	},
+	["l05_bar"] = {
+		{228.70849914551, -5.4503493309021, 136.50042419434, 233.42893676758, -1.0519095659256, 126.57520599365}, --duty bunk beds
+		{219.56079406738, -5.0499024391174, 138.83359985352, 228.07172851563, -2.4763352870941, 136.55815429687}, --duty locker room
+		{149.67822570801, 0.3282687664032, 114.43153076172, 157.08332519531, 3.0807070732117, 105.73060150146}, --ground floor tower
+	},
+	["l11_pripyat"] = {
+		{-130.92065124512, -3.4855844974518, 113.61938171387, -110.18291015625, 5.9668273925781, 88.933901977539}, --west apartments to jupiter
+		{167.72458190918, -5.386682510376, 83.24172668457, 173.4787109375, -3.8845863342285, 57.994097900391}, --southeastern subway
+		{-18.468046951294, -5.4088726043701, 83.191265869141, -12.654755783081, -3.8886969089508, 57.993880462646}, --southwestern subway
+		{188.08757324219, 2.7863442897797, 220.11686401367, 208.81770019531, 5.9649219512939, 195.39094848633}, --east apartments to outskirts
+		{98.297244262695, 3.9985744953156, 155.10070495605, 109.78532104492, 6.7264261245728, 113.66337127686}, --most of hotel
+		{-37.094540405273, -1.7373523712158, 39.181954193115, -24.705437850952, 2.2554223537445, 32.928744506836}, --ground floor building by chopper
+	},
+	["pripyat"] = {
+		{16.138018798828, 4.9052171707153, 371.25361328125, 40.881871032715, 9.375521659851, 354.98381347656}, --theater west stage
+		{55.605578613281, 1.4367532730103, 379.83646850586, 98.840061950684, 12.962801933289, 355.13771362305}, --theater east stage
+		{-18.968991088867, -0.24539467692375, -348.12123413086, -8.0121566772461, 2.1974936008453, -350.84605102539}, --southern green cabin
+		{-103.14957885742, 0.84048211574554, -95.119326782227, -99.05368347168, 1.9545547962189, -97.281140136719}, --kindergarten west under stairs
+		{-58.195603179932, 0.83801019191742, -94.961642456055, -54.106757354736, 1.9545547962189, -97.280583190918}, --kindergarten east under stairs
+		{119.3057434082, 28.910228729248, 252.05163269043, 129.2040222168, 32.191608428955, 244.29698486328}, --top apartment at vine anomaly
+		{132.00854797363, 0.04171930551529, -183.46095581055, 150.07345275879, 0.2544013261795, -207.05494384766}, --laundromat machine room
+		{131.80715942383, 4.8769640922546, -183.22172546387, 142.680859375, 8.7435255050659, -207.06277160645}, --room next to strelok's room + hallway
+	},
+	["l10_radar"] = {
+		{116.95075531006, -9.2693119049072, -21.496211242676, 152.90189819336, -4.2741050720215, -29.651657867432}, --bunker to the lab
+	},
+	["l04_darkvalley"] = {
+		{120.82502288818, 0.15305557847023, -287.81090087891, 140.01662902832, 3.7703151702881, -299.97553710938}, --industrial complex southern barn
+		{36.238188934326, 0.31758350133896, -208.31975097656, 39.523731994629, 3.125338602066, -213.29061584473}, --cabin in middle of level north half
+		{36.241038513184, 0.3166024684906, -216.26665039062, 39.528706359863, 3.125338602066, -221.41585998535}, --cabin in middle of level south half
+	},
+}
+
+local tb_ug_maps = {
+	["jupiter_underground"] = true,
+	["l03u_agr_underground"] = true,
+	["l04u_labx18"] = true,
+	["l08u_brainlab"] = true,
+	["l10u_bunker"] = true,
+	["l12u_control_monolith"] = true,
+	["l12u_sarcofag"] = true,
+	["l13u_warlab"] = true,
+	["labx8"] = true,
+}
+
+function actor_on_update()
+	local tg = time_global()
+	if tg < tg_update then
+		return
+	end
+	tg_update = tg + tg_update_step
+
+	local surge_state = GetEvent("surge", "state")
+	local psi_storm_state = GetEvent("psi_storm", "state")
+
+	if surge_state or psi_storm_state then
+		local SurgeManager = surge_manager.get_surge_manager()
+		local PsiStormManager = psi_storm_manager.get_psi_storm_manager()
+
+		if not cubesplaced then
+			add_tiny_cubes_to_world()
+		end
+
+		local msg_a = ""
+		local msg_b = ""
+		if surge_state then
+			msg_a = game.translate_string("hide_from_surge_name_1")
+			msg_b = game.translate_string("hide_from_surge_descr_1_a")
+		elseif psi_storm_state then
+			msg_a = game.translate_string("hide_from_psi_storm_name_1")
+			msg_b = game.translate_string("hide_from_psi_storm_descr_1_a")
+		end
+
+		if GetEvent("current_safe_cover") then
+			if iconsplaced then
+				removesafeicons()
+			end
+		else
+			if (not iconsplaced) and (SurgeManager.task_given == true or PsiStormManager.task_given == true) then
+				addsafeicons(msg_a, msg_b)
+			end
+		end
+
+		update_safe_bounds()
+	else
+		if iconsplaced then
+			removesafeicons()
+		end
+		if cubesplaced then
+			remove_tiny_cubes_from_world()
+		end
+		withinsafebounds = false
+	end
+
+	if tb_ug_maps[level.name()] == nil and last_underground_state ~= withinsafebounds then
+		SetEvent("underground", withinsafebounds)
+		last_underground_state = withinsafebounds
+	end
+end
+
+function update_safe_bounds()
+	local zones = level_safe_zones[level.name()]
+	if not zones then
+		withinsafebounds = false
+		return
+	end
+
+	local pos = db.actor:position()
+	local px, py, pz = pos.x, pos.y, pos.z
+
+	for i = 1, #zones do
+		local z = zones[i]
+		if (px > z[1]) and (pz < z[3]) and (px < z[4]) and (pz > z[6]) and (py < z[5]) then
+			withinsafebounds = true
+			return
+		end
+	end
+
+	withinsafebounds = false
+end
+
+function addsafeicons(msg_a, msg_b)
+	local text = msg_a .. "\\n \\n" .. msg_b
+
+	for i = 1, #active_cube_ids do
+		local id = active_cube_ids[i]
+		if level.map_has_object_spot(id, "secondary_task_location") == 0 then
+			level.map_add_object_spot(id, "secondary_task_location", text)
+		end
+	end
+
+	iconsplaced = true
+end
+
+function removesafeicons()
+	for i = 1, #active_cube_ids do
+		local id = active_cube_ids[i]
+		if level.map_has_object_spot(id, "secondary_task_location") ~= 0 then
+			level.map_remove_object_spot(id, "secondary_task_location")
+		end
+	end
+
+	iconsplaced = false
+end
+
+function add_tiny_cubes_to_world()
+	active_cube_ids = {}
+	for i = 1, #tbiconobjs do
+		local c = tbiconobjs[i]
+		local tbpos = vector():set(c[1], c[2], c[3])
+		local se_obj = alife_create_item(mapiconobject, {tbpos, c[4], c[5]})
+		if se_obj then
+			active_cube_ids[#active_cube_ids + 1] = se_obj.id
+		end
+	end
+	cubesplaced = true
+end
+
+function remove_tiny_cubes_from_world()
+	local sim = alife()
+	for i = 1, #active_cube_ids do
+		local id = active_cube_ids[i]
+		local se_obj = sim:object(id)
+		if se_obj and se_obj:section_name() == mapiconobject then
+			safe_release_manager.release(se_obj)
+		end
+	end
+	active_cube_ids = {}
+	cubesplaced = false
+end
+
+function physic_object_on_use_callback(obj, who)
+	if obj:section() == "ph_sleepbag" then
+		update_safe_bounds()
+		if withinsafebounds == true then
+			CreateTimeEvent(0, "wait_a_second", 1, function()
+				ui_sleep_dialog.main()
+				actor_menu.set_msg(1, game.translate_string("sleep_ok_button"), 4)
+				return true
+			end)
+		end
+	end
+end
+
+function save_state(m_data)
+	m_data.tb_safe_zones = {
+		cubesplaced = cubesplaced,
+		iconsplaced = iconsplaced,
+		active_cube_ids = active_cube_ids,
+	}
+end
+
+function load_state(m_data)
+	local data = m_data.tb_safe_zones
+	if data then
+		cubesplaced = data.cubesplaced or false
+		iconsplaced = data.iconsplaced or false
+		active_cube_ids = data.active_cube_ids or {}
+	else
+		cubesplaced = false
+		iconsplaced = false
+		active_cube_ids = {}
+	end
+	last_underground_state = nil
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("physic_object_on_use_callback", physic_object_on_use_callback)
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
+end
