@@ -1,182 +1,317 @@
-af_spawn_duration_limit = 259200 -- time in game time seconds after which artefacts are released if not looted ; 86400 = how many seconds in 1 day
-ah_af_sections = {
-    ["af_ah_o1"] = true,
-    ["af_ah_o1"] = true,
-    ["af_ah_o2"] = true,
-    ["af_ah_e1"] = true,
-    ["af_ah_g1"] = true,
-    ["af_ah_g2"] = true,
-    ["af_ah_h1"] = true,
-    ["af_ah_h2"] = true,
-    ["af_ah_e1"] = true,
-    ["af_ah_e2"] = true,
-    ["af_ah_g1"] = true,
-    ["af_ah_o2"] = true,
-    ["af_ah_h1"] = true,
-    ["af_ah_g1"] = true,
-    ["af_ah_o1"] = true,
-    ["af_ah_s1"] = true,
-    ["af_ah_r1"] = true,
-    ["af_ah_r2"] = true,
-    ["af_ah_r3"] = true,
-    ["af_ah_h1"] = true,
-    ["af_ah_h2"] = true,
-    ["af_ah_e1"] = true,
-    ["af_ah_e2"] = true,
-    ["af_ah_g2"] = true,
-    ["af_ah_f1"] = true,
-    ["af_oasis_heart"] = true,
+local af_spawn_duration_limit = 259200 -- time in game time seconds after which artefacts are released if not looted ; 86400 = how many seconds in 1 day
+
+local ah_af_sections = {
+	["af_ah_e1"] = true,
+	["af_ah_e2"] = true,
+
+	["af_ah_f1"] = true,
+
+	["af_ah_g1"] = true,
+	["af_ah_g2"] = true,
+
+	["af_ah_h1"] = true,
+	["af_ah_h2"] = true,
+
+	["af_ah_o1"] = true,
+	["af_ah_o2"] = true,
+
+	["af_ah_r1"] = true,
+	["af_ah_r2"] = true,
+	["af_ah_r3"] = true,
+	["af_ah_r4"] = true,
+	["af_ah_r5"] = true,
+
+	["af_ah_s1"] = true,
+
+	["af_black"] = true,
+	["monolith_shard"] = true,
+	["misery_bread"] = true,
+	["af_oasis_heart"] = true,
 }
 
+local artefacts_spawned_time = {}
+local tracked_loose_artefacts = {}
+
 function t2c(t)
-    if not t then return nil end
-    local ct = game.CTime()
-    ct:set(t.Y, t.M, t.D, t.h, t.m, t.s, t.ms)
-    return ct
+	if not t then return nil end
+	local ct = game.CTime()
+	ct:set(t.Y, t.M, t.D, t.h, t.m, t.s, t.ms)
+	return ct
 end
 
 function c2t(ct)
-    if not ct then return nil end
-    local Y, M, D, h, m, s, ms = 0, 0, 0, 0, 0, 0, 0
-    Y, M, D, h, m, s, ms = ct:get(Y, M, D, h, m, s, ms)
-    return {
-        Y = Y,
-        M = M,
-        D = D,
-        h = h,
-        m = m,
-        s = s,
-        ms = ms
-    }
+	if not ct then return nil end
+	local Y, M, D, h, m, s, ms = 0, 0, 0, 0, 0, 0, 0
+	Y, M, D, h, m, s, ms = ct:get(Y, M, D, h, m, s, ms)
+	return {
+		Y = Y,
+		M = M,
+		D = D,
+		h = h,
+		m = m,
+		s = s,
+		ms = ms
+	}
 end
 
 local function is_in_display(id, displays)
-    if not displays then return false end
-    for _, case_items in pairs(displays) do
-        for _, world_id in pairs(case_items) do
-            if world_id == id then
-                return true
-            end
-        end
-    end
-    return false
+	if not displays then return false end
+	for _, case_items in pairs(displays) do
+		for _, world_id in pairs(case_items) do
+			if world_id == id then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function cache_loose_artefact(af_id)
+	tracked_loose_artefacts[af_id] = true
+	if not artefacts_spawned_time[af_id] then
+		artefacts_spawned_time[af_id] = c2t(game.get_game_time())
+	end
+end
+
+local function wrap_binder_net_spawn(binder_tbl)
+	if binder_tbl and binder_tbl.net_spawn then
+		local base_net_spawn = binder_tbl.net_spawn
+		binder_tbl.net_spawn = function(self, se_abstract)
+			local res = base_net_spawn(self, se_abstract)
+			if res and se_abstract then
+				local sim = alife()
+				local se_obj = sim and sim:object(se_abstract.id)
+				if se_obj and IsArtefact(se_obj) then
+					local af_sec = se_obj:section_name()
+					local kind = SYS_GetParam(0, af_sec, "kind")
+					if (kind == "i_arty_junk" or kind == "i_arty") and (se_obj.parent_id or 65535) >= 65535 then
+						cache_loose_artefact(se_obj.id)
+					end
+				end
+			end
+			return res
+		end
+	end
+end
+
+local function hook_artefact_net_spawn()
+	wrap_binder_net_spawn(item_artefact and item_artefact.artefact_binder)
+	wrap_binder_net_spawn(bind_artefact and bind_artefact.artefact_binder)
 end
 
 local function process_se_artefact(se_obj, actor_id, sim, current_level_id, local_displays)
-    local af_sec = se_obj:section_name()
-    local kind = SYS_GetParam(0, af_sec, "kind")
-    if kind ~= "i_arty_junk" and kind ~= "i_arty" then return end
+	local af_id = se_obj.id
+	local af_sec = se_obj:section_name()
+	local kind = SYS_GetParam(0, af_sec, "kind")
+	if kind ~= "i_arty_junk" and kind ~= "i_arty" then
+		tracked_loose_artefacts[af_id] = nil
+		artefacts_spawned_time[af_id] = nil
+		return
+	end
 
-    local artifact_level = sim:level_name(game_graph():vertex(se_obj.m_game_vertex_id):level_id())
-    if artifact_level ~= current_level_id then return end
+	local artifact_level = sim:level_name(game_graph():vertex(se_obj.m_game_vertex_id):level_id())
+	if artifact_level ~= current_level_id then
+		return
+	end
 
-    local parent_id = se_obj.parent_id
-    local is_owned = false
+	local parent_id = se_obj.parent_id
+	local is_owned = false
 
-    if parent_id then
-        local se_parent = parent_id < 65535 and sim:object(parent_id)
-        is_owned = (parent_id == actor_id or IsStalker(se_parent) or IsInvbox(se_parent) or IsMonster(se_parent))
-    end
+	if parent_id and parent_id < 65535 then
+		local se_parent = sim:object(parent_id)
+		if parent_id == actor_id or IsStalker(se_parent) or IsInvbox(se_parent) or IsMonster(se_parent) then
+			is_owned = true
+		end
+	end
 
-    if not is_owned and is_in_display(se_obj.id, local_displays) then
-        is_owned = true
-    end
+	if not is_owned and is_in_display(af_id, local_displays) then
+		is_owned = true
+	end
 
-    if is_owned and artefacts_spawned_time and artefacts_spawned_time[se_obj.id] then
-        artefacts_spawned_time[se_obj.id] = nil
-    elseif not is_owned then
-        delete_artefacts(se_obj)
-    end
+	if is_owned then
+		tracked_loose_artefacts[af_id] = nil
+		artefacts_spawned_time[af_id] = nil
+	else
+		delete_artefacts(se_obj)
+	end
 end
 
+-- function run_verification()
+	-- CreateTimeEvent("af_audit_5s", "verify_65k", 5, function()
+		-- local sim = alife()
+		-- if not sim or not db.actor then return true end
+
+		-- local actor_id = db.actor:id()
+		-- local current_level_id = level.name()
+		-- local local_displays = (weapon_showcase and weapon_showcase.weapon_displays) or {}
+		-- local gg = game_graph()
+
+		-- local t_65k = os.clock()
+		-- local truth_loose = {}
+		-- for i = 1, 65534 do
+			-- local se_obj = sim:object(i)
+			-- if se_obj and IsArtefact(se_obj) then
+				-- local af_sec = se_obj:section_name()
+				-- local kind = SYS_GetParam(0, af_sec, "kind")
+				-- local lvl = sim:level_name(gg:vertex(se_obj.m_game_vertex_id):level_id())
+				-- if lvl == current_level_id then
+					-- if kind == "i_arty_junk" or kind == "i_arty" then
+						-- local parent_id = se_obj.parent_id
+						-- local is_owned = false
+						-- if parent_id and parent_id < 65535 then
+							-- local se_parent = sim:object(parent_id)
+							-- is_owned = (parent_id == actor_id or IsStalker(se_parent) or IsInvbox(se_parent) or IsMonster(se_parent))
+						-- end
+						-- if not is_owned and is_in_display(se_obj.id, local_displays) then
+							-- is_owned = true
+						-- end
+						-- if not is_owned then
+							-- truth_loose[se_obj.id] = se_obj
+						-- end
+					-- end
+				-- end
+			-- end
+		-- end
+		-- local scan65k_ms = string.format("%.3f", (os.clock() - t_65k) * 1000)
+
+		-- printf("=================================================================")
+		-- printf("Level: %s | 65k Scan: %s ms", current_level_id, scan65k_ms)
+
+		-- local caught = 0
+		-- local missed = 0
+		-- for id, se_obj in pairs(truth_loose) do
+			-- if tracked_loose_artefacts[id] then
+				-- caught = caught + 1
+				-- printf("  [OK] ID:%s | %s | Caught | Timed: %s",
+					-- id, se_obj:section_name(), artefacts_spawned_time[id] and "YES" or "NO")
+			-- else
+				-- missed = missed + 1
+				-- local bind = SYS_GetParam(0, se_obj:section_name(), "script_binding") or "none"
+				-- printf("  [MISSED] ID:%s | %s | Online:%s | bind:%s",
+					-- id, se_obj:section_name(), se_obj.online and "Y" or "N", tostring(bind))
+			-- end
+		-- end
+
+		-- printf("Loose Caught: %s | Loose Missed: %s | Total Tracked: %s",
+			-- caught, missed, table.size(tracked_loose_artefacts))
+		-- printf("=================================================================")
+		-- return true
+	-- end)
+-- end
+
 function clear_old_artefacts()
-    --printf("\\\\ Checking IDs for artefacts")
-    local actor_id = db.actor:id()
-    local sim = alife()
-    if not sim then return end
+	-- run_verification()
 
-    local current_level_id = level.name()
-    local local_displays = (weapon_showcase and weapon_showcase.weapon_displays) or {}
+	if not db.actor then return end
 
-    for i = 1, 65534 do
-        local se_obj = sim:object(i)
-        if se_obj and IsArtefact(se_obj) then
-            process_se_artefact(se_obj, actor_id, sim, current_level_id, local_displays)
-        end
-    end
+	local actor_id = db.actor:id()
+	local sim = alife()
+	if not sim then return end
+
+	if bind_anomaly_zone and bind_anomaly_zone.parent_zones_by_artefact_id then
+		for id, _ in pairs(bind_anomaly_zone.parent_zones_by_artefact_id) do
+			tracked_loose_artefacts[id] = true
+		end
+	end
+
+	if db.storage then
+		for id, _ in pairs(db.storage) do
+			local se_obj = sim:object(id)
+			if se_obj and IsArtefact(se_obj) then
+				tracked_loose_artefacts[id] = true
+			end
+		end
+	end
+
+	local current_level_id = level.name()
+	local local_displays = (weapon_showcase and weapon_showcase.weapon_displays) or {}
+
+	for id, _ in pairs(tracked_loose_artefacts) do
+		local se_obj = sim:object(id)
+		if se_obj and IsArtefact(se_obj) then
+			process_se_artefact(se_obj, actor_id, sim, current_level_id, local_displays)
+		else
+			tracked_loose_artefacts[id] = nil
+			artefacts_spawned_time[id] = nil
+		end
+	end
+end
+
+local function delayed_clear_old_artefacts()
+	CreateTimeEvent("af_despawner", "clear_old_artefacts", 3, function()
+		clear_old_artefacts()
+		return true
+	end)
 end
 
 function delete_artefacts(artefact)
-    curr_time = game.get_game_time()
-    if not artefact then return end
+	local curr_time = game.get_game_time()
+	if not artefact then return end
 
-    local af_id = artefact.id
-    local af_sec = artefact:section_name()
+	local af_id = artefact.id
+	local af_sec = artefact:section_name()
 
-    if not artefacts_spawned_time then
-        artefacts_spawned_time = {}
-    end
+	if not artefacts_spawned_time[af_id] then
+		artefacts_spawned_time[af_id] = c2t(curr_time)
+		return
+	end
 
-    if not artefacts_spawned_time[af_id] then -- attribute current game time as spawn time for the given artefact
-        --printf("/// new artefact found, registering the time of spawn")
-        artefacts_spawned_time[af_id] = c2t(curr_time)
-        return
-    end
+	local spawn_time_diff = curr_time:diffSec(t2c(artefacts_spawned_time[af_id]))
 
-    -- artefact has spawn time defined > compare and potentially release
-    --printf(artefacts_spawned_time[af_id])
-    local spawn_time_diff = curr_time:diffSec(t2c(artefacts_spawned_time[af_id]))
-    --printf(spawn_time_diff)
+	if spawn_time_diff >= af_spawn_duration_limit and not ah_af_sections[af_sec] then
+		if bind_anomaly_zone then
+			local zone = bind_anomaly_zone.parent_zones_by_artefact_id[af_id]
+			bind_anomaly_zone.parent_zones_by_artefact_id[af_id] = nil
+			bind_anomaly_zone.artefact_ways_by_id[af_id] = nil
+			bind_anomaly_zone.artefact_points_by_id[af_id] = nil
+			if zone then
+				zone.artefact_ways_by_id[af_id] = nil
+				zone.artefact_points_by_id[af_id] = nil
+				zone.spawned_count = zone.spawned_count - 1
+				if zone.spawned_count < 0 then
+					zone.spawned_count = 0
+				end
+			end
+		end
+		alife_release(artefact)
+		artefacts_spawned_time[af_id] = nil
+		tracked_loose_artefacts[af_id] = nil
+	end
+end
 
-    if spawn_time_diff >= af_spawn_duration_limit and not ah_af_sections[af_sec] then -- respawn artefact hunter artefacts > Implement it later / avoid for the moment
-        --printf("/// old artefact found, releasing it")
-        if bind_anomaly_zone then
-            local zone = bind_anomaly_zone.parent_zones_by_artefact_id[af_id]
-            bind_anomaly_zone.parent_zones_by_artefact_id[af_id] = nil
-            bind_anomaly_zone.artefact_ways_by_id[af_id] = nil
-            bind_anomaly_zone.artefact_points_by_id[af_id] = nil
-            if zone then
-                zone.artefact_ways_by_id[af_id] = nil
-                zone.artefact_points_by_id[af_id] = nil
-                zone.spawned_count = zone.spawned_count - 1
-                if zone.spawned_count < 0 then
-                    zone.spawned_count = 0
-                end
-            end
-        end
-        alife_release(artefact)
-        artefacts_spawned_time[af_id] = nil
-    end
+function actor_on_item_drop(item)
+	if item and IsArtefact(item) then
+		local sec = item:section()
+		local kind = SYS_GetParam(0, sec, "kind")
+		if kind == "i_arty_junk" or kind == "i_arty" then
+			cache_loose_artefact(item:id())
+		end
+	end
 end
 
 function actor_on_item_take(item)
-    if item and IsArtefact(item) and artefacts_spawned_time and artefacts_spawned_time[item:id()] then
-        artefacts_spawned_time[item:id()] = nil
-    end
+	if item and IsArtefact(item) then
+		local id = item:id()
+		tracked_loose_artefacts[id] = nil
+		artefacts_spawned_time[id] = nil
+	end
 end
 
 function save_state(m_data)
-    --printf("/// saving artefacts spawn time")
-    m_data.artefacts_spawned_time = artefacts_spawned_time
+	m_data.af_despawner_times = artefacts_spawned_time
+	m_data.af_despawner_tracked = tracked_loose_artefacts
 end
 
 function load_state(m_data)
-    artefacts_spawned_time = m_data.artefacts_spawned_time or {}
-
-    local sim = alife()
-    if sim then
-        for id, _ in pairs(artefacts_spawned_time) do
-            local se_obj = sim:object(id)
-            if not (se_obj and IsArtefact(se_obj)) then
-                artefacts_spawned_time[id] = nil
-            end
-        end
-    end
+	artefacts_spawned_time = m_data.af_despawner_times or {}
+	tracked_loose_artefacts = m_data.af_despawner_tracked or {}
 end
 
 function on_game_start()
-    RegisterScriptCallback("actor_on_first_update", clear_old_artefacts)
-    RegisterScriptCallback("actor_on_item_take", actor_on_item_take)
-    RegisterScriptCallback("save_state", save_state)
-    RegisterScriptCallback("load_state", load_state)
+	hook_artefact_net_spawn()
+	RegisterScriptCallback("actor_on_first_update", delayed_clear_old_artefacts)
+	RegisterScriptCallback("actor_on_item_drop", actor_on_item_drop)
+	RegisterScriptCallback("actor_on_item_take", actor_on_item_take)
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
 end
