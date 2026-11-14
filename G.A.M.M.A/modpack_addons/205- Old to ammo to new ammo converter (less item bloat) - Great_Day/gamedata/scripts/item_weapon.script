@@ -1024,12 +1024,68 @@ local function actor_on_update()
 	update_overheat()
 end
 
+-- ammo_aggregation replaces these sections instead of merging them
+local function replaced_on_merge(section)
+	if section == "ammo_12x70_buck_self" then
+		return true
+	end
+	if not _NO_DAMAGED_AMMO then
+		return false
+	end
+	local clean = string_gsub(section, "_verybad", "")
+	if clean == section then
+		clean = string_gsub(section, "_bad", "")
+	end
+	return clean ~= section and ini_sys:section_exist(clean)
+end
+
+-- Merges every ammo section with more than one partial box in a stash or body, in one pass over its items
+function merge_box_ammo(npc)
+	local first, split = {}, {}
+	local function collect(temp, item)
+		if IsAmmo(item) and item:ammo_get_count() < item:ammo_box_size() then
+			local section = item:section()
+			if first[section] then
+				split[section] = first[section]
+			else
+				first[section] = item
+			end
+		end
+	end
+	if IsInvbox(npc) then
+		npc:iterate_inventory_box(collect)
+	else
+		npc:iterate_inventory(collect)
+	end
+	for section, item in pairs(split) do
+		if not replaced_on_merge(section) then
+			ammo_aggregation(item, npc)
+		end
+	end
+end
+
+local function merge_on_move(npc_id)
+	local npc = level.object_by_id(npc_id)
+	if npc then
+		merge_box_ammo(npc)
+	end
+	return true
+end
+
 local function move(npc_id, obj, mode, bag_from)
     if mode == "loot" and bag_from == EDDListType.iActorBag and IsAmmo(obj) then
 		local box = level.object_by_id(npc_id)
 		if box then
-			CreateTimeEvent("box", "box_agg", 0, ammo_aggregation, obj, box)
+			-- One merge per stash covers every box moved in the same action
+			CreateTimeEvent("box_agg", npc_id, 0.1, merge_on_move, npc_id)
 		end
+	end
+end
+
+-- Stashes split by older versions or by scripts that spawn into them are merged when opened
+local function stash_opened(mode, flags, obj)
+	if mode == "loot" and obj and IsInvbox(obj) then
+		merge_box_ammo(obj)
 	end
 end
 
@@ -1038,6 +1094,7 @@ function on_game_start()
 	RegisterScriptCallback("on_key_release",on_key_release)
 	RegisterScriptCallback("actor_on_update",actor_on_update)
 	RegisterScriptCallback("ActorMenu_on_item_after_move", move)
+	RegisterScriptCallback("ActorMenu_on_before_init_mode", stash_opened)
 	if (ini_sys:section_exist("addons_table")) then
 		--[[
 		local snd_targets = get_console_cmd(2,"snd_targets")
