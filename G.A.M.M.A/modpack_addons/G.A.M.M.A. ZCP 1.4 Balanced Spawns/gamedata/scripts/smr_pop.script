@@ -1139,6 +1139,14 @@ local function get_common_squad_type(squad_name)
     return false
 end
 
+local function get_squad_member_ids(squad)
+    local t = {}
+    for k in squad:squad_members() do
+        table.insert(t, k.id)
+    end
+    return t
+end
+
 local function release_npc_or_squad(npc, squad)
     alife_release(npc)
     if (squad:npc_count() <= 1) then
@@ -1321,11 +1329,12 @@ function remove_disabled_mutants_from_squad(squad, spawn_smart)
     end
     local sim = alife()
     -- remove disabled mutants
-    for k in squad:squad_members() do
-        local se_obj = k.object or k.id and sim:object(k.id)
+    for i, id in ipairs(get_squad_member_ids(squad)) do
+        local se_obj = sim:object(id)
         if  IsMonster(nil, se_obj:clsid())
             and (not get_object_story_id(se_obj.id))
             and (not is_mutant_type_enabled(se_obj:section_name()))
+            and ((squad:npc_count() > 1) or (string.sub(squad:name(), 1, string.len("simulation_")) ~= "simulation_"))
         then
             smr_debug.get_log().info("population/monsters", "releasing disabled mutant %s in squad %s", se_obj:section_name(), squad:section_name())
             alife_release(se_obj)
@@ -1355,17 +1364,17 @@ end
 function replace_mutant_variants_in_squad(squad, smart)
     local vt = get_unused_mutant_spawn_table()
     local sim = alife()
-    for k in squad:squad_members() do
-        local se_obj = k.object or k.id and sim:object(k.id)
+    for i, id in ipairs(get_squad_member_ids(squad)) do
+        local se_obj = sim:object(id)
         for m, v in pairs(vt) do
             if  (str_explode(se_obj:section_name(), "_")[1] == m)
                 and (random(1,100) <= smr_mutants_mcm.get_config("unused_types_chance"))
              then
-                release_npc_or_squad(se_obj, squad)
                 local mrs = v[random(#v)]
                 local mr = alife_create(mrs, smart)
                 smr_debug.get_log().info("population/monsters", "replaced %s with variant %s in squad %s", se_obj:section_name(), mrs, squad:section_name())
                 squad:register_member(mr.id)
+                alife_release(se_obj)
             end
         end
     end
@@ -1412,9 +1421,9 @@ function adjust_squad_size(squad, smart)
         end
         smr_debug.get_log().info("population", "adjusted squad %s size up: new count is %s", squad:section_name(), squad:npc_count())
     elseif (target_diff < 0) then
-        for k in squad:squad_members() do
+        for i, id in ipairs(get_squad_member_ids(squad)) do
             local sim = alife()
-            local se_obj = k.object or k.id and sim:object(k.id)
+            local se_obj = sim:object(id)
             if (target_diff >= 0) then
                 break
             elseif (target_diff < -1) then
