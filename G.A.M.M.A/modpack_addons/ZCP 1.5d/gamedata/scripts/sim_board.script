@@ -201,9 +201,7 @@ function simulation_board:create_squad_at_named_location(loc_name, squad_id) -- 
 	local pos = vector():set(data[1], data[2], data[3])
 	
 	local squad = alife_create(squad_id, pos,	data[4], data[5])
-	if squad then 
-		-- printf('create_squad_at_named_location: squad created %s',squad.id)
-	end
+	if not squad then return end
 	squad:create_npc(nil, pos, data[4], data[5])
 
 	local sim = alife()
@@ -384,7 +382,7 @@ function get_sim_board()
 end
 
 local priority_tasks = {}
-function simulation_board:get_squad_target(squad)
+function simulation_board:get_squad_target(squad, ignore_population, skip_props)
 	local size_t = 0
 	
 	local object_registry = simulation_objects.object_registry
@@ -393,7 +391,7 @@ function simulation_board:get_squad_target(squad)
 		local se_target = object_registry[index]
 		if (not se_target.locked and se_target.id ~= squad.id and is_available[se_target.id]) then 
 			local curr_prior = se_target:evaluate_prior(squad)
-			if (curr_prior > 0 and se_target:target_precondition(squad)) then
+			if (curr_prior > 0 and se_target:target_precondition(squad, ignore_population, skip_props)) then
 				-- Prioritize 5 potential targets
 				if (size_t < 5) then 
 					size_t = size_t + 1
