@@ -1,0 +1,94 @@
+-- Lets a revived stalker play its getup clip before combat or idle takes over
+
+local HOLD_MAX = 6000
+
+local holds = {}
+local base = {
+	evaluate = xr_wounded.evaluator_wound.evaluate,
+	execute = xr_wounded.action_wounded.execute,
+	update = xr_wounded.Cwound_manager.update,
+	eat_medkit = xr_wounded.Cwound_manager.eat_medkit,
+}
+
+local function smgr(id)
+	local sto = db.storage[id]
+	return sto and sto.state_mgr
+end
+
+-- Wound animation the state manager still shows for this wound state, nil once another state or clip took over
+local function wound_anim(npc, wound_state)
+	local sm = smgr(npc:id())
+	local st = sm and sm.target_state == wound_state and state_lib.states[wound_state]
+	local anim = st and st.animation
+	if anim and anim:find("^wounded") and sm.animation.states.current_state == anim and not npc:has_info("npcx_is_companion") then
+		return anim
+	end
+end
+
+local function release(npc)
+	holds[npc:id()] = nil
+end
+
+-- Medkit revive leaves the wound state slowly so the stop action plays the out clip
+local function eat_medkit(self)
+	local anim = self.can_use_medkit == true and wound_anim(self.npc, self.state)
+	local t = time_global()
+	local r = base.eat_medkit(self)
+	if r and anim then
+		smgr(self.npc:id()).fast_set = nil
+		holds[self.npc:id()] = { t = t, anim = anim }
+	end
+	return r
+end
+
+-- A wound state that turns nil while its loop still plays is a health rise revive
+local function update(self)
+	local was = self.state
+	base.update(self)
+	local id = self.npc:id()
+	if self.state == "nil" and was ~= "nil" and not holds[id] then
+		local anim = wound_anim(self.npc, was)
+		if anim then
+			holds[id] = { t = time_global(), anim = anim }
+		end
+	end
+end
+
+-- Keeps the wounded action selected until the out clip ends or the hold runs out
+local function evaluate(self)
+	local wounded = base.evaluate(self)
+	local npc = self.object
+	local h = holds[npc:id()]
+	if not h then
+		return wounded
+	end
+	if not wounded and npc:alive() and not (npc:critically_wounded() or npc:in_smart_cover()) and time_global() - h.t < HOLD_MAX then
+		local sm = smgr(npc:id())
+		if sm and sm.animation.states.current_state == h.anim then
+			return true
+		end
+	end
+	release(npc)
+	return wounded
+end
+
+-- Leaves the wound state without the fast flag while held instead of logging a wrong wounded animation
+local function execute(self)
+	local npc = self.object
+	if holds[npc:id()] and tostring(load_var(npc, "wounded_state")) == "nil" then
+		action_base.execute(self)
+		state_mgr.set_state(npc, "hide_no_wpn")
+		return
+	end
+	return base.execute(self)
+end
+
+xr_wounded.evaluator_wound.evaluate = evaluate
+xr_wounded.action_wounded.execute = execute
+xr_wounded.Cwound_manager.update = update
+xr_wounded.Cwound_manager.eat_medkit = eat_medkit
+
+function on_game_start()
+	RegisterScriptCallback("npc_on_death_callback", release)
+	RegisterScriptCallback("npc_on_net_destroy", release)
+end
