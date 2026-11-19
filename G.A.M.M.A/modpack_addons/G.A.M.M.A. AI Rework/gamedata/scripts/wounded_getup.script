@@ -1,6 +1,7 @@
 -- Lets a revived stalker play its getup clip before combat or idle takes over
 
-local HOLD_MAX = 6000
+-- Covers the longest wound loop still playing at the revive plus its out clip
+local HOLD_MAX = 10000
 
 local holds = {}
 local base = {
@@ -15,12 +16,13 @@ local function smgr(id)
 	return sto and sto.state_mgr
 end
 
--- Wound animation the state manager still shows for this wound state, nil once another state or clip took over
+-- Wound animation the state manager still shows for this wound state or a companion's wounded pose, nil once another state or clip took over
 local function wound_anim(npc, wound_state)
 	local sm = smgr(npc:id())
-	local st = sm and sm.target_state == wound_state and state_lib.states[wound_state]
+	local target = sm and sm.target_state
+	local st = (target == wound_state or target == "wounded" and npc:has_info("npcx_is_companion")) and state_lib.states[target]
 	local anim = st and st.animation
-	if anim and anim:find("^wounded") and sm.animation.states.current_state == anim and not npc:has_info("npcx_is_companion") then
+	if anim and anim:find("^wounded") and sm.animation.states.current_state == anim then
 		return anim
 	end
 end
@@ -54,19 +56,22 @@ local function update(self)
 	end
 end
 
+-- True while a revived NPC still plays its out clip within the hold time
+function is_held(npc)
+	local h = holds[npc:id()]
+	local sm = h and time_global() - h.t < HOLD_MAX and smgr(npc:id())
+	return sm and sm.animation.states.current_state == h.anim or false
+end
+
 -- Keeps the wounded action selected until the out clip ends or the hold runs out
 local function evaluate(self)
 	local wounded = base.evaluate(self)
 	local npc = self.object
-	local h = holds[npc:id()]
-	if not h then
+	if not holds[npc:id()] then
 		return wounded
 	end
-	if not wounded and npc:alive() and not (npc:critically_wounded() or npc:in_smart_cover()) and time_global() - h.t < HOLD_MAX then
-		local sm = smgr(npc:id())
-		if sm and sm.animation.states.current_state == h.anim then
-			return true
-		end
+	if not wounded and npc:alive() and not (npc:critically_wounded() or npc:in_smart_cover()) and is_held(npc) then
+		return true
 	end
 	release(npc)
 	return wounded
