@@ -1,0 +1,67 @@
+local bin_patched = false
+
+local knifesm = {
+	["wpn_knife"]  = { min = 25 , max = 40 },
+	["wpn_knife2"] = { min = 35 , max = 50 },
+	["wpn_knife3"] = { min = 45 , max = 60 },
+	["wpn_knife4"] = { min = 55 , max = 70 },
+	["wpn_knife5"] = { min = 65 , max = 85 },
+	["wpn_knife6"] = { min = 75 , max = 98 },
+	["wpn_knife7"] = { min = 75 , max = 98 },
+	["wpn_knife8"] = { min = 75 , max = 98 },
+}
+
+local function new_create_part(section, obj, t)
+	local min_mutant_part_cond = 25
+	local max_mutant_part_cond = 40
+
+	local hand_tool = db.actor and (db.actor:active_item() or db.actor:item_in_slot(12))
+	local target_knife = hand_tool and hand_tool:clsid() == clsid.wpn_knife_s and hand_tool:section() or item_knife.active_variable
+
+	if target_knife and knifesm[target_knife] then
+		min_mutant_part_cond = knifesm[target_knife].min
+		max_mutant_part_cond = knifesm[target_knife].max
+	else
+		local max_found = -1
+		local function itr(_, item)
+			local sec = item:section()
+			if knifesm[sec] and knifesm[sec].max > max_found then
+				max_found = knifesm[sec].max
+				max_mutant_part_cond = knifesm[sec].max
+				min_mutant_part_cond = knifesm[sec].min
+			end
+		end
+		db.actor:iterate_inventory(itr, db.actor)
+	end
+
+	if t then
+		if t.cond_r then
+			t.cond_r[1] = min_mutant_part_cond
+			t.cond_r[2] = max_mutant_part_cond
+		end
+		if t.cond_cr then
+			t.cond_cr[1] = min_mutant_part_cond / 100
+			t.cond_cr[2] = max_mutant_part_cond / 100
+		end
+	end
+
+	return alife_create_item(section, obj, t)
+end
+
+local function on_game_load()
+	if bin_patched then return end
+
+	if _G["ui_mutant_loot"] then
+		_G["ui_mutant_loot"].alife_create_item = new_create_part
+	end
+
+	if _G["zz_ui_mutant_loot_hunter_backpacks"] then
+		_G["zz_ui_mutant_loot_hunter_backpacks"].alife_create_item = new_create_part
+	end
+
+	bin_patched = true
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_game_load", on_game_load)
+end
