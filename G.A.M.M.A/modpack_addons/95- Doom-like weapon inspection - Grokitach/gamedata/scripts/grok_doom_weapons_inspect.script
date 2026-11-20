@@ -18,7 +18,14 @@ function check_weapon(obj)
 end
 
 function check_anim()
-	if block_repeat then return end
+	if block_repeat then
+		-- Putting the weapon away ends the inspection, so the restore leaves the next draw alone
+		local wpn = db.actor:active_item()
+		if not (wpn and wpn:id() == inspect_id and wpn:get_state() ~= 2) then
+			inspect_id = nil
+		end
+		return
+	end
     current_wpn = db.actor:active_item()
     if(current_wpn) then
         current_wpn_id = current_wpn:id()
@@ -79,6 +86,8 @@ end
 function play_anim(weapon, anim, sound)
 	if not block_repeat then
 		block_repeat = true
+		inspect_id = weapon:id()
+		inspect_state = weapon:get_state()
 		local length = weapon:play_hud_motion(anim, true, 0, 1, 0)
 		if sound then
 			snd = sound_object(sound)
@@ -97,9 +106,10 @@ end
 function unset()
 	block_repeat = false
 	local current_weapon = db.actor:active_item()
-        if current_weapon then
-	      current_weapon:switch_state(0)
-        end
+	-- Leave the weapon alone if the player started a reload, shot or swap meanwhile
+	if current_weapon and current_weapon:id() == inspect_id and current_weapon:get_state() == inspect_state then
+		current_weapon:switch_state(0)
+	end
 	return true
 end
 
