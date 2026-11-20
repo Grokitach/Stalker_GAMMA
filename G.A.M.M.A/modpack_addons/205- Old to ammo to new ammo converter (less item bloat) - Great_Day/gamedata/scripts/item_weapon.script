@@ -582,6 +582,44 @@ end
 -------------------------------------------------------------------
 GUI = nil -- instance, don't touch
 local aw_cooldown = 0
+local queued_pick = nil
+
+-- A busy weapon refuses the reload, so the pick waits until it is free
+local function pick_ammo_type(wpn, ammo_type)
+	if ammo_type == wpn:get_ammo_type() then
+		queued_pick = nil
+		return
+	end
+	if wpn:is_pending() and (wpn:get_state() ~= 7) then
+		queued_pick = { id = wpn:id(), ammo_type = ammo_type, gl = wpn:weapon_in_grenade_mode() }
+		return
+	end
+	queued_pick = nil
+	wpn:unload_magazine(true)
+	wpn:set_ammo_type(ammo_type)
+	db.actor:reload_weapon()
+end
+
+-- A waiting pick counts as the current type so later picks build on it
+local function picked_ammo_type(wpn)
+	if queued_pick and queued_pick.id == wpn:id() and queued_pick.gl == wpn:weapon_in_grenade_mode() then
+		return queued_pick.ammo_type
+	end
+	return wpn:get_ammo_type()
+end
+
+local function update_queued_pick()
+	if not queued_pick then
+		return
+	end
+	local wpn = db.actor:active_item()
+	-- The type index belongs to one ammo list, so a launcher toggle drops the pick
+	if not (wpn and wpn:id() == queued_pick.id and wpn:weapon_in_grenade_mode() == queued_pick.gl) then
+		queued_pick = nil
+	elseif not wpn:is_pending() then
+		pick_ammo_type(wpn, queued_pick.ammo_type)
+	end
+end
 
 function start_ammo_wheel()
 	local wpn = db.actor:active_item()
@@ -708,7 +746,7 @@ function UIWheelAmmo:Reset(obj)
 	self.object    = obj
 	self.id        = obj:id()
 	self.section   = obj:section()
-	self.ammo_type = obj:get_ammo_type()
+	self.ammo_type = picked_ammo_type(obj)
 	self.grenade_mode = obj:weapon_in_grenade_mode() and true or false
 
 	-- Collect weapon's ammo list
@@ -785,7 +823,7 @@ function UIWheelAmmo:SwitchNextAmmo()
 	if wpn and (wpn:section() == self.section) then
 		
 		local new_type
-		local ammo_type = wpn:get_ammo_type()
+		local ammo_type = picked_ammo_type(wpn)
 		
 		-- Search for available next ammo types
 		for i=(ammo_type + 2),self.ammo_max do -- +2 because we need next type (+1 is the current type in ammo table)
@@ -806,9 +844,7 @@ function UIWheelAmmo:SwitchNextAmmo()
 		end
 		
 		if new_type then
-			wpn:unload_magazine(true)
-			wpn:set_ammo_type(new_type - 1) -- ammo type starts from 0
-			db.actor:reload_weapon()
+			pick_ammo_type(wpn, new_type - 1) -- ammo type starts from 0
 		end
 	end
 
@@ -819,11 +855,9 @@ function UIWheelAmmo:OnAmmo(n)
 	local wpn = db.actor:active_item()
 	if wpn and (wpn:section() == self.section) and self.avail[n] then
 		
-		local ammo_type = wpn:get_ammo_type()
+		local ammo_type = picked_ammo_type(wpn)
 		if (ammo_type ~= n - 1) then
-			wpn:unload_magazine(true)
-			wpn:set_ammo_type(n - 1) -- ammo type starts from 0
-			db.actor:reload_weapon()
+			pick_ammo_type(wpn, n - 1) -- ammo type starts from 0
 		end
 	end
 
@@ -1022,6 +1056,7 @@ end
 
 local function actor_on_update()
 	update_overheat()
+	update_queued_pick()
 end
 
 -- ammo_aggregation replaces these sections instead of merging them
