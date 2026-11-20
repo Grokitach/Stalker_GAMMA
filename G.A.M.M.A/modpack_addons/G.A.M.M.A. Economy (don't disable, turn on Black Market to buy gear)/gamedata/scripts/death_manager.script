@@ -378,6 +378,27 @@ function decide_items_to_keep(npc, npc_id, npc_name) -- this will actually occur
 	npc:iterate_inventory(keep_item, npc)
 end
 
+-- Release an item of a "dont_keep_items" NPC.
+-- The weapon in the NPC's hands is being dropped by the engine during the death callback, and
+-- addons such as "Weapons Drop on Bodies" transfer it back into the corpse right after keep_item.
+-- Releasing it immediately leaves a physics object with a destroyed owner, which crashes the
+-- engine on its next collision (play_object / TContactShotMark access violation), e.g. when the
+-- player kills Dazhbog (red_greh_tech). Release the held weapon a moment later instead.
+local function release_dont_keep_item(npc, item, se_item)
+	local active_item = npc:active_item()
+	if active_item and active_item:id() == item:id() then
+		local item_id = item:id()
+		CreateTimeEvent("death_manager_dont_keep_items", tostring(item_id), 1, function()
+			if alife_object(item_id) then
+				alife_release_id(item_id)
+			end
+			return true
+		end)
+		return
+	end
+	alife_release(se_item)
+end
+
 function keep_item(npc, item) -- The function is called for each item, and decide if this item should stay or get released.
 	if not (item) then
 		return
@@ -400,14 +421,14 @@ function keep_item(npc, item) -- The function is called for each item, and decid
 	-- NPC has a define "dont_keep_items" in his spawn ini
 	local ini = npc:spawn_ini()
 	if ini and ini:section_exist("dont_keep_items") then
-		alife_release(se_item)
+		release_dont_keep_item(npc, item, se_item)
 		return
 	end
 	
 	local npc_id = npc:id()
 	local st = db.storage[npc_id]
 	if (st and st.ini and st.section_logic and st.ini:line_exist(st.section_logic,"dont_keep_items")) then
-		alife_release(se_item)
+		release_dont_keep_item(npc, item, se_item)
 		return
 	end 
 	
