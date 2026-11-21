@@ -1674,6 +1674,15 @@ function UIInventory:UpdateWeight()
 end
 
 function UIInventory:UpdateInventories()
+	local saved = {}
+	for name, cc in pairs(self.CC) do
+		saved[name] = { sort_method = cc.sort_method, kind_row = cc.rKind and cc.rKind.row }
+		cc.sort_method = nil
+		if cc.rKind then
+			cc.rKind.row = 1
+		end
+	end
+
 	if (self.mode == "inventory") or (self.mode == "repair") then
 		self:IMode_RefreshInventories()
 		
@@ -1682,6 +1691,13 @@ function UIInventory:UpdateInventories()
 		
 	elseif (self.mode == "trade") then
 		self:TMode_RefreshInventories()
+	end
+
+	for name, cc in pairs(self.CC) do
+		cc.sort_method = saved[name].sort_method
+		if cc.rKind then
+			cc.rKind.row = math.min(saved[name].kind_row, cc.row_end + 1)
+		end
 	end
 end
 
