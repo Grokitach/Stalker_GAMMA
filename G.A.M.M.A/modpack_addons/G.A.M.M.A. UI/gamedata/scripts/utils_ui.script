@@ -1805,6 +1805,15 @@ function UICellContainer:TakeRoom(r,c,w,h)
 	return { y=r , x=c , w=w , h=h } -- rows are Y, coloumns are X
 end
 
+local function is_row_used(grid, row, cols)
+	for col = 1, cols do
+		if grid[row][col] == false then
+			return true
+		end
+	end
+	return false
+end
+
 function UICellContainer:FreeRoom(r,c,w,h)
 	self:Print(nil, "FreeRoom (%s,%s,%s,%s)", r,c,w,h)
 	
@@ -1813,6 +1822,11 @@ function UICellContainer:FreeRoom(r,c,w,h)
 			self.grid[row][col] = true
 		end
 	end
+
+	while self.row_end > 0 and not is_row_used(self.grid, self.row_end, self.cols) do
+		self.row_end = self.row_end - 1
+	end
+	self.rKind.row = math.min(self.rKind.row, self.row_end + 1)
 end
 
 function UICellContainer:FindSimilar(obj, sec)
