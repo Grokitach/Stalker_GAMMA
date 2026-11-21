@@ -2383,7 +2383,7 @@ function UIInventory:LMode_PutAll()
 	end
 	
 	-- We need to make sure that the other NPC has enough carry weight
-	if IsStalker(npc) and npc:alive() then
+	if IsStalker(npc) and npc:alive() and not se_load_var(npc:id(), nil, "companion") then
 		local tot_weight = 0
 		for id,idx in pairs(cc.indx_id) do
 			local ci = cc:GetCell_ID(id)
@@ -2402,13 +2402,17 @@ function UIInventory:LMode_PutAll()
 	end
 	
 	-- Move all possible items
-	for id,idx in pairs(cc.indx_id) do
-		local ci = cc:GetCell_ID(id)
-		if ci then
-			local obj = level.object_by_id(id)
-			if self:Cond_Move(obj, "actor_bag") then
-				self:Action_Move(obj, "actor_bag")
-			end
+	local items = {}
+	for id in pairs(cc.indx_id) do
+		local obj = cc:GetCell_ID(id) and level.object_by_id(id)
+		if obj then
+			items[#items + 1] = { obj = obj, weight = obj:weight() }
+		end
+	end
+	table.sort(items, function(left, right) return left.weight > right.weight end)
+	for _, item in ipairs(items) do
+		if self:Cond_Move(item.obj, "actor_bag") then
+			self:Action_Move(item.obj, "actor_bag")
 		end
 	end
 	
