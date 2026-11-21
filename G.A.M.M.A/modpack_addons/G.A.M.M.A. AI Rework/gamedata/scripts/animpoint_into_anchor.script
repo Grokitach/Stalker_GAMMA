@@ -1,0 +1,21 @@
+-- Keeps animpoint sitters on their seat when their job restarts or they change pose on the same cover
+
+local base_add_anim = state_mgr_animation.animation.add_anim
+
+-- The cover transform positions the into clip, so it is applied to every into clip and never to the clips of a body state already entered through one
+local function add_anim(self, anm, state)
+	local mgr = self.mgr
+	local body = mgr.animation_position and mgr.animstate
+	local body_anims = body and body.anim_path and body.anim_path.animations
+	if body_anims then
+		local states = body.states
+		if self.name == "state_mgr_animstate_list" and states.current_state == nil and states.target_state and states.seq_id == 1 then
+			mgr.animation_direction_applied = nil
+		elseif states.current_state and body_anims[states.current_state] and body_anims[states.current_state].into and not mgr.fast_set then
+			mgr.animation_direction_applied = true
+		end
+	end
+	return base_add_anim(self, anm, state)
+end
+
+state_mgr_animation.animation.add_anim = add_anim
