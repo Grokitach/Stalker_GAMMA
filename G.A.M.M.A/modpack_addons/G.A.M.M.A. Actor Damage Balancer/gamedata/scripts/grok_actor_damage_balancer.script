@@ -205,7 +205,7 @@ function get_game_factor(key)
 end
 
 -- Returns displayed AP res on armor
-function get_outfit_ap_res(obj)
+function get_outfit_ap_res(obj, sec)
 	-- Object exists
 	if obj then
 		local outfit = IsOutfit(obj)
@@ -226,6 +226,10 @@ function get_outfit_ap_res(obj)
 		end
 
 		return armor_bone_value
+
+	-- Section only, outfits and helmets read the same key
+	elseif sec then
+		return 1 - (ini_sys:r_float_ex(sec, "hit_fraction_actor") or 1)
 	end
 end
 
@@ -566,6 +570,52 @@ function get_af_value(obj, sec, name, def)
 	end
 end
 
+-- The engine keeps protections as 32 bit floats, so round section values the same way
+local function to_float(x)
+	local m, e = math.frexp(x)
+	return math.ldexp(math_floor(m * 16777216 + 0.5) / 16777216, e)
+end
+
+-- Section value with each preinstalled upgrade added in order, as the engine does on spawn
+function get_section_value(sec, key)
+	local value = to_float(ini_sys:r_float_ex(sec, key) or 0)
+	for _, upgr in ipairs(parse_list(ini_sys, sec, "installed_upgrades")) do
+		local upgr_sec = ini_sys:r_string_ex(upgr, "section")
+		local add = upgr_sec and ini_sys:r_float_ex(upgr_sec, key)
+		if add then
+			value = to_float(value + to_float(add))
+		end
+	end
+	return value
+end
+
+local function read_bone_armor(bones_sec, bone)
+	local line = bones_sec and ini_sys:r_string_ex(bones_sec, bone)
+	return line and tonumber(str_explode(line, ",")[2])
+end
+
+-- Bone armor from the bone section, replaced or added to by preinstalled upgrades like the engine does
+local function get_section_bone_armor(sec, bone)
+	local bones_sec = ini_sys:r_string_ex(sec, "bones_koeff_protection")
+	local armor, default = read_bone_armor(bones_sec, bone), read_bone_armor(bones_sec, "default") or 0
+	for _, upgr in ipairs(parse_list(ini_sys, sec, "installed_upgrades")) do
+		local upgr_sec = ini_sys:r_string_ex(upgr, "section")
+		local new_sec = upgr_sec and ini_sys:r_string_ex(upgr_sec, "bones_koeff_protection")
+		if new_sec then
+			bones_sec = new_sec
+			armor, default = read_bone_armor(bones_sec, bone), read_bone_armor(bones_sec, "default") or 0
+		end
+		local add_sec = bones_sec and upgr_sec and ini_sys:r_string_ex(upgr_sec, "bones_koeff_protection_add")
+		if add_sec then
+			local add = read_bone_armor(add_sec, bone)
+			if add then
+				armor = to_float(armor or 0) + to_float(add)
+			end
+			default = to_float(default) + to_float(read_bone_armor(add_sec, "default") or 0)
+		end
+	end
+	return to_float(armor or default)
+end
 
 function get_outfit_value(obj, sec, name, def)
 	local outfit = IsOutfit(obj)
@@ -615,9 +665,11 @@ function get_outfit_value(obj, sec, name, def)
 
 	if sec then
 		if protection == "FireWound" then
-			section_protection = math_ceil(SYS_GetParam(0,sec,"hit_fraction_actor") * adjuster * 100) or 0
+			-- Same bone armor the object path reads
+			local bone = string.find(SYS_GetParam(0, sec, "class", ""), "HLMET") and "bip01_head" or "bip01_spine"
+			section_protection = math_ceil(get_section_bone_armor(sec, bone) * adjuster * 100)
 		else
-			section_protection = math_ceil(SYS_GetParam(0,sec, defense) * adjuster * 100) or 0
+			section_protection = math_ceil(get_section_value(sec, defense) * adjuster * 100)
 		end
 
 		return section_protection
