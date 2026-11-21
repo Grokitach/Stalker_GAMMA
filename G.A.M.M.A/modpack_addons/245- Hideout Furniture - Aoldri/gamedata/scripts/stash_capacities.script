@@ -15,7 +15,11 @@ local function itr_for_stashes(section)
 end
 ini_sys:section_for_each(itr_for_stashes)
 
-local weight_add = 0 -- used when moving items into a stash
+local cached_time, cached_stash_id, cached_weight
+
+local function is_from_actor(bag_from)
+	return bag_from == EDDListType.iActorBag or bag_from == EDDListType.iActorSlot
+end
 
 local function getInvWeight(stash_id)
     local stash = get_object_by_id(stash_id)
@@ -25,6 +29,13 @@ local function getInvWeight(stash_id)
     end)
         
     return weight
+end
+
+local function get_stash_weight(stash_id)
+	if cached_time ~= time_global() or cached_stash_id ~= stash_id then
+		cached_time, cached_stash_id, cached_weight = time_global(), stash_id, getInvWeight(stash_id)
+	end
+	return cached_weight
 end
 
 -- Update Max Capacity of stash inventories
@@ -62,15 +73,6 @@ function ui_inventory.UIInventory:Action_Move_All(obj, bag)
             pr("UNO")
 			if id and bag then
 				self:Action_Move(id, bag)
-				item = self:CheckItem(id)
-				if item then
-					item_weight = item:weight()
-					if item_weight then
-						weight_add = weight_add + item_weight
-					else
-						weight_add = weight_add
-					end
-				end
 			end
         else
             pr("Would normally move, but COND_MOVE says no.")
@@ -79,15 +81,13 @@ function ui_inventory.UIInventory:Action_Move_All(obj, bag)
     if self:Cond_Move(obj, bag) then
         pr("DUO")
 	    self:Action_Move(obj, bag)
-        weight_add = weight_add + self:CheckItem(obj):weight()
     else
         pr("Would normally move, but COND_MOVE says no.")
     end
-    weight_add = 0
 end
 
 local function actor_on_item_before_move(flags, npc_id, obj, mode, bag_from)
-	if (bag_from ~= EDDListType.iActorBag) then return end
+	if not is_from_actor(bag_from) then return end
 	if not obj then return end
     if not npc_id then
         pr("no npc id?")
@@ -103,7 +103,7 @@ local function actor_on_item_before_move(flags, npc_id, obj, mode, bag_from)
     if not stash_sections[section] then return end
 
 	local capacity = ini_sys:r_float_ex(section,"capacity") or 60
-    local weight = getInvWeight(npc_id) + weight_add
+    local weight = get_stash_weight(npc_id)
     pr("Weight: " .. weight)
 	if weight + obj:weight() > capacity then
 		flags.ret_value = false
@@ -111,6 +111,13 @@ local function actor_on_item_before_move(flags, npc_id, obj, mode, bag_from)
 	end
 end
 
+local function actor_on_item_after_move(stash_id, item, mode, bag_from)
+	if cached_stash_id == stash_id and cached_time == time_global() and is_from_actor(bag_from) then
+		cached_weight = cached_weight + item:weight()
+	end
+end
+
 function on_game_start()
 	RegisterScriptCallback("ActorMenu_on_item_before_move", actor_on_item_before_move)
+	RegisterScriptCallback("ActorMenu_on_item_after_move", actor_on_item_after_move)
 end
