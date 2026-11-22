@@ -155,7 +155,7 @@ local function get_shuffle_vertex(npc, enemy, max_allowed_dist)
 	if v_id and v_id ~= 4294967295 and v_id ~= npc:level_vertex_id() and npc:accessible(v_id) then
 		return v_id
 	end
-	return npc:level_vertex_id()
+	return nil
 end
 
 local function smarter_behavior(npc)
@@ -221,18 +221,18 @@ local function smarter_behavior(npc)
 			if not c_state.shuffle_timer or tg >= c_state.shuffle_timer then
 				c_state.shuffle_timer = tg + 3000
 				c_state.shuffle_vertex = get_shuffle_vertex(npc, enemy, dynamic_trigger_dist)
-				npc:set_dest_level_vertex_id(c_state.shuffle_vertex)
-
-				-- printf(string.format("---[AI_DEBUG] %s can't see the target. Shuffle to node %d.", npc:name(), tonumber(c_state.shuffle_vertex) or 0))
-			end
-			if c_state.shuffle_vertex then
-				if c_state.shuffle_vertex == npc:level_vertex_id() then
-					npc:set_movement_type(move.stand)
-					npc:set_body_state(move.crouch)
-				else
-					npc:set_movement_type(move.walk)
-					npc:set_body_state(move.crouch)
+				if c_state.shuffle_vertex then
+					npc:set_dest_level_vertex_id(c_state.shuffle_vertex)
 				end
+
+				-- printf(string.format("---[AI_DEBUG] %s can't see the target. %s", npc:name(), c_state.shuffle_vertex and ("Shuffle to node " .. c_state.shuffle_vertex .. ".") or "Skipped shuffling to empty node."))
+			end
+			if c_state.shuffle_vertex and c_state.shuffle_vertex ~= npc:level_vertex_id() then
+				npc:set_movement_type(move.walk)
+				npc:set_body_state(move.crouch)
+			else
+				npc:set_movement_type(move.stand)
+				npc:set_body_state(move.crouch)
 			end
 			return
 		else
@@ -257,9 +257,8 @@ local function smarter_behavior(npc)
 
 				local refresh_window = tactical_behavior and tactical_behavior.get_rank_refresh(npc) or 16000
 				c_state.bush_timer = tg + refresh_window
-				c_state.shuffle_timer = tg + 3000
-				c_state.shuffle_vertex = get_shuffle_vertex(npc, enemy, dynamic_trigger_dist)
-				npc:set_dest_level_vertex_id(c_state.shuffle_vertex)
+				c_state.shuffle_timer = nil
+				c_state.shuffle_vertex = nil
 				npc:set_movement_type(move.stand)
 				npc:set_body_state(move.crouch)
 
@@ -281,9 +280,8 @@ local function smarter_behavior(npc)
 		if d < dynamic_trigger_dist then
 			local refresh_window = tactical_behavior and tactical_behavior.get_rank_refresh(npc) or 16000
 			c_state.bush_timer = tg + refresh_window
-			c_state.shuffle_timer = tg + 3000
-			c_state.shuffle_vertex = get_shuffle_vertex(npc, enemy, dynamic_trigger_dist)
-			npc:set_dest_level_vertex_id(c_state.shuffle_vertex)
+			c_state.shuffle_timer = nil
+			c_state.shuffle_vertex = nil
 			npc:set_movement_type(move.stand)
 			npc:set_body_state(move.crouch)
 
