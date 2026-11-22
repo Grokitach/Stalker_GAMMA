@@ -1454,6 +1454,11 @@ function is_overweight(npc, npc_id, comp_weight)
 	return curr_weight > npc_max_weight, curr_weight, npc_max_weight
 end
 
+function can_carry(npc_id, item_weight)
+	local _, assigned_weight, max_weight = is_overweight(nil, npc_id)
+	return assigned_weight ~= nil and assigned_weight + item_weight <= max_weight
+end
+
 function get_inventory_weight(tbl_inv)
 	local inv_weight = 0
 	for id,sec in pairs(tbl_inv) do
@@ -1462,8 +1467,12 @@ function get_inventory_weight(tbl_inv)
 	return inv_weight
 end
 
+local function is_from_actor(bag_from)
+	return bag_from == EDDListType.iActorBag or bag_from == EDDListType.iActorSlot
+end
+
 function OnItemBeforeMove(flags, npc_id, obj, mode, bag_from)
-	if (mode ~= "loot") or (bag_from ~= EDDListType.iActorBag) then
+	if (mode ~= "loot") or not is_from_actor(bag_from) then
 		return
 	end
 	
@@ -1472,25 +1481,8 @@ function OnItemBeforeMove(flags, npc_id, obj, mode, bag_from)
 		return
 	end
 	
-	local overweight, a, b = is_overweight(nil, npc_id) --utils_item.is_overweight(nil, npc_id)
-	if overweight then
+	if obj and not can_carry(npc_id, obj:weight()) then
 		flags.ret_value = false
-	end
-
-	if obj then
-		local curr_weight = 0
-		if assigned_items[npc_id] then
-			for id,_ in pairs(assigned_items[npc_id]) do
-				local npc_obj = level.object_by_id(id)
-				if npc_obj then
-					curr_weight = curr_weight + npc_obj:weight()
-				end
-			end
-		end
-
-		if curr_weight + obj:weight() > npc_max_weight then
-			flags.ret_value = false
-		end
 	end
 end
 
@@ -1507,7 +1499,7 @@ function OnItemAfterMove(npc_id, obj, mode, bag_from)
 	local item_id = obj:id()
 	
 	-- Move from actor to NPC
-	if (bag_from == EDDListType.iActorBag) then
+	if is_from_actor(bag_from) then
 		if not assigned_items[npc_id] then 
 			assigned_items[npc_id] = {}
 		end
