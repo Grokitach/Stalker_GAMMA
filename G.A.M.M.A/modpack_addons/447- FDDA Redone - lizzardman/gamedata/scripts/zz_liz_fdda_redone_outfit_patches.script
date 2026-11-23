@@ -1,0 +1,157 @@
+local mcm_allow_movement = liz_fdda_redone_mcm.get_config("outfit_anm/allow_movement")
+local mcm_enable_animation = liz_fdda_redone_mcm.get_config("outfit_anm/enable_patches")
+local mcm_enable_animation_inventory = liz_fdda_redone_mcm.get_config("outfit_anm/enable_patches_inventory")
+
+----------------------------------------
+-- monkey patches
+----------------------------------------
+
+--disable vanilla patch animation
+local originalPIF = actor_effects.play_item_fx
+actor_effects.play_item_fx = function(name)
+    if name == "disguise_tear_patch" then return end
+    originalPIF(name)
+end
+
+
+--call animation when perform actions on patches
+local originalMPA = gameplay_disguise.menu_patch_action
+gameplay_disguise.menu_patch_action = function(obj)
+
+    local section = obj:section()
+    local comm = ini_sys:r_string_ex(section, "community")
+    if comm and (comm ~= "") and gameplay_disguise.possible_factions[comm] then
+        local id = obj:id()
+        local obj_patch = gameplay_disguise.get_patch(comm)
+        local state = se_load_var(id, obj:name(), "unpatched")
+
+        local current_outfit_id = db.actor:item_in_slot(7) and db.actor:item_in_slot(7):id() or -1
+        local is_equipped_outfit = id == current_outfit_id and true or false
+
+        if state and obj_patch then
+
+            if is_equipped_outfit then
+                if mcm_enable_animation then play_animation(obj, "outfit_animation_patch_apply_" .. comm .. "_hud", 0.8) else originalMPA(obj) end
+            else
+                if mcm_enable_animation_inventory then play_animation(obj, "outfit_animation_patch_apply_inventory_" .. comm .. "_hud", 0.8) else originalMPA(obj) end
+            end
+
+        elseif (state == nil) then
+
+            if is_equipped_outfit then
+                if mcm_enable_animation then play_animation(obj, "outfit_animation_patch_remove_" .. comm .. "_hud", 0.1) else originalMPA(obj) end
+            else
+                if mcm_enable_animation_inventory then play_animation(obj, "outfit_animation_patch_remove_inventory_" .. comm .. "_hud", 0.1) else originalMPA(obj) end
+            end
+
+        end
+    end
+
+    -- originalMPA(obj)
+end
+
+
+InventoryClick = ui_inventory.UIInventory.On_CC_Mouse1
+function ui_inventory.UIInventory:On_CC_Mouse1(bag, idx)
+    InventoryClick(self, bag, idx)
+	local obj = self.CC[bag]:GetObj(idx)
+	if (not obj) then
+		self:Print(nil, "Callback On_CC_Mouse1 | no object recieved!", bag, idx)
+		return
+	end
+    if ((key_state(DIK_keys.DIK_RCONTROL) or 0) ~= 0 or (key_state(DIK_keys.DIK_LCONTROL) or 0) ~= 0) and (bag == "npc_bag" or bag == "actor_bag" or bag == "actor_equ") then
+        gameplay_disguise.menu_patch_action(obj)
+    end
+end
+
+----------------------------------------
+
+function on_game_start()
+    RegisterScriptCallback("on_option_change", on_option_change)
+	rax_persistent_highlight.register("liz_outfit_patch", check_ready)
+end
+
+function on_option_change()
+    mcm_allow_movement = liz_fdda_redone_mcm.get_config("outfit_anm/allow_movement")
+    mcm_enable_animation = liz_fdda_redone_mcm.get_config("outfit_anm/enable_patches")
+    mcm_enable_animation_inventory = liz_fdda_redone_mcm.get_config("outfit_anm/enable_patches_inventory")
+end
+
+----------------------------------------
+
+-- selection color
+local outfit_in_use = {}
+local bags = { actor_equ = true, actor_bag = true, npc_bag = true }
+local ready_color = GetARGB(100, 255, 159, 82)
+function check_ready(cell)
+    if bags[cell.container.ID] then
+        return outfit_in_use[cell.ID] and ready_color
+    end
+end
+
+local function is_valid_game_obj(obj)
+    if not obj then return false end
+    local ok_id, id = pcall(function() return obj:id() end)
+    if not (ok_id and id) then return false end
+    local ok_sec, sec = pcall(function() return obj:section() end)
+    if not (ok_sec and sec and sec ~= "") then return false end
+    return alife_object(id) ~= nil
+end
+
+function play_animation(obj, section_name, apply_time_normalized)
+    if not is_valid_game_obj(obj) then return end
+    local obj_id = obj:id()
+    if outfit_in_use[obj_id] then return end
+
+    outfit_in_use[obj_id] = true
+
+    local action = lam2.get_template_action_play_animation()
+    action.item = obj
+    action.sec = section_name
+    action.only_allow_movekeys = mcm_allow_movement
+    action.disable_input = not mcm_allow_movement
+    action.can_skip = true
+    action.patch_action_done = false
+    action.apply_time = apply_time_normalized or 0.5
+    action.on_execute = function (self, time)
+        --remove patch in the middle of the animation
+        if not self.patch_action_done and time > self.duration * self.apply_time then
+            self.patch_action_done = true
+            local current_id = nil
+            pcall(function()
+                if self.item then
+                    current_id = self.item:id()
+                end
+            end)
+            if current_id then
+                outfit_in_use[current_id] = nil
+            else
+                outfit_in_use[obj_id] = nil
+            end
+
+            if is_valid_game_obj(self.item) then
+                originalMPA(self.item)
+            elseif self.stop then
+                pcall(function() self:stop() end)
+            end
+        end
+    end
+    action.on_skip = function (self)
+        lam2.log("[PATCH ANIMATION] On Skip called: Patch action done: %s", self.patch_action_done)
+        local target_id = obj_id
+        pcall(function()
+            if self.item and self.item:id() then
+                target_id = self.item:id()
+            end
+        end)
+        if not self.patch_action_done and target_id then
+            outfit_in_use[target_id] = nil
+        end
+    end
+
+    local inv_gui = ui_inventory.GUI
+    if inv_gui and inv_gui:IsShown() and inv_gui.mode == "loot" then
+        hide_hud_inventory()
+    end
+    lam2.add_action(action)
+end
