@@ -786,6 +786,11 @@ if pda.coc_ranking_list then
 		-- force actor into last visible slot + 1 on ranking list
 		coc_ranking_list[coc_ranking_array_size+1] = 0
 	end
+
+	local old_pda_coc_rankings_can_show = pda.coc_rankings_can_show
+	function pda.coc_rankings_can_show(index)
+		return old_pda_coc_rankings_can_show(index) and IsStalker(alife_object(pda.coc_ranking_list[index]))
+	end
 end
 
 -- Saloeater: Fix/trade manager resupply sync
@@ -1305,6 +1310,54 @@ local function fix_squad_offline_teleport()
 	end
 end
 
+-- Stevo88494
+-- Fix: stop treasure_manager putting loot and a map spot on an object that is not a stash.
+-- Deleted stashes can leave stale ids in the stash list. The game reuses those ids, so it can accidentally assign a stash to some unrelated object.
+-- The fix makes removing unused boxes work correctly, then checks that an object is still a box before assigning loot and a marker.
+-- It prevents new unusable markers and discards stale entries when selected. It doesn’t remove broken markers already in a save.
+local function fix_stale_stash_ids()
+	local tm = treasure_manager
+	if not (tm and tm.caches and type(tm.release_stash_by_id) == "function"
+	        and type(tm.set_random_stash) == "function") then
+		printf("![fix_stale_stash_ids] treasure_manager missing or changed shape, fix not installed")
+		return
+	end
+
+	-- caches[id] is false for an available box, so the base guard skips it. Set
+	-- it true and the original will delete the key and decrement caches_count
+	local base_release_stash_by_id = tm.release_stash_by_id
+	tm.release_stash_by_id = function(id)
+		-- Only promote a key that is already there, or this enrols a stash
+		-- instead of removing one.
+		if tm.caches[id] == false then
+			tm.caches[id] = true
+		end
+		return base_release_stash_by_id(id)
+	end
+
+	local base_set_random_stash = tm.set_random_stash
+	tm.set_random_stash = function(no_spot, hint, bonus_items, id, dbg)
+		-- simulate_stash_creation passes counters, not real ids.
+		-- alife_object callstacks on a nil or out-of-range id, so screen it
+		-- first. IsInvbox is what on_game_load builds the pool with.
+		if not dbg then
+			local usable = (type(id) == "number") and (id >= 0) and (id < 65535)
+			local se_obj = usable and alife_object(id) or nil
+			if not (se_obj and IsInvbox(nil, se_obj:clsid())) then
+				printf("![treasure_manager] refused to place a stash on a non-box: id %s", id)
+				if usable and (tm.caches[id] ~= nil) then
+					if type(tm.caches[id]) == "string" then
+						printf("![treasure_manager] dropped entry had contents: %s", tm.caches[id])
+					end
+					tm.release_stash_by_id(id)
+				end
+				return
+			end
+		end
+		return base_set_random_stash(no_spot, hint, bonus_items, id, dbg)
+	end
+end
+
 -- Disable caching in utils_item, with extra setters exported it will have wrong data
 utils_item.check_cache = function(...)
 	return false
@@ -1574,6 +1627,26 @@ level_weathers.WeatherManager.reset = function(self, ...)
 	end
 end
 
+-- Warfare escort target functors crash on a nil squad when the escort dies after leaving the level of
+-- its target anomaly: task_target_anomaly stays set but is no longer in db.anomaly_by_name.
+do
+	local function guard_escort_target(functor_name, escort_task_id, squad_story_id)
+		local base = task_functor[functor_name]
+		task_functor[functor_name] = function(task_id, field, p, tsk)
+			if task_id == escort_task_id and not get_story_squad(squad_story_id) then
+				local n = db.actor and load_var(db.actor, "task_target_anomaly")
+				local anomaly = n and db.anomaly_by_name[n]
+				if n and not (anomaly and anomaly.object) then
+					return nil
+				end
+			end
+			return base(task_id, field, p, tsk)
+		end
+	end
+	guard_escort_target("mar_base_owl_stalker_trader_task_target", "sim_default_csky_trader_task_3", "ecolog_companion_task_1")
+	guard_escort_target("jup_b6_scientist_tech_task_target", "sim_default_ecolog_trader_task_1", "ecolog_companion_task_2")
+end
+
 -- Perform luagc cleanup
 function luagc_cleanup()
 	printf("~[luagc_cleanup] collectgarbage before=%sKb",collectgarbage("count")*1024)
@@ -1646,4 +1719,5 @@ function on_game_start()
 	RegisterScriptCallback("on_loading_screen_key_prompt", luagc_cleanup)
 
 	fix_squad_offline_teleport()
+	fix_stale_stash_ids()
 end

@@ -1,0 +1,32 @@
+#include "common.h"
+
+Texture2D s_ui_3d_icons;
+
+static const int2 SHADOW_OFFSET = int2(1, 2);
+static const float4 SHADOW_COLOR = float4(20.0f, 20.0f, 20.0f, 200.0f) / 255.0f;
+static const float SHARPEN_STRENGTH = 0.30f;
+
+float4 rgba_blend(float4 b, float4 a)
+{
+	float na = a.a + b.a * (1 - a.a);
+	float3 nc = na > 0 ? (a.rgb * a.a + b.rgb * b.a * (1 - a.a)) / na : float3(0, 0, 0);
+	return float4(nc, na);
+}
+
+float4 main(p_screen input) : SV_Target
+{
+	const int2 pixel = int2(input.hpos.xy);
+	const float4 source = s_ui_3d_icons.Load(int3(pixel, 0));
+
+	const float3 left = s_ui_3d_icons.Load(int3(pixel + int2(-1, 0), 0)).rgb;
+	const float3 right = s_ui_3d_icons.Load(int3(pixel + int2(1, 0), 0)).rgb;
+	const float3 up = s_ui_3d_icons.Load(int3(pixel + int2(0, -1), 0)).rgb;
+	const float3 down = s_ui_3d_icons.Load(int3(pixel + int2(0, 1), 0)).rgb;
+	const float3 sharpened_rgb = saturate(source.rgb + SHARPEN_STRENGTH *
+		(4.0f * source.rgb - left - right - up - down));
+
+	float4 shadow = s_ui_3d_icons.Load(int3(pixel - SHADOW_OFFSET, 0));
+	shadow *= SHADOW_COLOR;
+
+	return rgba_blend(shadow, float4(sharpened_rgb, source.a));
+}

@@ -1,0 +1,143 @@
+--[[
+	New-game start locations by level name and position.
+
+	A [<location>] section in plugins\new_game_start_locations.ltx may name its level instead of baking ids:
+		[my_level_camp]
+		level = my_level
+		x = 12.3
+		y = 0.5
+		z = -45.6
+	With level, the game vertex is the level's nearest one to x, y, z (game_graph():nearest_vertex) and lvid / gvid
+	are not read. Without it the section works as before (lvid, gvid, x, y, z).
+	The main menu lists a location with level only when that level is in game.level_names().
+--]]
+
+local ini = ini_file("plugins\\new_game_start_locations.ltx")
+local levels_in_play
+
+local function level_of(location)
+	local level = ini:r_string_ex(location, "level")
+	return level ~= "" and level or nil
+end
+
+local function in_play(location)
+	local level = level_of(location)
+	if not level then
+		return true
+	end
+	if not levels_in_play then
+		levels_in_play = {}
+		for _, name in ipairs(game.level_names()) do
+			levels_in_play[name] = true
+		end
+	end
+	return levels_in_play[level] == true
+end
+
+local function position_of(location)
+	local x, y, z = ini:r_float_ex(location, "x"), ini:r_float_ex(location, "y"), ini:r_float_ex(location, "z")
+	return x and y and z and vector():set(x, y, z)
+end
+
+-- { lvid, gvid, position } as ChangeLevel takes them, or nil and the reason.
+local function resolve(location)
+	local pos = position_of(location)
+	if not pos then
+		return nil, "x, y or z is missing"
+	end
+
+	local level = level_of(location)
+	if not level then
+		local lvid, gvid = ini:r_float_ex(location, "lvid"), ini:r_float_ex(location, "gvid")
+		if not (lvid and gvid) then
+			return nil, "lvid or gvid is missing"
+		end
+		return { lvid, gvid, pos }
+	end
+
+	local graph = game_graph()
+	local gvid = graph:nearest_vertex(level, pos)
+	if not gvid then
+		return nil, "level '" .. level .. "' is not in the game graph"
+	end
+	return { graph:vertex(gvid):level_vertex_id(), gvid, pos }
+end
+
+local function first_resolvable(faction, skip)
+	local section = faction .. "_start_locations"
+	if not ini:section_exist(section) then
+		return
+	end
+	for i = 0, ini:line_count(section) - 1 do
+		local _, location = ini:r_line(section, i, "", "")
+		if location ~= skip then
+			local start = resolve(location)
+			if start then
+				return location, start
+			end
+		end
+	end
+end
+
+local base_load_map = ui_mm_faction_select.UINewGame.LoadMap
+ui_mm_faction_select.UINewGame.LoadMap = function(self, rand)
+	base_load_map(self, rand)
+
+	local kept, locations, dropped = {}, 0, false
+	for _, id in ipairs(self.table_map) do
+		if id == "random_location" then
+			kept[#kept + 1] = id
+		elseif in_play(id) then
+			kept[#kept + 1] = id
+			locations = locations + 1
+		else
+			dropped = true
+		end
+	end
+	if not dropped then
+		return
+	end
+	if locations == 0 then
+		printf("! start locations: faction '%s' has no location on a level in play, listing all", self.selected_faction)
+		return
+	end
+
+	self.table_map = kept
+	self.list_map:ClearList()
+	for i = 1, #kept do
+		self.list_map:AddItem(game.translate_string("ui_st_" .. kept[i]), i)
+	end
+	local pick = rand and kept[math.random(#kept)] or kept[1]
+	self.list_map:SetText(game.translate_string("ui_st_" .. pick))
+	self.selected_map = pick
+	self:UpdateMap()
+end
+
+local base_on_game_load = ui_mm_faction_select.on_game_load
+if not base_on_game_load then
+	printf("! start_locations_by_level: ui_mm_faction_select.on_game_load is not unlocalized, start locations by level are off")
+	return
+end
+ui_mm_faction_select.on_game_load = function(binder)
+	local config = axr_main.config
+	local faction = config and config:r_value("character_creation", "new_game_faction", 3) or ""
+	local location = config and config:r_value("character_creation", "new_game_map") or ""
+
+	base_on_game_load(binder)
+
+	if faction == "" or location == "" or not level_of(location) then
+		return
+	end
+
+	local start, reason = resolve(location)
+	if not start then
+		local fallback
+		fallback, start = first_resolvable(faction, location)
+		if fallback then
+			printf("! start location '%s': %s, using '%s'", location, reason, fallback)
+		else
+			printf("! start location '%s': %s, no other start location of faction '%s' resolves", location, reason, faction)
+		end
+	end
+	ui_mm_faction_select.start_pos = start
+end

@@ -249,12 +249,16 @@ _G.CBeforeHitAfterCalcs = function(shit, target, boneId)
 	SendScriptCallback("on_before_hit_after_calcs", shit, target, boneId)
 end
 
--- Monster combat action decision callback, fired at the head of the shared monster attack selectors.
--- A subscriber sets flags.substate to a monster_state.* id (e.g. monster_state.eStateAttack_RunAway);
--- the engine selects it only if its own
--- start conditions pass, else the vanilla selection runs. Left at -1 = no proposal = exact vanilla.
--- A proposed substate's check_start_conditions runs every selector tick (camp runs a cover search),
--- and the selector crosses into this relay once per tick even with zero subscribers.
+-- Monster combat action decision callback, fired at the head of every species state manager and
+-- the shared monster attack selectors (the poltergeist excepted, its live selector is
+-- hidden-attack/rest only). A subscriber sets flags.substate to a monster_state.* id: an
+-- eStateAttack_* substate steers the attack trees, a top-level id (monster_state.eStatePanic,
+-- eStateHitted, eStateThreaten, eStateAttack_Psy) steers the state manager. The engine selects it
+-- only where that species registers the state and its own start conditions pass, else the vanilla
+-- selection runs. Left at -1 = no proposal = exact vanilla.
+-- The result is memoized per monster per frame, so this relay fires at most once per monster per
+-- frame even where a state manager and an attack tree both consult it; it still crosses into Lua
+-- once per combat-active monster per frame with zero subscribers.
 AddScriptCallback("monster_on_combat_action")
 _G.CMonsterCombatAction = function(monster, enemy, dist, enemy_strength, can_jump)
 	local flags = { substate = -1 }
@@ -400,7 +404,6 @@ end
 -- is registered near the NPC. in_open=true when NPC has no cover point selected.
 -- cover_threatened=true when the danger overlaps the NPC's current cover position.
 -- Use npc:best_cover_invalidate() to force cover re-evaluation.
--- Use npc:rank_name() to scale reaction threshold by rank.
 AddScriptCallback("npc_on_danger_location_add")
 _G.CAI_Stalker__OnDangerLocationAdd = function(npc, pos, radius, in_open, cover_threatened)
 	SendScriptCallback("npc_on_danger_location_add", npc, pos, radius, in_open, cover_threatened)
@@ -435,7 +438,7 @@ _G.CAI_Stalker__OnWeaponReloadStop = function(npc, weapon)
 	SendScriptCallback("npc_on_weapon_reload_stop", npc, weapon)
 end
 
--- NPC grenade throw gate. Return false to prevent the throw. Use npc:rank_name() to scale by rank
+-- NPC grenade throw gate. Return false to prevent the throw.
 -- Note: only fires when throw trajectory is clear, after engine validity checks pass
 AddScriptCallback("npc_on_should_throw")
 _G.CAI_Stalker__ShouldThrow = function(npc)
@@ -445,11 +448,21 @@ _G.CAI_Stalker__ShouldThrow = function(npc)
 end
 
 -- NPC grenade throw force override. Return a float to override throw force.
--- Lower values = shorter throw range. Use npc:rank_name() to scale by rank
+-- Lower values = shorter throw range.
 AddScriptCallback("npc_on_missile_throw_force")
 _G.CAI_Stalker__GetMissileThrowForce = function(npc, base_force)
 	local flags = { ret_value = base_force }
 	SendScriptCallback("npc_on_missile_throw_force", npc, base_force, flags)
+	return flags.ret_value
+end
+
+-- Actor grenade throw force override. missile is the item being thrown, base_force the force the engine picked.
+-- Multiply flags.ret_value rather than assigning it, so that several addons can stack.
+-- The result must be > 0, otherwise it is ignored
+AddScriptCallback("actor_on_missile_throw_force")
+_G.CActor__GetMissileThrowForce = function(missile, base_force)
+	local flags = { ret_value = base_force }
+	SendScriptCallback("actor_on_missile_throw_force", missile, base_force, flags)
 	return flags.ret_value
 end
 
@@ -841,6 +854,12 @@ end
 AddScriptCallback("imgui_on_render")
 function on_imgui_render(name)
 	SendScriptCallback("imgui_on_render", name)
+end
+
+AddScriptCallback("imgui_on_show")
+AddScriptCallback("imgui_on_hide")
+function on_imgui_show(show)
+	SendScriptCallback(show and "imgui_on_show" or "imgui_on_hide")
 end
 
 --on GAME path build fail callback (can be used when npc tries to get to currently unavailable smart), 

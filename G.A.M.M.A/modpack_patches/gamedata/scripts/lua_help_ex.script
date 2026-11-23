@@ -6,11 +6,14 @@
         step_particle_distance [10; 100] // max distance at which step particle effects are played, hard cut-off, default 50
         snd_max_distance_multiplier [0.2; 2.0] // multiplier for maximum sound distance before it fade into being inaudbile due to low volume, default 1.0 (base values are configured on a per ogg file basis)
         snd_max_ai_distance_multiplier [0.2; 2.0] // multiplier for maximum distance AI reacts to sounds, default 1.0 (base values are configured on a per ogg file basis)
+        snd_music_next // Skip current music track for the next one
 
         bus_list // Print every shader bus lane with its owner, value, state, counters and the frame a shader last bound it
         bus_get <id> // Print one shader bus lane
         bus_force <id> x y z w // Force a lane to finite values until bus_release, a console debug path, the lua write path still needs the token
         bus_release <id> // Stop forcing the lane, the pending value returns on the next frame
+
+        env_mods_reload // Re-read environment modifiers for the current level from configs\environment\env_mods\<level>.ltx, see docs/env_mods.md
 
         snd_doppler_power [0; 5] // Adjust power of doppler effect
         snd_doppler_smoothing [1; 100] // Adjust smoothness of pitch shifting in doppler effect
@@ -24,9 +27,15 @@
 
         allow_accel_during_lookout [0; 1] // flag to allow 'running' speed during left or right lookouts
 
-        scale_hud_motion_marks_by_speed [1; 0] // flag to scale motion marks by speed, default is on
+        hud_ik_compensation [0; 1] // Anchor enabled arm IK shoulders to the camera and idle HUD offset. Default: 0
 
         npc_dont_drop_weapons_on_death [0; 1] // flag to disable NPCs dropping weapons on death
+
+        r4_atlas [0; 1] // DX11 3D inventory icon atlas. Default: 0 (direct rendering). Disabling stops atlas rendering immediately; vid_restart applies allocation/freeing of atlas resources
+        r4_atlas_resolution [0.1; 1.0] // Icon render size in the atlas relative to its screen size. Default: 0.6666667 (vanilla Anomaly icons resolution); applies immediately
+        r4_atlas_width [256; 8192] // Atlas texture width in pixels. Default: 2048; requires vid_restart
+        r4_atlas_height [256; 8192] // Atlas texture height in pixels. Default: 2048; requires vid_restart
+        r4_atlas_msaa [st_opt_off; 2x; 4x] // Atlas MSAA; st_opt_off disables MSAA. Default: 4x; requires vid_restart
 
         telekinetic_objects_include_corpses [0; 1] // Enable the ability for poltergeists and burers to throw corpses
 
@@ -197,19 +206,40 @@
         void iterate_objects(function(se_obj))
         void iterate_level_objects_of_clsid(number script_clsid, function(se_obj)) -- walks actor's current-level CSE registry filtered by m_script_clsid; functor returns true to stop early; must not release the currently iterated entity
         void force_update() -- forces an immediate alife scheduled update cycle
+        number objects_per_update() -- current scheduled-update object budget, as last set by set_objects_per_update (initially alife.ltx [alife] objects_per_update)
         cse_abstract create_on_level(string section, string level_name, Fvector position, number level_vertex_id = nil) -- create(section, position, lvid, gvid) with the ids derived: exact on the current level; elsewhere the level's nearest game vertex and level_vertex_id or that vertex's own level vertex, re-snapped to position when the level loads; nil (logged) when the level is not in the game graph
     }
 
     game {
+        // Hand poses: hand = 0 right, 1 left, 2 both, accrue/falloff are blend rates
+        void set_hand_pose(number hand, string section, string animation, number accrue, number falloff)
+        void force_set_hand_pose(number hand, string section, string animation)
+        void clear_hand_pose(number hand, number accrue, number falloff)
+
+        table list_hand_motions(string section)
+
+        table get_hand_motion_marks(string animation)
+        void set_hand_motion_marks(string animation, table marks)
+
+        // part = 0 item and both arms, 1 left arm/hand, 2 right arm/hand.
+        // time is normalized (0..1); a nonzero set_time overrides it with seconds.
+        void set_part_cycle_time(number part, number time, number set_time)
+
+        bool model_prefetched(string name)
+        table list_lanims() // light-animations
+        bool top_input_receiver() // UI dialog owns input
         Fvector2 world2ui(Fvector pos, bool hud = false, bool allow_offscreen = false)
         Fvector world2ui_with_depth(Fvector pos, bool hud = false, bool allow_offscreen = false) // x and y are screen coordinates, z is the post projection w, negative behind the camera and its magnitude is the view distance in metres
         table world2ui_many(table positions, bool hud, bool allow_offscreen) // projects an array of Fvector in one call, result[i] is the world2ui_with_depth vector for positions[i], stops at the first missing or non vector entry, empty table if the argument is not a table
+        table level_names() // names of the levels in play: game.ltx [levels] entries minus spawn_overlays.ltx [level_cut], sorted; works in the main menu, same list in game
         function ui2world(Fvector2 pos) -> Fvector result, u16 object_id
         function ui2world_offscreen(Fvector2 pos) -> Fvector result, u16 object_id
         change_game_news_show_time(CUIWindow* UIWindow, float show_time)
         update_pda_news_from_uiwindow(CUIWindow* UIWindow)
 
         bool motion_exists(string model_path, string motion_name) -- Loads a HUD model temporarily and checks whether it contains a named cycle motion. Caller must ensure the file exists first — game crashes on a missing path.
+
+        void set_hud_motion_lock(number target, number seconds) -- Ramps lock_to_camera toward target (clamped 0-1, 0 = normal hud, 1 = render cam w/o script/movement layers) from its current value, if seconds is 0 sets target instantly. Target resets to 0 when done with ramping.
     }
 
     ini_file() {
@@ -257,13 +287,28 @@
         property dest_position          // Fvector
     }
 
+    class cse_alife_trader_abstract {
+        function set_character_display_name(string)
+    }
+
     // game_graph()
     class CGameGraph {
         table level_neighbours(number level_id) // {[level_id] = true} for every level sharing a game-graph edge with level_id; empty table when the level is unknown or has no cross-level edges (offline squads cannot path in or out)
         number nearest_vertex(string level_name, Fvector position) // game vertex id of level_name's vertex whose level point is nearest to position; nil when the level is not in the game graph
     }
 
+    bool GetCursorVisible()
+    void SetCursorVisible(bool visible)
+    object_factory get_object_factory()
+    class object_factory {
+        number script_clsid(string class_id) // Engine CLASS_ID string -> registered script class ID
+    }
+    class CUICheckButton {
+        void SetVisualState(number state) // -1 automatic, 0 enabled, 1 disabled, 2 highlighted, 3 touched
+    }
+
     class CUIWindow {
+        void Update()
         CUIWindow FindChild()
 
         void SetHideLock(bool lock) // while locked the window hides and Show(true) is ignored
@@ -280,6 +325,7 @@
 
 		CUI3tButton cast_3tButton()
 		CUIActorMenu cast_ActorMenu()
+		CUIBinocularsVision cast_BinocularsVision()
 		CUIButton cast_Button()
 		CUICheckButton cast_CheckButton()
 		CUIComboBox cast_ComboBox()
@@ -320,10 +366,28 @@
     }
     
     class CUIGameCustom {
+        void TalkMenuSetVisible(bool visible)
         CUIWindow GetWindow() // get_hud():GetWindow()
     }
 
+    class CScriptXmlInit {
+        CUIBinocularsVision InitBinocularsVision(string path, CUIWindow parent) // node holds <corners width height> with the <lt>, <rt>, <lb>, <rb> corner textures as children
+    }
+
+    // Frames are placed in screen space : keep the window at 0,0 and over the whole screen
+    class CUIBinocularsVision : CUIWindow {
+        CUIBinocularsVision(string lt, string rt, string lb, string rb, vector2 frame_size) // corner textures, and the size of one corner
+        CUIBinocularsVision(string section) // item section with vis_frame_speed, vis_frame_color, found_snd and catch_snd, vanilla corners
+
+        void SetFrameColor(u32 color) // frame color until it locks, drawn at half alpha
+        void SetSpeed(float speed) // share of the remaining distance to the target closed per second
+        void SetRelationColors(u32 friend_color, u32 neutral_color, u32 enemy_color) // locked frame color of stalkers by relation to the actor, mutants keep the frame color
+        void SetFoundSound(string path) // played when a target is spotted, "" or "none" for silence
+        void SetCatchSound(string path) // played when a frame locks onto its target, "" or "none" for silence
+    }
+
     class CUIProgressBar {
+        void SetProgressPosInstant(float value)
         CUIStatic GetProgressStatic()
 		bool GetSnapNoDelay() Get the status of "SnapNoDelay"
 		void SetSnapNoDelay() Enable: progress visual displays progress position instantly. No longer progressively increase/descrease until meeting the new position.
@@ -335,9 +399,21 @@
         void ResetHeadingPivot()
         float SetLineTo(float x1, float y1, float x2, float y2, float thickness) // size, place and rotate the static as a segment between two points in parent units, returns the segment length
 
+        void SetOnlyHeadingPivot(Fvector2 pivot)
+        Fvector2 GetOnlyHeadingPivot()
+        void SetOnlyHeadingOffset(Fvector2 offset)
+        Fvector2 GetOnlyHeadingOffset()
     	void SetColorAnimation(string name, number flags, float delay)
 		void ResetColorAnimation()
 		void RemoveColorAnimation()
+    }
+
+    // 3D icon
+    class CUI3dStatic : CUIStatic {
+        function SetVisual(string model)
+        function SetObject(game_object obj)
+        function SetRotation(float heading, float pitch, float bank) // radians
+        function SetScale(float scale)
     }
 
     class CUIDialogWnd : CUIWindow {
@@ -470,6 +546,9 @@
     class render_device {
         // Switch the pause, with sound emitters and without hint on screen
         void pause_ex(bool state)
+        // CamAttached FOV in degrees (default 83). Global, restore when done.
+        void set_cam_attached_fov(float fov)
+        float get_cam_attached_fov()
     }
 
     class particles_object {
@@ -560,15 +639,19 @@
         bool set_array_uint(number token, number first, table rows) -- set_array with unsigned rows
         bool set_object(number token, game_object obj, number x, number y, number z, number w) -- the object's own value on a lane whose id starts obj_, HUD draws read the actor's
         bool clear_object(number token, game_object obj) -- the object reads the lane's value again
+        bool set_attachment(number token, script_attachment obj, number x, number y, number z, number w) -- the attachment's own value on a lane whose id starts obj_ (world and HUD)
+        bool clear_attachment(number token, script_attachment obj) -- the attachment reads the lane's value again
         bool set_texture(number token, string name) -- the texture or render target $user$bus_<id> shows from the next frame, "" empties it
         function get(string id) -> bool ok, number x, number y, number z, number w -- the bound value, one frame behind set
         function get_uint(string id) -> bool ok, number a, number b, number c, number d -- the bound value as unsigned integers
         function get_row(string id, number i) -> bool ok, number x, number y, number z, number w -- bound row i, false past the rows a shader declared, unsigned on a uint lane
         function get_object(string id, game_object obj) -> bool ok, number x, number y, number z, number w -- what draws of obj read, its own value or the lane's
+        function get_attachment(string id, script_attachment obj) -> bool ok, number x, number y, number z, number w -- what draws of obj read, its own value or the lane's
         string get_texture(string id) -- what $user$bus_<id> shows, nil for none or an unknown id
         function get_pending(string id) -> bool ok, number x, number y, number z, number w -- the value last written through the token, the largest of the tokens on a shared lane, unsigned on a uint lane
         table writers(string id) -- rows {owner, x, y, z, w}, one per token of a shared lane that called set, empty for any other lane
         table writers(string id, game_object obj) -- the same rows for the tokens that gave obj an object value
+        table writers(string id, script_attachment obj) -- the same rows for the tokens that gave obj an attachment value
         bool has(string id)
         string describe(string id) -- nil for an unknown or unregistered id
         string owner_of(string id) -- nil for an unknown or unregistered id
@@ -577,12 +660,14 @@
     }
 
     level {
+        bool is_demo_record()
         float get_music_volume()
         void set_music_volume(float)
 
         float get_weather_weight()
         void set_weather_weight(float)
         void set_weather_smooth(string)
+        void set_rain_wetness(float) // 0 to 1, read with level.rain_wetness()
 
         // Camera, position is x,y,z vector, direction is head,pitch,roll vector in RADIANS
         void set_cam_custom_position_direction(Fvector position, Fvector direction, int smoothing, bool hudDraw, bool hudAffect)
@@ -837,9 +922,22 @@
         function place_skeleton (game_object obj, string section, Fvector start, Fvector dir, float size, float ttl)
     }
 
-    // monster_on_combat_action callback flags.substate: the attack substates the shared monster
-    // and group attack selectors can honor; any other value is ignored and vanilla selection runs.
-    // Values are EMonsterState ids.
+    // monster_on_combat_action callback flags.substate: the states the monster selectors can honor;
+    // any other value is ignored and vanilla selection runs. Values are EMonsterState ids.
+    // eStateAttack_* substates reach the shared monster and group attack selectors; the top-level ids
+    // below them reach each species state manager. A proposal is honored only where that species
+    // registers the state and its own start conditions pass. Species notes:
+    //   eStateThreaten - chimera only (the dormant GSC intimidation machine: roar, creep, walk display).
+    //     The chimera's roar animation row is a GSC idle stub, so the roar phase stands still;
+    //     the proposer owns the visible display (set_override_animation + its own motion asset).
+    //     The creep and walk phases use the model's own motions.
+    //   eStateAttack_Psy - psy dog only (hide in cover while the phantoms press)
+    //   eStateHitted - flinch/disengage; anchors on hit memory, propose only after a real hit
+    //     (get_monster_hit_info), else the retreat anchors at the world origin
+    //   eStatePanic - flee; on the controller prefer eStateCustom (its own run-to-cover state),
+    //     the generic panic run was never exercised on its custom animation rig
+    //   eStateCustom - controller only (run to cover near the enemy, then face danger)
+    // The poltergeist selector takes no proposals: its live selector is hidden-attack/rest only.
     enum monster_state {
         eStateAttack_Run             = 262145,
         eStateAttack_Melee           = 262146,
@@ -852,7 +950,26 @@
         eStateAttackCamp             = 262160,
         eStateAttack_MoveToHomePoint = 262165,
         eStateAttack_Attack_On_Run   = 262169,
+        eStateAttack_Psy             = 262164,
+        eStatePanic                  = 524288,
+        eStateHitted                 = 1048576,
+        eStateThreaten               = 16777216,
         eStateCustom                 = 1073741824
+    }
+
+    // MonsterMovementInfo.path_capturer values (ControlCom::EControlType); custom1 is the controller psi tube
+    enum monster_path_capturer {
+        none             = -1,
+        sequencer        = 4,
+        triple_animation = 5,
+        jump             = 6,
+        rotation_jump    = 7,
+        run_attack       = 8,
+        threaten         = 9,
+        melee_jump       = 10,
+        custom1          = 16,
+        critical_wound   = 17,
+        anti_aim         = 18
     }
     
     // slot ids, the same numbers move_to_slot and active_slot use, read as inventory.knife
@@ -880,6 +997,14 @@
     }
 
     class game_object {
+        table get_current_motion()
+        bool is_pending()
+        void set_pending(bool pending)
+
+        xrTime game_death_time()
+        Fvector get_actor_direction() // Camera yaw, pitch and roll in radians
+        Fmatrix bone_transform(number bone_id, bool hud, bool previous)
+        Fmatrix bone_transform(string bone_name, bool hud, bool previous)
 		// Class casting
 		function cast_Knife()
 		function cast_Binoculars() // CWeaponBinoculars, nil when the object is not a pair of binoculars
@@ -940,6 +1065,7 @@
         // CBaseMonster - FSM memory readers. Report what the monster currently believes, distinct from live ground truth off the enemy game_object.
         MonsterEnemyInfo get_monster_enemy_info() // The EnemyMan record: enemy game_object (nil when none), last-seen position and vertex (the monster's cached belief, diverges from the live object while the enemy is unseen), time_last_seen (ms), enemies_count (remembered, not live-visible), my_vertex_enemy_last_seen + enemy_vertex_enemy_last_seen. Empty record on a non-monster.
         MonsterHomeInfo get_monster_home_info() // The CMonsterHome record: point (home anchor), radius_min/mid/max, aggressive, has_home, at_home. has_home false = no home set. Empty record on a non-monster.
+        MonsterMovementInfo get_monster_movement_info() // The CControl_Manager movement record, for slow/stuck diagnosis: velocity_current (applied AI speed), velocity_target (speed the active state asked for), real_velocity (physics XZ translation in the going direction), path_completed (reached the path end, arrived and correctly idle), path_actual (path is current/valid, false = rebuilding or target unreachable), path_capturer (the component holding the path, read against monster_path_capturer: a leap, charge, roar, rear strike, tube, flinch, anti-aim or standalone animation; none while the path builder drives. A chimera holds the path with its jump component while it circles and winds up too, read get_chimera_attack_phase alongside). Empty record on a non-monster.
         // get_monster_hit_info gains .position (last hit world pos) + .count (remembered hits); get_sound_info gains .type (TSoundDangerValue) + .count (remembered sounds).
         
         // CBaseMonster - rear-strike lever. Default = exact vanilla; not serialized, re-apply on net_spawn.
@@ -982,6 +1108,8 @@
         void set_monster_aura_params(string aura_name, float linear, float quadratic, float max_power, float max_distance) // One monster aura by name: psy, radiation, fire or base. Writes the falloff pair, power cap and range the aura's calculate() reads live. Error log on an unknown name.
         void set_bloodsucker_vis_timing(float min_delay_ms) // Bloodsucker only. The minimum delay between visibility-state changes (the predator flicker pacing).
         void set_monster_turn_factor(float factor) // The monster's base-path heading-turn speed multiplier (CControlDirectionBase::update_frame): it re-faces a moving target faster on the ground. 1 = vanilla, <= 0 keeps the current value. The jump control's in-flight alignment is untouched.
+        void set_monster_dest(Fvector position) // Override the monster's movement destination: the active state's mover walks the body to this world point each tick instead of its own target, re-asserted in CControlPathBuilderBase::update_target_point, the node resolved from the position. Single controller, no mob_capture. Caller restricts this to continuous-chase states (chimera attack) - a state that transitions on arriving at its own target desyncs under the override. Stays set until clear_monster_dest.
+        void clear_monster_dest() // Drop the destination override; the monster's own state resumes driving the mover. Default (never set) = vanilla.
 
 
         // CBaseMonster - maneuver invokes. Lua commands a control component; the engine executes it.
@@ -1042,6 +1170,9 @@
 		// Devices
 		function set_device_enabled(bool)
 		function is_device_enabled()
+
+		// Explosive
+		function set_initiator(obj)
 
         // Bones
         u16 get_bone_id(string)
@@ -1235,6 +1366,56 @@
     }
 
     class CWeapon : CGameObject {
+        // Scope zoom parameters
+        function GetScopeZoomFactor()
+        function SetScopeZoomFactor(float factor)
+        function GetMinScopeZoomFactor()
+        function SetMinScopeZoomFactor(float factor)
+        function GetZoomStepCount()
+        function SetZoomStepCount(float steps)
+        function IsDynamicZoom()
+        function SetDynamicZoom(bool enabled)
+        function GetZoomPostprocess()
+        function SetZoomPostprocess(string section)
+
+        // Current shot particle effects and muzzle light
+        function SetFlameParticles(string effect)
+        function SetSmokeParticles(string effect)
+        function SetLightShotDisabled(bool disabled)
+
+        // Magazine / ammo
+        function SetAmmoMagSize(number capacity)
+        function GetAmmoName()
+        function SetAmmoType(number index)
+        function SetAmmoType(string section)
+        function GetAmmoCount_forType(string section)
+        function GetAmmoCount_forType(number index)
+
+        function UseCustomHudOffset(bool enabled)
+
+        // HUD inertia on mouse movement
+        function GetInertionOffsetLRUD()
+        function GetInertionOffsetLRUDAim()
+        function SetInertionOffsetLRUD(Fvector4 offsets)
+        function SetInertionOffsetLRUD(float left, float right, float up, float down)
+        function SetInertionOffsetLRUDAim(Fvector4 offsets)
+        function SetInertionOffsetLRUDAim(float left, float right, float up, float down)
+
+        function GetInertionTendtoSpeed()
+        function GetInertionTendtoAimSpeed()
+        function SetInertionTendtoSpeed(float speed)
+        function SetInertionTendtoAimSpeed(float speed)
+
+        function GetInertionTendtoRetSpeed()
+        function GetInertionTendtoRetAimSpeed()
+        function SetInertionTendtoRetSpeed(float speed)
+        function SetInertionTendtoRetAimSpeed(float speed)
+
+        function GetInertionMinAngle()
+        function GetInertionMinAngleAim()
+        function SetInertionMinAngle(float angle)
+        function SetInertionMinAngleAim(float angle)
+
         // Return RPM in actual RPM value like in configs
         function RealRPM()
         function ModeRealRPM()
@@ -1326,7 +1507,17 @@
         function SetZoomCamMaxAngleHorz(float)
         function SetZoomCamStepAngleHorz(float)
 		
-		
+		-- lua table listing the different firemodes
+		-- example:
+		-- {
+		--    [1] = -1
+		--    [2] = 1
+		--    [3] = 3
+		-- }
+		function GetFireModes()
+
+		-- returns the index of the engine firemode array (starting at 0 unlike the table returned by GetFireModes)
+        function GetFireModeIndex()
 
         // Zoom
         bool StopZoom() // leaves ADS, plays the aim end animation when the weapon has one, false if the weapon was not zoomed
@@ -1340,7 +1531,8 @@
             statics - array of CUIStatic that CUIWindow scope UI instance uses
         }
         table get_scope_ui() 
-        function set_scope_ui(string)
+        function set_scope_ui(string name) // creates/replaces UI using the named node in scopes.xml
+        function reset_scope_ui() // removes the scope UI and clears the active 2D scope flag
         
         // Get and set the zoom_rotate_time (time in seconds to fully ADS) field for a given weapon
         function GetZoomRotateTime()
@@ -1350,6 +1542,21 @@
 		function ForceSetZoomType(float)
 
         callbacks (see callbacks_gameobject.script): npc_on_weapon_reload_start, npc_on_weapon_reload_stop -- (npc, wpn), fired on a stalker's weapon entering/leaving the reload state; actor reloads fire actor_on_weapon_reload instead
+    }
+
+    class CWeaponMagazined : CWeapon {
+        // Select a loaded firing-sound alias, e.g. "sndShot" or "sndSilencerShot".
+        // This does not load a sound file
+        function SetShootSound(string alias)
+    }
+
+    namespace hud_adjust {
+        // Edit the HUD item in slot 0. type: 0 = position, 1 = rotation (radians).
+        // idx selects the HUD offset; use 8 with CWeapon.UseCustomHudOffset(true).
+        // Does nothing if slot 0 has no attached HUD item.
+        function set_hud_offset(number type, number idx, Fvector offset)
+        function set_hud_offset(number type, number idx, float x, float y, float z)
+        function get_hud_transform()
     }
 
     class CWeaponKnife : CWeapon {
@@ -1492,7 +1699,8 @@
         function set_scale(vector);
         function set_scale(number, number, number);
         function set_scale(number);
-        function get_scale();
+        function get_scale(); -- returns vector
+        function get_scale_val(); -- returns number (x if x,y,z are the same, otherwise the average of all three values)
         function get_transform();
         function get_center();
 

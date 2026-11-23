@@ -1,0 +1,10 @@
+function normal(shader, t_base, t_second, t_detail)
+    shader:begin("ui_icons", "ui_icons")
+        :fog(false)
+        :zb(true, true)
+        :blend(false, blend.srcalpha, blend.invsrcalpha)
+        :aref(true, 0)
+        :sorting(2, true)
+        :distort(true)
+    shader:sampler("s_base"):texture(t_base):wrap():f_trilinear()
+end

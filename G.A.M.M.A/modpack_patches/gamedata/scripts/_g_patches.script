@@ -2,6 +2,12 @@
 
 _G.MODDED_EXES_VERSION = get_modded_exes_version()
 
+-- Cache device
+local device_ = device()
+_G.device = function()
+	return device_
+end
+
 -- IMPORTS
 local string_find 	= string.find
 local string_format	= string.format
@@ -93,6 +99,46 @@ _G.str_explode_lim = function(str, sep, n, plain)
 		t[#t + 1] = rest_s
 	end
 	return t
+end
+
+-- Better print_table function
+_G.print_table = function(table, subs)
+        local sub
+        if subs ~= nil then
+                sub = subs
+        else
+                sub = ""
+        end
+        printf(sub.."{")
+        for k,v in pairs(table) do
+                if type(v) == "table" then
+                        if (not next(v)) then
+                                printf(sub.."%s = {},", tostring(k))
+                        else
+                                printf(sub.."%s = ", tostring(k))
+                                print_table(v, sub.."    ")
+                        end
+                elseif type(v) == "function" then
+                        printf(sub.."%s = \"func\",", tostring(k))
+                elseif type(v) == "userdata" then
+                        if (v.x and v.y and v.z and v.w) then --vector4
+                                printf(sub.."%s = (%s, %s, %s, %s),", tostring(k), tostring(v.x), tostring(v.y), tostring(v.z), tostring(v.w))
+                        elseif (v.r and v.g and v.b and v.a) then --color
+                                printf(sub.."%s = (R:%s, G:%s, B:%s, A:%s),", tostring(k), tostring(v.r), tostring(v.g), tostring(v.b), tostring(v.a))
+                        elseif (v.x and v.y and v.z) then --vector3
+                                printf(sub.."%s = (%s, %s, %s),", tostring(k), tostring(v.x), tostring(v.y), tostring(v.z))
+                        elseif (v.x and v.y) then --vector2
+                                printf(sub.."%s = (%s, %s),", tostring(k), tostring(v.x), tostring(v.y))
+                        else
+                                printf(sub.."%s = \"userdata\",", tostring(k))
+                        end
+                elseif type(v) == "string" then
+                        printf(sub.."%s = \"%s\",", tostring(k), tostring(v))
+                else
+                        printf(sub.."%s = %s,", tostring(k), tostring(v))
+                end
+        end
+        printf(sub.."},")
 end
 
 -- Inserts character into string
@@ -440,13 +486,24 @@ end
 
 -- Additional params for callbacks
 -- Called on CHudItem Motion Mark
-_G.CHudItem__OnMotionMark = function(state, mark, obj, owner)
-	SendScriptCallback("actor_on_hud_animation_mark", state, mark, obj, owner)
+_G.CHudItem__OnMotionMark = function(state, mark, obj, owner, mark_start, mark_end)
+	SendScriptCallback("actor_on_hud_animation_mark", state, mark, obj, owner, mark_start, mark_end)
 end
 
 _G.CHudItem__PlayHUDMotion = function(anm_table, obj, owner)
 	SendScriptCallback("actor_on_hud_animation_play", anm_table, obj, owner)
 	return anm_table
+end
+
+-- Device attach/detach callbacks
+AddScriptCallback("actor_on_device_attach")
+_G.CCustomDevice__on_a_hud_attach = function()
+        SendScriptCallback("actor_on_device_attach")
+end
+
+AddScriptCallback("actor_on_device_detach")
+_G.CCustomDevice__on_b_hud_detach = function()
+        SendScriptCallback("actor_on_device_detach")
 end
 
 -- Disable caching of ini values to utilize engine functions and reduce memory footprint
