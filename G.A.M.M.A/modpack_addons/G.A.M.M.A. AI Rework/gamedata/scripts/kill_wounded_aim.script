@@ -1,0 +1,78 @@
+-- Lets the engine kill wounded planner finish its aim step when the victim lies under the stalker's head
+
+-- Time spent aiming at one victim before the aim counts as done
+local HOLD_TIME = 3000
+-- A longer pause between evaluations starts the hold over
+local MAX_GAP = 1000
+-- Only victims within 1.5 m, squared
+local MAX_DIST_SQR = 2.25
+
+class "evaluator_wounded_aimed" (property_evaluator)
+function evaluator_wounded_aimed:__init(planner, name) super(nil, name)
+	self.planner = planner
+	self.enemy_id = nil
+	self.since = nil
+	self.last = 0
+end
+
+function evaluator_wounded_aimed:evaluate()
+	-- 31 is the wounded enemy aimed property the engine aim step sets
+	local storage = self.storage
+	if not storage then
+		return false
+	end
+	if storage:property(31) then
+		return true
+	end
+
+	local tg = time_global()
+	local gap = tg - self.last
+	self.last = tg
+
+	-- 31 is also the id of the aim step inside the kill wounded planner
+	local kw = self.planner
+	local npc = self.object
+	local enemy = npc and npc:best_enemy()
+	if not (enemy and kw and kw:initialized() and kw:current_action_id() == 31) then
+		self.since = nil
+		return false
+	end
+
+	local id = enemy:id()
+	if not self.since or gap > MAX_GAP or id ~= self.enemy_id then
+		self.since = tg
+		self.enemy_id = id
+		return false
+	end
+
+	if tg - self.since >= HOLD_TIME and npc:position():distance_to_sqr(enemy:position()) <= MAX_DIST_SQR then
+		self.since = nil
+		storage:set_property(31, true)
+		return true
+	end
+	return false
+end
+
+-- Swaps the aim check of the kill wounded planner each time a stalker's brain is rebuilt
+local function npc_on_net_spawn(npc)
+	if GAMMA_AI and GAMMA_AI.disabled then
+		return
+	end
+
+	local manager = npc and npc:motivation_action_manager()
+	local combat = manager and manager:action(stalker_ids.action_combat_planner)
+	local combat_planner = combat and cast_planner(combat)
+	local kill_wounded = combat_planner and combat_planner:action(stalker_ids.action_kill_wounded_enemy)
+	local kw = kill_wounded and cast_planner(kill_wounded)
+	if not kw then
+		return
+	end
+
+	-- The engine keeps the old evaluator when an id is added twice
+	kw:remove_evaluator(31)
+	kw:add_evaluator(31, evaluator_wounded_aimed(kw, "evaluator_wounded_aimed"))
+end
+
+function on_game_start()
+	RegisterScriptCallback("npc_on_net_spawn", npc_on_net_spawn)
+end
