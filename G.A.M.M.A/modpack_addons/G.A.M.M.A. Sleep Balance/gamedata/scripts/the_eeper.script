@@ -1,0 +1,101 @@
+-- Fixes Hideout Furniture beds having worse (default public bed) properties compared to Sleeping Bag
+
+local function inject_comfort_override()
+	if not ui_sleep_dialog then
+		return false
+	end
+
+	ui_sleep_dialog.sleep_bag = function(ph_sleepbag_id, sec)
+		if (ui_sleep_dialog.GUI == nil) then
+			ui_sleep_dialog.GUI = ui_sleep_dialog.UISleep()
+		end
+
+		ui_sleep_dialog.GUI.forced = nil
+		ui_sleep_dialog.GUI.item_section = sec or (ph_sleepbag_id and type(ph_sleepbag_id) ~= "number" and ph_sleepbag_id:section()) or "placeable_bed_1"
+		ui_sleep_dialog.GUI.ph_sleepbag_id = (type(ph_sleepbag_id) == "number" and ph_sleepbag_id) or (ph_sleepbag_id and ph_sleepbag_id.id and ph_sleepbag_id:id()) or nil
+
+		ui_sleep_dialog.GUI.time_track:SetCurrentValue()
+		ui_sleep_dialog.GUI:TestAndShow()
+	end
+
+	ui_sleep_dialog.get_immersive_sleep_hours = function(hours)
+		local stored_bed_id = ui_sleep_dialog.GUI and ui_sleep_dialog.GUI.ph_sleepbag_id
+
+		if stored_bed_id and type(stored_bed_id) == "number" and stored_bed_id > 0 then
+			local COMFY_TIER_MAX = 2
+			local COMFY2_REST_RATE = 1400
+
+			if actor_status_sleep and actor_status_sleep.set_rest_per_hour then
+				actor_status_sleep.set_rest_per_hour(COMFY2_REST_RATE)
+			end
+
+			local display_str = game.translate_string("st_sleep_awake_slept_well")
+			actor_menu.set_msg(1, string.format(display_str, tostring(hours)), 4)
+
+			if ui_sleep_dialog.GUI then
+				ui_sleep_dialog.GUI.ph_sleepbag_id = nil
+				ui_sleep_dialog.GUI.item_section = nil
+			end
+
+			if DEV_DEBUG then
+				printf("[SLEEP_PATCH] Placed Furniture Detected (ID: %s): Granted 100%% rest quality. Bed ID uncached.", tostring(stored_bed_id))
+			end
+			return hours
+		end
+
+		if DEV_DEBUG then
+			printf("[SLEEP_PATCH] Generic Map Zone Detected (ID: Nil): Enforcing default comfort formulas.")
+		end
+
+		local sleepiness = actor_status_sleep.get_last_sleep() or 0
+		local max_sleep_percentage = 1.01
+		local comfy = 0
+		local comfy0_rest = 980
+		local comfy1_rest = 1120
+		local comfy2_rest = 1400
+		local rest_per_hour = comfy0_rest
+
+		local early_wakeup_percentage = 0
+		local early_wakeup_multiplier = 2
+		local early_wakeup_hour = 0.63
+
+		if comfy == 0 then
+			hours = math.floor(hours * max_sleep_percentage)
+		end
+
+		early_wakeup_percentage = early_wakeup_percentage + math.floor(hours * early_wakeup_multiplier)
+		actor_status_sleep.set_rest_per_hour(comfy0_rest)
+
+		local woke_early = 0
+		local rng = math.random(0, 100)
+		if rng < early_wakeup_percentage then
+			woke_early = 1
+			local min_wakeup_hour = math.floor(hours * early_wakeup_hour)
+			hours = math.random(min_wakeup_hour, (hours - 1))
+		end
+
+		if ui_sleep_dialog.GUI then
+			ui_sleep_dialog.GUI.ph_sleepbag_id = nil
+			ui_sleep_dialog.GUI.item_section = nil
+		end
+
+		if woke_early == 1 then
+			actor_menu.set_msg(1, string.format(game.translate_string("st_sleep_awake_woke_early"), tostring(hours)), 4)
+		else
+			actor_menu.set_msg(1, string.format(game.translate_string("st_sleep_awake_slept_for"), tostring(hours)), 4)
+		end
+
+		return hours
+	end
+
+	return true
+end
+
+local function on_game_load()
+	inject_comfort_override()
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_game_load", on_game_load)
+	RegisterScriptCallback("actor_on_first_update", on_game_load)
+end
