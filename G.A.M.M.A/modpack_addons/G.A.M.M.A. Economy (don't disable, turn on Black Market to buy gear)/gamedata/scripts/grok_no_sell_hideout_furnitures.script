@@ -1,0 +1,61 @@
+-- Monkey patch: items with a non-null "placeable_type" (workshop, etc.) can't be sold by the player.
+
+local function is_placeable(obj)
+	local pt = SYS_GetParam(0, obj:section(), "placeable_type")
+	return (pt ~= nil and pt ~= "" and pt ~= "none")
+end
+
+function utils_item.get_item_trade_status(obj, profile)
+	-- nil: no object
+	-- 1: item can't be traded
+	-- 2: item is too damaged to be traded
+	-- 3: item is not tradable by npc (to hide)
+	-- 4: tradable
+	
+	if not (obj and profile) then
+		return
+	end
+	
+	local note = 4
+	local sec = obj:section()
+	local cond = obj:condition() or 1
+	local uses = IsItem("multiuse",sec)
+	local ammo = IsItem("ammo",sec)
+	
+	-- No trade for too damaged item
+	if profile.cond_factor and cond < profile.cond_factor and (not uses) and (not ammo) then
+		note = 2
+	end
+	
+	-- No trade for quest items
+	if SYS_GetParam(1,sec,"quest_item") or (SYS_GetParam(1,sec,"can_trade") == false) then
+		note = 1
+	end
+	
+	-- No trade for unlisted items
+	local cfg = trade_manager.get_trade_cfg( profile.cfg )
+	local list = profile.list
+	if not (cfg and list) then
+		printe("!ERROR get_item_trade_status | trading profiles missing info | cfg: %s - list: %s", profile.cfg, list and true or false)
+		return
+	end
+	if cfg:line_exist(list, sec) and (not cfg:r_string_ex(list,sec)) then
+		note = 1
+	end
+	
+	-- For NPC, non-tradable items shouldn't be shown
+	if (profile.mode == 2) then
+		if (note ~= 4) or (obj:cost() <= 0) or IsItem("anim",sec) or IsItem("fake_ammo",sec)
+		or (ammo and ammo > obj:ammo_get_count())
+		or (uses and uses > obj:get_remaining_uses())
+		then
+			note = 3
+		end
+	end
+	
+	if (note == 4) and (profile.mode == 1) and is_placeable(obj) then
+		note = 1
+	end
+	
+	return note
+end
