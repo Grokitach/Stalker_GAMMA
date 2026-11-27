@@ -1,0 +1,63 @@
+[logic@bar_guard1]
+active = walker@guard_door
+suitable = {=check_npc_name(bar_visitors_garik_stalker_guard)} true
+prior = 100
+on_combat = combat@bar_guard1
+
+[combat@bar_guard1]
+on_info = {-bar_guards_alarm} %+bar_guards_alarm%
+
+[walker@guard_door]
+path_walk = guard_door_walk
+path_look = guard_door_look
+def_state_standing = guard
+def_state_moving1 = walk
+def_state_moving2 = walk
+def_state_moving3 = walk
+on_info = {+bar_guards_alarm !has_enemy} walker@guard_door_alert
+on_game_timer = 4700 | remark@smoke
+danger = danger_ignore
+meet = meet@1
+combat_ignore_cond = {=check_enemy_name(actor) !actor_true_enemy} true, false
+invulnerable = {=is_warfare} false, {!actor_true_enemy} true, false
+corpse_detection_enabled = false
+gather_items_enabled = false
+help_wounded_enabled = false
+
+[walker@guard_door_alert]:walker@guard_door
+def_state_standing = threat_na
+on_info = nil
+on_game_timer = 150 | {!has_enemy} walker@guard_door %-bar_guards_alarm%
+
+[remark@smoke]:walker@guard_door
+anim = smoking_stand
+meet = no_meet
+on_info = {+bar_guards_alarm !has_enemy} walker@guard_door_alert
+on_game_timer = 1200 | walker@guard_door
+
+[meet@1]
+close_distance = 2
+close_victim = actor
+close_anim = guard
+close_snd_hello = nil
+close_snd_bye = nil
+close_snd_distance = 2
+use = false
+use_wpn = false
+abuse = false
+
+[danger_ignore]
+ignore_distance = 0
+
+[walker@guard_nodoor]
+path_walk = guard_nodoor_walk
+path_look = guard_nodoor_look
+def_state_standing = ward
+def_state_moving1 = walk
+def_state_moving2 = walk
+def_state_moving3 = walk
+on_actor_not_in_zone = bar_bar_room_area | {-bar_barman_need_room} walker@guard_door
+danger = danger_ignore
+meet = meet@1
+combat_ignore_cond = {=check_enemy_name(actor) !actor_true_enemy} true, false
+invulnerable = {=is_warfare} false, {!actor_true_enemy} true, false

@@ -1,0 +1,47 @@
+local cached_radio_id = nil
+
+function actor_on_first_update()
+    if level.name() ~= "zaton" then
+        return
+    end
+
+    local sim = alife()
+
+    if cached_radio_id then
+        local se_obj = sim:object(cached_radio_id)
+        if se_obj and se_obj:name() == "zaton_a2_ph_rupor" then
+            local obj = level.object_by_id(cached_radio_id)
+            if obj then
+                obj:force_set_position(vector():set(124.17, -5, 175.55))
+            end
+            return
+        end
+        cached_radio_id = nil
+    end
+
+    for id = 1, 65534 do
+        local se_obj = sim:object(id)
+        if se_obj and se_obj:name() == "zaton_a2_ph_rupor" then
+            cached_radio_id = id
+            local obj = level.object_by_id(id)
+            if obj then
+                obj:force_set_position(vector():set(124.17, -5, 175.55))
+            end
+            break
+        end
+    end
+end
+
+function save_state(m_data)
+    m_data.zaton_radio_id = cached_radio_id
+end
+
+function load_state(m_data)
+    cached_radio_id = m_data.zaton_radio_id
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
+end
