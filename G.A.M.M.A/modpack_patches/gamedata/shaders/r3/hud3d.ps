@@ -1,0 +1,20 @@
+#include "common.h"
+#include "hdr10.h"
+
+struct ui_vert_out
+{
+	float2 tc0 : TEXCOORD0;
+};
+
+float4 main ( ui_vert_out I ) : SV_Target
+{
+	float4 r = s_base.Sample( smp_base, I.tc0 );
+
+	if (HDR10_IS_ENABLED) {
+		r.rgb = HDR10_sRGBToLinear(r.rgb);
+		r.rgb *= HDR10_UI_NITS_SCALAR * HDR10_PDA_INTENSITY;
+		r.rgb = HDR10_LinearTosRGB(r.rgb);
+	}
+
+	return r;
+}
