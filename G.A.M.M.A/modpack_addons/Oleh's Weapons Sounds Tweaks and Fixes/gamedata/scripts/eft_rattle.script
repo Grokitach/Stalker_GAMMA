@@ -44,6 +44,7 @@ limit = {
 
 local cached_sec
 local ini_cas = ini_file_ex("plugins\\grok_casings_sounds_weapons.ltx")
+local wpn_lowered = false
 local wpn = {
     weight = 3.3,
     aim_time = 0.25,
@@ -61,7 +62,7 @@ function get_wpn_params(weapon)
         cached_sec     = sec
         wpn.weight     = ini_sys:r_float_ex(sec, "inv_weight") or 3.3
         wpn.aim_time   = ini_sys:r_float_ex(sec, "zoom_rotate_time") or 0.25
-        wpn.volume     = 0.3 --(0.25 + weight * 0.025)
+        wpn.volume     = 0.5 --(0.25 + weight * 0.025)
         wpn.frequency  = clamp(0.25 / wpn.aim_time, 0.8, 1.2)
         wpn.kind       = SYS_GetParam(0, sec, "kind") or "w_misc"
         wpn.class      = wpn_kinds[wpn.kind] or wpn_kinds["w_misc"]
@@ -137,7 +138,7 @@ function play_sprint_rattle_sound(volume, frequency, weapon)
 
     local sound = sound_object("weapons\\_rattle\\" .. wpn.sclass .. roll)
     sound:play(db.actor, 0, sound_object.s2d)
-    sound.volume = (wpn.volume * volume) * 0.75 or 0.25
+    sound.volume = wpn_lowered and 0.5 * wpn.volume * volume or 1 * wpn.volume * volume
     sound.frequency = frequency or 1
     --printf("[eft_rattle] %s | volume: %s, frequency: %s", wpn.sclass .. roll, volume, frequency)
 
@@ -174,12 +175,14 @@ function actor_on_weapon_zoom_type_changed(weapon, previous, current)
 end
 
 function actor_on_weapon_raise(weapon)
+    wpn_lowered = false
     if opt_lower_raise_rattle then
         play_aim_sound(volume_lower_raise_rattle, 1, weapon)
     end
 end
 
 function actor_on_weapon_lower(weapon)
+    wpn_lowered = true
     if opt_lower_raise_rattle then
         play_aim_sound(volume_lower_raise_rattle, 1, weapon)
     end
@@ -191,9 +194,9 @@ function weapon_cover_tilt_rattle.play_sound(dir, weapon, coeff)
     if not weapon_cover_tilt.get_setting("tilt_rattle") or not weapon then return end
 
     if wct_raised then
-        play_aim_sound(volume_lower_raise_rattle, clamp(1.25 - wpn.weight * 0.0625, 0.8, 1.2), weapon)
+        play_aim_sound(volume_lower_raise_rattle * 0.6, clamp(1.25 - wpn.weight * 0.0625, 0.8, 1.2), weapon)
     else
-        play_aim_sound(volume_lower_raise_rattle, clamp(1.25 - wpn.weight * 0.0625, 0.8, 1.2), weapon)
+        play_aim_sound(volume_lower_raise_rattle * 0.6, clamp(1.25 - wpn.weight * 0.0625, 0.8, 1.2), weapon)
     end
     wct_raised = not wct_raised
 end
