@@ -232,6 +232,9 @@ function sim_squad_scripted:update()
 
 	local script_target_id = self:get_script_target()
 	if (script_target_id) then
+		self.__lock = nil
+		self.next_target_retry = nil
+		self.fallback_target_id = nil
 		self:specific_update(script_target_id)
 	else
 		self:generic_update()
@@ -333,9 +336,13 @@ end
 function sim_squad_scripted:generic_update() -- This update is called for all squads with no scripted assigned target
 	--utils_data.debug_write(strformat("%s:generic_update",self:name()))
 	
-	if (self.__lock) then 
-		return -- so that squad doesn't continously try to find target which lowers FPS
-	end 
+	if self.__lock then
+		if time_global() < (self.next_target_retry or 0) then
+			return
+		end
+		self.__lock = nil
+		self.next_target_retry = nil
+	end
 	
 	local forced_id = get_help_target_id(self)
 	self.assigned_target_id = forced_id or self.assigned_target_id or self.current_target_id
@@ -349,7 +356,10 @@ function sim_squad_scripted:generic_update() -- This update is called for all sq
 		
 		local se_target = self.assigned_target_id == self.id and self or simulation_objects.get_server_entity(self.assigned_target_id)
 		-- Evaluate current assigned target; make sure it is still valid
-		if (se_target and se_target:target_precondition(self,true)) then
+		local skip_props = self.fallback_target_id ~= nil
+			and self.fallback_target_id == self.assigned_target_id
+			and not xr_conditions.surge_started()
+		if (se_target and se_target:target_precondition(self, true, skip_props)) then
 			-- If current action is not finished, then return
 			
 			if (self.smart_id ~= self.assigned_target_id and se_target:clsid() == clsid.smart_terrain) then 
@@ -375,8 +385,13 @@ function sim_squad_scripted:generic_update() -- This update is called for all sq
 		end
 	end
 	
-	-- Find a new target
-	local target = SIMBOARD:get_squad_target(self) or SIMBOARD:get_squad_target(self,false,true)
+	-- Keep shelter rules in effect during emissions.
+	local target = SIMBOARD:get_squad_target(self)
+	local used_fallback = false
+	if not target and not xr_conditions.surge_started() then
+		target = SIMBOARD:get_squad_target(self, false, true)
+		used_fallback = true
+	end
 	if not (target) then
 		--printf("squad %s has no target",self:name())
 		self:on_reach_target(self)
@@ -386,13 +401,19 @@ function sim_squad_scripted:generic_update() -- This update is called for all sq
 		self.current_target_id = nil
 		self.task_target_id = nil
 		self.current_action = nil
-		self.__lock = db.actor and db.actor.afterFirstUpdate -- keep trying until first update
+		self.fallback_target_id = nil
+		if db.actor and db.actor.afterFirstUpdate then
+			self.__lock = true
+			-- Stagger the 30-39 second retry so squads do not all search in the same update.
+			self.next_target_retry = time_global() + 30000 + (self.id % 10) * 1000
+		end
 		return 
 	end
 
 	target:on_reach_target(self)
 	
 	self.assigned_target_id = target.id
+	self.fallback_target_id = used_fallback and target.id or nil
 	self.current_target_id = nil
 	self.task_target_id = nil
 	self.current_action = 0
