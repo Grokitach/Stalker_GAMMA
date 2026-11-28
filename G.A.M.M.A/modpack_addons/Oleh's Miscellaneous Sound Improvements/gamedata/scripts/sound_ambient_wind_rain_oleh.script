@@ -50,9 +50,9 @@ if sar_snd_replacer then
 	end
 end
 
-function sound_ambient.update_rain_helm_sound(bLevelUnderground, indoor, rain_factor, rain_volume)
+function sound_ambient.update_rain_helm_sound(underground, indoor, rain_factor, rain_volume)
 
-	if not bLevelUnderground and rain_factor > 0 then
+	if not underground and rain_factor > 0 then
 		local vol = sar_snd_replacer and rain_factor or rain_volume
 
 		if indoor then
@@ -118,12 +118,13 @@ local volume_indoor_wind = 1
 local volume_master_wind = 1
 local enabled_wind_ear = true
 
-function sound_ambient.update_wind(bLevelUnderground, indoor, wind_velocity)
-	if not bLevelUnderground then
-		local vol = clamp(wind_velocity/1000,0,1)
+function sound_ambient.update_wind(underground, indoor, wind_velocity)
+	if not underground then
+		wind_velocity = wind_velocity / 1000
+		local vol = clamp(wind_velocity * wind_velocity,0,1)
 
 		if indoor then
-			if wind_velocity > 499 then
+			if wind_velocity > 0.5 then
 				wnd_vol_int_low = clamp(wnd_vol_int_low - step,0,1)
 				wnd_vol_int_big = clamp(wnd_vol_int_big + step,0,vol * volume_indoor_wind)
 
@@ -136,7 +137,7 @@ function sound_ambient.update_wind(bLevelUnderground, indoor, wind_velocity)
 			wnd_vol_big = clamp(wnd_vol_big - step,0,1)
 
 		else
-			if wind_velocity > 499 then
+			if wind_velocity > 0.5 then
 				wnd_vol_low = clamp(wnd_vol_low - step,0,1)
 				wnd_vol_big = clamp(wnd_vol_big + step,0,vol * volume_outdoor_wind)
 
@@ -214,7 +215,29 @@ local function update_settings()
 
 end
 
-local function actor_on_first_update()
+local next_update = 0
+local next_debug_log = 0
+
+local rain_factor = 0
+local rain_volume = 0
+local wind_velocity = 0
+local indoor = false
+
+local underground = false
+underground_levels = {
+	["jupiter_underground"] = true,
+	["l03u_agr_underground"] = true,
+	["l04u_labx18"] = true,
+	["l08u_brainlab"] = true,
+	["l10u_bunker"] = true,
+	["l12u_control_monolith"] = true,
+	["l12u_sarcofag"] = true,
+	["l13u_warlab"] = true,
+	["labx8"] = true,
+}
+function actor_on_first_update()
+	underground = underground_levels[level.name()] or false
+
 	xr_sound.play_sound_looped(AC_ID, low)
 	xr_sound.play_sound_looped(AC_ID, med)
 	xr_sound.play_sound_looped(AC_ID, big)
@@ -236,14 +259,6 @@ local function actor_on_first_update()
 	xr_sound.set_volume_sound_looped(AC_ID, wnd_int_big, 0)
 end
 
-local next_update = 0
-local next_debug_log = 0
-
-local rain_factor = 0
-local rain_volume = 0
-local wind_velocity = 0
-local bLevelUnderground = false
-local indoor = false
 function sound_ambient.actor_on_update()
 	local tg = time_global()
 	if tg > next_update + 249 then
@@ -252,16 +267,15 @@ function sound_ambient.actor_on_update()
 		rain_factor = level.rain_factor()
 		rain_volume = level.get_rain_volume()
 		wind_velocity = weather.get_value_numric("wind_velocity") or 0
-		bLevelUnderground = GetEvent("underground")
 		indoor = is_indoor()
 	end
 
-	sound_ambient.update_wind(bLevelUnderground, indoor, wind_velocity)
-	sound_ambient.update_rain_helm_sound(bLevelUnderground, indoor, rain_factor, rain_volume)
+	sound_ambient.update_wind(underground, indoor, wind_velocity)
+	sound_ambient.update_rain_helm_sound(underground, indoor, rain_factor, rain_volume)
 
 	if debug_logging and tg > next_debug_log then
-		printf("[sound_ambient] bLevelUnderground: %s, indoor: %s",
-			bLevelUnderground, indoor)
+		printf("[sound_ambient] underground: %s, indoor: %s",
+			underground, indoor)
 		printf("[sound_ambient] Wind | velocity: %s, outdoor: %s/%s/%s, indoor: %s/%s/%s",
 			wind_velocity, wnd_vol_low, wnd_vol_med, wnd_vol_big, wnd_vol_int_low, wnd_vol_int_med, wnd_vol_int_big)
 		printf("[sound_ambient] Rain | factor: %s, volume: %s, outdoor: %s/%s/%s, indoor: %s",
